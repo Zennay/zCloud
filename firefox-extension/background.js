@@ -403,6 +403,7 @@ async function refreshTargets() {
       const tabId = projectTabs[id];
       if (tabId != null) {
         try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: id, reason: "worker-count-reduced"}); } catch (_) {}
+        await clearRecoveryTag(tabId);
         try { await browser.tabs.remove(tabId); } catch (_) {}
         delete tabTargets[tabId];
         delete pendingAdoptions[tabId];
