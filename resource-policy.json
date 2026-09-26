@@ -1,0 +1,14 @@
+{
+  "supa": {
+    "priority": "normal"
+  },
+  "cloud": {
+    "priority": "normal"
+  },
+  "haxlab": {
+    "priority": "background"
+  },
+  "ftmo": {
+    "priority": "high"
+  }
+}

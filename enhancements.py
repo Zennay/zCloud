@@ -1,0 +1,366 @@
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+import hashlib, json, re, sqlite3, subprocess, time
+
+ROOT = Path("/home/ubuntu/zennay-cloud")
+RESOURCE_FILE = ROOT / "resource-policy.json"
+ALERT_STATE_FILE = ROOT / "alert-state.json"
+SIGNALS_DIR = ROOT / "signals"
+SIGNALS_DIR.mkdir(exist_ok=True)
+
+PRIORITY_WEIGHTS = {"background": 100, "normal": 400, "high": 800}
+PROJECT_UNITS = {
+    "haxlab": [
+        "haxlab-analyzer.service",
+        "haxlab-ingest.service",
+        "haxlab-worker.service",
+        "actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service",
+    ],
+    "ftmo": [
+        "ftmo-autonomous.service",
+        "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
+    ],
+    "cloud": ["zennay-cloud.service"],
+    "supa": [],
+}
+_RESOURCE_PREV = {}
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+def _json(path, sudo=False):
+    p = str(path)
+    try:
+        if sudo:
+            raw = subprocess.check_output(["sudo", "-n", "cat", p], text=True, stderr=subprocess.DEVNULL, timeout=3)
+            return json.loads(raw)
+        return json.loads(Path(p).read_text())
+    except Exception:
+        return None
+
+def load_resource_policy():
+    default = {
+        "haxlab": {"priority": "background"},
+        "ftmo": {"priority": "high"},
+        "supa": {"priority": "normal"},
+        "cloud": {"priority": "normal"},
+    }
+    try:
+        raw = json.loads(RESOURCE_FILE.read_text())
+    except Exception:
+        raw = {}
+    for pid, cfg in default.items():
+        priority = str((raw.get(pid) or {}).get("priority") or cfg["priority"])
+        if priority not in PRIORITY_WEIGHTS:
+            priority = cfg["priority"]
+        default[pid] = {"priority": priority}
+    return default
+
+def _unit_numbers(unit):
+    try:
+        raw = subprocess.check_output(
+            ["systemctl", "show", unit, "--property=CPUUsageNSec,MemoryCurrent,ActiveState"],
+            text=True, stderr=subprocess.DEVNULL, timeout=2
+        )
+        d = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
+        return int(d.get("CPUUsageNSec") or 0), int(d.get("MemoryCurrent") or 0), d.get("ActiveState") or "unknown"
+    except Exception:
+        return 0, 0, "unknown"
+
+def resource_snapshot():
+    policy = load_resource_policy()
+    now_mono = time.monotonic()
+    out = {}
+    for pid, cfg in policy.items():
+        units = PROJECT_UNITS.get(pid, [])
+        total_cpu = total_mem = active = 0
+        for unit in units:
+            cpu, mem, state = _unit_numbers(unit)
+            total_cpu += cpu
+            total_mem += mem
+            active += int(state in ("active", "activating"))
+        cpu_pct = None
+        prev = _RESOURCE_PREV.get(pid)
+        if prev and now_mono > prev[0] and total_cpu >= prev[1]:
+            cpu_pct = round(((total_cpu - prev[1]) / 1_000_000_000) / (now_mono - prev[0]) * 100, 1)
+        _RESOURCE_PREV[pid] = (now_mono, total_cpu)
+        out[pid] = {
+            "priority": cfg["priority"],
+            "weight": PRIORITY_WEIGHTS[cfg["priority"]],
+            "managed": bool(units),
+            "active_units": active,
+            "unit_count": len(units),
+            "cpu_percent": cpu_pct,
+            "memory_bytes": total_mem,
+            "mode": "relative",
+            "note": "Relatieve CPU/IO-prioriteit; vrije capaciteit blijft bruikbaar.",
+        }
+    return out
+
+def set_priority(project, priority):
+    if project not in PROJECT_UNITS:
+        raise ValueError("Onbekend project")
+    if priority not in PRIORITY_WEIGHTS:
+        raise ValueError("Ongeldige prioriteit")
+    policy = load_resource_policy()
+    policy[project] = {"priority": priority}
+    tmp = RESOURCE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(policy, ensure_ascii=False, indent=2) + "\n")
+    tmp.replace(RESOURCE_FILE)
+    subprocess.check_output(
+        ["sudo", "-n", "/usr/local/sbin/zennay-resource-control", "apply", project],
+        text=True, stderr=subprocess.STDOUT, timeout=12
+    )
+    return {"project": project, "priority": priority, "weight": PRIORITY_WEIGHTS[priority]}
+
+def _find_metrics_dict(data):
+    if not isinstance(data, dict):
+        return None
+    for key in ("frozen_holdout", "holdout", "validation", "metrics"):
+        val = data.get(key)
+        if isinstance(val, dict) and "direction_accuracy" in val and "joint_accuracy" in val:
+            return val
+    if "direction_accuracy" in data and "joint_accuracy" in data:
+        return data
+    for val in data.values():
+        if isinstance(val, dict):
+            hit = _find_metrics_dict(val)
+            if hit:
+                return hit
+    return None
+
+def _hax_quality():
+    current = _json("/var/lib/haxlab/derived/champions/elite-player/current.json", sudo=True) or {}
+    live = _json("/var/lib/haxlab/derived/champions/elite-player/live.json", sudo=True) or {}
+    metrics = _json(current.get("metrics_path", ""), sudo=True) if current.get("metrics_path") else None
+    if not metrics:
+        metrics = _json("/var/lib/haxlab/derived/training/elite-player-champion-candidate/pipeline-summary.json") or {}
+    holdout = _find_metrics_dict(metrics) or {}
+    direction = holdout.get("direction_accuracy")
+    joint = holdout.get("joint_accuracy")
+    kick_f1 = holdout.get("kick_f1")
+    live_healthy = bool((live.get("live_health") or {}).get("healthy"))
+    version = live.get("version_id") or current.get("version_id")
+    items = []
+    if direction is not None:
+        items.append({"label": "Direction accuracy", "value": round(float(direction) * 100, 1), "unit": "%"})
+    if joint is not None:
+        items.append({"label": "Joint action accuracy", "value": round(float(joint) * 100, 1), "unit": "%"})
+    if kick_f1 is not None:
+        items.append({"label": "Kick F1", "value": round(float(kick_f1) * 100, 1), "unit": "%"})
+    items.append({"label": "Live champion", "value": "Healthy" if live_healthy else "Not healthy", "unit": ""})
+    headline = None
+    if joint is not None:
+        headline = {
+            "label": "Player imitation",
+            "value": round(float(joint) * 100, 1),
+            "unit": "%",
+            "note": "Frozen-holdout joint action accuracy; geen win-rate.",
+        }
+    return {
+        "available": bool(headline),
+        "headline": headline,
+        "items": items,
+        "stage": "live champion" if live else "offline validation",
+        "meta": {"version_id": version, "live_healthy": live_healthy},
+    }
+
+def _gen_number(text):
+    m = re.search(r"(?:alpha-|generation-?)(\d+)", text or "", re.I)
+    return int(m.group(1)) if m else -1
+
+def _ftmo_candidate():
+    root = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes")
+    choices = []
+    for path in root.glob("*/development-review-summary.json"):
+        data = _json(path)
+        if not data:
+            continue
+        gen = _gen_number(data.get("generation_id") or path.parent.name)
+        for review in data.get("reviews", []):
+            if review.get("outcome") != "candidate" or not review.get("selected_variant"):
+                continue
+            exp = review.get("experiment_id")
+            for trial_path in (path.parent / str(exp) / "trials").glob("*.json"):
+                trial = _json(trial_path) or {}
+                result = trial.get("result") or {}
+                if result.get("variant") == review.get("selected_variant"):
+                    choices.append((gen, trial_path, trial, result, data))
+    return max(choices, key=lambda x: x[0]) if choices else None
+
+def _ftmo_release():
+    root = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes")
+    releases = []
+    for release_path in root.glob("*/paper-release.json"):
+        release = _json(release_path) or {}
+        for rel in release.get("released_candidates", []):
+            exp = rel.get("experiment_id")
+            run_path = release_path.parent / str(exp) / "holdout-run.json"
+            holdout = _json(run_path) or {}
+            if holdout:
+                releases.append((_gen_number(release.get("generation_id") or release_path.parent.name), release, rel, holdout))
+    return max(releases, key=lambda x: x[0]) if releases else None
+
+def _pips(value):
+    try:
+        return round(float(value) / 0.0001, 1)
+    except Exception:
+        return None
+
+def _ftmo_quality():
+    cand = _ftmo_candidate()
+    rel = _ftmo_release()
+    items = []
+    headline = None
+    meta = {}
+    stage = "research"
+    if cand:
+        gen, trial_path, trial, result, review = cand
+        pips = _pips(result.get("total_pnl"))
+        stressed = _pips(result.get("cost_1_5x_pnl"))
+        wr = result.get("win_rate")
+        trades = result.get("closed_trades")
+        note = "Generation %s development-only · %s trades" % (gen, trades or 0)
+        if wr is not None:
+            note += " · %.1f%% WR" % (float(wr) * 100)
+        headline = {"label": "Current dev candidate", "value": pips, "unit": " pips", "note": note}
+        items.extend([
+            {"label": "1.5× cost PnL", "value": stressed, "unit": " pips"},
+            {"label": "Dev win rate", "value": round(float(wr) * 100, 1) if wr is not None else None, "unit": "%"},
+            {"label": "Closed trades", "value": trades, "unit": ""},
+        ])
+        meta["candidate_hash"] = trial.get("trial_hash")
+        meta["candidate_generation"] = gen
+        stage = "generation %s candidate" % gen
+    if rel:
+        gen, release, released, holdout = rel
+        hres = holdout.get("result") or holdout
+        items.extend([
+            {"label": "Validated holdout PnL", "value": _pips(hres.get("total_pnl")), "unit": " pips"},
+            {"label": "Validated 1.5× cost", "value": _pips(hres.get("cost_1_5x_pnl")), "unit": " pips"},
+            {"label": "Validated win rate", "value": round(float(hres.get("win_rate")) * 100, 1) if hres.get("win_rate") is not None else None, "unit": "%"},
+        ])
+        meta["release_hash"] = release.get("paper_release_hash")
+        meta["release_generation"] = gen
+    return {
+        "available": bool(headline),
+        "headline": headline,
+        "items": [x for x in items if x.get("value") is not None],
+        "stage": stage,
+        "meta": meta,
+    }
+
+def quality_for(project):
+    if project == "haxlab":
+        return _hax_quality()
+    if project == "ftmo":
+        return _ftmo_quality()
+    return {"available": False, "headline": None, "items": [], "stage": None, "meta": {}}
+
+def init_db(c):
+    c.execute("""CREATE TABLE IF NOT EXISTS alerts(
+        id TEXT PRIMARY KEY, ts TEXT, project TEXT, kind TEXT, severity TEXT,
+        title TEXT, detail TEXT, important INTEGER, fingerprint TEXT
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS alerts_ts ON alerts(ts)")
+
+def _emit(c, project, kind, severity, title, detail, fingerprint, cooldown=0):
+    effective_fingerprint = fingerprint
+    if cooldown:
+        row = c.execute("SELECT ts FROM alerts WHERE project=? AND kind=? ORDER BY ts DESC LIMIT 1", (project, kind)).fetchone()
+        if row:
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(row[0])).total_seconds()
+                if age < cooldown:
+                    return False
+            except Exception:
+                pass
+        effective_fingerprint = fingerprint + ":" + str(int(time.time() // cooldown))
+    if c.execute("SELECT 1 FROM alerts WHERE fingerprint=?", (effective_fingerprint,)).fetchone():
+        return False
+    ts = _now()
+    aid = hashlib.sha256((effective_fingerprint + "|" + ts).encode()).hexdigest()[:20]
+    c.execute("INSERT INTO alerts VALUES(?,?,?,?,?,?,?,?,?)", (aid, ts, project, kind, severity, title, detail, 1, effective_fingerprint))
+    return True
+
+def list_alerts(db_path, limit=20, important_only=False):
+    try:
+        with sqlite3.connect(db_path) as c:
+            c.row_factory = sqlite3.Row
+            where = "WHERE important=1" if important_only else ""
+            rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+def _state_for(data):
+    state = {"milestones": [], "quality": {}}
+    for p in data.get("projects", []):
+        for i, m in enumerate(p.get("milestones", [])):
+            value = float(m.get("progress", 100 if m.get("done") else 0))
+            if value >= 100:
+                state["milestones"].append("%s:%s:%s" % (p["id"], i, p.get("milestone_revision", "")))
+        q = p.get("quality") or {}
+        state["quality"][p["id"]] = q.get("meta") or {}
+    return state
+
+def evaluate_alerts(data, runner, db_path):
+    current = _state_for(data)
+    try:
+        previous = json.loads(ALERT_STATE_FILE.read_text())
+    except Exception:
+        previous = None
+    with sqlite3.connect(db_path) as c:
+        init_db(c)
+        for p in data.get("projects", []):
+            if p.get("status") == "archived":
+                continue
+            if p.get("health") != "healthy":
+                bad = next((s for s in p.get("services", []) if s.get("state") not in ("active", "activating", "waiting")), None)
+                detail = (bad or {}).get("name", "service") + " · " + (bad or {}).get("state", "attention")
+                _emit(c, p["id"], "freeze", "high", p["name"] + " heeft aandacht nodig", detail, "health:" + p["id"] + ":" + detail, 3 * 3600)
+        if runner.get("state") in ("stale", "offline") and (runner.get("age_seconds") or 0) > 300:
+            _emit(c, "cloud", "automation", "high", "ChatGPT automation lijkt stil te staan",
+                  "Runner %s · laatste event %ss geleden" % (runner.get("state"), runner.get("age_seconds")),
+                  "runner-stale", 2 * 3600)
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        blocked = c.execute("""SELECT reason,COUNT(*) c FROM runner_events
+            WHERE event='startup-blocked' AND ts>=? AND reason NOT IN ('generation-active','draft-present','')
+            GROUP BY reason HAVING c>=3 ORDER BY c DESC LIMIT 1""", (cutoff,)).fetchone()
+        if blocked:
+            _emit(c, "cloud", "input", "high", "Automatisering blijft geblokkeerd",
+                  "%s · %sx in 30 min" % (blocked[0], blocked[1]), "blocked:" + str(blocked[0]), 2 * 3600)
+        if previous:
+            old = set(previous.get("milestones", []))
+            for key in set(current["milestones"]) - old:
+                pid = key.split(":", 1)[0]
+                p = next((x for x in data.get("projects", []) if x["id"] == pid), None)
+                if p and p.get("status") != "archived":
+                    idx = int(key.split(":")[1])
+                    title = p.get("milestones", [{}])[idx].get("title", "Milestone")
+                    _emit(c, pid, "breakthrough", "normal", p["name"] + ": milestone afgerond", title, "milestone:" + key)
+            oldq = previous.get("quality", {})
+            hnew = (current["quality"].get("haxlab") or {}).get("version_id")
+            hold = (oldq.get("haxlab") or {}).get("version_id")
+            if hnew and hold and hnew != hold:
+                _emit(c, "haxlab", "breakthrough", "high", "HaxLab heeft een nieuwe live champion", str(hnew), "hax-version:" + str(hnew))
+            fnew = (current["quality"].get("ftmo") or {}).get("candidate_hash")
+            fold = (oldq.get("ftmo") or {}).get("candidate_hash")
+            if fnew and fold and fnew != fold:
+                q = next((p.get("quality") for p in data["projects"] if p["id"] == "ftmo"), {}) or {}
+                h = q.get("headline") or {}
+                detail = "%s%s · %s" % (h.get("value", "?"), h.get("unit", ""), h.get("note", ""))
+                _emit(c, "ftmo", "breakthrough", "high", "FTMO heeft een nieuwe research-candidate", detail, "ftmo-candidate:" + str(fnew))
+            rnew = (current["quality"].get("ftmo") or {}).get("release_hash")
+            rold = (oldq.get("ftmo") or {}).get("release_hash")
+            if rnew and rold and rnew != rold:
+                _emit(c, "ftmo", "breakthrough", "high", "FTMO heeft een nieuwe gevalideerde paper release",
+                      "Nieuwe frozen-holdout release is vrijgegeven voor paper execution.", "ftmo-release:" + str(rnew))
+        for path in SIGNALS_DIR.glob("*.json"):
+            sig = _json(path) or {}
+            sid = str(sig.get("id") or path.stem)
+            _emit(c, str(sig.get("project") or "cloud"), str(sig.get("kind") or "input"),
+                  str(sig.get("severity") or "high"), str(sig.get("title") or "Input nodig"),
+                  str(sig.get("detail") or ""), "signal:" + sid)
+        c.commit()
+    ALERT_STATE_FILE.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n")

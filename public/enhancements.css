@@ -1,0 +1,32 @@
+.quality-chip{margin-top:12px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--accent) 25%,var(--edge));border-radius:8px;background:color-mix(in srgb,var(--accent) 6%,transparent);display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.quality-chip span,.quality-chip small{font-size:11px;color:var(--muted)}
+.quality-chip strong{font-size:15px;color:var(--accent);font-weight:650}
+.quality-chip small{grid-column:1/-1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quality-panel,.milestone-progress-panel{margin-bottom:20px}
+.quality-hero{padding:18px 23px;display:grid;grid-template-columns:1fr auto;gap:3px 16px;color:var(--muted);font-size:12px}
+.quality-hero strong{font-size:27px;color:var(--text);font-weight:600}
+.quality-hero span{grid-column:1/-1}
+.quality-grid{border-top:1px solid var(--edge);padding:12px 23px 18px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.quality-grid div{padding:10px;border-radius:8px;background:#10141b}
+.quality-grid span{display:block;font-size:11px;color:var(--muted)}
+.quality-grid strong{display:block;font-size:16px;margin-top:3px}
+.top-controls{grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr)}
+.resource-grid{padding:10px 23px 18px}
+.resource-row{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--edge)}
+.resource-row:last-child{border-bottom:0}
+.resource-row strong{font-size:13px}
+.resource-row small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+.resource-row select{background:#10141b;color:var(--text);border:1px solid #323946;border-radius:7px;padding:7px 9px;font-size:12px}
+.alert-list{padding:10px 23px 18px}
+.alert-row{padding:11px 0;border-bottom:1px solid var(--edge);display:flex;gap:12px;justify-content:space-between}
+.alert-row:last-child{border:0}
+.alert-row strong{display:block;font-size:12px}
+.alert-row span{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+.alert-row time{font-size:10px;color:var(--muted);white-space:nowrap}
+.alert-row.high strong{color:#ffc17d}
+.milestone-main{flex:1;min-width:0}
+.milestone-mini{height:3px;background:#252b35;border-radius:2px;margin-top:7px;overflow:hidden}
+.milestone-mini i{display:block;height:100%;background:var(--accent)}
+.milestone em{min-width:43px;text-align:right}
+.milestone.done em{color:#a6d496}
+@media(max-width:760px){.top-controls,.quality-grid{grid-template-columns:1fr}.quality-chip small{white-space:normal}.resource-row{align-items:flex-start}.resource-row select{min-width:110px}}

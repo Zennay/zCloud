@@ -1,0 +1,310 @@
+[
+  {
+    "id": "haxlab",
+    "name": "HaxLab",
+    "eyebrow": "GAME INTELLIGENCE",
+    "goal": "Van replay naar een competitieve HaxBall-bot.",
+    "icon": "game",
+    "accent": "#a899ff",
+    "repo": "/opt/actions-runner-haxlab/_work/Haxlab/Haxlab",
+    "repo_ref": "origin/main",
+    "milestone_revision": "v3-granular-quality",
+    "progress_basis": "Bouwvoortgang is het gemiddelde van milestone-percentages. Modelkwaliteit staat apart.",
+    "milestones": [
+      {
+        "title": "Replay pipeline",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "State analysis",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Player profiling",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Behavior model",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Closed-loop bot",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Self-play training",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Competitive benchmark",
+        "done": false,
+        "progress": 45
+      },
+      {
+        "title": "Live match bot",
+        "done": false,
+        "progress": 55
+      }
+    ],
+    "phase": "Live champion validation · competitive behavior",
+    "next_step": "Verbeter kickgedrag en competitieve sandbox-resultaten; valideer daarna tegen echte spelers.",
+    "status": "active",
+    "priority": "low"
+  },
+  {
+    "id": "ftmo",
+    "name": "FTMO",
+    "eyebrow": "AUTONOMOUS RESEARCH",
+    "goal": "Een onderzoekssysteem voor robuuste tradingstrategieën.",
+    "icon": "chart",
+    "accent": "#5ddcbb",
+    "repo": "/opt/ftmo-runner/_work/Ftmo/Ftmo",
+    "milestone_revision": "v3-granular-quality",
+    "progress_basis": "Bouwvoortgang is het gemiddelde van milestone-percentages. Tradingkwaliteit staat apart.",
+    "milestones": [
+      {
+        "title": "Research framework",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Market data pipeline",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Backtest engine",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Strategy generations",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Telemetry",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Autonomous research loop",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Robust validation",
+        "done": false,
+        "progress": 82
+      },
+      {
+        "title": "Production-ready system",
+        "done": false,
+        "progress": 35
+      }
+    ],
+    "phase": "Generation 10 candidate · awaiting walk-forward",
+    "next_step": "Voer de frozen walk-forward uit voor de Generation-10 candidate; houd development en validatie strikt gescheiden.",
+    "status": "active",
+    "priority": "high"
+  },
+  {
+    "id": "cloud",
+    "name": "zCloud",
+    "eyebrow": "PROJECT COMMAND CENTER",
+    "goal": "Je projecten, progressie en VPS in één overzicht — met zCloud Wear als onderdeel op je Galaxy Watch 7.",
+    "icon": "cloud",
+    "accent": "#82b8ff",
+    "milestone_revision": "v5-zcloud-wear",
+    "progress_basis": "zCloud is de control room; zCloud Wear is de native Watch-client als onderdeel van dit project.",
+    "milestones": [
+      {
+        "title": "Live projectoverzicht",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Grafieken met datums",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Milestones & activity history",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "VPS-monitoring",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Responsive mobile design",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Compacte Watch API",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "zCloud Wear OS-app",
+        "done": false,
+        "progress": 80
+      }
+    ],
+    "phase": "zCloud Wear · v0.3 gebouwd, Watch-validatie open",
+    "status": "active",
+    "priority": "system",
+    "next_step": "Installeer en valideer zCloud Wear op de Galaxy Watch 7.",
+    "components": [
+      {
+        "id": "zcloud-wear",
+        "name": "zCloud Wear",
+        "accent": "#5ddcbb",
+        "progress": 80,
+        "summary": "Native Jetpack Compose-app voor de ronde Galaxy Watch 7. Toont zCloud-projecten via de read-only Watch API. De debug-APK is gebouwd; installatie en eindtest op het horloge staan nog open.",
+        "next_step": "Installeer de actuele APK op de Galaxy Watch 7 en controleer projectoverzicht, projectdetail en live status.",
+        "milestones": [
+          {
+            "title": "Native Jetpack Compose Wear OS-app",
+            "done": true,
+            "progress": 100
+          },
+          {
+            "title": "Ronde home- en projectdetailweergave",
+            "done": true,
+            "progress": 100
+          },
+          {
+            "title": "Read-only koppeling met de zCloud Watch API",
+            "done": true,
+            "progress": 100
+          },
+          {
+            "title": "Debug-APK voor de huidige versie bouwen",
+            "done": true,
+            "progress": 100
+          },
+          {
+            "title": "Installatie en eindtest op Galaxy Watch 7",
+            "done": false,
+            "progress": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "supa",
+    "name": "Supa",
+    "eyebrow": "SMART GROCERY PLANNER",
+    "goal": "Een mobile-first boodschappenplanner die studenten helpt goedkoper en slimmer te eten.",
+    "icon": "layers",
+    "accent": "#ff9b7a",
+    "repo": "/home/ubuntu/zennay-cloud/repos/supa",
+    "repo_ref": "origin/main",
+    "repo_url": "https://github.com/Zennay/Supa",
+    "phase": "Production rebuild · mobile-first foundation",
+    "status": "active",
+    "next_step": "Bouw de mobile-first production foundation en koppel de plannerflow aan echte app-state.",
+    "milestone_revision": "supa-v3-granular",
+    "progress_basis": "Bouwvoortgang is het gemiddelde van milestone-percentages.",
+    "milestones": [
+      {
+        "title": "User research & problem validation",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "UX architecture & planner-first flow",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Validated graduation prototype",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Savings logic & basket-comparison concept",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Production mobile UI foundation",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Planner + recipe/offer engine",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Full basket comparison & data integration",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Beta deployment & real-user validation",
+        "done": false,
+        "progress": 0
+      }
+    ],
+    "priority": "normal"
+  },
+  {
+    "id": "raiseai",
+    "name": "Raise AI",
+    "eyebrow": "RAISE-TO-TALK · GALAXY WATCH 7",
+    "goal": "Je Galaxy Watch 7 opent een handsfree ChatGPT-sessie wanneer je je pols naar je mond brengt.",
+    "icon": "pulse",
+    "accent": "#c4a3ff",
+    "phase": "Voiceflow integreren · daarna fysieke Watch-validatie",
+    "status": "active",
+    "next_step": "Integreer de dictation-first state machine in de actuele RaiseAI-bron en test die op de Galaxy Watch 7.",
+    "milestone_revision": "raiseai-v1.1-dashboard",
+    "progress_basis": "Codevoortgang op basis van Raise AI v1.1; fysieke installatie en gedragstesten tellen pas mee na Watch-validatie.",
+    "milestones": [
+      {
+        "title": "Raise-to-mouth detectie en sessiebewaking",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "ChatGPT via GeckoView op de ronde Watch UI",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Gemini en Google Home als aparte fallback",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Dictation-first flow met geanimeerde opname-UI",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "v1.1 op Galaxy Watch 7 installeren en testen",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Batterij- en false-positive metingen",
+        "done": false,
+        "progress": 0
+      }
+    ],
+    "priority": "normal"
+  }
+]

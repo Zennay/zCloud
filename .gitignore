@@ -1,0 +1,24 @@
+# Runtime secrets and local configuration
+.watch-token
+watch-tls.key
+watch-tls.crt
+wear-os/local.properties
+
+# Runtime state and databases
+alert-state.json
+history.db*
+*.sqlite
+*.sqlite3
+signals/
+
+# Local backups and generated files
+*.bak
+*.bak-*
+backup-*
+__pycache__/
+*.py[cod]
+
+# Android build output and Gradle caches
+wear-os/.gradle/
+wear-os/build/
+wear-os/app/build/
