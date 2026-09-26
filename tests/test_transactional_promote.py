@@ -102,6 +102,32 @@ class TransactionalPromotionTests(unittest.TestCase):
                 with promote.promotion_lock(state):
                     pass
 
+    def test_failed_firefox_reload_restores_runtime_bytes(self):
+        runtime = Path(self.tmp.name) / "runtime" / "background.js"
+        runtime.parent.mkdir()
+        runtime.write_text("old-runtime\n")
+        helper = Path(self.tmp.name) / "reload.mjs"
+        helper.write_text("// helper\n")
+        tx = Path(self.tmp.name) / "runtime-tx"
+        tx.mkdir()
+        original_run = promote.run
+
+        def failing_run(args, check=True):
+            raise promote.PromotionError("reload failed")
+
+        promote.run = failing_run
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.sync_firefox_runtime(
+                    self.candidate,
+                    runtime,
+                    helper,
+                    tx,
+                )
+        finally:
+            promote.run = original_run
+        self.assertEqual("old-runtime\n", runtime.read_text())
+
     def test_postdeploy_command_contract_requires_requested_features(self):
         calls = []
         original_run = promote.run
