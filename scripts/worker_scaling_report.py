@@ -235,5 +235,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-[executed on device: vps-bb300bba (43be714e-c0e5-463e-8ac8-e5aa8446b070)]
