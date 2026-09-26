@@ -1,5 +1,3 @@
-[Reading 153 lines from start (total: 153 lines, 0 remaining)]
-
 'use strict';
 (function(){
   function qInline(p){
