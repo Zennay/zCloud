@@ -39,22 +39,38 @@
   function resourcePanel(){
     var list=(DATA.projects||[]).filter(function(p){return !!p.resource});
     if(!list.length)return '';
+    var weights={background:100,normal:400,high:800,turbo:3000};
+    var tech=[];
     var rows=list.map(function(p){
       var r=p.resource||{};
-      var cpu=r.cpu_percent==null?'meten…':num(r.cpu_percent)+'%';
+      var cpu=r.cpu_percent==null?'wordt gemeten':num(r.cpu_percent)+'%';
       var mem=r.memory_bytes?num(r.memory_bytes/1048576)+' MB':'—';
-      var detail=r.managed?'CPU '+cpu+' · RAM '+mem:'Geen persistente VPS-worker · instelling wordt bewaard';
-      return '<div class="resource-row"><div><strong>'+esc(p.name)+'</strong><small>'+detail+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Resourceprioriteit '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Achtergrond · 100</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal · 400</option><option value="high" '+(r.priority==='high'?'selected':'')+'>Hoog · 800</option><option value="turbo" '+(r.priority==='turbo'?'selected':'')+'>Turbo · 3000</option></select></div>';
+      var state=r.managed?'Draait op de VPS':'Geen vaste VPS-worker';
+      tech.push('<div class="resource-tech-row"><strong>'+esc(p.name)+'</strong><span>CPU '+cpu+' · RAM '+mem+' · weight '+esc(weights[r.priority]||400)+'</span></div>');
+      return '<div class="resource-row"><div class="resource-copy"><strong>'+esc(p.name)+'</strong><small>'+state+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Voorrang voor '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Achtergrond</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal</option><option value="high" '+(r.priority==='high'?'selected':'')+'>Hoog</option><option value="turbo" '+(r.priority==='turbo'?'selected':'')+'>Turbo</option></select></div>';
     }).join('');
-    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource priority</h2><div class="panel-subtitle">Relatieve CPU/IO-weight · 100 / 400 / 800 / 3000</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div><div class="detail-note">Geen niveau is een CPU-cap: elk project mag alle vrije cores gebruiken. Alleen bij contention bepaalt de weight de verdeling; Turbo krijgt dan de sterkste voorrang, gevolgd door Hoog, Normaal en Achtergrond. Wijzigingen zijn alleen toegestaan vanaf vertrouwde beheer-IP’s; er is geen actiesleutel meer nodig.</div></div>';
+    var details='<details class="section-details resource-details"><summary>Technische details</summary><div class="resource-tech-list">'+tech.join('')+'</div><p>Weights: Achtergrond 100 · Normaal 400 · Hoog 800 · Turbo 3000. Dit is alleen de verdeling wanneer meerdere projecten tegelijk CPU/IO nodig hebben; het is geen harde CPU-limiet.</p></details>';
+    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Voorrang per project</h2><div class="panel-subtitle">Kies wie voorrang krijgt als de VPS druk is</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
+  }
+  function plainAlertDetail(x){
+    var d=String(x.detail||'');
+    if(/research\s*·\s*failed/i.test(d))return 'Onderzoek liep vast';
+    if(/composer-missing/i.test(d))return 'ChatGPT reageert niet goed';
+    if(/runner offline/i.test(d))return 'Automatisering is offline';
+    if(/github runner\s*·\s*deactivating/i.test(d))return 'GitHub-runner stopt';
+    if(/milestone/i.test(d)&&/completed|afgerond/i.test(d))return 'Projectstap is afgerond';
+    return d||'Bekijk de activiteit voor meer informatie';
   }
   function alertsPanel(){
     var a=DATA.alerts||[];
-    if(!a.length)return '<div class="panel alert-panel"><div class="panel-header"><div><h2>Important events</h2><div class="panel-subtitle">Geen grote alerts</div></div>'+icon('check')+'</div><div class="detail-note">Alleen freezes, blokkades, serviceproblemen, afgeronde milestones en echte breakthroughs komen hier.</div></div>';
-    var rows=a.slice(0,6).map(function(x){
-      return '<div class="alert-row '+esc(x.severity)+'"><div><strong>'+esc(x.title)+'</strong><span>'+esc(x.detail||'')+'</span></div><time>'+rel(x.ts)+'</time></div>';
+    if(!a.length)return '<div class="panel alert-panel"><div class="panel-header"><div><h2>Belangrijke meldingen</h2><div class="panel-subtitle">Alles loopt rustig</div></div>'+icon('check')+'</div><div class="alert-empty">Geen melding die nu aandacht vraagt.</div></div>';
+    var attention=function(x){return !['info','success','ok'].includes(String(x.severity||'').toLowerCase())};
+    var visible=a.filter(function(x,i){return i<3||attention(x)}).slice(0,6);
+    var rows=visible.map(function(x){
+      return '<div class="alert-row '+esc(x.severity)+'"><span class="alert-mark" aria-hidden="true"></span><div class="alert-copy"><strong>'+esc(x.title)+'</strong><span>'+esc(plainAlertDetail(x))+'</span></div><time>'+rel(x.ts)+'</time></div>';
     }).join('');
-    return '<div class="panel alert-panel"><div class="panel-header"><div><h2>Important events</h2><div class="panel-subtitle">Rustige alerts met cooldown</div></div>'+icon('pulse')+'</div><div class="alert-list">'+rows+'</div></div>';
+    var raw=visible.map(function(x){return '<div class="alert-tech-row"><strong>'+esc(x.title)+'</strong><span>'+esc(x.detail||'geen technische details')+' · '+esc(x.severity||'info')+'</span></div>'}).join('');
+    return '<div class="panel alert-panel"><div class="panel-header"><div><h2>Belangrijke meldingen</h2><div class="panel-subtitle">Wat nu aandacht kan vragen</div></div><a class="events-link" href="#activity">Alles bekijken</a></div><div class="alert-list">'+rows+'</div><details class="section-details alert-details"><summary>Technische details</summary><div class="alert-tech-list">'+raw+'</div></details></div>';
   }
   function milestonePanel(p){
     var rows=(p.milestones||[]).map(function(m,i){
