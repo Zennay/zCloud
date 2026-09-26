@@ -1065,6 +1065,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return self.reply({'ok':True,'resource':result,'time':now()})
             if u.path=='/api/project-layout':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 if 'application/json' not in self.headers.get('Content-Type',''):return self.reply({'error':'JSON vereist'},415)
                 actor=request_actor(self)
                 with LOCK:data=CACHE
