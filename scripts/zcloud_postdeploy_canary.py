@@ -29,6 +29,35 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def firefox_runtime_parity(root: Path, runtime_extension: Path) -> dict:
+    runtime_root = runtime_extension.parent
+    names = ["background.js", "manifest.json", "recovery.js"]
+    checked = []
+    mismatches = []
+    for name in names:
+        source = root / "firefox-extension" / name
+        if not source.exists():
+            continue
+        runtime = runtime_root / name
+        checked.append(name)
+        if not runtime.exists():
+            mismatches.append({"file": name, "reason": "runtime missing"})
+            continue
+        source_hash = sha256_file(source)
+        runtime_hash = sha256_file(runtime)
+        if source_hash != runtime_hash:
+            mismatches.append({
+                "file": name,
+                "source": source_hash,
+                "runtime": runtime_hash,
+            })
+    return {
+        "ok": bool(checked) and not mismatches,
+        "checked": checked,
+        "mismatches": mismatches,
+    }
+
+
 def service_active(service: str, *, user: bool = False) -> bool:
     cmd = ["systemctl"]
     env = os.environ.copy()
@@ -177,12 +206,8 @@ def live_canary(
         targets = {}
         errors.append(str(exc))
 
-    source_extension = root / "firefox-extension/background.js"
-    source_runtime_match = (
-        source_extension.exists()
-        and runtime_extension.exists()
-        and sha256_file(source_extension) == sha256_file(runtime_extension)
-    )
+    parity = firefox_runtime_parity(root, runtime_extension)
+    source_runtime_match = parity["ok"]
     static_ok = all(http_ok(base_url + path) for path in (
         "/app.js", "/enhancements.js", "/enhancements.css"
     ))
@@ -200,6 +225,7 @@ def live_canary(
         require_worker_read_model=require_worker_read_model,
         require_incidents=require_incidents,
     )
+    result["firefox_runtime_parity"] = parity
     if errors:
         result["transport_errors"] = errors
         result["ok"] = False

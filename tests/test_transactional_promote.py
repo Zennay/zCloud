@@ -24,9 +24,12 @@ class TransactionalPromotionTests(unittest.TestCase):
         self._write(self.root, "server.py", "old-server\n")
         self._write(self.root, "public/app.js", "old-app\n")
         self._write(self.root, "firefox-extension/background.js", "old-runner\n")
+        self._write(self.root, "firefox-extension/manifest.json", '{"version":"old"}\n')
         self._write(self.candidate, "server.py", "new-server\n")
         self._write(self.candidate, "public/app.js", "new-app\n")
         self._write(self.candidate, "firefox-extension/background.js", "new-runner\n")
+        self._write(self.candidate, "firefox-extension/manifest.json", '{"version":"new"}\n')
+        self._write(self.candidate, "firefox-extension/recovery.js", "new-recovery\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -65,6 +68,21 @@ class TransactionalPromotionTests(unittest.TestCase):
             result["server.py"],
         )
 
+    def test_only_explicit_recovery_file_may_be_created(self):
+        result = promote.validate_candidate(
+            self.candidate,
+            self.root,
+            ["firefox-extension/recovery.js"],
+        )
+        self.assertIn("firefox-extension/recovery.js", result)
+        self._write(self.candidate, "firefox-extension/other-new.js", "nope\n")
+        with self.assertRaises(promote.PromotionError):
+            promote.validate_candidate(
+                self.candidate,
+                self.root,
+                ["firefox-extension/other-new.js"],
+            )
+
     def test_transactional_replace_promotes_all_requested_files(self):
         hashes = promote.transactional_replace(
             self.candidate,
@@ -95,6 +113,29 @@ class TransactionalPromotionTests(unittest.TestCase):
             (self.root / "firefox-extension/background.js").read_text(),
         )
 
+    def test_partial_replace_failure_removes_newly_created_file(self):
+        with self.assertRaises(promote.PromotionError):
+            promote.transactional_replace(
+                self.candidate,
+                self.root,
+                ["firefox-extension/recovery.js", "server.py"],
+                self.tx,
+                fail_after=1,
+            )
+        self.assertFalse((self.root / "firefox-extension/recovery.js").exists())
+        self.assertEqual("old-server\n", (self.root / "server.py").read_text())
+
+    def test_firefox_only_paths_do_not_restart_zcloud_service(self):
+        self.assertFalse(promote.needs_service_restart([
+            "firefox-extension/background.js",
+            "firefox-extension/manifest.json",
+            "firefox-extension/recovery.js",
+        ]))
+        self.assertTrue(promote.needs_service_restart([
+            "firefox-extension/background.js",
+            "server.py",
+        ]))
+
     def test_promotion_lock_is_fail_closed(self):
         state = Path(self.tmp.name) / "state"
         with promote.promotion_lock(state):
@@ -102,10 +143,11 @@ class TransactionalPromotionTests(unittest.TestCase):
                 with promote.promotion_lock(state):
                     pass
 
-    def test_failed_firefox_reload_restores_runtime_bytes(self):
+    def test_failed_firefox_reload_restores_runtime_set(self):
         runtime = Path(self.tmp.name) / "runtime" / "background.js"
         runtime.parent.mkdir()
         runtime.write_text("old-runtime\n")
+        (runtime.parent / "manifest.json").write_text('{"version":"old"}\n')
         helper = Path(self.tmp.name) / "reload.mjs"
         helper.write_text("// helper\n")
         tx = Path(self.tmp.name) / "runtime-tx"
@@ -123,10 +165,20 @@ class TransactionalPromotionTests(unittest.TestCase):
                     runtime,
                     helper,
                     tx,
+                    [
+                        "firefox-extension/background.js",
+                        "firefox-extension/manifest.json",
+                        "firefox-extension/recovery.js",
+                    ],
                 )
         finally:
             promote.run = original_run
         self.assertEqual("old-runtime\n", runtime.read_text())
+        self.assertEqual(
+            '{"version":"old"}\n',
+            (runtime.parent / "manifest.json").read_text(),
+        )
+        self.assertFalse((runtime.parent / "recovery.js").exists())
 
     def test_config_validation_uses_candidate_overlay_only_for_selected_paths(self):
         calls = []

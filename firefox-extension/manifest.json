@@ -4,12 +4,14 @@
   "version": "0.8.0",
   "permissions": [
     "tabs",
+    "sessions",
     "https://chatgpt.com/*",
     "http://127.0.0.1:8765/*",
     "http://localhost:8765/*"
   ],
   "background": {
     "scripts": [
+      "recovery.js",
       "background.js"
     ],
     "persistent": true

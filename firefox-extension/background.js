@@ -5,6 +5,53 @@ const projectTabs = Object.create(null);
 const pendingAdoptions = Object.create(null);
 const runningActions = new Set();
 const processedCommands = new Set();
+const Recovery = globalThis.ZCloudRecovery;
+if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
+
+async function setRecoveryTag(tabId, projectId) {
+  if (tabId == null || !projectId) return;
+  try { await browser.sessions.setTabValue(tabId, Recovery.SESSION_KEY, projectId); } catch (_) {}
+}
+
+async function clearRecoveryTag(tabId) {
+  if (tabId == null) return;
+  try { await browser.sessions.removeTabValue(tabId, Recovery.SESSION_KEY); } catch (_) {}
+}
+
+async function sessionAssignments(tabs) {
+  const out = Object.create(null);
+  await Promise.all((tabs || []).map(async tab => {
+    if (tab?.id == null) return;
+    try {
+      const value = await browser.sessions.getTabValue(tab.id, Recovery.SESSION_KEY);
+      if (value) out[tab.id] = String(value);
+    } catch (_) {}
+  }));
+  return out;
+}
+
+async function adoptConversation(tabId, target, url) {
+  const conversationId = Recovery.conversationFromUrl(url);
+  if (!conversationId || !target || projectTabs[target.project_id] !== tabId) return false;
+  target.conversation_id = conversationId;
+  target.url = "https://chatgpt.com/c/" + conversationId;
+  targets[target.project_id] = target;
+  delete pendingAdoptions[tabId];
+  await setRecoveryTag(tabId, target.project_id);
+  await postStatus({
+    projectId: target.project_id,
+    baseProjectId: target.base_project_id,
+    workerSlot: target.worker_slot,
+    projectName: target.name,
+    target: target.url,
+    targetConversation: conversationId,
+    event: "conversation-adopted",
+    reason: "persistent-tab-recovery",
+    at: new Date().toISOString(),
+    tabId: tabId
+  });
+  return true;
+}
 
 function workerKeysFor(projectId, activeOnly = false) {
   if (targets[projectId]) return (!activeOnly || targets[projectId].active) ? [projectId] : [];
@@ -356,6 +403,7 @@ async function refreshTargets() {
       const tabId = projectTabs[id];
       if (tabId != null) {
         try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: id, reason: "worker-count-reduced"}); } catch (_) {}
+        await clearRecoveryTag(tabId);
         try { await browser.tabs.remove(tabId); } catch (_) {}
         delete tabTargets[tabId];
         delete pendingAdoptions[tabId];
@@ -368,11 +416,16 @@ async function refreshTargets() {
     }
     postStatus({event: "targets-loaded", at: new Date().toISOString(), reason: Object.keys(targets).join(",")});
     const tabs = await browser.tabs.query({url: "https://chatgpt.com/*"});
+    const restoredAssignments = await sessionAssignments(tabs);
+    const claimedTabIds = new Set(
+      Object.values(projectTabs).filter(tabId => tabId != null)
+    );
     for (const target of Object.values(targets)) {
       const assignedTabId = projectTabs[target.project_id];
       if (!target.active) {
         if (assignedTabId != null) {
           try { await browser.tabs.sendMessage(assignedTabId, {type: "runner-stop", projectId: target.project_id, reason: "project-paused"}); } catch (_) {}
+          await clearRecoveryTag(assignedTabId);
           try { await browser.tabs.remove(assignedTabId); } catch (_) {}
           delete tabTargets[assignedTabId];
           delete projectTabs[target.project_id];
@@ -386,20 +439,40 @@ async function refreshTargets() {
         continue;
       }
       if (assignedTabId != null) {
-        try { await browser.tabs.get(assignedTabId); continue; }
-        catch (_) { delete projectTabs[target.project_id]; }
+        try {
+          await browser.tabs.get(assignedTabId);
+          claimedTabIds.add(assignedTabId);
+          await setRecoveryTag(assignedTabId, target.project_id);
+          continue;
+        } catch (_) {
+          claimedTabIds.delete(assignedTabId);
+          delete projectTabs[target.project_id];
+        }
       }
-      const tab = target.conversation_id ? tabs.find(t => t.url && t.url.includes("/c/" + target.conversation_id)) : null;
+      const recovered = Recovery.selectRecoveryTab(
+        target, tabs, restoredAssignments, claimedTabIds
+      );
+      const tab = recovered?.tab || null;
       if (tab) {
         tabTargets[tab.id] = target;
         projectTabs[target.project_id] = tab.id;
-        postStatus({projectId:target.project_id,projectName:target.name,target:tab.url,event:"target-tab-found",at:new Date().toISOString(),tabId:tab.id});
+        claimedTabIds.add(tab.id);
+        await setRecoveryTag(tab.id, target.project_id);
+        if (!target.conversation_id) {
+          pendingAdoptions[tab.id] = target.project_id;
+          await adoptConversation(tab.id, target, tab.url);
+        }
+        postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
+          projectName:target.name,target:tab.url,event:"target-tab-recovered",reason:recovered.reason,
+          at:new Date().toISOString(),tabId:tab.id});
         await inject(tab.id, target);
       } else {
         postStatus({projectId:target.project_id,projectName:target.name,target:target.url,event:"target-tab-opening",at:new Date().toISOString()});
         const opened = await browser.tabs.create({url: target.url, active: false});
         tabTargets[opened.id] = target;
         projectTabs[target.project_id] = opened.id;
+        claimedTabIds.add(opened.id);
+        await setRecoveryTag(opened.id, target.project_id);
         if (!target.conversation_id) pendingAdoptions[opened.id] = target.project_id;
       }
     }
@@ -412,6 +485,7 @@ async function inject(tabId, target) {
   try {
     tabTargets[tabId] = target;
     projectTabs[target.project_id] = tabId;
+    await setRecoveryTag(tabId, target.project_id);
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(target) + ");", runAt: "document_idle"});
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-success", at: new Date().toISOString(), tabId: tabId});
@@ -447,6 +521,7 @@ async function newProjectChat(projectId, reason, commandId) {
     const oldTab = projectTabs[projectId];
     if (oldTab != null) {
       try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
+      await clearRecoveryTag(oldTab);
       try { await browser.tabs.remove(oldTab); } catch (_) {}
       delete tabTargets[oldTab];
       delete pendingAdoptions[oldTab];
@@ -455,6 +530,7 @@ async function newProjectChat(projectId, reason, commandId) {
     const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: false});
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
+    await setRecoveryTag(tab.id, projectId);
     pendingAdoptions[tab.id] = projectId;
     await commandResult(commandId, "completed", "Nieuwe projectchat geopend");
   } catch (error) {
@@ -500,6 +576,7 @@ async function startProject(projectId, commandId) {
     const tab = await browser.tabs.create({url: target.url, active: false});
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
+    await setRecoveryTag(tab.id, projectId);
     await commandResult(commandId, "completed", "Project gestart");
   } catch (error) {
     await commandResult(commandId, "failed", String(error?.message || error));
@@ -521,6 +598,7 @@ async function pauseProject(projectId, commandId) {
   const tabId = projectTabs[projectId];
   if (tabId != null) {
     try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: projectId, reason: "dashboard-pause"}); } catch (_) {}
+    await clearRecoveryTag(tabId);
     try { await browser.tabs.remove(tabId); } catch (_) {}
     delete tabTargets[tabId];
     delete projectTabs[projectId];
@@ -662,21 +740,8 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!tab.url || !tab.url.includes("chatgpt.com")) return;
   const assigned = tabTargets[tabId];
   if (assigned) {
-    const match = tab.url.match(/\/c\/([0-9a-f-]{20,})/i);
-    if (match && pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {
-      assigned.conversation_id = match[1];
-      assigned.url = "https://chatgpt.com/c/" + match[1];
-      targets[assigned.project_id] = assigned;
-      delete pendingAdoptions[tabId];
-      postStatus({
-        projectId: assigned.project_id,
-        projectName: assigned.name,
-        target: assigned.url,
-        targetConversation: match[1],
-        event: "conversation-adopted",
-        at: new Date().toISOString(),
-        tabId: tabId
-      });
+    if (pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {
+      adoptConversation(tabId, assigned, tab.url).catch(() => {});
     }
     if (changeInfo.status === "complete") inject(tabId, assigned);
   } else if (changeInfo.status === "complete") {
