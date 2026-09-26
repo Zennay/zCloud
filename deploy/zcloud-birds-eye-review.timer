@@ -1,9 +1,9 @@
 [Unit]
-Description=Run zCloud portfolio bird's-eye review every 24 hours
+Description=Run zCloud portfolio bird's-eye review every 12 hours
 
 [Timer]
 OnBootSec=10min
-OnUnitActiveSec=24h
+OnUnitActiveSec=12h
 Persistent=true
 Unit=zcloud-birds-eye-review.service
 
