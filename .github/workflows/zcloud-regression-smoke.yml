@@ -13,4 +13,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run critical zCloud smoke suite
-        run: python3 -m unittest -v tests.test_runner_smoke
+        run: python3 -m unittest discover -v
