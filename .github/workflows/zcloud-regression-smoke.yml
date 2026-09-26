@@ -20,6 +20,12 @@ jobs:
         run: bash tests/test_improvement_stopgate_js.sh
       - name: Verify safe in-place Firefox addon reload helper
         run: node tests/test_reload_extension.mjs
+      - name: Verify Firefox crash-recovery contract
+        run: |
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
       - name: Verify fail-closed pre-change guard
         run: python3 -m unittest -v tests.test_prechange_guard
       - name: Verify post-deploy canary checks
