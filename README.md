@@ -30,3 +30,21 @@ Only `zennay-cloud.service` is restarted. The obsolete `zennay-cloud-snapshot.ti
 Release backup directories on the VPS contain original `server.py`, `index.html`, and a SQLite-consistent database copy. To roll back, stop only zennay-cloud, restore the original Python/HTML and consistent database backup, then start zennay-cloud and re-enable the original snapshot timer. Keep the new database separately to preserve any newly collected history.
 
 Validation: staged real VPS metrics, JSON endpoints, database migration and static-file allowlist checks. DOM interaction tests cover project navigation, milestone counts, chart points/ranges, activity filters, the infrastructure view, offline recovery, and unknown projects. Full visual/browser QA was blocked: the cloud browser forces HTTPS on this existing HTTP-only endpoint; its localhost preview is blocked as well. Responsive CSS is implemented, but actual mobile/desktop layout has not been visually verified in this session. The screen does not fabricate historical progress or sample metric values.
+## Last-known-good recovery
+
+zCloud keeps recovery snapshots outside the repository at `~/.local/state/zcloud/recovery`. Runtime state and secrets such as `history.db`, ChatGPT project/conversation mappings, watch tokens, management allowlists and TLS keys are **never** restored by this mechanism.
+
+Before marking a release as safe, run the regression smoke-suite and live health check. Then capture the healthy tree with evidence:
+
+```bash
+python3 scripts/zcloud_recovery.py capture --evidence "10/10 regression tests green; live API 200"
+python3 scripts/zcloud_recovery.py status
+```
+
+Rollback is one action:
+
+```bash
+python3 scripts/zcloud_recovery.py rollback
+```
+
+Rollback verifies the stored snapshot hashes first, backs up the current managed source/config tree, stops only `zennay-cloud.service`, restores the last-known-good tree, starts the service to the recorded state, checks `/api/status`, and verifies that the project/chat mapping fingerprint in `history.db` did not change. If restore or health validation fails, it automatically restores the pre-rollback files and records the failure in `recovery.log`.
