@@ -197,7 +197,8 @@ def init_db():
         if 'assistant_chars' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN assistant_chars INTEGER')
         if 'worker_slot' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN worker_slot INTEGER NOT NULL DEFAULT 1')
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_ts ON runner_events(project_id,ts)')
-        c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')        target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
+        c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')
+        target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
         migrated_active='active' not in target_columns
         if migrated_active:
             c.execute('ALTER TABLE runner_targets ADD COLUMN active INTEGER NOT NULL DEFAULT 0')
@@ -396,6 +397,7 @@ def _claim_lease_seconds(raw):
 
 def _claim_timestamp(seconds=0):
     return datetime.fromtimestamp(time.time()+seconds,timezone.utc).isoformat()
+
 def _claim_payload(row):
     if not row:
         return None
@@ -595,7 +597,8 @@ def runner_record(payload):
                       (project_id,worker_slot,match.group(1)))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
-        cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()        c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
+        cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
+        c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
     if project_id==IMPROVEMENT_PROJECT_ID:
         if event=='improvement-iteration-complete':
             improvement_loop_record(project_id,'iteration')
@@ -794,7 +797,8 @@ class Handler(BaseHTTPRequestHandler):
                         try:
                             seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
                             cooldown=5 if action in ('push','start','pause') else 30
-                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)                        except Exception: pass
+                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)
+                        except Exception: pass
                     if action=='push' and not configs[project_id].get('active'):
                         return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
                     if action in ('start','new_chat'):
