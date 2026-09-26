@@ -197,7 +197,8 @@ function runProject(cfg) {
         if (!(await canAutoContinue())) {
           status("auto-continue-blocked", {reason: "finished-maintain"});
           return;
-        }        recoveryRequested = true;
+        }
+        recoveryRequested = true;
         status("stall-detected", {reason: "no-response-progress-for-20m"});
         const stop = stopButton();
         if (stop) stop.click();
@@ -396,7 +397,8 @@ async function inject(tabId, target) {
 }
 async function commandResult(commandId, status, result) {
   if (!commandId) return;
-  await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",    body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
+  await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",
+    body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
 }
 async function newProjectChat(projectId, reason, commandId) {
   const workerKeys = workerKeysFor(projectId);
@@ -595,7 +597,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
         return {auto_continue: target ? target.auto_continue !== false : base !== "cloud"};
       })
       .catch(() => ({auto_continue: message.projectId.split("::w", 1)[0] !== "cloud"}));
-  } else if (message?.type === "runner-new-chat" && message.projectId) {    newProjectChat(message.projectId, message.reason || "stall-recovery", null);
+  } else if (message?.type === "runner-new-chat" && message.projectId) {
+    newProjectChat(message.projectId, message.reason || "stall-recovery", null);
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
