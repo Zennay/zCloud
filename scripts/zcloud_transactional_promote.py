@@ -119,7 +119,7 @@ def validate_relpath(rel: str) -> str:
     path = Path(raw)
     if not raw or path.is_absolute() or ".." in path.parts:
         raise PromotionError(f"unsafe promotion path: {rel!r}")
-    normalized = path.as_posix().lstrip("./")
+    normalized = path.as_posix()
     if normalized in ("", "."):
         raise PromotionError(f"unsafe promotion path: {rel!r}")
     if any(
