@@ -543,11 +543,45 @@ def _incident_from_alert(alert, recovery, now_ts):
         "rollback": recovery,
     }
 
+def _claim_key_from_alert(alert):
+    detail=str((alert or {}).get("detail") or "").strip()
+    first=detail.split(" · ",1)[0].strip()
+    return first if ":" in first and len(first) >= 4 else None
+
+def _claim_conflict_is_active(db_path, alert, now_ts):
+    claim_key=_claim_key_from_alert(alert)
+    if not claim_key:
+        # Backward-compatible for legacy alerts without structured claim detail.
+        return True
+    try:
+        with sqlite3.connect(db_path) as c:
+            c.row_factory=sqlite3.Row
+            if not c.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_claims'"
+            ).fetchone():
+                return True
+            row=c.execute(
+                "SELECT lease_until FROM task_claims WHERE project_id=? AND claim_key=?",
+                (str(alert.get("project") or "cloud"),claim_key),
+            ).fetchone()
+        if not row:
+            return False
+        try:
+            return datetime.fromisoformat(str(row["lease_until"])).astimezone(timezone.utc) > now_ts
+        except Exception:
+            return True
+    except Exception:
+        # Attention filtering must never hide an issue because claim-state lookup failed.
+        return True
+
 def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None):
     recovery=recovery_status(recovery_dir)
     now_ts=datetime.now(timezone.utc)
     items=[]
     for alert in list_alerts(db_path,80,False):
+        if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
+            if not _claim_conflict_is_active(db_path,alert,now_ts):
+                continue
         incident=_incident_from_alert(alert,recovery,now_ts)
         if incident:
             items.append(incident)
