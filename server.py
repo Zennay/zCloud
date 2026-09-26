@@ -2,7 +2,7 @@
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re
 from contextlib import contextmanager, closing
 import enhancements
@@ -20,6 +20,13 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 MAX_CHATGPT_WORKERS = 8
+FEATURE_FLAG_DEFINITIONS = {
+    'high_blast_radius_promotion': {
+        'default': False,
+        'max_ttl_seconds': 3600,
+        'description': 'Tijdelijke toestemming voor brede/cross-plane zCloud-promoties',
+    },
+}
 WORKER_LANES = (
     'kritieke pad / eerstvolgende veilige projectgate',
     'tests, validatie, determinisme en race-condition checks',
@@ -232,6 +239,74 @@ def config_audit(limit=80,config_key=None,target=None):
         out.append(item)
     return out
 
+def _feature_flag_row(name, connection=None):
+    sql="SELECT name,enabled,expires_at,updated_at,actor FROM feature_flags WHERE name=?"
+    if connection is not None:
+        return connection.execute(sql,(name,)).fetchone()
+    with connect() as c:
+        return c.execute(sql,(name,)).fetchone()
+
+def feature_flag_state(name, at=None):
+    definition=FEATURE_FLAG_DEFINITIONS.get(name)
+    if not definition:
+        raise ValueError("Onbekende feature flag")
+    row=_feature_flag_row(name)
+    enabled=bool(row["enabled"]) if row else bool(definition["default"])
+    expires_at=(row["expires_at"] if row else None)
+    expired=False
+    if enabled and expires_at:
+        try:
+            expired=datetime.fromisoformat(expires_at).astimezone(timezone.utc) <= (at or datetime.now(timezone.utc))
+        except Exception:
+            expired=True
+    effective=enabled and not expired
+    return {
+        "name":name,
+        "enabled":enabled,
+        "effective":effective,
+        "expires_at":expires_at,
+        "updated_at":row["updated_at"] if row else None,
+        "actor":row["actor"] if row else None,
+        "description":definition["description"],
+        "max_ttl_seconds":definition["max_ttl_seconds"],
+    }
+
+def feature_flags():
+    return [feature_flag_state(name) for name in sorted(FEATURE_FLAG_DEFINITIONS)]
+
+def set_feature_flag(name,enabled,actor,ttl_seconds=None):
+    definition=FEATURE_FLAG_DEFINITIONS.get(name)
+    if not definition:
+        raise ValueError("Onbekende feature flag")
+    if not isinstance(enabled,bool):
+        raise ValueError("enabled moet true of false zijn")
+    now_dt=datetime.now(timezone.utc)
+    old=feature_flag_state(name,now_dt)
+    expires_at=None
+    ttl=None
+    if enabled:
+        try: ttl=int(ttl_seconds if ttl_seconds is not None else 900)
+        except Exception: raise ValueError("ttl_seconds moet een geheel getal zijn")
+        max_ttl=int(definition["max_ttl_seconds"])
+        if ttl<60 or ttl>max_ttl:
+            raise ValueError(f"ttl_seconds moet tussen 60 en {max_ttl} liggen")
+        expires_at=(now_dt+timedelta(seconds=ttl)).isoformat()
+    with connect() as c:
+        c.execute(
+            "INSERT INTO feature_flags(name,enabled,expires_at,updated_at,actor) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET enabled=excluded.enabled,expires_at=excluded.expires_at,"
+            "updated_at=excluded.updated_at,actor=excluded.actor",
+            (name,1 if enabled else 0,expires_at,now_dt.isoformat(),str(actor or "unknown")[:128]),
+        )
+        new_value={"enabled":enabled,"expires_at":expires_at,"ttl_seconds":ttl}
+        old_value={"enabled":old["effective"],"expires_at":old["expires_at"]}
+        record_config_audit(
+            "feature.flag",name,actor,old_value,new_value,
+            "no_change" if old["effective"]==enabled and (not enabled or old["expires_at"]==expires_at) else "succeeded",
+            connection=c,
+        )
+    return feature_flag_state(name)
+
 def init_db():
     with connect() as c:
         c.execute('PRAGMA journal_mode=WAL')
@@ -267,6 +342,10 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS config_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')")
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_ts ON config_audit(ts,id)")
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_key_target ON config_audit(config_key,target,id)")
+        c.execute("CREATE TABLE IF NOT EXISTS feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, expires_at TEXT, updated_at TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'system')")
+        for flag_name,definition in FEATURE_FLAG_DEFINITIONS.items():
+            c.execute("INSERT OR IGNORE INTO feature_flags(name,enabled,expires_at,updated_at,actor) VALUES(?,?,?,?,?)",
+                      (flag_name,1 if definition['default'] else 0,None,now(),'system-default'))
         c.execute("INSERT OR IGNORE INTO improvement_loops(project_id,state,iteration_count,clean_reviews,stop_reason,last_green_commit,audit_result,updated_at) VALUES('cloud','running',0,0,NULL,NULL,NULL,?)",(datetime.now(timezone.utc).isoformat(),))
         for project_id,target in RUNNER_DEFAULTS.items():
             c.execute('INSERT INTO runner_targets(project_id,name,conversation_id,prompt,active) VALUES(?,?,?,?,0) '
@@ -1023,6 +1102,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'error':'Ongeldige claimactie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
+            if u.path=='/api/feature-flags':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                actor=request_actor(self)
+                name=str(payload.get('name') or '').strip()
+                enabled=payload.get('enabled')
+                try:
+                    result=set_feature_flag(name,enabled,actor,payload.get('ttl_seconds'))
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
+                return self.reply({'ok':True,'feature_flag':result,'time':now()})
             if u.path=='/api/runner-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
@@ -1094,6 +1183,9 @@ class Handler(BaseHTTPRequestHandler):
             try: limit=int(q.get('limit',['80'])[0])
             except Exception: limit=80
             return self.reply({'items':config_audit(limit,q.get('key',[''])[0] or None,q.get('target',[''])[0] or None),'time':now()})
+        if u.path=='/api/feature-flags':
+            if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+            return self.reply({'items':feature_flags(),'time':now()})
         if u.path=='/api/improvement-loop':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'improvement':improvement_loop_state(q.get('project',[IMPROVEMENT_PROJECT_ID])[0] or IMPROVEMENT_PROJECT_ID),'time':now()})
