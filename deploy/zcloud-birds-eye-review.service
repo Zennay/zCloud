@@ -1,0 +1,8 @@
+[Unit]
+Description=zCloud daily portfolio bird's-eye review
+After=zennay-cloud.service chatgpt-firefox.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/zennay-cloud
+ExecStart=/usr/bin/python3 /home/ubuntu/zennay-cloud/scripts/daily_birds_eye_review.py
