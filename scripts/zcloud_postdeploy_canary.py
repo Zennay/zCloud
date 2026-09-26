@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""Read-only post-deploy canary for the zCloud control plane."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(os.environ.get("ZCLOUD_ROOT", "/home/ubuntu/zennay-cloud"))
+DB = Path(os.environ.get("ZCLOUD_DB", str(ROOT / "history.db")))
+BASE_URL = os.environ.get("ZCLOUD_BASE_URL", "http://127.0.0.1:8765")
+RUNTIME_EXTENSION = Path(os.environ.get(
+    "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
+    str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
+))
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def service_active(service: str, *, user: bool = False) -> bool:
+    cmd = ["systemctl"]
+    env = os.environ.copy()
+    if user:
+        cmd.append("--user")
+        env.update({
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        })
+    cmd.extend(["is-active", "--quiet", service])
+    return subprocess.run(cmd, env=env).returncode == 0
+
+
+def http_json(url: str, timeout: float = 3.0) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        if response.status != 200:
+            raise RuntimeError(f"HTTP {response.status}: {url}")
+        data = json.loads(response.read().decode("utf-8"))
+        if not isinstance(data, dict):
+            raise RuntimeError(f"non-object JSON: {url}")
+        return data
+
+
+def http_ok(url: str, timeout: float = 3.0) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def mapping_fingerprint(db_path: Path) -> dict:
+    if not db_path.exists():
+        return {"available": False, "reason": "history.db missing"}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        conn.row_factory = sqlite3.Row
+        targets = [dict(row) for row in conn.execute(
+            "SELECT project_id,active,worker_count,conversation_id "
+            "FROM runner_targets ORDER BY project_id"
+        )]
+        workers = [dict(row) for row in conn.execute(
+            "SELECT project_id,worker_slot,conversation_id "
+            "FROM runner_workers ORDER BY project_id,worker_slot"
+        )]
+        conn.close()
+        payload = json.dumps(
+            {"targets": targets, "workers": workers},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return {
+            "available": True,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "targets": len(targets),
+            "workers": len(workers),
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200]}
+
+
+def evaluate(
+    status: dict,
+    targets_payload: dict,
+    mapping: dict,
+    *,
+    services: dict[str, bool],
+    static_assets_ok: bool,
+    source_runtime_match: bool,
+    expected_mapping_sha: str | None = None,
+    require_worker_read_model: bool = False,
+    require_incidents: bool = False,
+) -> dict:
+    checks: list[dict] = []
+
+    def add(name: str, ok: bool, detail) -> None:
+        checks.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    add("zcloud_service", services.get("zcloud") is True, services.get("zcloud"))
+    add("firefox_service", services.get("firefox") is True, services.get("firefox"))
+    add("static_assets", static_assets_ok, "app.js + enhancements.js + enhancements.css")
+    add("status_errors_empty", not (status.get("errors") or []), status.get("errors") or [])
+    firefox = status.get("chatgpt_firefox") or {}
+    add(
+        "firefox_runtime_active",
+        firefox.get("active") is True or firefox.get("state") == "active",
+        firefox,
+    )
+    projects = targets_payload.get("projects")
+    add("runner_targets_available", isinstance(projects, dict), {
+        "project_count": len(projects) if isinstance(projects, dict) else None,
+        "max_workers": targets_payload.get("max_workers"),
+    })
+    add("mapping_available", mapping.get("available") is True, mapping)
+    if expected_mapping_sha:
+        add(
+            "mapping_unchanged",
+            mapping.get("sha256") == expected_mapping_sha,
+            {"expected": expected_mapping_sha, "actual": mapping.get("sha256")},
+        )
+    add("firefox_source_runtime_match", source_runtime_match, source_runtime_match)
+
+    runners = status.get("chatgpt_runners") or {}
+    if require_worker_read_model:
+        bad = []
+        for project_id, runner in runners.items():
+            if not isinstance(runner.get("workers"), list):
+                bad.append(project_id + ":workers")
+            if "desired_worker_count" not in runner:
+                bad.append(project_id + ":desired")
+            if "active_worker_count" not in runner:
+                bad.append(project_id + ":active")
+        add("worker_read_model", not bad and bool(runners), bad or "present")
+
+    if require_incidents:
+        incidents = status.get("incidents")
+        ok = isinstance(incidents, dict) and isinstance(incidents.get("items"), list)
+        add("incident_center", ok, incidents if ok else "missing/invalid")
+
+    return {
+        "ok": all(item["ok"] for item in checks),
+        "checks": checks,
+        "mapping": mapping,
+    }
+
+
+def live_canary(
+    *,
+    root: Path = ROOT,
+    db_path: Path = DB,
+    base_url: str = BASE_URL,
+    runtime_extension: Path = RUNTIME_EXTENSION,
+    expected_mapping_sha: str | None = None,
+    require_worker_read_model: bool = False,
+    require_incidents: bool = False,
+) -> dict:
+    errors = []
+    try:
+        status = http_json(base_url + "/api/status")
+    except Exception as exc:
+        status = {"errors": [f"status unavailable: {exc}"]}
+        errors.append(str(exc))
+    try:
+        targets = http_json(base_url + "/api/runner-targets")
+    except Exception as exc:
+        targets = {}
+        errors.append(str(exc))
+
+    source_extension = root / "firefox-extension/background.js"
+    source_runtime_match = (
+        source_extension.exists()
+        and runtime_extension.exists()
+        and sha256_file(source_extension) == sha256_file(runtime_extension)
+    )
+    static_ok = all(http_ok(base_url + path) for path in (
+        "/app.js", "/enhancements.js", "/enhancements.css"
+    ))
+    result = evaluate(
+        status,
+        targets,
+        mapping_fingerprint(db_path),
+        services={
+            "zcloud": service_active("zennay-cloud.service"),
+            "firefox": service_active("chatgpt-firefox.service", user=True),
+        },
+        static_assets_ok=static_ok,
+        source_runtime_match=source_runtime_match,
+        expected_mapping_sha=expected_mapping_sha,
+        require_worker_read_model=require_worker_read_model,
+        require_incidents=require_incidents,
+    )
+    if errors:
+        result["transport_errors"] = errors
+        result["ok"] = False
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate zCloud after a deploy")
+    parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--db", type=Path, default=DB)
+    parser.add_argument("--base-url", default=BASE_URL)
+    parser.add_argument("--runtime-extension", type=Path, default=RUNTIME_EXTENSION)
+    parser.add_argument("--expect-mapping-sha")
+    parser.add_argument("--require-worker-read-model", action="store_true")
+    parser.add_argument("--require-incidents", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    result = live_canary(
+        root=args.root.resolve(),
+        db_path=args.db.resolve(),
+        base_url=args.base_url.rstrip("/"),
+        runtime_extension=args.runtime_extension.resolve(),
+        expected_mapping_sha=args.expect_mapping_sha,
+        require_worker_read_model=args.require_worker_read_model,
+        require_incidents=args.require_incidents,
+    )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        for check in result["checks"]:
+            print(("OK" if check["ok"] else "FAIL").ljust(5), check["name"], check["detail"])
+        print("POSTDEPLOY_GREEN" if result["ok"] else "POSTDEPLOY_BLOCKED")
+    return 0 if result["ok"] else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
