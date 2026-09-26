@@ -198,6 +198,8 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS runner_workers(project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, conversation_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,worker_slot))")
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
+        c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
+        c.execute('CREATE INDEX IF NOT EXISTS task_claims_lease_until ON task_claims(lease_until)')
         for project_id,target in RUNNER_DEFAULTS.items():
             c.execute('INSERT INTO runner_targets(project_id,name,conversation_id,prompt,active) VALUES(?,?,?,?,0) '
                       'ON CONFLICT(project_id) DO UPDATE SET name=excluded.name,prompt=excluded.prompt',
@@ -372,6 +374,83 @@ def compact_history(pid, limit=24):
     if out[-1]['date'] != rows[-1]['date']:
         out.append(dict(rows[-1]))
     return out[-limit:]
+
+def _claim_lease_seconds(raw):
+    try:
+        seconds=int(raw)
+    except Exception:
+        seconds=300
+    return max(15,min(3600,seconds))
+
+def _claim_timestamp(seconds=0):
+    return datetime.fromtimestamp(time.time()+seconds,timezone.utc).isoformat()
+
+def _claim_payload(row):
+    if not row:
+        return None
+    item=dict(row)
+    try:
+        item['metadata']=json.loads(item.pop('metadata_json') or '{}')
+    except Exception:
+        item['metadata']={}
+        item.pop('metadata_json',None)
+    return item
+
+def task_claims(project_id=None):
+    ts=now()
+    with connect() as c:
+        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+        if project_id:
+            rows=c.execute('SELECT * FROM task_claims WHERE project_id=? ORDER BY claim_key',(project_id,)).fetchall()
+        else:
+            rows=c.execute('SELECT * FROM task_claims ORDER BY project_id,claim_key').fetchall()
+    return [_claim_payload(row) for row in rows]
+
+def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=300,metadata=None):
+    project_id=str(project_id or '').strip()[:80]
+    claim_key=str(claim_key or '').strip()[:240]
+    owner_id=str(owner_id or '').strip()[:160]
+    worker_id=str(worker_id or '').strip()[:160]
+    if not project_id or not claim_key or not owner_id:
+        raise ValueError('project_id, claim_key en owner_id zijn verplicht')
+    lease_seconds=_claim_lease_seconds(lease_seconds)
+    ts=now()
+    until=_claim_timestamp(lease_seconds)
+    metadata_json=json.dumps(metadata if isinstance(metadata,dict) else {},ensure_ascii=False,separators=(',',':'))[:4000]
+    with connect() as c:
+        cur=c.execute(
+            """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
+               VALUES(?,?,?,?,?,?,?,?)
+               ON CONFLICT(project_id,claim_key) DO UPDATE SET
+                 owner_id=excluded.owner_id,
+                 worker_id=excluded.worker_id,
+                 acquired_at=CASE WHEN task_claims.owner_id=excluded.owner_id THEN task_claims.acquired_at ELSE excluded.acquired_at END,
+                 heartbeat_at=excluded.heartbeat_at,
+                 lease_until=excluded.lease_until,
+                 metadata_json=excluded.metadata_json
+               WHERE task_claims.owner_id=excluded.owner_id OR task_claims.lease_until<=excluded.acquired_at""",
+            (project_id,claim_key,owner_id,worker_id,ts,ts,until,metadata_json)
+        )
+        changed=cur.rowcount>0
+        row=c.execute('SELECT * FROM task_claims WHERE project_id=? AND claim_key=?',(project_id,claim_key)).fetchone()
+    return {'acquired':bool(changed and row and row['owner_id']==owner_id),'claim':_claim_payload(row)}
+
+def task_claim_heartbeat(project_id,claim_key,owner_id,lease_seconds=300):
+    lease_seconds=_claim_lease_seconds(lease_seconds)
+    ts=now()
+    until=_claim_timestamp(lease_seconds)
+    with connect() as c:
+        cur=c.execute(
+            'UPDATE task_claims SET heartbeat_at=?,lease_until=? WHERE project_id=? AND claim_key=? AND owner_id=? AND lease_until>?',
+            (ts,until,project_id,claim_key,owner_id,ts)
+        )
+        row=c.execute('SELECT * FROM task_claims WHERE project_id=? AND claim_key=?',(project_id,claim_key)).fetchone()
+    return {'renewed':cur.rowcount==1,'claim':_claim_payload(row)}
+
+def task_claim_release(project_id,claim_key,owner_id):
+    with connect() as c:
+        cur=c.execute('DELETE FROM task_claims WHERE project_id=? AND claim_key=? AND owner_id=?',(project_id,claim_key,owner_id))
+    return {'released':cur.rowcount==1}
 
 def runner_targets():
     with connect() as c:
@@ -630,6 +709,25 @@ class Handler(BaseHTTPRequestHandler):
                     cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
                     command_id=cur.lastrowid
                 return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause'})
+            if u.path=='/api/task-claims':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                action=str(payload.get('action') or 'acquire')
+                project_id=str(payload.get('project_id') or '').strip()
+                claim_key=str(payload.get('claim_key') or '').strip()
+                owner_id=str(payload.get('owner_id') or '').strip()
+                try:
+                    if action=='acquire':
+                        result=task_claim_acquire(project_id,claim_key,owner_id,payload.get('worker_id') or '',payload.get('lease_seconds') or 300,payload.get('metadata'))
+                        return self.reply(result,200 if result['acquired'] else 409)
+                    if action=='heartbeat':
+                        result=task_claim_heartbeat(project_id,claim_key,owner_id,payload.get('lease_seconds') or 300)
+                        return self.reply(result,200 if result['renewed'] else 409)
+                    if action=='release':
+                        result=task_claim_release(project_id,claim_key,owner_id)
+                        return self.reply(result,200 if result['released'] else 409)
+                    return self.reply({'error':'Ongeldige claimactie'},400)
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
             if u.path=='/api/runner-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or '')
@@ -665,6 +763,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
+        if u.path=='/api/task-claims':
+            if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+            return self.reply({'claims':task_claims(q.get('project',[''])[0] or None),'time':now()})
         if u.path=='/api/runner-commands':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             with connect() as c:
