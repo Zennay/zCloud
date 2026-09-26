@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
 import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re
+from contextlib import contextmanager, closing
 import enhancements
 
 ROOT = Path(__file__).resolve().parent
@@ -100,10 +101,18 @@ def firefox_runner_status():
     except Exception as e:
         return {'state':'unknown','active':False,'main_pid':0,'active_since':None,'restarts':0,'auto_restart':'unknown','error':str(e)[:200]}
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
+@contextmanager
 def connect():
     c = sqlite3.connect(DB, timeout=4)
     c.row_factory = sqlite3.Row
-    return c
+    try:
+        yield c
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+    finally:
+        c.close()
 
 def init_db():
     with connect() as c:
@@ -155,7 +164,7 @@ def service_states():
 
 def replay_metrics():
     # Read-only connection, bounded query, no trainer commands and no state changes.
-    with sqlite3.connect('file:/var/lib/haxlab/state/haxlab.sqlite3?mode=ro',uri=True,timeout=1) as c:
+    with closing(sqlite3.connect('file:/var/lib/haxlab/state/haxlab.sqlite3?mode=ro',uri=True,timeout=1)) as c:
         deadline=time.monotonic()+1
         c.set_progress_handler(lambda: int(time.monotonic()>deadline),1000)
         counts=dict(c.execute('SELECT status,COUNT(*) FROM replay_analysis GROUP BY status'))
