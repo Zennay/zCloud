@@ -19,6 +19,7 @@ function runProject(cfg) {
   if (window[marker]) return;
   window[marker] = true;
   const PROMPT = cfg.prompt;
+  const SINGLE_RUN = (cfg.base_project_id || cfg.projectId) === "portfolio-review";
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
@@ -189,6 +190,7 @@ function runProject(cfg) {
         sawGeneration = false;
         finishedAt = 0;
         lastText = text;
+        if (SINGLE_RUN) { status("scheduled-run-complete", {reason: "single-run"}); return; }
         if (!paused) await send("antwoord klaar");
       }
       return;
@@ -249,6 +251,7 @@ function runProject(cfg) {
   heartbeatTimer = setInterval(() => status("heartbeat"), 60000);
   setTimeout(() => {
     if (paused) return;
+    if (SINGLE_RUN) { status("scheduled-ready", {reason: "awaiting-daily-push"}); return; }
     if (stopButton()) { status("startup-blocked", {reason: "generation-active"}); return; }
     const draft = composerText();
     if (draft === null) { status("startup-waiting", {reason: "composer-missing"}); return; }
