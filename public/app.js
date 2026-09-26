@@ -52,61 +52,64 @@ function runnerPanel(){
     const lastPrompt=r.last_prompt_sent?.time?date(r.last_prompt_sent.time,true):'Nog geen prompt gemeten';
     const progress=r.progress_age_seconds==null?'Geen tekstmeting':r.progress_age_seconds<60?'Tekst bijgewerkt zojuist':Math.floor(r.progress_age_seconds/60)+' min zonder tekstwijziging';
     const mode=!active?'Gepauzeerd':r.generating?'ChatGPT genereert':r.state==='live'?'Wacht op antwoord':'Start op';
+    const workerCount=Math.max(1,Number(r.worker_count||1));
     const actions=active
       ? '<button type="button" class="runner-action" data-runner-push="'+esc(id)+'" '+(pending?'disabled':'')+'>Push nu</button><button type="button" class="runner-action runner-action-secondary" data-runner-pause="'+esc(id)+'" '+(pending?'disabled':'')+'>Pauzeer</button><button type="button" class="runner-action runner-action-secondary" data-runner-new-chat="'+esc(id)+'" '+(pending?'disabled':'')+'>Nieuwe chat</button>'
       : '<button type="button" class="runner-action" data-runner-start="'+esc(id)+'" '+(pending?'disabled':'')+'>'+(pending?'Starten…':'Start project')+'</button>';
-    return '<article class="runner-card '+(active&&state==='live'?'runner-live':'')+'"><div class="runner-card-head"><div><span class="eyebrow">'+esc(name)+'</span><h3>'+esc(r.name||name)+'</h3></div><span class="runner-state '+(active&&state==='live'?'':'runner-warn')+'">'+(labels[state]||'Onbekend')+'</span></div><div class="runner-metrics"><div><small>Runner</small><strong>'+esc(mode)+'</strong></div><div><small>Heartbeat</small><strong>'+esc(heartbeat)+'</strong></div><div><small>Laatste prompt</small><strong>'+esc(lastPrompt)+'</strong></div><div><small>Voortgang</small><strong>'+esc(progress)+'</strong></div></div>'+(r.error?'<div class="runner-error">'+esc(r.error)+'</div>':'')+'<div class="runner-card-foot"><span>'+(pending?'Runneractie wordt uitgevoerd':r.command?.result?esc(r.command.result):active?'Push gebruikt de huidige projectchat.':'Start opent of hervat een eigen projectchat met Notion-handoff.')+'</span><div class="runner-actions">'+actions+'</div></div></article>';
+    return '<article class="runner-card '+(active&&state==='live'?'runner-live':'')+'"><div class="runner-card-head"><div><span class="eyebrow">'+esc(name)+'</span><h3>'+esc(r.name||name)+'</h3></div><span class="runner-state '+(active&&state==='live'?'':'runner-warn')+'">'+(labels[state]||'Onbekend')+'</span></div><div class="runner-metrics"><div><small>Runner</small><strong>'+esc(mode)+'</strong></div><div><small>Heartbeat</small><strong>'+esc(heartbeat)+'</strong></div><div><small>Laatste prompt</small><strong>'+esc(lastPrompt)+'</strong></div><div><small>Voortgang</small><strong>'+esc(progress)+'</strong></div></div><div class="runner-worker-row"><label>ChatGPT-tabs <input type="number" min="1" max="8" step="1" value="'+workerCount+'" data-runner-workers="'+esc(id)+'" aria-label="Aantal ChatGPT-tabs voor '+esc(name)+'"></label><small>Elke tab krijgt een eigen work-lane.</small></div>'+(r.error?'<div class="runner-error">'+esc(r.error)+'</div>':'')+'<div class="runner-card-foot"><span>'+(pending?'Runneractie wordt uitgevoerd':r.command?.result?esc(r.command.result):active?'Push gebruikt de huidige projectchat.':'Start opent of hervat een eigen projectchat met Notion-handoff.')+'</span><div class="runner-actions">'+actions+'</div></div></article>';
   }).join('');
   return '<section class="runner-section"><div class="section-title"><div><h2>Projectinitiators</h2><p class="reduced">Firefox-service, projectstatus en herstel. Nieuwe chats krijgen altijd een projectspecifieke prompt.</p></div></div><div class="runner-grid">'+serviceCard+cards+'</div></section>';
 }
 async function restartRunner(projectId,button){
-  let token=sessionStorage.getItem('zcloud-runner-control')||'';
-  if(!token){token=window.prompt('Voer de ZCloud runner-actiesleutel in. De sleutel blijft alleen in dit browsertabblad bewaard.');if(!token)return;sessionStorage.setItem('zcloud-runner-control',token)}
   const projectName=DATA?.projects?.find(p=>p.id===projectId)?.name||projectId;
   if(!window.confirm('Start een nieuwe ChatGPT-chat voor '+projectName+'? Een eventueel lopend antwoord in de oude chat wordt gestopt.'))return;
   button.disabled=true;
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({project_id:projectId,action:'new_chat'}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,action:'new_chat'}),signal:AbortSignal.timeout(10000)});
     const data=await response.json();
-    if(!response.ok){if(response.status===401){sessionStorage.removeItem('zcloud-runner-control');throw new Error('Actiesleutel ongeldig. Klik opnieuw en voer de sleutel nogmaals in.')}throw new Error(data.error||'Actie mislukt')}
+    if(!response.ok){throw new Error(data.error||'Actie mislukt')}
     button.textContent='Herstart staat klaar';setTimeout(()=>refresh(true),1500);
   }catch(error){window.alert(error.message||'ZCloud kon de actie niet versturen.');button.disabled=false}
 }
 async function setRunnerActive(projectId,action,button){
-  let token=sessionStorage.getItem('zcloud-runner-control')||'';
-  if(!token){token=window.prompt('Voer de ZCloud runner-actiesleutel in. De sleutel blijft alleen in dit browsertabblad bewaard.');if(!token)return;sessionStorage.setItem('zcloud-runner-control',token)}
   const labelEl=button.querySelector('.runner-toggle-label');const previous=labelEl?labelEl.textContent:button.textContent;const setLabel=value=>{if(labelEl)labelEl.textContent=value;else button.textContent=value};button.disabled=true;setLabel(action==='start'?'Starten…':button.classList.contains('runner-toggle')?'Stoppen…':'Pauzeren…');
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({project_id:projectId,action}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,action}),signal:AbortSignal.timeout(10000)});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok){if(response.status===401){sessionStorage.removeItem('zcloud-runner-control');throw new Error('Actiesleutel ongeldig. Klik opnieuw en voer de sleutel nogmaals in.')}throw new Error(data.error||'Runneractie mislukt')}
+    if(!response.ok){throw new Error(data.error||'Runneractie mislukt')}
     setLabel(action==='start'?'Gestart':button.classList.contains('runner-toggle')?'Gestopt':'Gepauzeerd');
     setTimeout(()=>refresh(true),450);
   }catch(error){setLabel('Mislukt');window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;setLabel(previous)},1800)}
 }
 async function pushRunner(projectId,button){
-  let token=sessionStorage.getItem('zcloud-runner-control')||'';
-  if(!token){token=window.prompt('Voer de ZCloud runner-actiesleutel in. De sleutel blijft alleen in dit browsertabblad bewaard.');if(!token)return;sessionStorage.setItem('zcloud-runner-control',token)}
   const previous=button.textContent;button.disabled=true;button.textContent='Pushen…';
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({project_id:projectId,action:'push'}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,action:'push'}),signal:AbortSignal.timeout(10000)});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok){if(response.status===401){sessionStorage.removeItem('zcloud-runner-control');throw new Error('Actiesleutel ongeldig. Klik opnieuw en voer de sleutel nogmaals in.')}throw new Error(data.error||'Push mislukt')}
+    if(!response.ok){throw new Error(data.error||'Push mislukt')}
     button.textContent='Push gestart';
     setTimeout(()=>refresh(true),1200);
   }catch(error){button.textContent='Mislukt';window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;button.textContent=previous},2200)}
 }
+async function setRunnerWorkers(projectId,count,input){
+  const previous=input.value;input.disabled=true;
+  try{
+    const response=await fetch('/api/runner-workers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,worker_count:Number(count)}),signal:AbortSignal.timeout(10000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Aantal ChatGPT-tabs opslaan mislukt');
+    input.value=String(data.worker_count);setTimeout(()=>refresh(true),700);
+  }catch(error){input.value=previous;window.alert(error.message||String(error))}
+  finally{input.disabled=false}
+}
 async function restartFirefoxInitiator(button){
-  let token=sessionStorage.getItem('zcloud-runner-control')||'';
-  if(!token){token=window.prompt('Voer de ZCloud runner-actiesleutel in. De sleutel blijft alleen in dit browsertabblad bewaard.');if(!token)return;sessionStorage.setItem('zcloud-runner-control',token)}
   if(!window.confirm('Herstart de Firefox ChatGPT-initiator op de VPS? De projecttabs worden opnieuw geopend en de runners pakken daarna automatisch verder.'))return;
   button.disabled=true;button.textContent='Herstarten…';
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({action:'restart_firefox'}),signal:AbortSignal.timeout(15000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'restart_firefox'}),signal:AbortSignal.timeout(15000)});
     const data=await response.json();
-    if(!response.ok){if(response.status===401){sessionStorage.removeItem('zcloud-runner-control');throw new Error('Actiesleutel ongeldig. Klik opnieuw en voer de sleutel nogmaals in.')}throw new Error(data.error||'Herstart mislukt')}
+    if(!response.ok){throw new Error(data.error||'Herstart mislukt')}
     button.textContent='Initiator herstart';setTimeout(()=>refresh(true),1500);
   }catch(error){window.alert(error.message||'Firefox-initiator kon niet worden herstart.');button.disabled=false;button.textContent='Firefox initiator herstarten'}
 }
@@ -139,5 +142,5 @@ document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.d
 document.addEventListener('click',async e=>{const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('change',e=>{if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('change',async e=>{const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
