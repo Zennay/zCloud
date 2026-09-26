@@ -1,5 +1,3 @@
-[Reading 1048 lines from start (total: 1048 lines, 0 remaining)]
-
 """zCloud: read-only project monitoring; stdlib only."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
