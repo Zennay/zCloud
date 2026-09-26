@@ -1,6 +1,6 @@
 [Unit]
 Description=zCloud daily portfolio bird's-eye review
-After=zennay-cloud.service chatgpt-firefox.service
+After=chatgpt-firefox.service
 
 [Service]
 Type=oneshot
