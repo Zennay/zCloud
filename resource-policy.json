@@ -3,7 +3,7 @@
     "priority": "background"
   },
   "ftmo": {
-    "priority": "high"
+    "priority": "turbo"
   },
   "supa": {
     "priority": "normal"
