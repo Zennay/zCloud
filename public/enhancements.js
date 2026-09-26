@@ -78,26 +78,22 @@
     var details='<details class="section-details resource-details"><summary>Technische details</summary><div class="resource-tech-list">'+tech.join('')+'</div><p>Weights: Achtergrond 100 · Normaal 400 · Hoog 800 · Turbo 3000. Dit is alleen de verdeling wanneer meerdere projecten tegelijk CPU/IO nodig hebben; het is geen harde CPU-limiet.</p></details>';
     return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Voorrang per project</h2><div class="panel-subtitle">Kies wie voorrang krijgt als de VPS druk is</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
   }
-  function plainAlertDetail(x){
-    var d=String(x.detail||'');
-    if(/research\s*·\s*failed/i.test(d))return 'Onderzoek liep vast';
-    if(/composer-missing/i.test(d))return 'ChatGPT reageert niet goed';
-    if(/runner offline/i.test(d))return 'Automatisering is offline';
-    if(/github runner\s*·\s*deactivating/i.test(d))return 'GitHub-runner stopt';
-    if(/milestone/i.test(d)&&/completed|afgerond/i.test(d))return 'Projectstap is afgerond';
-    return d||'Bekijk de activiteit voor meer informatie';
-  }
-  function alertsPanel(){
-    var a=DATA.alerts||[];
-    if(!a.length)return '<div class="panel alert-panel"><div class="panel-header"><div><h2>Belangrijke meldingen</h2><div class="panel-subtitle">Alles loopt rustig</div></div>'+icon('check')+'</div><div class="alert-empty">Geen melding die nu aandacht vraagt.</div></div>';
-    var attention=function(x){return !['info','success','ok'].includes(String(x.severity||'').toLowerCase())};
-    var visible=a.filter(function(x,i){return i<3||attention(x)}).slice(0,6);
-    var rows=visible.map(function(x){
-      return '<div class="alert-row '+esc(x.severity)+'"><span class="alert-mark" aria-hidden="true"></span><div class="alert-copy"><strong>'+esc(x.title)+'</strong><span>'+esc(plainAlertDetail(x))+'</span></div><time>'+rel(x.ts)+'</time></div>';
+  function incidentPanel(){
+    var center=DATA.incidents||{items:[],recovery:null},items=center.items||[];
+    if(!items.length){
+      var recovery=center.recovery||{};
+      var recoveryText=recovery.available?'Herstelpunt beschikbaar':'Nog geen herstelpunt';
+      return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Aandacht nodig</h2><div class="panel-subtitle">Geen actie nodig · '+esc(recoveryText)+'</div></div>'+icon('check')+'</div><div class="alert-empty">Alles wat nu draait heeft geen concrete interventie nodig.</div></div>';
+    }
+    var names={};(DATA.projects||[]).forEach(function(p){names[p.id]=p.name});
+    var rows=items.map(function(x){
+      var rollback=x.rollback||{},project=names[x.project]||x.project||'zCloud';
+      var recovery=!rollback.available?'Geen herstelpunt':rollback.status==='tested'?'Herstel getest':rollback.status==='problem'?'Herstelcontrole nodig':rollback.status==='in_progress'?'Herstel loopt':'Herstelpunt klaar';
+      return '<article class="incident-card '+esc(x.severity||'warning')+'"><div class="incident-card-head"><div><span>'+esc(project)+'</span><strong>'+esc(x.title)+'</strong></div><b>'+esc(x.health||'Aandacht')+'</b></div><dl><div><dt>Oorzaak</dt><dd>'+esc(x.cause||'Onbekend')+'</dd></div><div><dt>Impact</dt><dd>'+esc(x.impact||'Onbekend')+'</dd></div><div><dt>Herstel</dt><dd>'+esc(recovery)+'</dd></div></dl><p class="incident-action"><b>Wat nu:</b> '+esc(x.action||'Controleer dit incident.')+'</p><details class="section-details incident-details"><summary>Technische details</summary><p>'+esc(x.technical_detail||'Geen extra technische details')+(x.detected_at?' · '+esc(date(x.detected_at,true)):'')+'</p></details></article>';
     }).join('');
-    var raw=visible.map(function(x){return '<div class="alert-tech-row"><strong>'+esc(x.title)+'</strong><span>'+esc(x.detail||'geen technische details')+' · '+esc(x.severity||'info')+'</span></div>'}).join('');
-    return '<div class="panel alert-panel"><div class="panel-header"><div><h2>Belangrijke meldingen</h2><div class="panel-subtitle">Wat nu aandacht kan vragen</div></div><a class="events-link" href="#activity">Alles bekijken</a></div><div class="alert-list">'+rows+'</div><details class="section-details alert-details"><summary>Technische details</summary><div class="alert-tech-list">'+raw+'</div></details></div>';
+    return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Aandacht nodig</h2><div class="panel-subtitle">'+items.length+' concrete '+(items.length===1?'actie':'acties')+' · geen logspam</div></div><a class="events-link" href="#activity">Historie</a></div><div class="incident-list">'+rows+'</div></div>';
   }
+
   function milestonePanel(p){
     var rows=(p.milestones||[]).map(function(m,i){
       var pct=Math.round(Number(m.progress==null?(m.done?100:0):m.progress)*10)/10;
@@ -118,7 +114,7 @@
   var baseOverview=overview;
   overview=function(){
     var html=baseOverview();
-    var controls='<div class="dashboard-grid top-controls">'+resourcePanel()+alertsPanel()+'</div>';
+    var controls='<div class="dashboard-grid top-controls">'+resourcePanel()+incidentPanel()+'</div>';
     return html.replace('<div class="dashboard-grid">',controls+'<div class="dashboard-grid">');
   };
 

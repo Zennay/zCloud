@@ -940,6 +940,13 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if action=='acquire':
                         result=task_claim_acquire(project_id,claim_key,owner_id,payload.get('worker_id') or '',payload.get('lease_seconds') or 300,payload.get('metadata'))
+                        if not result['acquired'] and result.get('claim'):
+                            holder=result['claim'].get('owner_id') or 'andere worker'
+                            emit=getattr(enhancements,'emit_incident',None)
+                            if emit:
+                                emit(DB, project_id, 'claim_conflict', 'warning', 'Taakclaim botst',
+                                     f'{claim_key} · huidige eigenaar {holder} · nieuwe poging {owner_id}',
+                                     f'claim-conflict:{project_id}:{claim_key}:{holder}', 15*60)
                         return self.reply(result,200 if result['acquired'] else 409)
                     if action=='heartbeat':
                         result=task_claim_heartbeat(project_id,claim_key,owner_id,payload.get('lease_seconds') or 300)
@@ -1003,7 +1010,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith('/api/v1/watch'):
                 auth=self.headers.get('Authorization','')
                 if WATCH_TOKEN and auth != 'Bearer '+WATCH_TOKEN:return self.reply({'error':'Unauthorized'},401)
-            if u.path in ('/api/status','/api/v1/status'):return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runner_statuses(),'chatgpt_firefox':firefox_runner_status()})
+            if u.path in ('/api/status','/api/v1/status'):
+                runners=runner_statuses()
+                incidents=enhancements.incident_center(DB,runners,data=data)
+                return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'incidents':incidents})
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
             if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
