@@ -22,3 +22,7 @@ __pycache__/
 wear-os/.gradle/
 wear-os/build/
 wear-os/app/build/
+
+# Nested project and legacy staging worktrees
+/repos/
+/staging-v2/
