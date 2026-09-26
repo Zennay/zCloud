@@ -1,0 +1,11 @@
+[Unit]
+Description=Run zCloud portfolio bird's-eye review every 24 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=24h
+Persistent=true
+Unit=zcloud-birds-eye-review.service
+
+[Install]
+WantedBy=timers.target
