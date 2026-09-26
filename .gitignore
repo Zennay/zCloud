@@ -1,5 +1,6 @@
 # Runtime secrets and local configuration
 .watch-token
+.runner-control-token
 watch-tls.key
 watch-tls.crt
 wear-os/local.properties

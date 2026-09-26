@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "ChatGPT Project Runner",
+  "version": "0.8.0",
+  "permissions": [
+    "tabs",
+    "https://chatgpt.com/*",
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "project-runner-v07@local"
+    }
+  }
+}

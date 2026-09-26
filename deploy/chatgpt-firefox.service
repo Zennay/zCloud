@@ -1,0 +1,19 @@
+[Unit]
+Description=Firefox + ChatGPT Project Runner
+Requires=chatgpt-display.service chatgpt-openbox.service
+After=chatgpt-display.service chatgpt-openbox.service zennay-cloud.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:99
+Environment=MOZ_ENABLE_WAYLAND=0
+ExecStartPre=/home/ubuntu/.local/bin/chatgpt-firefox-prestart.sh
+ExecStartPre=/bin/sleep 2
+ExecStart=/home/ubuntu/.local/bin/web-ext run --source-dir %h/snap/firefox/common/chatgpt-project-extension --firefox /usr/bin/firefox --firefox-profile %h/snap/firefox/common/chatgpt-webext-profile --keep-profile-changes --no-reload --no-input
+ExecStartPost=/home/ubuntu/.local/bin/chatgpt-window-layout.sh
+ExecStopPost=/home/ubuntu/.local/bin/chatgpt-firefox-stop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

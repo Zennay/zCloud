@@ -3,7 +3,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
-import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging
+import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re
 import enhancements
 
 ROOT = Path(__file__).resolve().parent
@@ -13,9 +13,23 @@ CACHE = None
 CPU_PREV = None
 RUNNERS = {'haxlab': 'actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service', 'ftmo': 'actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service'}
 SUPA_SYNC = 'zennay-supa-sync.timer'
+FIREFOX_RUNNER_SERVICE = 'chatgpt-firefox.service'
 SERVICES = ['haxlab-analyzer.service', 'haxlab-ingest.service', 'haxlab-worker.service', 'ftmo-autonomous.service', 'ftmo-autonomous.timer', SUPA_SYNC, *RUNNERS.values()]
 WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
+RUNNER_CONTROL_FILE = ROOT / '.runner-control-token'
+RUNNER_DEFAULTS = {
+    'haxlab': {
+        'name': 'HaxLab · HaxBall AI',
+        'conversation_id': '6ab6e0af-b1e8-83eb-b355-6398eb60dce4',
+        'prompt': 'Ga verder met project HaxLab (HaxBall AI). Deze chat is uitsluitend voor HaxLab/HaxBall, niet voor FTMO of andere projecten. Controleer eerst de actuele HaxLab-handoff en projectstatus. Pak daarna zelfstandig de volgende concrete stap op en rapporteer kort wat je hebt gedaan.'
+    },
+    'ftmo': {
+        'name': 'FTMO Telemetry Sync',
+        'conversation_id': '6ab611aa-d5c4-83eb-940c-498aa3dbe0e1',
+        'prompt': 'Ga verder met project FTMO Telemetry Sync. Deze chat is uitsluitend voor FTMO, niet voor HaxLab/HaxBall of andere projecten. Controleer eerst de actuele FTMO-handoff en projectstatus. Pak daarna zelfstandig de volgende concrete stap op en rapporteer kort wat je hebt gedaan.'
+    }
+}
 LAYOUT_FILE = ROOT / 'project-layout.json'
 
 def load_project_layout(projects=None):
@@ -59,6 +73,21 @@ def public_status(data):
 def now(): return datetime.now(timezone.utc).isoformat()
 def cmd(args):
     return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL, timeout=4).strip()
+def user_systemctl(*args):
+    env=os.environ.copy()
+    env.update({'XDG_RUNTIME_DIR':'/run/user/1000','DBUS_SESSION_BUS_ADDRESS':'unix:path=/run/user/1000/bus'})
+    return subprocess.check_output(['systemctl','--user',*args], text=True, stderr=subprocess.STDOUT, timeout=12, env=env).strip()
+def firefox_runner_status():
+    try:
+        try: state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
+        except subprocess.CalledProcessError as e: state=(e.output or '').strip() or 'inactive'
+        raw=user_systemctl('show',FIREFOX_RUNNER_SERVICE,'-p','MainPID','-p','ActiveEnterTimestamp','-p','NRestarts','-p','Restart')
+        fields=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
+        return {'state':state,'active':state=='active','main_pid':int(fields.get('MainPID') or 0),
+                'active_since':fields.get('ActiveEnterTimestamp') or None,'restarts':int(fields.get('NRestarts') or 0),
+                'auto_restart':fields.get('Restart') or 'unknown'}
+    except Exception as e:
+        return {'state':'unknown','active':False,'main_pid':0,'active_since':None,'restarts':0,'auto_restart':'unknown','error':str(e)[:200]}
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
 def connect():
     c = sqlite3.connect(DB, timeout=4)
@@ -73,6 +102,17 @@ def init_db():
         c.execute('CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, ts TEXT, project TEXT, kind TEXT, title TEXT, detail TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS events_ts ON events(ts)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, event TEXT, target TEXT, title TEXT, generating INTEGER, sending INTEGER, reason TEXT, tab_id INTEGER, error TEXT)')
+        columns={r['name'] for r in c.execute('PRAGMA table_info(runner_events)').fetchall()}
+        if 'project_id' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN project_id TEXT')
+        if 'progress_at' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN progress_at TEXT')
+        if 'assistant_chars' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN assistant_chars INTEGER')
+        c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_ts ON runner_events(project_id,ts)')
+        c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')
+        c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
+        c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
+        for project_id,target in RUNNER_DEFAULTS.items():
+            c.execute('INSERT OR IGNORE INTO runner_targets(project_id,name,conversation_id,prompt) VALUES(?,?,?,?)',
+                      (project_id,target['name'],target['conversation_id'],target['prompt']))
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_ts ON runner_events(ts)')
         enhancements.init_db(c)
         # Preserve original snapshots, whose timestamps were recorded in VPS UTC.
@@ -234,6 +274,12 @@ def compact_history(pid, limit=24):
         out.append(dict(rows[-1]))
     return out[-limit:]
 
+def runner_targets():
+    with connect() as c:
+        rows=c.execute('SELECT project_id,name,conversation_id,prompt FROM runner_targets ORDER BY project_id').fetchall()
+    return {r['project_id']:{'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
+                            'url':'https://chatgpt.com/c/'+r['conversation_id'],'prompt':r['prompt']} for r in rows}
+
 def runner_record(payload):
     event=str(payload.get('event') or 'unknown')[:64]
     raw_ts=str(payload.get('at') or now())
@@ -243,37 +289,68 @@ def runner_record(payload):
     title=str(payload.get('title') or '')[:250]
     reason=str(payload.get('reason') or '')[:250]
     error=str(payload.get('error') or '')[:500]
+    progress_at=str(payload.get('progressAt') or '')
+    try: progress_at=datetime.fromisoformat(progress_at.replace('Z','+00:00')).astimezone(timezone.utc).isoformat() if progress_at else None
+    except Exception: progress_at=None
+    try: assistant_chars=max(0,min(2000000,int(payload.get('assistantCharacters')))) if payload.get('assistantCharacters') is not None else None
+    except Exception: assistant_chars=None
     tab_id=payload.get('tabId')
+    project_id=str(payload.get('projectId') or '')[:40]
+    match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
     with connect() as c:
-        c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error) VALUES(?,?,?,?,?,?,?,?,?)',
-                  (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error))
+        if not project_id and target:
+            for pid,t in runner_targets().items():
+                if t['conversation_id'] in target: project_id=pid; break
+        c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error,project_id,progress_at,assistant_chars) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                  (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error,project_id or None,progress_at,assistant_chars))
+        if event == 'conversation-adopted' and project_id in RUNNER_DEFAULTS and match:
+            c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
 
-def runner_status():
+def runner_status(project_id=None):
+    target_cfg=runner_targets()
     with connect() as c:
-        latest=c.execute('SELECT * FROM runner_events ORDER BY id DESC LIMIT 1').fetchone()
-        if not latest:
-            return {'state':'offline','age_seconds':None,'last_event':None,'last_heartbeat':None,'last_prompt_sent':None,'last_generation_started':None,'last_generation_finished':None}
-        heartbeat=c.execute("SELECT * FROM runner_events WHERE event='heartbeat' ORDER BY id DESC LIMIT 1").fetchone()
-        prompt=c.execute("SELECT * FROM runner_events WHERE event='prompt-sent' ORDER BY id DESC LIMIT 1").fetchone()
-        started=c.execute("SELECT * FROM runner_events WHERE event='generation-started' ORDER BY id DESC LIMIT 1").fetchone()
-        finished=c.execute("SELECT * FROM runner_events WHERE event='generation-finished' ORDER BY id DESC LIMIT 1").fetchone()
-        meta=c.execute("SELECT * FROM runner_events WHERE title<>'' OR target<>'' ORDER BY id DESC LIMIT 1").fetchone()
-    def info(r):
-        if not r:return None
-        return {'time':r['ts'],'event':r['event'],'reason':r['reason'] or None,'error':r['error'] or None}
+        if project_id in target_cfg:
+            cfg=target_cfg[project_id]
+            where='(project_id=? OR (project_id IS NULL AND target LIKE ?))'
+            args=(project_id,'%'+cfg['conversation_id']+'%')
+        else:
+            where='1=1'; args=()
+        latest=c.execute('SELECT * FROM runner_events WHERE '+where+' ORDER BY id DESC LIMIT 1',args).fetchone()
+        heartbeat=c.execute('SELECT * FROM runner_events WHERE '+where+" AND event='heartbeat' ORDER BY id DESC LIMIT 1",args).fetchone()
+        def event_row(event):
+            return c.execute('SELECT * FROM runner_events WHERE '+where+' AND event=? ORDER BY id DESC LIMIT 1',args+(event,)).fetchone()
+        prompt=event_row('prompt-sent'); started=event_row('generation-started'); finished=event_row('generation-finished')
+        command=c.execute('SELECT id,status,action,created_at,updated_at,result FROM runner_commands WHERE project_id=? ORDER BY id DESC LIMIT 1',(project_id,)).fetchone() if project_id in target_cfg else None
+    def info(row):
+        if not row:return None
+        return {'time':row['ts'],'event':row['event'],'reason':row['reason'] or None,'error':row['error'] or None}
+    if not latest:
+        return {'project_id':project_id,'name':target_cfg.get(project_id,{}).get('name'),'state':'offline','age_seconds':None,
+                'generating':False,'sending':False,'last_event':None,'last_heartbeat':None,
+                'last_prompt_sent':None,'last_generation_started':None,'last_generation_finished':None,
+                'command':dict(command) if command else None}
     try: age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(latest['ts'])).total_seconds()))
     except Exception: age=999999
-    state='live' if age<=90 else 'stale' if age<=300 else 'offline'
-    return {
-        'state':state,'age_seconds':age,'event':latest['event'],
-        'generating':bool(latest['generating']),'sending':bool(latest['sending']),
-        'title':(meta['title'] if meta else '') or None,'target':(meta['target'] if meta else '') or None,
-        'tab_id':latest['tab_id'],'error':latest['error'] or None,
-        'last_event':info(latest),'last_heartbeat':info(heartbeat),'last_prompt_sent':info(prompt),
-        'last_generation_started':info(started),'last_generation_finished':info(finished)
-    }
+    progress_time=latest['progress_at'] or (heartbeat['progress_at'] if heartbeat else None)
+    try: progress_age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(progress_time)).total_seconds())) if progress_time else None
+    except Exception: progress_age=None
+    generating=bool(latest['generating'])
+    stalled=bool(generating and progress_age is not None and progress_age>=20*60)
+    state='stalled' if stalled else 'live' if age<=90 else 'stale' if age<=300 else 'offline'
+    cfg=target_cfg.get(project_id,{})
+    return {'project_id':project_id,'name':cfg.get('name') or latest['title'],'state':state,'age_seconds':age,
+            'generating':generating,'sending':bool(latest['sending']),'stalled':stalled,
+            'progress_age_seconds':progress_age,'assistant_characters':latest['assistant_chars'],
+            'title':latest['title'] or cfg.get('name'),'target':latest['target'] or cfg.get('url'),
+            'tab_id':latest['tab_id'],'error':latest['error'] or None,'event':latest['event'],
+            'last_event':info(latest),'last_heartbeat':info(heartbeat),'last_prompt_sent':info(prompt),
+            'last_generation_started':info(started),'last_generation_finished':info(finished),
+            'command':dict(command) if command else None}
+
+def runner_statuses():
+    return {pid:runner_status(pid) for pid in runner_targets()}
 
 def watch_last_run(pid):
     aliases={'haxlab':['haxlab'],'ftmo':['ftmo'],'cloud':['zennay cloud','zennay-cloud'],'supa':['supa']}.get(pid,[pid])
@@ -361,6 +438,10 @@ class Handler(BaseHTTPRequestHandler):
         raw=json.dumps(body,ensure_ascii=False).encode() if not isinstance(body,bytes) else body
         self.send_response(status)
         for k,v in {'Content-Type':kind,'Content-Length':str(len(raw)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}.items():self.send_header(k,v)
+        origin=self.headers.get('Origin','')
+        if origin.startswith('moz-extension://'):
+            self.send_header('Access-Control-Allow-Origin',origin)
+            self.send_header('Vary','Origin')
         self.end_headers();self.wfile.write(raw)
     def do_GET(self):
         try:self.route()
@@ -378,6 +459,42 @@ class Handler(BaseHTTPRequestHandler):
                 if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
                 runner_record(payload)
                 return self.reply({'ok':True,'time':now()})
+            if u.path=='/api/runner-command-result':
+                if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
+                command_id=int(payload.get('command_id') or 0)
+                status=str(payload.get('status') or '')
+                if status not in ('completed','failed'):return self.reply({'error':'Ongeldige status'},400)
+                with connect() as c:
+                    c.execute('UPDATE runner_commands SET status=?,updated_at=?,result=? WHERE id=?',
+                              (status,now(),str(payload.get('result') or '')[:300],command_id))
+                return self.reply({'ok':True})
+            if u.path=='/api/runner-control':
+                auth=self.headers.get('Authorization','')
+                supplied=auth[7:] if auth.startswith('Bearer ') else ''
+                expected=RUNNER_CONTROL_FILE.read_text().strip() if RUNNER_CONTROL_FILE.exists() else ''
+                if not expected or not hmac.compare_digest(supplied,expected):return self.reply({'error':'Unauthorized'},401)
+                project_id=str(payload.get('project_id') or '')
+                action=str(payload.get('action') or '')
+                if action=='restart_firefox':
+                    try:
+                        user_systemctl('restart',FIREFOX_RUNNER_SERVICE)
+                        status=firefox_runner_status()
+                        return self.reply({'ok':bool(status.get('active')),'status':status},200 if status.get('active') else 503)
+                    except Exception as e:
+                        logging.exception('Firefox runner restart failed')
+                        return self.reply({'error':'Firefox-initiator kon niet worden herstart','detail':str(e)[:200]},500)
+                if project_id not in RUNNER_DEFAULTS or action!='new_chat':return self.reply({'error':'Ongeldige runneractie'},400)
+                with connect() as c:
+                    recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND status IN ('pending','completed') ORDER BY id DESC LIMIT 1",(project_id,)).fetchone()
+                    if recent:
+                        try:
+                            seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
+                            if seconds<60:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)
+                        except Exception: pass
+                    ts=now()
+                    cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
+                    command_id=cur.lastrowid
+                return self.reply({'ok':True,'command_id':command_id,'status':'pending'})
             if u.path=='/api/resource-priority':
                 if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
                 project=str(payload.get('project') or '')
@@ -396,6 +513,14 @@ class Handler(BaseHTTPRequestHandler):
             logging.exception('POST failed');self.reply({'error':'Opslaan mislukt'},500)
     def route(self):
         u=urlparse(self.path);q=parse_qs(u.query)
+        if u.path=='/api/runner-targets':
+            if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
+            return self.reply({'projects':runner_targets()})
+        if u.path=='/api/runner-commands':
+            if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
+            with connect() as c:
+                rows=c.execute("SELECT id,project_id,action,created_at FROM runner_commands WHERE status='pending' ORDER BY id LIMIT 10").fetchall()
+            return self.reply({'commands':[dict(r) for r in rows]})
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
             if data is None:return self.reply({'error':'Monitor start op'},503)
@@ -403,7 +528,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith('/api/v1/watch'):
                 auth=self.headers.get('Authorization','')
                 if WATCH_TOKEN and auth != 'Bearer '+WATCH_TOKEN:return self.reply({'error':'Unauthorized'},401)
-            if u.path in ('/api/status','/api/v1/status'):return self.reply({**public_status(data),'chatgpt_runner':runner_status()})
+            if u.path in ('/api/status','/api/v1/status'):return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runner_statuses(),'chatgpt_firefox':firefox_runner_status()})
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
             if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
@@ -426,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
             return self.reply({'error':'Niet gevonden'},404)
-        files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest'}
+        files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest'}
         if u.path not in files:return self.reply({'error':'Niet gevonden'},404)
         path=ROOT/'public'/files[u.path]
         return self.reply(path.read_bytes(),kind=mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
@@ -434,5 +559,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     init_db()
+    if not RUNNER_CONTROL_FILE.exists():
+        RUNNER_CONTROL_FILE.write_text(secrets.token_urlsafe(32)+chr(10))
+        RUNNER_CONTROL_FILE.chmod(0o600)
     threading.Thread(target=sampler,daemon=True,name='cloud-monitor').start()
     ThreadingHTTPServer((os.getenv('ZENNAY_BIND','0.0.0.0'),int(os.getenv('ZENNAY_PORT','8765'))),Handler).serve_forever()
