@@ -58,6 +58,13 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
+    project=PROJECT_INDEX.get(project_id,{})
+    sources=[]
+    if project.get('notion_url'): sources.append('Notion project: '+project['notion_url'])
+    if project.get('handoff_url'): sources.append('handoff: '+project['handoff_url'])
+    if project.get('scorecard_url'): sources.append('scorecard: '+project['scorecard_url'])
+    if project.get('repo_url'): sources.append('GitHub: '+project['repo_url'])
+    source_context=(' Canonieke bronnen: '+'; '.join(sources)+'.') if sources else ''
     return (
         f'Ga verder met project {name}. Deze chat is uitsluitend voor project {name}; werk niet aan andere projecten. '
         'Controleer eerst via de gekoppelde Notion-workspace de actuele projectpagina, handoff, status, open taken, '
@@ -65,7 +72,7 @@ def project_runner_prompt(project_id, name):
         'die voor dit project relevant is. Ga daarna zelfstandig verder met de eerstvolgende concrete stap die het '
         'project aantoonbaar vooruit helpt. Behoud bestaande architectuur en eerdere beslissingen tenzij de actuele '
         'projectdocumentatie expliciet iets anders aangeeft. Rapporteer kort wat je hebt gedaan, wat de nieuwe status '
-        'is en wat logisch als volgende stap volgt.'
+        'is en wat logisch als volgende stap volgt.' + source_context
     )
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total):
@@ -244,7 +251,8 @@ def collect():
         values=[float(m.get('progress',100 if m.get('done') else 0)) for m in p['milestones']]
         for m,value in zip(p['milestones'],values):
             m['progress']=round(max(0,min(100,value)),1);m['done']=m['progress']>=100
-        p['progress']=round(sum(m['progress'] for m in p['milestones'])/len(p['milestones']))
+        computed_progress=sum(m['progress'] for m in p['milestones'])/len(p['milestones'])
+        p['progress']=round(float(p.pop('progress_override',computed_progress)))
         p['completed']=sum(m['done'] for m in p['milestones'])
         p['next']=next((m['title'] for m in p['milestones'] if not m['done']), 'Alle milestones afgerond')
         p['current_milestone_progress']=next((m['progress'] for m in p['milestones'] if not m['done']),100)
