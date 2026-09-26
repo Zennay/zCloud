@@ -28,3 +28,7 @@ jobs:
         run: python3 -m unittest -v tests.test_transactional_promote
       - name: Verify control-plane health contract
         run: python3 -m unittest -v tests.test_zcloud_healthcheck
+      - name: Verify config schema validator
+        run: |
+          python3 -m unittest -v tests.test_config_validation
+          python3 scripts/zcloud_config_validate.py             --projects projects.json             --layout project-layout.json             --resource-policy resource-policy.json             --server server.py             --enhancements enhancements.py

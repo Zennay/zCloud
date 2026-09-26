@@ -46,6 +46,10 @@ DEFAULT_POSTDEPLOY = Path(os.environ.get(
     "ZCLOUD_POSTDEPLOY_CANARY",
     str(Path.home() / ".local/bin/zcloud-postdeploy-canary"),
 ))
+DEFAULT_CONFIG_VALIDATOR = Path(os.environ.get(
+    "ZCLOUD_CONFIG_VALIDATOR",
+    str(Path.home() / ".local/bin/zcloud-config-validate"),
+))
 DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
     "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
@@ -211,6 +215,39 @@ def run_prechange(prechange: Path, root: Path, state: Path) -> dict:
     payload = parse_json_output(proc, "pre-change guard")
     if proc.returncode or not payload.get("ok"):
         raise PromotionError("pre-change guard is not green")
+    return payload
+
+
+def run_config_validation(
+    validator: Path,
+    *,
+    candidate: Path,
+    root: Path,
+    paths: list[str],
+) -> dict:
+    selected = set(paths)
+
+    def effective(rel: str) -> Path:
+        return candidate / rel if rel in selected else root / rel
+
+    args = [
+        str(validator),
+        "--projects", str(effective("projects.json")),
+        "--layout", str(effective("project-layout.json")),
+        "--resource-policy", str(effective("resource-policy.json")),
+        "--server", str(effective("server.py")),
+        "--enhancements", str(effective("enhancements.py")),
+        "--db", str(root / "history.db"),
+        "--json",
+    ]
+    proc = run(args, check=False)
+    payload = parse_json_output(proc, "config schema validator")
+    if proc.returncode or not payload.get("ok"):
+        detail = "; ".join(str(x) for x in (payload.get("errors") or [])[:5])
+        raise PromotionError(
+            "config schema validation is not green"
+            + (f": {detail}" if detail else "")
+        )
     return payload
 
 
@@ -386,6 +423,7 @@ def promote(
     *,
     prechange: Path = DEFAULT_PRECHANGE,
     postdeploy: Path = DEFAULT_POSTDEPLOY,
+    config_validator: Path = DEFAULT_CONFIG_VALIDATOR,
     runtime_extension: Path = DEFAULT_RUNTIME_EXTENSION,
     reload_helper: Path = DEFAULT_RELOAD_HELPER,
     require_worker_read_model: bool = False,
@@ -398,6 +436,12 @@ def promote(
     normalized = [validate_relpath(rel) for rel in paths]
     candidate_hashes = validate_candidate(candidate, root, normalized)
     syntax_check(candidate, normalized)
+    config_validation = run_config_validation(
+        config_validator,
+        candidate=candidate,
+        root=root,
+        paths=normalized,
+    )
 
     with promotion_lock(state):
         pre = run_prechange(prechange, root, state)
@@ -409,6 +453,7 @@ def promote(
                 "candidate": str(candidate),
                 "paths": normalized,
                 "candidate_hashes": candidate_hashes,
+                "config_validation": config_validation,
                 "prechange_snapshot": pre.get("snapshot_id"),
                 "mapping_sha256": mapping_sha,
             }
@@ -509,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--path", action="append", dest="paths")
     parser.add_argument("--prechange", type=Path, default=DEFAULT_PRECHANGE)
     parser.add_argument("--postdeploy", type=Path, default=DEFAULT_POSTDEPLOY)
+    parser.add_argument("--config-validator", type=Path, default=DEFAULT_CONFIG_VALIDATOR)
     parser.add_argument("--runtime-extension", type=Path, default=DEFAULT_RUNTIME_EXTENSION)
     parser.add_argument("--reload-helper", type=Path, default=DEFAULT_RELOAD_HELPER)
     parser.add_argument("--require-worker-read-model", action="store_true")
@@ -524,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
             args.paths or list(DEFAULT_PATHS),
             prechange=args.prechange,
             postdeploy=args.postdeploy,
+            config_validator=args.config_validator,
             runtime_extension=args.runtime_extension,
             reload_helper=args.reload_helper,
             require_worker_read_model=args.require_worker_read_model,
