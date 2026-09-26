@@ -24,3 +24,5 @@ jobs:
         run: python3 -m unittest -v tests.test_prechange_guard
       - name: Verify post-deploy canary checks
         run: python3 -m unittest -v tests.test_postdeploy_canary
+      - name: Verify transactional promotion safety
+        run: python3 -m unittest -v tests.test_transactional_promote
