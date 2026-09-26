@@ -177,6 +177,10 @@ def syntax_check(candidate: Path, paths: list[str]) -> None:
                 raise PromotionError(f"invalid JSON candidate {rel}: {exc}") from exc
 
 
+def needs_service_restart(paths: list[str]) -> bool:
+    return any(not str(rel).startswith("firefox-extension/") for rel in paths)
+
+
 def http_healthy(url: str = HEALTH_URL, timeout: float = 3.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -518,7 +522,8 @@ def promote(
         try:
             deployed_hashes = transactional_replace(candidate, root, normalized, tx_root)
             source_promoted = True
-            service_restart()
+            if needs_service_restart(normalized):
+                service_restart()
 
             extension_paths = [
                 rel for rel in normalized if rel.startswith("firefox-extension/")
