@@ -125,6 +125,7 @@ def validate_relpath(rel: str) -> str:
     if any(
         normalized == prefix
         or normalized.startswith(prefix + "/")
+        or (prefix == "history.db" and normalized.startswith("history.db-"))
         or (prefix.endswith(".") and normalized.startswith(prefix))
         for prefix in BLOCKED_PREFIXES
     ):
@@ -342,11 +343,25 @@ def sync_firefox_runtime(
     stage = runtime_extension.with_name(runtime_extension.name + f".zcloud-new-{os.getpid()}")
     shutil.copy2(source, stage)
     os.replace(stage, runtime_extension)
-    if not reload_helper.exists():
-        raise PromotionError(f"Firefox reload helper missing: {reload_helper}")
-    run(["node", str(reload_helper)])
-    if sha256_file(source) != sha256_file(runtime_extension):
-        raise PromotionError("Firefox source/runtime mismatch after sync")
+    try:
+        if not reload_helper.exists():
+            raise PromotionError(f"Firefox reload helper missing: {reload_helper}")
+        run(["node", str(reload_helper)])
+        if sha256_file(source) != sha256_file(runtime_extension):
+            raise PromotionError("Firefox source/runtime mismatch after sync")
+    except Exception:
+        if backup.exists():
+            restore_stage = runtime_extension.with_name(
+                runtime_extension.name + f".zcloud-sync-revert-{os.getpid()}"
+            )
+            shutil.copy2(backup, restore_stage)
+            os.replace(restore_stage, runtime_extension)
+            if reload_helper.exists():
+                try:
+                    run(["node", str(reload_helper)])
+                except Exception:
+                    pass
+        raise
     return backup if backup.exists() else None
 
 
