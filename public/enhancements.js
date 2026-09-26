@@ -5,6 +5,32 @@
     if(!h)return '';
     return '<div class="quality-chip"><span>'+esc(h.label)+'</span><strong>'+esc(h.value)+esc(h.unit||'')+'</strong><small>'+esc(h.note||'')+'</small></div>';
   }
+  function progressDelta(p){
+    var rows=HISTORY[p.id]||[];
+    if(rows.length<2)return null;
+    var first=Number(rows[0].progress),last=Number(rows[rows.length-1].progress);
+    if(!Number.isFinite(first)||!Number.isFinite(last))return null;
+    return Math.round((last-first)*10)/10;
+  }
+  function evidencePoint(slot,item){
+    if(!item)return '';
+    var labels={latest:'Nieuwste',current:'Huidig gevalideerd',best:'Beste gevalideerd'};
+    return '<div class="evidence-point"><span>'+esc(labels[slot]||slot)+'</span><strong>'+esc(item.value)+esc(item.unit||'')+'</strong><small>'+esc(item.label||'')+(item.note?' · '+esc(item.note):'')+'</small></div>';
+  }
+  function evidencePanel(p){
+    var q=p&&p.quality||{},cmp=q.comparison||{};
+    var slots=['latest','current','best'].map(function(k){return evidencePoint(k,cmp[k])}).join('');
+    var delta=progressDelta(p);
+    var deltaText=delta==null?'Nog geen vergelijkingspunt':(delta>0?'+':'')+num(delta)+' procentpunt';
+    var bottleneck=p.next_step||p.next||p.phase||'Geen actuele bottleneck vastgelegd';
+    var sourceBits=[];
+    if(p.milestone_revision)sourceBits.push('Checkpoint '+String(p.milestone_revision));
+    if(p.progress_basis)sourceBits.push(String(p.progress_basis));
+    ['latest','current','best'].forEach(function(k){var x=cmp[k];if(x&&x.source)sourceBits.push((k==='latest'?'Nieuwste':k==='current'?'Huidig':'Beste')+': '+String(x.source))});
+    var comparison=slots?'<div class="evidence-comparison">'+slots+'</div>':'<div class="evidence-empty">Nog geen betrouwbare latest/current/best-evidence voor dit project.</div>';
+    return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Voortgang met bewijs</h2><div class="panel-subtitle">Checkpoint-voortgang, verandering en actuele bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Verandering ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Actuele bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Bronnen en technische details</summary><p>'+esc(sourceBits.join(' · ')||'Geen bronmetadata beschikbaar')+'</p></details></div>';
+  }
+
   function qPanel(p){
     var q=p&&p.quality;
     if(!q||!q.available||!q.headline)return '';
@@ -83,7 +109,9 @@
   var baseProjectCard=projectCard;
   projectCard=function(p){
     var html=baseProjectCard(p);
-    var q=qInline(p);
+    var q=qInline(p),delta=progressDelta(p);
+    var deltaChip=delta==null?'':'<span class="progress-delta '+(delta>0?'up':delta<0?'down':'flat')+'">'+(delta>0?'+':'')+num(delta)+' pp</span>';
+    if(deltaChip)html=html.replace('<div class="progress-row">','<div class="progress-row">'+deltaChip);
     return q?html.replace('<div class="progress-row">',q+'<div class="progress-row">'):html;
   };
 
@@ -97,7 +125,7 @@
   var baseDetail=detail;
   detail=function(p){
     var html=baseDetail(p);
-    var extras=qPanel(p)+readinessPanel(p)+milestonePanel(p);
+    var extras=evidencePanel(p)+qPanel(p)+readinessPanel(p)+milestonePanel(p);
     return html.replace('<div class="detail-columns">',extras+'<div class="detail-columns">');
   };
 
