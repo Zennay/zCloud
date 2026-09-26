@@ -26,7 +26,9 @@ class RunnerSmokeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-smoke-")
         self.original_db = server.DB
         self.original_cache = server.CACHE
+        self.original_layout_file = server.LAYOUT_FILE
         server.DB = Path(self.tmp.name) / "history.db"
+        server.LAYOUT_FILE = Path(self.tmp.name) / "project-layout.json"
         server.CACHE = None
         server.init_db()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -41,11 +43,12 @@ class RunnerSmokeTests(unittest.TestCase):
         self.thread.join(timeout=2)
         server.DB = self.original_db
         server.CACHE = self.original_cache
+        server.LAYOUT_FILE = self.original_layout_file
         self.tmp.cleanup()
 
-    def request(self, path, payload=None):
+    def request(self, path, payload=None, extra_headers=None):
         data = None
-        headers = {}
+        headers = dict(extra_headers or {})
         method = "GET"
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
@@ -224,6 +227,120 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertNotEqual(first["command_id"], second["command_id"])
         self.assertFalse(second.get("deduplicated"))
         self.assertGreater(second["command_id"], pause["command_id"])
+
+    def test_config_audit_worker_count_records_actor_and_noop(self):
+        status, body = self.request(
+            "/api/runner-workers",
+            {"project_id": "cloud", "worker_count": 3},
+            {"X-ZCloud-Actor": "dashboard-test"},
+        )
+        self.assertEqual(200, status, body)
+        status, audit = self.request(
+            "/api/config-audit?key=runner.worker_count&target=cloud"
+        )
+        self.assertEqual(200, status, audit)
+        item = audit["items"][0]
+        self.assertEqual("runner.worker_count", item["config_key"])
+        self.assertEqual("cloud", item["target"])
+        self.assertEqual(1, item["old_value"])
+        self.assertEqual(3, item["new_value"])
+        self.assertEqual("succeeded", item["result"])
+        self.assertTrue(item["actor"].startswith("dashboard-test@"))
+
+        status, body = self.request(
+            "/api/runner-workers",
+            {"project_id": "cloud", "worker_count": 3},
+            {"X-ZCloud-Actor": "dashboard-test"},
+        )
+        self.assertEqual(200, status, body)
+        _, audit = self.request(
+            "/api/config-audit?key=runner.worker_count&target=cloud"
+        )
+        self.assertEqual("no_change", audit["items"][0]["result"])
+        self.assertEqual(3, audit["items"][0]["old_value"])
+        self.assertEqual(3, audit["items"][0]["new_value"])
+
+    def test_config_audit_resource_priority_success_and_rejection(self):
+        policy = {"cloud": {"priority": "normal"}}
+
+        def load_policy():
+            return {key: dict(value) for key, value in policy.items()}
+
+        def set_priority(project, priority):
+            if priority not in ("normal", "high"):
+                raise ValueError("Ongeldige prioriteit")
+            old = policy.setdefault(project, {"priority": "normal"})
+            old["priority"] = priority
+            return {"project": project, "priority": priority, "weight": 1}
+
+        server.enhancements.load_resource_policy = load_policy
+        server.enhancements.set_priority = set_priority
+
+        status, body = self.request(
+            "/api/resource-priority",
+            {"project": "cloud", "priority": "high"},
+            {"X-ZCloud-Actor": "resource-test"},
+        )
+        self.assertEqual(200, status, body)
+        _, audit = self.request(
+            "/api/config-audit?key=resource.priority&target=cloud"
+        )
+        self.assertEqual("normal", audit["items"][0]["old_value"])
+        self.assertEqual("high", audit["items"][0]["new_value"])
+        self.assertEqual("succeeded", audit["items"][0]["result"])
+
+        status, body = self.request(
+            "/api/resource-priority",
+            {"project": "cloud", "priority": "warp"},
+            {"X-ZCloud-Actor": "resource-test"},
+        )
+        self.assertEqual(400, status, body)
+        _, audit = self.request(
+            "/api/config-audit?key=resource.priority&target=cloud"
+        )
+        self.assertEqual("rejected", audit["items"][0]["result"])
+        self.assertEqual("high", audit["items"][0]["old_value"])
+        self.assertEqual("warp", audit["items"][0]["new_value"])
+        self.assertIn("Ongeldige", audit["items"][0]["detail"])
+
+    def test_config_audit_project_layout_and_filters(self):
+        server.CACHE = {
+            "projects": [
+                {"id": "cloud", "name": "zCloud"},
+                {"id": "ftmo", "name": "FTMO"},
+            ]
+        }
+        status, body = self.request(
+            "/api/project-layout",
+            {"order": ["ftmo", "cloud"], "archived": ["ftmo"]},
+            {"X-ZCloud-Actor": "layout-test"},
+        )
+        self.assertEqual(200, status, body)
+        status, audit = self.request(
+            "/api/config-audit?key=project.layout&target=portfolio&limit=1"
+        )
+        self.assertEqual(200, status, audit)
+        self.assertEqual(1, len(audit["items"]))
+        item = audit["items"][0]
+        self.assertEqual("project.layout", item["config_key"])
+        self.assertEqual("portfolio", item["target"])
+        self.assertEqual(
+            {"order": ["cloud", "ftmo"], "archived": []},
+            item["old_value"],
+        )
+        self.assertEqual(
+            {"order": ["ftmo", "cloud"], "archived": ["ftmo"]},
+            item["new_value"],
+        )
+        self.assertEqual("succeeded", item["result"])
+        self.assertTrue(item["actor"].startswith("layout-test@"))
+
+    def test_config_audit_table_exists_on_cold_start(self):
+        with server.connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='config_audit'"
+            ).fetchone()
+        self.assertIsNotNone(row)
 
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
