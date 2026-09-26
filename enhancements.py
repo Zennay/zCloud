@@ -9,7 +9,7 @@ ALERT_STATE_FILE = ROOT / "alert-state.json"
 SIGNALS_DIR = ROOT / "signals"
 SIGNALS_DIR.mkdir(exist_ok=True)
 
-PRIORITY_WEIGHTS = {"background": 100, "normal": 400, "high": 800}
+PRIORITY_WEIGHTS = {"background": 100, "normal": 400, "high": 800, "turbo": 3000}
 PROJECT_UNITS = {
     "haxlab": [
         "haxlab-analyzer.service",
@@ -55,7 +55,7 @@ def _json(path, sudo=False):
 def load_resource_policy():
     default = {
         "haxlab": {"priority": "background"},
-        "ftmo": {"priority": "high"},
+        "ftmo": {"priority": "turbo"},
         "supa": {"priority": "normal"},
         "raiseai": {"priority": "normal"},
         "cloud": {"priority": "normal"},
