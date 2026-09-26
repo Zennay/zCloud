@@ -1,5 +1,3 @@
-[Reading 704 lines from start (total: 704 lines, 0 remaining)]
-
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
