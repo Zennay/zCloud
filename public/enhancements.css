@@ -33,7 +33,7 @@
 .runner-section{margin-top:22px}
 .runner-section>.section-title{display:flex;justify-content:space-between;align-items:end;margin-bottom:12px}
 .runner-section>.section-title p{margin:5px 0 0}
-.runner-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.runner-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .runner-card{min-width:0;padding:18px;border:1px solid var(--edge);border-radius:14px;background:linear-gradient(145deg,#151a22,#101319)}
 .runner-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .runner-card-head h3{margin:5px 0 0;font-size:17px}
@@ -42,11 +42,14 @@
 .runner-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}
 .runner-metrics small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}
 .runner-metrics strong{font-size:12px;font-weight:550;overflow-wrap:anywhere}
+.runner-worker-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:-2px 0 14px;padding:10px 0;border-top:1px solid #202630}
+.runner-worker-row label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:#dce5ef}
+.runner-worker-row input{width:58px;border:1px solid #3b4654;border-radius:7px;background:#0f1319;color:#e9f1f8;padding:6px 7px;font:inherit}
+.runner-worker-row small{color:var(--muted);font-size:10px;text-align:right}
 .runner-card-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--edge);padding-top:13px}
 .runner-card-foot>span{color:var(--muted);font-size:10px}
 .runner-action{border:1px solid #39594f;border-radius:8px;background:#14251e;color:#b8efd2;padding:9px 11px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
 .runner-action:hover:not(:disabled){background:#1c392c}
 .runner-action:disabled{opacity:.55;cursor:wait}
 .runner-error{color:#ffb7a5;font-size:11px;margin:-4px 0 12px}
-@media(max-width:1100px){.runner-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.runner-grid{grid-template-columns:1fr}.runner-card-foot{align-items:flex-start;flex-direction:column}.runner-action{width:100%}}
