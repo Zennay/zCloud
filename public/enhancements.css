@@ -53,3 +53,58 @@
 .runner-action:disabled{opacity:.55;cursor:wait}
 .runner-error{color:#ffb7a5;font-size:11px;margin:-4px 0 12px}
 @media(max-width:760px){.runner-grid{grid-template-columns:1fr}.runner-card-foot{align-items:flex-start;flex-direction:column}.runner-action{width:100%}}
+
+/* Mobile-first overview controls */
+.resource-panel,.alert-panel{min-width:0}
+.resource-grid{padding:8px 22px 12px}
+.resource-row{display:grid;grid-template-columns:minmax(0,1fr) 148px;gap:16px;align-items:center;padding:14px 0}
+.resource-copy{min-width:0}
+.resource-copy strong{font-size:14px;font-weight:650}
+.resource-copy small{font-size:11px;line-height:1.4}
+.resource-row select{width:100%;min-width:0;padding:10px 34px 10px 12px;border-radius:10px;background:#10151d;border-color:#374151;font-size:13px;font-weight:600}
+.section-details{border-top:1px solid var(--edge);padding:0 22px 17px;color:var(--muted)}
+.section-details summary{list-style:none;cursor:pointer;padding:13px 0 4px;color:#9da8b8;font-size:11px;font-weight:600;display:flex;align-items:center;gap:7px}
+.section-details summary::-webkit-details-marker{display:none}
+.section-details summary:after{content:'›';font-size:18px;line-height:1;transform:rotate(90deg);transition:transform .16s ease}
+.section-details[open] summary:after{transform:rotate(270deg)}
+.section-details p{font-size:10px;line-height:1.5;margin-top:9px;color:#7f8a9a}
+.resource-tech-list,.alert-tech-list{display:grid;gap:7px;margin-top:9px}
+.resource-tech-row,.alert-tech-row{display:flex;justify-content:space-between;gap:12px;font-size:10px;line-height:1.4}
+.resource-tech-row strong,.alert-tech-row strong{color:#b9c2cf;font-weight:600}
+.resource-tech-row span,.alert-tech-row span{text-align:right;color:#7f8a9a}
+.events-link{font-size:11px;color:#a8d7ff;white-space:nowrap;padding:4px 0}
+.events-link:hover{color:#d7ecff}
+.alert-list{padding:7px 22px 10px}
+.alert-row{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:10px;align-items:start;padding:14px 0}
+.alert-mark{width:7px;height:7px;border-radius:50%;margin-top:6px;background:#7790aa;box-shadow:0 0 0 3px #7790aa16}
+.alert-copy{min-width:0}
+.alert-row strong{font-size:13px;line-height:1.35;color:#e6eaf0}
+.alert-row span:not(.alert-mark){font-size:11px;line-height:1.45;margin-top:4px;color:#8e99a9}
+.alert-row time{font-size:10px;margin-top:2px;color:#7e8998}
+.alert-row.high .alert-mark,.alert-row.warning .alert-mark,.alert-row.warn .alert-mark{background:#f3ad61;box-shadow:0 0 0 3px #f3ad6118}
+.alert-row.high strong,.alert-row.warning strong,.alert-row.warn strong{color:#f3bc7c}
+.alert-row.critical .alert-mark,.alert-row.error .alert-mark{background:#ef647c;box-shadow:0 0 0 3px #ef647c1b}
+.alert-row.critical strong,.alert-row.error strong{color:#f18a9c}
+.alert-empty{padding:22px;color:#8f9aaa;font-size:12px}
+@media(max-width:760px){
+  .top-controls{grid-template-columns:1fr!important;gap:14px}
+  .top-controls .panel{width:100%;min-width:0}
+  .resource-panel .panel-header,.alert-panel .panel-header{padding:18px 18px 0;align-items:flex-start}
+  .resource-panel .panel-header h2,.alert-panel .panel-header h2{font-size:18px}
+  .resource-panel .panel-subtitle,.alert-panel .panel-subtitle{font-size:12px;line-height:1.45;max-width:250px}
+  .resource-grid{padding:7px 18px 10px}
+  .resource-row{grid-template-columns:1fr;gap:9px;padding:14px 0}
+  .resource-copy strong{font-size:15px}
+  .resource-copy small{font-size:12px;margin-top:2px}
+  .resource-row select{width:100%;min-height:46px;font-size:14px;padding:10px 13px}
+  .section-details{padding:0 18px 15px}
+  .section-details summary{min-height:42px;font-size:12px;padding-top:12px}
+  .resource-tech-row,.alert-tech-row{display:grid;grid-template-columns:1fr;gap:2px;font-size:10px}
+  .resource-tech-row span,.alert-tech-row span{text-align:left}
+  .alert-list{padding:7px 18px 8px}
+  .alert-row{grid-template-columns:8px minmax(0,1fr);gap:4px 10px;padding:14px 0}
+  .alert-row strong{font-size:14px}
+  .alert-row span:not(.alert-mark){font-size:12px}
+  .alert-row time{grid-column:2;font-size:11px;margin-top:2px}
+  .events-link{font-size:12px;padding-top:2px}
+}
