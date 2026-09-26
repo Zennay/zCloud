@@ -14,7 +14,7 @@ function runProject(cfg) {
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
-  const COMPOSER_RECOVERY_MS = 90 * 1000;
+  const COMPOSER_RECOVERY_MS = 45 * 1000;
   let sawGeneration = false;
   let awaitingGeneration = false;
   let generationDeadline = 0;
