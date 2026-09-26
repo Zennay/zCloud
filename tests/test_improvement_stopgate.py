@@ -197,7 +197,8 @@ class ImprovementStopGateTests(unittest.TestCase):
         self.assertEqual(0, state["clean_reviews"])
         self.assertEqual(
             "12345678-1234-1234-1234-123456789abc",
-            self.project_shape("cloud")[2],        )
+            self.project_shape("cloud")[2],
+        )
 
 
 if __name__ == "__main__":
