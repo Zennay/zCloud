@@ -128,6 +128,43 @@ class TransactionalPromotionTests(unittest.TestCase):
             promote.run = original_run
         self.assertEqual("old-runtime\n", runtime.read_text())
 
+    def test_config_validation_uses_candidate_overlay_only_for_selected_paths(self):
+        calls = []
+        original_run = promote.run
+
+        class Result:
+            returncode = 0
+            stdout = '{"ok":true,"errors":[]}'
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        promote.run = fake_run
+        try:
+            promote.run_config_validation(
+                Path("/bin/config-validator"),
+                candidate=self.candidate,
+                root=self.root,
+                paths=["server.py"],
+            )
+        finally:
+            promote.run = original_run
+
+        command = calls[0]
+        self.assertEqual(
+            str(self.candidate / "server.py"),
+            command[command.index("--server") + 1],
+        )
+        self.assertEqual(
+            str(self.root / "enhancements.py"),
+            command[command.index("--enhancements") + 1],
+        )
+        self.assertEqual(
+            str(self.root / "projects.json"),
+            command[command.index("--projects") + 1],
+        )
+
     def test_postdeploy_command_contract_requires_requested_features(self):
         calls = []
         original_run = promote.run
