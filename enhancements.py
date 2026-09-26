@@ -7,7 +7,6 @@ ROOT = Path("/home/ubuntu/zennay-cloud")
 RESOURCE_FILE = ROOT / "resource-policy.json"
 ALERT_STATE_FILE = ROOT / "alert-state.json"
 SIGNALS_DIR = ROOT / "signals"
-SIGNALS_DIR.mkdir(exist_ok=True)
 
 PRIORITY_WEIGHTS = {"background": 100, "normal": 400, "high": 800, "turbo": 3000}
 PROJECT_UNITS = {
