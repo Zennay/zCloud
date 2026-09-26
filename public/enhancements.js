@@ -44,9 +44,9 @@
       var cpu=r.cpu_percent==null?'meten…':num(r.cpu_percent)+'%';
       var mem=r.memory_bytes?num(r.memory_bytes/1048576)+' MB':'—';
       var detail=r.managed?'CPU '+cpu+' · RAM '+mem:'Geen persistente VPS-worker · instelling wordt bewaard';
-      return '<div class="resource-row"><div><strong>'+esc(p.name)+'</strong><small>'+detail+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Resourceprioriteit '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Achtergrond · 100</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal · 400</option><option value="high" '+(r.priority==='high'?'selected':'')+'>Hoog · 800</option></select></div>';
+      return '<div class="resource-row"><div><strong>'+esc(p.name)+'</strong><small>'+detail+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Resourceprioriteit '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Achtergrond · 100</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal · 400</option><option value="high" '+(r.priority==='high'?'selected':'')+'>Hoog · 800</option><option value="turbo" '+(r.priority==='turbo'?'selected':'')+'>Turbo · 3000</option></select></div>';
     }).join('');
-    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource priority</h2><div class="panel-subtitle">CPU/IO-weight per project · 100 / 400 / 800</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div><div class="detail-note">Achtergrond blijft doorwerken en mag vrije capaciteit gebruiken; Hoog krijgt bij contention duidelijk voorrang. Wijzigingen zijn beveiligd met dezelfde zCloud-actiesleutel als de runner-controls.</div></div>';
+    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource priority</h2><div class="panel-subtitle">Relatieve CPU/IO-weight · 100 / 400 / 800 / 3000</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div><div class="detail-note">Geen niveau is een CPU-cap: elk project mag alle vrije cores gebruiken. Alleen bij contention bepaalt de weight de verdeling; Turbo krijgt dan de sterkste voorrang, gevolgd door Hoog, Normaal en Achtergrond. Wijzigingen zijn alleen toegestaan vanaf vertrouwde beheer-IP’s; er is geen actiesleutel meer nodig.</div></div>';
   }
   function alertsPanel(){
     var a=DATA.alerts||[];
@@ -95,13 +95,11 @@
     if(!el)return;
     e.stopImmediatePropagation();
     var previous=el.dataset.previousValue||'normal';
-    var token=sessionStorage.getItem('zcloud-runner-control')||'';
-    if(!token){token=window.prompt('Voer de zCloud actiesleutel in om resource-prioriteit te wijzigen.');if(!token){el.value=previous;return}sessionStorage.setItem('zcloud-runner-control',token)}
     el.disabled=true;
     try{
-      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
+      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
       var data=await response.json().catch(function(){return {}});
-      if(!response.ok){if(response.status===401)sessionStorage.removeItem('zcloud-runner-control');throw new Error(data.error||'Opslaan mislukt')}
+      if(!response.ok){throw new Error(data.error||'Opslaan mislukt')}
       el.dataset.previousValue=el.value;
       await refresh(true);
     }catch(err){
