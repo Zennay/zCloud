@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,12 @@ BLOCKED_PREFIXES = (
 
 CREATABLE_PATHS = {
     "firefox-extension/recovery.js",
+}
+
+AUDITED_CONFIG_PATHS = {
+    "projects.json": ("project.catalog", "portfolio"),
+    "project-layout.json": ("project.layout", "portfolio"),
+    "resource-policy.json": ("resource.policy", "portfolio"),
 }
 
 
@@ -160,6 +167,61 @@ def validate_candidate(candidate: Path, root: Path, paths: list[str]) -> dict[st
             raise PromotionError(f"live target is not a file: {rel}")
         hashes[rel] = sha256_file(source)
     return hashes
+
+
+def config_changes(candidate: Path, root: Path, paths: list[str]) -> list[dict]:
+    changes = []
+    for rel in paths:
+        if rel not in AUDITED_CONFIG_PATHS:
+            continue
+        old_value = json.loads((root / rel).read_text(encoding="utf-8"))
+        new_value = json.loads((candidate / rel).read_text(encoding="utf-8"))
+        if old_value == new_value:
+            continue
+        config_key, target = AUDITED_CONFIG_PATHS[rel]
+        changes.append({
+            "path": rel,
+            "config_key": config_key,
+            "target": target,
+            "old_value": old_value,
+            "new_value": new_value,
+        })
+    return changes
+
+
+def write_config_audit(
+    db_path: Path,
+    changes: list[dict],
+    *,
+    actor: str,
+    result: str,
+    transaction_id: str,
+    detail: str = "",
+) -> None:
+    if not changes:
+        return
+    with sqlite3.connect(db_path, timeout=4) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='config_audit'"
+        ).fetchone()
+        if not exists:
+            raise PromotionError("config_audit table missing; refusing unaudited config promotion")
+        for change in changes:
+            conn.execute(
+                "INSERT INTO config_audit("
+                "ts,actor,config_key,target,old_value_json,new_value_json,result,detail"
+                ") VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    utc_now(),
+                    str(actor or "transactional-promote")[:128],
+                    change["config_key"],
+                    change["target"],
+                    json.dumps(change["old_value"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    json.dumps(change["new_value"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    result,
+                    (f"tx={transaction_id}; path={change['path']}; {detail}").strip()[:500],
+                ),
+            )
 
 
 def syntax_check(candidate: Path, paths: list[str]) -> None:
@@ -469,6 +531,7 @@ def promote(
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
     dry_run: bool = False,
+    actor: str = "transactional-promote",
 ) -> dict:
     candidate = candidate.resolve()
     root = root.resolve()
@@ -476,6 +539,7 @@ def promote(
     normalized = [validate_relpath(rel) for rel in paths]
     candidate_hashes = validate_candidate(candidate, root, normalized)
     syntax_check(candidate, normalized)
+    pending_config_changes = config_changes(candidate, root, normalized)
     config_validation = run_config_validation(
         config_validator,
         candidate=candidate,
@@ -494,6 +558,7 @@ def promote(
                 "paths": normalized,
                 "candidate_hashes": candidate_hashes,
                 "config_validation": config_validation,
+                "config_changes": pending_config_changes,
                 "prechange_snapshot": pre.get("snapshot_id"),
                 "mapping_sha256": mapping_sha,
             }
@@ -539,6 +604,14 @@ def promote(
                 expected_mapping_sha=mapping_sha,
                 require_worker_read_model=require_worker_read_model,
                 require_incidents=require_incidents,
+            )
+            write_config_audit(
+                root / "history.db",
+                pending_config_changes,
+                actor=actor,
+                result="succeeded",
+                transaction_id=tx_id,
+                detail="POSTDEPLOY_GREEN",
             )
             after = capture_lkg(
                 root,
@@ -587,6 +660,20 @@ def promote(
                     (rollback_error + "; " if rollback_error else "")
                     + f"Firefox runtime restore failed: {runtime_exc}"
                 )
+            try:
+                write_config_audit(
+                    root / "history.db",
+                    pending_config_changes,
+                    actor=actor,
+                    result="failed",
+                    transaction_id=tx_id,
+                    detail=str(exc)[:300],
+                )
+            except Exception as audit_exc:
+                rollback_error = (
+                    (rollback_error + "; " if rollback_error else "")
+                    + f"config audit failed: {audit_exc}"
+                )
             write_json_line(
                 log,
                 "promotion_failed",
@@ -615,6 +702,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-worker-read-model", action="store_true")
     parser.add_argument("--require-incidents", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--actor", default="transactional-promote")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -631,6 +719,7 @@ def main(argv: list[str] | None = None) -> int:
             require_worker_read_model=args.require_worker_read_model,
             require_incidents=args.require_incidents,
             dry_run=args.dry_run,
+            actor=args.actor,
         )
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
