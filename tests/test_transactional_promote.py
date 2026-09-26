@@ -1,5 +1,7 @@
 import hashlib
 import importlib.util
+import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -179,6 +181,78 @@ class TransactionalPromotionTests(unittest.TestCase):
             (runtime.parent / "manifest.json").read_text(),
         )
         self.assertFalse((runtime.parent / "recovery.js").exists())
+
+    def test_config_changes_capture_only_real_selected_config_changes(self):
+        self._write(self.root, "resource-policy.json", '{"cloud":{"priority":"normal"}}\n')
+        self._write(self.candidate, "resource-policy.json", '{"cloud":{"priority":"high"}}\n')
+        changes = promote.config_changes(
+            self.candidate,
+            self.root,
+            ["resource-policy.json", "server.py"],
+        )
+        self.assertEqual(1, len(changes))
+        change = changes[0]
+        self.assertEqual("resource.policy", change["config_key"])
+        self.assertEqual("portfolio", change["target"])
+        self.assertEqual({"cloud": {"priority": "normal"}}, change["old_value"])
+        self.assertEqual({"cloud": {"priority": "high"}}, change["new_value"])
+
+        self._write(self.candidate, "resource-policy.json", '{"cloud":{"priority":"normal"}}\n')
+        self.assertEqual(
+            [],
+            promote.config_changes(
+                self.candidate,
+                self.root,
+                ["resource-policy.json"],
+            ),
+        )
+
+    def test_config_audit_write_is_fail_closed_and_records_transaction(self):
+        db = self.root / "history.db"
+        change = {
+            "path": "resource-policy.json",
+            "config_key": "resource.policy",
+            "target": "portfolio",
+            "old_value": {"cloud": {"priority": "normal"}},
+            "new_value": {"cloud": {"priority": "high"}},
+        }
+        with self.assertRaises(promote.PromotionError):
+            promote.write_config_audit(
+                db,
+                [change],
+                actor="deploy-test",
+                result="succeeded",
+                transaction_id="tx-missing-table",
+            )
+
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "CREATE TABLE config_audit("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
+                "config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, "
+                "new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+            )
+        promote.write_config_audit(
+            db,
+            [change],
+            actor="deploy-test",
+            result="succeeded",
+            transaction_id="tx-123",
+            detail="POSTDEPLOY_GREEN",
+        )
+        with sqlite3.connect(db) as conn:
+            row = conn.execute(
+                "SELECT actor,config_key,target,old_value_json,new_value_json,result,detail "
+                "FROM config_audit"
+            ).fetchone()
+        self.assertEqual("deploy-test", row[0])
+        self.assertEqual("resource.policy", row[1])
+        self.assertEqual("portfolio", row[2])
+        self.assertEqual(change["old_value"], json.loads(row[3]))
+        self.assertEqual(change["new_value"], json.loads(row[4]))
+        self.assertEqual("succeeded", row[5])
+        self.assertIn("tx=tx-123", row[6])
+        self.assertIn("POSTDEPLOY_GREEN", row[6])
 
     def test_config_validation_uses_candidate_overlay_only_for_selected_paths(self):
         calls = []
