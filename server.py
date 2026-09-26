@@ -207,6 +207,9 @@ def init_db():
             c.execute('ALTER TABLE runner_targets ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 1')
             c.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='ftmo'")
         c.execute("CREATE TABLE IF NOT EXISTS runner_workers(project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, conversation_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,worker_slot))")
+        worker_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_workers)').fetchall()}
+        if 'desired_state' not in worker_columns:
+            c.execute("ALTER TABLE runner_workers ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'running'")
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
@@ -557,14 +560,16 @@ def runner_worker_targets():
             for slot in range(1,count+1):
                 c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
                           (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
-                row=c.execute('SELECT conversation_id FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
+                row=c.execute('SELECT conversation_id,desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
                 conversation_id=(row['conversation_id'] if row else '') or ''
+                desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
-                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),'active':bool(cfg['active']),
+                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
+                    'desired_state':desired_state,'active':bool(cfg['active']) and desired_state!='paused',
                     'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')
                 }
     return out
@@ -600,6 +605,8 @@ def runner_record(payload):
                       (project_id,worker_slot,match.group(1)))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
+        if event in ('runner-drained','runner-paused') and project_id in runner_targets():
+            c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
     if project_id==IMPROVEMENT_PROJECT_ID:
@@ -659,8 +666,84 @@ def runner_status(project_id=None):
             'last_generation_started':info(started),'last_generation_finished':info(finished),
             'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None,'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')}
 
+def runner_worker_statuses(project_id):
+    base=runner_targets().get(project_id)
+    if not base:
+        return []
+    targets=runner_worker_targets()
+    claims=task_claims(project_id)
+    by_worker={}
+    for claim in claims:
+        worker_id=str(claim.get('worker_id') or '')
+        if worker_id:
+            by_worker.setdefault(worker_id,[]).append(claim)
+    out=[]
+    with connect() as c:
+        for worker_key,cfg in sorted(targets.items(),key=lambda item:item[1].get('worker_slot',1)):
+            if cfg.get('base_project_id')!=project_id:
+                continue
+            slot=int(cfg.get('worker_slot') or 1)
+            args=(project_id,slot)
+            latest=c.execute('SELECT * FROM runner_events WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1',args).fetchone()
+            heartbeat=c.execute("SELECT * FROM runner_events WHERE project_id=? AND worker_slot=? AND event='heartbeat' ORDER BY id DESC LIMIT 1",args).fetchone()
+            command=c.execute('SELECT id,status,action,created_at,updated_at,result FROM runner_commands WHERE project_id=? ORDER BY id DESC LIMIT 1',(worker_key,)).fetchone()
+            desired=cfg.get('desired_state') or 'running'
+            active=bool(base.get('active')) and desired!='paused'
+            try:
+                age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(latest['ts'])).total_seconds())) if latest else None
+            except Exception:
+                age=999999
+            progress_time=(latest['progress_at'] if latest else None) or (heartbeat['progress_at'] if heartbeat else None)
+            try:
+                progress_age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(progress_time)).total_seconds())) if progress_time else None
+            except Exception:
+                progress_age=None
+            generating=bool(latest['generating']) if latest else False
+            stalled=bool(generating and progress_age is not None and progress_age>=20*60)
+            if not base.get('active') or desired=='paused':
+                state='paused'
+            elif desired=='draining':
+                state='draining'
+            elif not latest:
+                state='starting'
+            elif stalled:
+                state='stalled'
+            elif age is not None and age<=90:
+                state='live'
+            elif age is not None and age<=300:
+                state='stale'
+            else:
+                state='offline'
+            worker_claims=by_worker.get(worker_key,[])
+            claim=worker_claims[0] if worker_claims else None
+            metadata=(claim or {}).get('metadata') or {}
+            out.append({
+                'worker_id':worker_key,'worker_slot':slot,'worker_count':cfg.get('worker_count') or 1,
+                'work_area':WORKER_LANES[(slot-1)%len(WORKER_LANES)],
+                'desired_state':desired,'active':active,'state':state,'generating':generating if active else False,
+                'sending':bool(latest['sending']) if latest and active else False,'stalled':stalled if active else False,
+                'age_seconds':age,'progress_age_seconds':progress_age,
+                'last_event':({'time':latest['ts'],'event':latest['event'],'reason':latest['reason'] or None,'error':latest['error'] or None} if latest else None),
+                'last_heartbeat':({'time':heartbeat['ts'],'event':heartbeat['event']} if heartbeat else None),
+                'current_task':({'claim_key':claim.get('claim_key'),'title':metadata.get('task') or claim.get('claim_key'),
+                                 'lease_until':claim.get('lease_until'),'branch':metadata.get('branch'),'pr':metadata.get('pr') or metadata.get('pr_url')} if claim else None),
+                'conversation_id':cfg.get('conversation_id') or None,
+                'command':dict(command) if command else None,
+                'error':(latest['error'] if latest else None) or None,
+            })
+    return out
+
 def runner_statuses():
-    return {pid:runner_status(pid) for pid in runner_targets()}
+    result={}
+    for pid in runner_targets():
+        status=runner_status(pid)
+        workers=runner_worker_statuses(pid)
+        status['workers']=workers
+        status['desired_worker_count']=len(workers)
+        status['active_worker_count']=sum(1 for w in workers if w['state'] not in ('paused','offline'))
+        status['attention_worker_count']=sum(1 for w in workers if w['state'] in ('offline','stalled') or w.get('error'))
+        result[pid]=status
+    return result
 
 def watch_last_run(pid):
     aliases={'haxlab':['haxlab'],'ftmo':['ftmo'],'cloud':['zennay cloud','zennay-cloud'],'supa':['supa']}.get(pid,[pid])
@@ -791,27 +874,51 @@ class Handler(BaseHTTPRequestHandler):
                         logging.exception('Firefox runner restart failed')
                         return self.reply({'error':'Firefox-initiator kon niet worden herstart','detail':str(e)[:200]},500)
                 configs=runner_targets()
-                if project_id not in configs or action not in ('start','pause','new_chat','push'):return self.reply({'error':'Ongeldige runneractie'},400)
-                if project_id==IMPROVEMENT_PROJECT_ID and action=='push' and not configs[project_id].get('auto_continue',True):
-                    return self.reply({'error':'zCloud improvements staan op Finished / Maintain. Gebruik Resume improvements om bewust verder te gaan.','improvement':configs[project_id].get('improvement')},409)
+                worker_configs=runner_worker_targets()
+                worker_cfg=worker_configs.get(project_id)
+                is_worker=worker_cfg is not None
+                base_project_id=worker_cfg.get('base_project_id') if is_worker else project_id
+                allowed=('start','pause','new_chat','push','drain') if is_worker else ('start','pause','new_chat','push')
+                if base_project_id not in configs or action not in allowed:return self.reply({'error':'Ongeldige runneractie'},400)
+                if base_project_id==IMPROVEMENT_PROJECT_ID and action=='push' and not configs[base_project_id].get('auto_continue',True):
+                    return self.reply({'error':'zCloud improvements staan op Finished / Maintain. Gebruik Resume improvements om bewust verder te gaan.','improvement':configs[base_project_id].get('improvement')},409)
                 with connect() as c:
                     recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND action=? AND status IN ('pending','completed') ORDER BY id DESC LIMIT 1",(project_id,action)).fetchone()
                     if recent:
                         try:
                             seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
-                            cooldown=5 if action in ('push','start','pause') else 30
-                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)
+                            cooldown=5 if action in ('push','start','pause','drain') else 30
+                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
                         except Exception: pass
-                    if action=='push' and not configs[project_id].get('active'):
-                        return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
-                    if action in ('start','new_chat'):
-                        c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
-                    elif action=='pause':
-                        c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
+                    if is_worker:
+                        if not configs[base_project_id].get('active') and action!='pause':
+                            return self.reply({'error':'Start eerst het project voordat je deze worker bedient'},409)
+                        slot=int(worker_cfg.get('worker_slot') or 1)
+                        current=worker_cfg.get('desired_state') or 'running'
+                        if action=='push' and current!='running':
+                            return self.reply({'error':'Deze worker is niet beschikbaar voor een nieuwe push'},409)
+                        if action in ('start','new_chat'):
+                            c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
+                        elif action=='pause':
+                            c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
+                        elif action=='drain':
+                            c.execute("UPDATE runner_workers SET desired_state='draining' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
+                    else:
+                        if action=='push' and not configs[project_id].get('active'):
+                            return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
+                        if action=='push' and not any(w.get('active') for w in worker_configs.values() if w.get('base_project_id')==project_id):
+                            return self.reply({'error':'Geen actieve workers om te pushen'},409)
+                        if action in ('start','new_chat'):
+                            c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
+                            c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
+                        elif action=='pause':
+                            c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
+                            c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
                     ts=now()
                     cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
                     command_id=cur.lastrowid
-                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause'})
+                desired_state=('draining' if action=='drain' else 'paused' if action=='pause' else 'running')
+                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause','desired_state':desired_state})
             if u.path=='/api/improvement-loop':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or IMPROVEMENT_PROJECT_ID).strip()
