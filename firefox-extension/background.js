@@ -6,10 +6,10 @@ const pendingAdoptions = Object.create(null);
 const runningActions = new Set();
 const processedCommands = new Set();
 
-function workerKeysFor(projectId) {
-  if (targets[projectId]) return [projectId];
+function workerKeysFor(projectId, activeOnly = false) {
+  if (targets[projectId]) return (!activeOnly || targets[projectId].active) ? [projectId] : [];
   return Object.values(targets)
-    .filter(t => (t.base_project_id || t.project_id) === projectId)
+    .filter(t => (t.base_project_id || t.project_id) === projectId && (!activeOnly || t.active))
     .sort((a,b) => (a.worker_slot || 1) - (b.worker_slot || 1))
     .map(t => t.project_id);
 }
@@ -35,6 +35,7 @@ function runProject(cfg) {
   let sending = false;
   let lastGenerating = null;
   let paused = false;
+  let draining = cfg.desired_state === "draining";
   let recoveryRequested = false;
   const startedAt = Date.now();
   let lastPromptSentAt = 0;
@@ -147,7 +148,7 @@ function runProject(cfg) {
     return true;
   }
   async function send(reason) {
-    if (paused || sending || stopButton()) return false;
+    if (paused || draining || sending || stopButton()) return false;
     const draft = composerText();
     if (draft === null) { status("send-blocked", {reason: "composer-missing"}); return false; }
     if (draft && draft !== PROMPT) { status("send-blocked", {reason: "draft-present"}); return false; }
@@ -231,10 +232,24 @@ function runProject(cfg) {
         finishedAt = 0;
         lastText = text;
         await reportFinishSignals(text);
+        if (draining) {
+          paused = true;
+          clearInterval(tickTimer);
+          clearInterval(heartbeatTimer);
+          status("runner-drained", {reason: "current-task-finished"});
+          return;
+        }
         if (SINGLE_RUN) { status("scheduled-run-complete", {reason: "single-run"}); return; }
         if (!paused && await canAutoContinue()) await send("antwoord klaar");
         else if (!paused) status("auto-continue-blocked", {reason: "finished-maintain"});
       }
+      return;
+    }
+    if (draining) {
+      paused = true;
+      clearInterval(tickTimer);
+      clearInterval(heartbeatTimer);
+      status("runner-drained", {reason: "already-idle"});
       return;
     }
     if (SINGLE_RUN) return;
@@ -293,6 +308,11 @@ function runProject(cfg) {
         return {ok: !!ok, reason: ok ? "prompt-sent" : "send-unavailable"};
       })();
     }
+    if (message.type === "runner-drain") {
+      draining = true;
+      status("runner-draining", {reason: message.reason || "dashboard-drain"});
+      return {ok: true, reason: "draining"};
+    }
     if (message.type === "runner-stop") {
       paused = true;
       clearInterval(tickTimer);
@@ -306,6 +326,7 @@ function runProject(cfg) {
   heartbeatTimer = setInterval(() => status("heartbeat"), 60000);
   setTimeout(async () => {
     if (paused) return;
+    if (draining) { status("runner-draining", {reason: "restart-drain"}); return; }
     if (SINGLE_RUN) { status("scheduled-ready", {reason: "awaiting-daily-push"}); return; }
     if (!(await canAutoContinue())) { status("auto-continue-blocked", {reason: "finished-maintain"}); return; }
     if (stopButton()) { status("startup-blocked", {reason: "generation-active"}); return; }
@@ -357,6 +378,11 @@ async function refreshTargets() {
           delete projectTabs[target.project_id];
           delete pendingAdoptions[assignedTabId];
         }
+        continue;
+      }
+      if (target.desired_state === "draining" && assignedTabId == null) {
+        postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
+          projectName:target.name,target:target.url,event:"runner-drained",reason:"already-idle",at:new Date().toISOString()});
         continue;
       }
       if (assignedTabId != null) {
@@ -504,8 +530,38 @@ async function pauseProject(projectId, commandId) {
     event: "runner-paused", reason: "dashboard-pause", at: new Date().toISOString()});
   await commandResult(commandId, "completed", "Project gepauzeerd");
 }
+async function drainProject(projectId, commandId) {
+  if (!targets[projectId]) {
+    await commandResult(commandId, "failed", "Workerconfig ontbreekt");
+    return;
+  }
+  const target = targets[projectId];
+  const tabId = projectTabs[projectId];
+  if (tabId == null) {
+    postStatus({projectId: projectId, projectName: target?.name, target: target?.url || "",
+      event: "runner-drained", reason: "already-idle", at: new Date().toISOString()});
+    await commandResult(commandId, "completed", "Worker was al klaar");
+    return;
+  }
+  let result = null;
+  try {
+    result = await browser.tabs.sendMessage(tabId, {type: "runner-drain", projectId: projectId, reason: "dashboard-drain"});
+  } catch (_) {
+    try {
+      await inject(tabId, target);
+      await new Promise(resolve => setTimeout(resolve, 800));
+      result = await browser.tabs.sendMessage(tabId, {type: "runner-drain", projectId: projectId, reason: "dashboard-drain"});
+    } catch (_) {}
+  }
+  if (result?.ok) {
+    await commandResult(commandId, "completed", "Worker rondt de huidige taak af");
+  } else {
+    await commandResult(commandId, "failed", "Drain kon niet veilig worden bevestigd");
+  }
+}
+
 async function pushProject(projectId, commandId) {
-  const workerKeys = workerKeysFor(projectId);
+  const workerKeys = workerKeysFor(projectId, true);
   if (!targets[projectId] && workerKeys.length) {
     for (const key of workerKeys) await pushProject(key, null);
     await commandResult(commandId, "completed", workerKeys.length + " ChatGPT-workers gepusht");
@@ -579,6 +635,7 @@ async function pollCommands() {
       if (command.action === "push") await pushProject(command.project_id, command.id);
       else if (command.action === "start") await startProject(command.project_id, command.id);
       else if (command.action === "pause") await pauseProject(command.project_id, command.id);
+      else if (command.action === "drain") await drainProject(command.project_id, command.id);
       else await newProjectChat(command.project_id, "dashboard-restart", command.id);
     }
   } catch (_) {}
