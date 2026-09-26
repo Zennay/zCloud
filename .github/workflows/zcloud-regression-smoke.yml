@@ -18,3 +18,5 @@ jobs:
         run: bash tests/test_birds_eye_review.sh
       - name: Verify zCloud self-improvement stop-gate browser isolation
         run: bash tests/test_improvement_stopgate_js.sh
+      - name: Verify safe in-place Firefox addon reload helper
+        run: node tests/test_reload_extension.mjs
