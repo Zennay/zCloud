@@ -4,6 +4,7 @@ import tempfile
 import threading
 import types
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -63,6 +64,16 @@ class ImprovementStopGateTests(unittest.TestCase):
                 (project_id,),
             ).fetchone()
         return tuple(row)
+
+    def test_canonical_main_sha_tolerates_missing_shallow_refs(self):
+        sha = "a" * 40
+        def fake_cmd(args):
+            ref = args[-1]
+            if ref in ("origin/main", "main"):
+                raise RuntimeError("missing shallow ref")
+            return sha
+        with patch.object(server, "cmd", side_effect=fake_cmd):
+            self.assertEqual(sha, server.canonical_main_sha())
 
     def test_two_clean_reviews_finish_only_cloud_and_survive_restart(self):
         ftmo_before = self.project_shape("ftmo")
