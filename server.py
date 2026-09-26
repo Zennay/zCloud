@@ -414,7 +414,10 @@ IMPROVEMENT_RUNNING = 'running'
 
 def canonical_main_sha():
     for ref in ('origin/main', 'main', 'HEAD'):
-        value=(cmd(['git','-C',str(ROOT),'rev-parse',ref]) or '').strip()
+        try:
+            value=(cmd(['git','-C',str(ROOT),'rev-parse',ref]) or '').strip()
+        except Exception:
+            continue
         if re.fullmatch(r'[0-9a-f]{40}',value,re.I):
             return value
     return None
