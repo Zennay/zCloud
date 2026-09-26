@@ -18,12 +18,45 @@ FIREFOX_RUNNER_SERVICE = 'chatgpt-firefox.service'
 SERVICES = ['haxlab-analyzer.service', 'haxlab-ingest.service', 'haxlab-worker.service', 'ftmo-autonomous.service', 'ftmo-autonomous.timer', SUPA_SYNC, *RUNNERS.values()]
 WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
-RUNNER_CONTROL_FILE = ROOT / '.runner-control-token'
+ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
+MAX_CHATGPT_WORKERS = 8
+WORKER_LANES = (
+    'kritieke pad / eerstvolgende veilige projectgate',
+    'tests, validatie, determinisme en race-condition checks',
+    'data, provider-validatie, preprocessing en provenance',
+    'VPS-infra, performance, concurrency en resourceveiligheid',
+    'stress-tests, transactiekosten, diagnostics en challenge-simulaties',
+    'voorbereidend werk voor de volgende generatie zonder verborgen OOS-resultaten',
+    'telemetrie, documentatie en reproduceerbaarheid',
+    'onafhankelijke QA van open werk zonder bestaand werk te dupliceren',
+)
 PROJECT_INDEX = {p['id']: p for p in json.loads((ROOT/'projects.json').read_text())}
 KNOWN_RUNNER_CONVERSATIONS = {
     'haxlab': '6ab6e0af-b1e8-83eb-b355-6398eb60dce4',
     'ftmo': '6ab611aa-d5c4-83eb-940c-498aa3dbe0e1',
 }
+
+def action_request_allowed(handler):
+    addr = handler.client_address[0]
+    if addr in ('127.0.0.1', '::1'):
+        return True
+    try:
+        allowed = {line.strip() for line in ACTION_ALLOW_FILE.read_text().splitlines() if line.strip()}
+    except Exception:
+        allowed = set()
+    if addr in allowed:
+        return True
+    host = (handler.headers.get('Host') or '').strip()
+    origin = (handler.headers.get('Origin') or '').strip()
+    referer = (handler.headers.get('Referer') or '').strip()
+    fetch_site = (handler.headers.get('Sec-Fetch-Site') or '').strip().lower()
+    same_origin = bool(host) and (
+        origin in ('http://' + host, 'https://' + host) or
+        referer.startswith('http://' + host + '/') or
+        referer.startswith('https://' + host + '/')
+    )
+    return same_origin and fetch_site in ('same-origin', 'same-site')
+
 def project_runner_prompt(project_id, name):
     return (
         f'Ga verder met project {name}. Deze chat is uitsluitend voor project {name}; werk niet aan andere projecten. '
@@ -34,6 +67,24 @@ def project_runner_prompt(project_id, name):
         'projectdocumentatie expliciet iets anders aangeeft. Rapporteer kort wat je hebt gedaan, wat de nieuwe status '
         'is en wat logisch als volgende stap volgt.'
     )
+
+def project_worker_prompt(project_id, name, base_prompt, slot, total):
+    lane=WORKER_LANES[(slot-1) % len(WORKER_LANES)]
+    coordination=(
+        f' Je bent parallelle zCloud-worker {slot}/{total}. Jouw werk-lane is: {lane}. '
+        'Voorkom dubbelwerk: controleer vóór iedere wijziging actuele Notion-taken/claims, open GitHub-PRs/branches '
+        'en de live VPS-status. Pak alleen een concrete work-item die niet al actief door een andere worker wordt '
+        'uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion en leg je claim vast '
+        'voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe alleen read-only '
+        'validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
+    )
+    if project_id=='ftmo':
+        coordination += (
+            ' Voor FTMO blijven preregistration, chronologische splits, walk-forward en final holdout strikt gescheiden. '
+            'Gebruik verborgen validation/holdout-resultaten nooit voor ontwerpkeuzes en red of retune afgewezen '
+            'generaties niet. Parallel voorbereid werk is alleen toegestaan wanneer het outcome-free blijft.'
+        )
+    return base_prompt + coordination
 RUNNER_DEFAULTS = {
     pid: {
         'name': project['name'],
@@ -126,6 +177,7 @@ def init_db():
         if 'project_id' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN project_id TEXT')
         if 'progress_at' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN progress_at TEXT')
         if 'assistant_chars' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN assistant_chars INTEGER')
+        if 'worker_slot' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN worker_slot INTEGER NOT NULL DEFAULT 1')
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_ts ON runner_events(project_id,ts)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')
         target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
@@ -133,12 +185,22 @@ def init_db():
         if migrated_active:
             c.execute('ALTER TABLE runner_targets ADD COLUMN active INTEGER NOT NULL DEFAULT 0')
             c.execute("UPDATE runner_targets SET active=1 WHERE project_id IN ('haxlab','ftmo')")
+        if 'worker_count' not in target_columns:
+            c.execute('ALTER TABLE runner_targets ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 1')
+            c.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='ftmo'")
+        c.execute("CREATE TABLE IF NOT EXISTS runner_workers(project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, conversation_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,worker_slot))")
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         for project_id,target in RUNNER_DEFAULTS.items():
             c.execute('INSERT INTO runner_targets(project_id,name,conversation_id,prompt,active) VALUES(?,?,?,?,0) '
                       'ON CONFLICT(project_id) DO UPDATE SET name=excluded.name,prompt=excluded.prompt',
                       (project_id,target['name'],target['conversation_id'],target['prompt']))
+            row=c.execute('SELECT conversation_id,worker_count FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+            c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
+                      (project_id,1,row['conversation_id'] or ''))
+            for slot in range(2,max(1,int(row['worker_count'] or 1))+1):
+                c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
+                          (project_id,slot,''))
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_ts ON runner_events(ts)')
         enhancements.init_db(c)
         # Preserve original snapshots, whose timestamps were recorded in VPS UTC.
@@ -194,13 +256,16 @@ def collect():
             try:
                 git(path,'rev-parse','--git-dir')
                 active_ref=None
-                for candidate in (repo_ref,'HEAD'):
+                valid_refs=[]
+                for candidate in dict.fromkeys((repo_ref,'HEAD')):
                     try:
                         git(path,'rev-parse','--verify',candidate+'^{commit}')
-                        active_ref=candidate
-                        break
+                        ts=git(path,'show','-s','--format=%ct',candidate)
+                        valid_refs.append((int(ts),candidate))
                     except Exception:
                         pass
+                if valid_refs:
+                    active_ref=max(valid_refs)[1]
                 if active_ref is None:
                     p['source_status']='empty'; p['commits']=0; p['message']='Repo gekoppeld · nog geen commits'
                 else:
@@ -302,10 +367,30 @@ def compact_history(pid, limit=24):
 
 def runner_targets():
     with connect() as c:
-        rows=c.execute('SELECT project_id,name,conversation_id,prompt,active FROM runner_targets ORDER BY project_id').fetchall()
+        rows=c.execute('SELECT project_id,name,conversation_id,prompt,active,worker_count FROM runner_targets ORDER BY project_id').fetchall()
     return {r['project_id']:{'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
                             'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
-                            'prompt':r['prompt'],'active':bool(r['active'])} for r in rows}
+                            'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1))} for r in rows}
+
+def runner_worker_targets():
+    base=runner_targets()
+    out={}
+    with connect() as c:
+        for project_id,cfg in base.items():
+            count=max(1,min(MAX_CHATGPT_WORKERS,int(cfg.get('worker_count') or 1)))
+            for slot in range(1,count+1):
+                c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
+                          (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
+                row=c.execute('SELECT conversation_id FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
+                conversation_id=(row['conversation_id'] if row else '') or ''
+                worker_key=f'{project_id}::w{slot}'
+                out[worker_key]={
+                    'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
+                    'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
+                    'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
+                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),'active':bool(cfg['active'])
+                }
+    return out
 
 def runner_record(payload):
     event=str(payload.get('event') or 'unknown')[:64]
@@ -322,16 +407,22 @@ def runner_record(payload):
     try: assistant_chars=max(0,min(2000000,int(payload.get('assistantCharacters')))) if payload.get('assistantCharacters') is not None else None
     except Exception: assistant_chars=None
     tab_id=payload.get('tabId')
-    project_id=str(payload.get('projectId') or '')[:40]
+    raw_project_id=str(payload.get('projectId') or '')[:80]
+    project_id=str(payload.get('baseProjectId') or raw_project_id.split('::w',1)[0])[:40]
+    try: worker_slot=max(1,min(MAX_CHATGPT_WORKERS,int(payload.get('workerSlot') or (raw_project_id.split('::w',1)[1] if '::w' in raw_project_id else 1))))
+    except Exception: worker_slot=1
     match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
     with connect() as c:
         if not project_id and target:
             for pid,t in runner_targets().items():
                 if t['conversation_id'] and t['conversation_id'] in target: project_id=pid; break
-        c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error,project_id,progress_at,assistant_chars) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                  (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error,project_id or None,progress_at,assistant_chars))
+        c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error,project_id,progress_at,assistant_chars,worker_slot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                  (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error,project_id or None,progress_at,assistant_chars,worker_slot))
         if event == 'conversation-adopted' and project_id in runner_targets() and match:
-            c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
+            c.execute('INSERT INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?) ON CONFLICT(project_id,worker_slot) DO UPDATE SET conversation_id=excluded.conversation_id',
+                      (project_id,worker_slot,match.group(1)))
+            if worker_slot==1:
+                c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
 
@@ -362,7 +453,7 @@ def runner_status(project_id=None):
         return {'project_id':project_id,'name':cfg.get('name'),'state':'offline' if active else 'paused','active':active,'age_seconds':None,
                 'generating':False,'sending':False,'last_event':None,'last_heartbeat':None,
                 'last_prompt_sent':None,'last_generation_started':None,'last_generation_finished':None,
-                'command':dict(command) if command else None}
+                'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None}
     try: age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(latest['ts'])).total_seconds()))
     except Exception: age=999999
     progress_time=latest['progress_at'] or (heartbeat['progress_at'] if heartbeat else None)
@@ -378,7 +469,7 @@ def runner_status(project_id=None):
             'tab_id':latest['tab_id'],'error':latest['error'] or None,'event':latest['event'],
             'last_event':info(latest),'last_heartbeat':info(heartbeat),'last_prompt_sent':info(prompt),
             'last_generation_started':info(started),'last_generation_finished':info(finished),
-            'command':dict(command) if command else None}
+            'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None}
 
 def runner_statuses():
     return {pid:runner_status(pid) for pid in runner_targets()}
@@ -500,10 +591,7 @@ class Handler(BaseHTTPRequestHandler):
                               (status,now(),str(payload.get('result') or '')[:300],command_id))
                 return self.reply({'ok':True})
             if u.path=='/api/runner-control':
-                auth=self.headers.get('Authorization','')
-                supplied=auth[7:] if auth.startswith('Bearer ') else ''
-                expected=RUNNER_CONTROL_FILE.read_text().strip() if RUNNER_CONTROL_FILE.exists() else ''
-                if not expected or not hmac.compare_digest(supplied,expected):return self.reply({'error':'Unauthorized'},401)
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or '')
                 action=str(payload.get('action') or '')
                 if action=='restart_firefox':
@@ -534,12 +622,22 @@ class Handler(BaseHTTPRequestHandler):
                     cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
                     command_id=cur.lastrowid
                 return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause'})
+            if u.path=='/api/runner-workers':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                project_id=str(payload.get('project_id') or '')
+                try: worker_count=int(payload.get('worker_count'))
+                except Exception: return self.reply({'error':'Aantal ChatGPT-tabs moet een geheel getal zijn'},400)
+                if project_id not in runner_targets():return self.reply({'error':'Onbekend project'},404)
+                if worker_count<1 or worker_count>MAX_CHATGPT_WORKERS:return self.reply({'error':f'Kies 1 t/m {MAX_CHATGPT_WORKERS} ChatGPT-tabs'},400)
+                with connect() as c:
+                    c.execute('UPDATE runner_targets SET worker_count=? WHERE project_id=?',(worker_count,project_id))
+                    primary=c.execute('SELECT conversation_id FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+                    for slot in range(1,worker_count+1):
+                        c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
+                                  (project_id,slot,(primary['conversation_id'] if slot==1 and primary else '') or ''))
+                return self.reply({'ok':True,'project_id':project_id,'worker_count':worker_count,'max_workers':MAX_CHATGPT_WORKERS})
             if u.path=='/api/resource-priority':
-                auth=self.headers.get('Authorization','')
-                supplied=auth[7:] if auth.startswith('Bearer ') else ''
-                expected=RUNNER_CONTROL_FILE.read_text().strip() if RUNNER_CONTROL_FILE.exists() else ''
-                local=self.client_address[0] in ('127.0.0.1','::1')
-                if not local and (not expected or not hmac.compare_digest(supplied,expected)):return self.reply({'error':'Unauthorized'},401)
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project=str(payload.get('project') or '')
                 priority=str(payload.get('priority') or '')
                 try: result=enhancements.set_priority(project,priority)
@@ -558,7 +656,7 @@ class Handler(BaseHTTPRequestHandler):
         u=urlparse(self.path);q=parse_qs(u.query)
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
-            return self.reply({'projects':runner_targets()})
+            return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
         if u.path=='/api/runner-commands':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             with connect() as c:
@@ -602,8 +700,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     init_db()
-    if not RUNNER_CONTROL_FILE.exists():
-        RUNNER_CONTROL_FILE.write_text(secrets.token_urlsafe(32)+chr(10))
-        RUNNER_CONTROL_FILE.chmod(0o600)
     threading.Thread(target=sampler,daemon=True,name='cloud-monitor').start()
     ThreadingHTTPServer((os.getenv('ZENNAY_BIND','0.0.0.0'),int(os.getenv('ZENNAY_PORT','8765'))),Handler).serve_forever()
