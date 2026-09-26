@@ -6,6 +6,14 @@ const pendingAdoptions = Object.create(null);
 const runningActions = new Set();
 const processedCommands = new Set();
 
+function workerKeysFor(projectId) {
+  if (targets[projectId]) return [projectId];
+  return Object.values(targets)
+    .filter(t => (t.base_project_id || t.project_id) === projectId)
+    .sort((a,b) => (a.worker_slot || 1) - (b.worker_slot || 1))
+    .map(t => t.project_id);
+}
+
 function runProject(cfg) {
   const marker = "__ZC_RUNNER_" + cfg.projectId.replace(/[^a-z0-9]/gi, "");
   if (window[marker]) return;
@@ -66,6 +74,8 @@ function runProject(cfg) {
     const text = assistantText();
     const payload = {
       projectId: cfg.projectId,
+      baseProjectId: cfg.base_project_id || cfg.projectId,
+      workerSlot: cfg.worker_slot || 1,
       projectName: cfg.name,
       target: location.href,
       targetConversation: cfg.conversation_id,
@@ -260,7 +270,20 @@ async function refreshTargets() {
     const response = await fetch(API + "/runner-targets", {cache: "no-store"});
     if (!response.ok) throw new Error("config HTTP " + response.status);
     const data = await response.json();
-    for (const [id, target] of Object.entries(data.projects || {})) {
+    const incoming = data.projects || {};
+    for (const id of Object.keys(targets)) {
+      if (Object.prototype.hasOwnProperty.call(incoming, id)) continue;
+      const tabId = projectTabs[id];
+      if (tabId != null) {
+        try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: id, reason: "worker-count-reduced"}); } catch (_) {}
+        try { await browser.tabs.remove(tabId); } catch (_) {}
+        delete tabTargets[tabId];
+        delete pendingAdoptions[tabId];
+      }
+      delete projectTabs[id];
+      delete targets[id];
+    }
+    for (const [id, target] of Object.entries(incoming)) {
       targets[id] = {...target, projectId: target.project_id || id, projectName: target.name || id};
     }
     postStatus({event: "targets-loaded", at: new Date().toISOString(), reason: Object.keys(targets).join(",")});
@@ -319,6 +342,18 @@ async function commandResult(commandId, status, result) {
     body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
 }
 async function newProjectChat(projectId, reason, commandId) {
+  const workerKeys = workerKeysFor(projectId);
+  if (!targets[projectId] && workerKeys.length) {
+    if (runningActions.has(projectId)) return;
+    runningActions.add(projectId);
+    try {
+      for (const key of workerKeys) await newProjectChat(key, reason, null);
+      await commandResult(commandId, "completed", workerKeys.length + " aparte workerchats geopend");
+    } catch (error) {
+      await commandResult(commandId, "failed", String(error?.message || error));
+    } finally { runningActions.delete(projectId); }
+    return;
+  }
   if (runningActions.has(projectId)) return;
   runningActions.add(projectId);
   const target = targets[projectId];
@@ -344,6 +379,18 @@ async function newProjectChat(projectId, reason, commandId) {
   } finally { runningActions.delete(projectId); }
 }
 async function startProject(projectId, commandId) {
+  const workerKeys = workerKeysFor(projectId);
+  if (!targets[projectId] && workerKeys.length) {
+    if (runningActions.has(projectId)) return;
+    runningActions.add(projectId);
+    try {
+      for (const key of workerKeys) await startProject(key, null);
+      await commandResult(commandId, "completed", workerKeys.length + " ChatGPT-workers gestart");
+    } catch (error) {
+      await commandResult(commandId, "failed", String(error?.message || error));
+    } finally { runningActions.delete(projectId); }
+    return;
+  }
   if (runningActions.has(projectId)) return;
   runningActions.add(projectId);
   const target = targets[projectId];
@@ -378,6 +425,12 @@ async function startProject(projectId, commandId) {
   }
 }
 async function pauseProject(projectId, commandId) {
+  const workerKeys = workerKeysFor(projectId);
+  if (!targets[projectId] && workerKeys.length) {
+    for (const key of workerKeys) await pauseProject(key, null);
+    await commandResult(commandId, "completed", workerKeys.length + " ChatGPT-workers gepauzeerd");
+    return;
+  }
   const target = targets[projectId];
   if (target) target.active = false;
   const tabId = projectTabs[projectId];
@@ -393,6 +446,12 @@ async function pauseProject(projectId, commandId) {
   await commandResult(commandId, "completed", "Project gepauzeerd");
 }
 async function pushProject(projectId, commandId) {
+  const workerKeys = workerKeysFor(projectId);
+  if (!targets[projectId] && workerKeys.length) {
+    for (const key of workerKeys) await pushProject(key, null);
+    await commandResult(commandId, "completed", workerKeys.length + " ChatGPT-workers gepusht");
+    return;
+  }
   const target = targets[projectId];
   if (!target) {
     await commandResult(commandId, "failed", "Projectconfig ontbreekt");
