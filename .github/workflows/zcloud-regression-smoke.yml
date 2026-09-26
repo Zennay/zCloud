@@ -26,3 +26,5 @@ jobs:
         run: python3 -m unittest -v tests.test_postdeploy_canary
       - name: Verify transactional promotion safety
         run: python3 -m unittest -v tests.test_transactional_promote
+      - name: Verify control-plane health contract
+        run: python3 -m unittest -v tests.test_zcloud_healthcheck
