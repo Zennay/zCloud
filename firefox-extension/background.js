@@ -210,7 +210,7 @@ function runProject(cfg) {
       return;
     }
     composerMissingSince = 0;
-    if (!sending && now - startedAt >= STARTUP_IDLE_MS &&
+    if (!SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
         (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
       if (draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
@@ -513,7 +513,8 @@ async function pollCommands() {
     if (!response.ok) return;
     const data = await response.json();
     for (const command of data.commands || []) {
-      if (!targets[command.project_id] || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
+      const hasTarget = !!targets[command.project_id] || workerKeysFor(command.project_id).length > 0;
+      if (!hasTarget || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
       processedCommands.add(command.id);
       if (command.action === "push") await pushProject(command.project_id, command.id);
       else if (command.action === "start") await startProject(command.project_id, command.id);
