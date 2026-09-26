@@ -107,6 +107,47 @@ class PostdeployCanaryTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
 
+    def test_firefox_runtime_parity_covers_manifest_and_recovery_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            runtime = Path(tmp) / "runtime"
+            (root / "firefox-extension").mkdir(parents=True)
+            runtime.mkdir()
+            for name, value in (
+                ("background.js", "bg\n"),
+                ("manifest.json", "{}\n"),
+                ("recovery.js", "helper\n"),
+            ):
+                (root / "firefox-extension" / name).write_text(value)
+                (runtime / name).write_text(value)
+            result = canary.firefox_runtime_parity(
+                root,
+                runtime / "background.js",
+            )
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(
+                ["background.js", "manifest.json", "recovery.js"],
+                result["checked"],
+            )
+
+    def test_firefox_runtime_parity_blocks_missing_recovery_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            runtime = Path(tmp) / "runtime"
+            (root / "firefox-extension").mkdir(parents=True)
+            runtime.mkdir()
+            (root / "firefox-extension/background.js").write_text("bg\n")
+            (root / "firefox-extension/manifest.json").write_text("{}\n")
+            (root / "firefox-extension/recovery.js").write_text("helper\n")
+            (runtime / "background.js").write_text("bg\n")
+            (runtime / "manifest.json").write_text("{}\n")
+            result = canary.firefox_runtime_parity(
+                root,
+                runtime / "background.js",
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual("recovery.js", result["mismatches"][0]["file"])
+
     def test_mapping_fingerprint_matches_recovery_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "history.db"
