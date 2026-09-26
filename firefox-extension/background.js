@@ -13,7 +13,7 @@ function runProject(cfg) {
   const PROMPT = cfg.prompt;
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
-  const STARTUP_IDLE_MS = 15000;
+  const STARTUP_IDLE_MS = 8000;
   const COMPOSER_RECOVERY_MS = 90 * 1000;
   let sawGeneration = false;
   let awaitingGeneration = false;
@@ -28,6 +28,7 @@ function runProject(cfg) {
   const startedAt = Date.now();
   let lastPromptSentAt = 0;
   let lastStartupStatusAt = 0;
+  let lastStartupAttemptAt = 0;
   let composerMissingSince = 0;
   let tickTimer = null;
   let heartbeatTimer = null;
@@ -99,17 +100,17 @@ function runProject(cfg) {
     return true;
   }
   async function send(reason) {
-    if (paused || sending || stopButton()) return;
+    if (paused || sending || stopButton()) return false;
     const draft = composerText();
-    if (draft === null) { status("send-blocked", {reason: "composer-missing"}); return; }
-    if (draft && draft !== PROMPT) { status("send-blocked", {reason: "draft-present"}); return; }
+    if (draft === null) { status("send-blocked", {reason: "composer-missing"}); return false; }
+    if (draft && draft !== PROMPT) { status("send-blocked", {reason: "draft-present"}); return false; }
     sending = true;
     try {
       const ok = draft === PROMPT || await fill(PROMPT);
-      if (!ok) { status("send-blocked", {reason: "composer-missing"}); return; }
+      if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
       await sleep(700);
       const button = sendButton();
-      if (!button || button.disabled) { status("send-blocked", {reason: "send-button-unavailable"}); return; }
+      if (!button || button.disabled) { status("send-blocked", {reason: "send-button-unavailable"}); return false; }
       button.click();
       lastPromptSentAt = Date.now();
       lastProgressAt = Date.now();
@@ -118,6 +119,7 @@ function runProject(cfg) {
       generationDeadline = Date.now() + 120000;
       finishedAt = 0;
       status("prompt-sent", {reason: reason});
+      return true;
     } finally {
       await sleep(1000);
       sending = false;
@@ -155,6 +157,16 @@ function runProject(cfg) {
       return;
     }
     if (awaitingGeneration) {
+      if (text && text !== lastText) {
+        awaitingGeneration = false;
+        sawGeneration = true;
+        finishedAt = now;
+        lastText = text;
+        lastProgressAt = now;
+        status("generation-started", {reason: "response-detected-between-polls"});
+        status("generation-finished", {reason: "response-detected-between-polls"});
+        return;
+      }
       if (now < generationDeadline) return;
       awaitingGeneration = false;
       lastPromptSentAt = 0;
@@ -186,12 +198,13 @@ function runProject(cfg) {
       return;
     }
     composerMissingSince = 0;
-    if (!sending && now - startedAt >= STARTUP_IDLE_MS && now - lastStartupStatusAt >= 30000 &&
+    if (!sending && now - startedAt >= STARTUP_IDLE_MS &&
         (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
       if (draft === "" || draft === PROMPT) {
-        lastStartupStatusAt = now;
+        if (now - lastStartupAttemptAt < 5000) return;
+        lastStartupAttemptAt = now;
         await send(lastPromptSentAt ? "idle-retry" : "startup-retry");
-      } else if (draft !== PROMPT) {
+      } else if (draft !== PROMPT && now - lastStartupStatusAt >= 30000) {
         lastStartupStatusAt = now;
         status("startup-blocked", {reason: "draft-present"});
       }
@@ -199,6 +212,20 @@ function runProject(cfg) {
   }
   browser.runtime.onMessage.addListener(message => {
     if (!message || message.projectId !== cfg.projectId) return;
+    if (message.type === "runner-push") {
+      return (async () => {
+        if (paused) return {ok: false, reason: "paused"};
+        if (stopButton() || sending || awaitingGeneration) {
+          status("push-skipped", {reason: "runner-busy"});
+          return {ok: false, reason: "runner-busy"};
+        }
+        const draft = composerText();
+        if (draft === null) return {ok: false, reason: "composer-missing"};
+        if (draft && draft !== PROMPT) return {ok: false, reason: "draft-present"};
+        const ok = await send(message.reason || "dashboard-push");
+        return {ok: !!ok, reason: ok ? "prompt-sent" : "send-unavailable"};
+      })();
+    }
     if (message.type === "runner-stop") {
       paused = true;
       clearInterval(tickTimer);
@@ -240,11 +267,21 @@ async function refreshTargets() {
     const tabs = await browser.tabs.query({url: "https://chatgpt.com/*"});
     for (const target of Object.values(targets)) {
       const assignedTabId = projectTabs[target.project_id];
+      if (!target.active) {
+        if (assignedTabId != null) {
+          try { await browser.tabs.sendMessage(assignedTabId, {type: "runner-stop", projectId: target.project_id, reason: "project-paused"}); } catch (_) {}
+          try { await browser.tabs.remove(assignedTabId); } catch (_) {}
+          delete tabTargets[assignedTabId];
+          delete projectTabs[target.project_id];
+          delete pendingAdoptions[assignedTabId];
+        }
+        continue;
+      }
       if (assignedTabId != null) {
         try { await browser.tabs.get(assignedTabId); continue; }
         catch (_) { delete projectTabs[target.project_id]; }
       }
-      const tab = tabs.find(t => t.url && t.url.includes("/c/" + target.conversation_id));
+      const tab = target.conversation_id ? tabs.find(t => t.url && t.url.includes("/c/" + target.conversation_id)) : null;
       if (tab) {
         tabTargets[tab.id] = target;
         projectTabs[target.project_id] = tab.id;
@@ -255,6 +292,7 @@ async function refreshTargets() {
         const opened = await browser.tabs.create({url: target.url, active: false});
         tabTargets[opened.id] = target;
         projectTabs[target.project_id] = opened.id;
+        if (!target.conversation_id) pendingAdoptions[opened.id] = target.project_id;
       }
     }
   } catch (error) {
@@ -267,13 +305,18 @@ async function inject(tabId, target) {
     tabTargets[tabId] = target;
     projectTabs[target.project_id] = tabId;
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(target) + ");", runAt: "document_idle"});
-    postStatus({projectId: target.project_id, projectName: target.name, target: "https://chatgpt.com/c/" + target.conversation_id,
+    postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-success", at: new Date().toISOString(), tabId: tabId});
   } catch (error) {
-    postStatus({projectId: target.project_id, projectName: target.name, target: "https://chatgpt.com/c/" + target.conversation_id,
+    postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-failed", error: String(error?.message || error),
       at: new Date().toISOString(), tabId: tabId});
   }
+}
+async function commandResult(commandId, status, result) {
+  if (!commandId) return;
+  await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",
+    body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
 }
 async function newProjectChat(projectId, reason, commandId) {
   if (runningActions.has(projectId)) return;
@@ -288,18 +331,103 @@ async function newProjectChat(projectId, reason, commandId) {
       delete tabTargets[oldTab];
       delete pendingAdoptions[oldTab];
     }
-    const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: true});
+    target.active = true;
+    const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: false});
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
     pendingAdoptions[tab.id] = projectId;
-    if (commandId) await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",
-      body: JSON.stringify({command_id: commandId, status: "completed", result: "Nieuwe projectchat geopend"})}).catch(() => {});
+    await commandResult(commandId, "completed", "Nieuwe projectchat geopend");
   } catch (error) {
-    if (commandId) await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",
-      body: JSON.stringify({command_id: commandId, status: "failed", result: String(error?.message || error)})}).catch(() => {});
+    await commandResult(commandId, "failed", String(error?.message || error));
     postStatus({projectId: projectId, projectName: target?.name, event: "recovery-failed",
       error: String(error?.message || error), reason: reason, at: new Date().toISOString()});
   } finally { runningActions.delete(projectId); }
+}
+async function startProject(projectId, commandId) {
+  if (runningActions.has(projectId)) return;
+  runningActions.add(projectId);
+  const target = targets[projectId];
+  try {
+    if (!target) throw new Error("Projectconfig ontbreekt");
+    target.active = true;
+    const current = projectTabs[projectId];
+    if (current != null) {
+      try {
+        await browser.tabs.get(current);
+        await commandResult(commandId, "completed", "Project draait al");
+        return;
+      } catch (_) {
+        delete projectTabs[projectId];
+      }
+    }
+    if (!target.conversation_id) {
+      runningActions.delete(projectId);
+      await newProjectChat(projectId, "dashboard-start", commandId);
+      return;
+    }
+    const tab = await browser.tabs.create({url: target.url, active: false});
+    tabTargets[tab.id] = target;
+    projectTabs[projectId] = tab.id;
+    await commandResult(commandId, "completed", "Project gestart");
+  } catch (error) {
+    await commandResult(commandId, "failed", String(error?.message || error));
+    postStatus({projectId: projectId, projectName: target?.name, event: "start-failed",
+      error: String(error?.message || error), at: new Date().toISOString()});
+  } finally {
+    runningActions.delete(projectId);
+  }
+}
+async function pauseProject(projectId, commandId) {
+  const target = targets[projectId];
+  if (target) target.active = false;
+  const tabId = projectTabs[projectId];
+  if (tabId != null) {
+    try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: projectId, reason: "dashboard-pause"}); } catch (_) {}
+    try { await browser.tabs.remove(tabId); } catch (_) {}
+    delete tabTargets[tabId];
+    delete projectTabs[projectId];
+    delete pendingAdoptions[tabId];
+  }
+  postStatus({projectId: projectId, projectName: target?.name, target: target?.url || "",
+    event: "runner-paused", reason: "dashboard-pause", at: new Date().toISOString()});
+  await commandResult(commandId, "completed", "Project gepauzeerd");
+}
+async function pushProject(projectId, commandId) {
+  const target = targets[projectId];
+  if (!target) {
+    await commandResult(commandId, "failed", "Projectconfig ontbreekt");
+    return;
+  }
+  let tabId = projectTabs[projectId];
+  if (tabId == null) {
+    await newProjectChat(projectId, "dashboard-push-recovery", commandId);
+    return;
+  }
+  try { await browser.tabs.get(tabId); }
+  catch (_) {
+    delete projectTabs[projectId];
+    await newProjectChat(projectId, "dashboard-push-recovery", commandId);
+    return;
+  }
+  let result = null;
+  try {
+    result = await browser.tabs.sendMessage(tabId, {type: "runner-push", projectId: projectId, reason: "dashboard-push"});
+  } catch (_) {
+    await inject(tabId, target);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      result = await browser.tabs.sendMessage(tabId, {type: "runner-push", projectId: projectId, reason: "dashboard-push"});
+    } catch (_) {}
+  }
+  if (result?.ok) {
+    await commandResult(commandId, "completed", "Prompt direct verstuurd");
+    return;
+  }
+  if (result?.reason === "runner-busy") {
+    await commandResult(commandId, "completed", "Runner is al bezig; extra prompt was niet nodig");
+    return;
+  }
+  await newProjectChat(projectId, "dashboard-push-recovery", commandId);
 }
 const lastHealthRecovery = Object.create(null);
 async function watchRunnerHealth() {
@@ -308,6 +436,7 @@ async function watchRunnerHealth() {
     if (!response.ok) return;
     const data = await response.json();
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
+      if (!status.active) continue;
       const stale = status.age_seconds != null && status.age_seconds > 300;
       const stalled = status.stalled === true;
       if ((!stale && !stalled) || Date.now() - (lastHealthRecovery[projectId] || 0) < 900000) continue;
@@ -324,7 +453,10 @@ async function pollCommands() {
     for (const command of data.commands || []) {
       if (!targets[command.project_id] || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
       processedCommands.add(command.id);
-      await newProjectChat(command.project_id, "dashboard-restart", command.id);
+      if (command.action === "push") await pushProject(command.project_id, command.id);
+      else if (command.action === "start") await startProject(command.project_id, command.id);
+      else if (command.action === "pause") await pauseProject(command.project_id, command.id);
+      else await newProjectChat(command.project_id, "dashboard-restart", command.id);
     }
   } catch (_) {}
 }

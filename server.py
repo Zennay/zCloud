@@ -18,17 +18,28 @@ SERVICES = ['haxlab-analyzer.service', 'haxlab-ingest.service', 'haxlab-worker.s
 WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 RUNNER_CONTROL_FILE = ROOT / '.runner-control-token'
+PROJECT_INDEX = {p['id']: p for p in json.loads((ROOT/'projects.json').read_text())}
+KNOWN_RUNNER_CONVERSATIONS = {
+    'haxlab': '6ab6e0af-b1e8-83eb-b355-6398eb60dce4',
+    'ftmo': '6ab611aa-d5c4-83eb-940c-498aa3dbe0e1',
+}
+def project_runner_prompt(project_id, name):
+    return (
+        f'Ga verder met project {name}. Deze chat is uitsluitend voor project {name}; werk niet aan andere projecten. '
+        'Controleer eerst via de gekoppelde Notion-workspace de actuele projectpagina, handoff, status, open taken, '
+        'besluiten en relevante documentatie. Gebruik daarnaast de gekoppelde GitHub/repository- en VPS-context waar '
+        'die voor dit project relevant is. Ga daarna zelfstandig verder met de eerstvolgende concrete stap die het '
+        'project aantoonbaar vooruit helpt. Behoud bestaande architectuur en eerdere beslissingen tenzij de actuele '
+        'projectdocumentatie expliciet iets anders aangeeft. Rapporteer kort wat je hebt gedaan, wat de nieuwe status '
+        'is en wat logisch als volgende stap volgt.'
+    )
 RUNNER_DEFAULTS = {
-    'haxlab': {
-        'name': 'HaxLab · HaxBall AI',
-        'conversation_id': '6ab6e0af-b1e8-83eb-b355-6398eb60dce4',
-        'prompt': 'Ga verder met project HaxLab (HaxBall AI). Deze chat is uitsluitend voor HaxLab/HaxBall, niet voor FTMO of andere projecten. Controleer eerst de actuele HaxLab-handoff en projectstatus. Pak daarna zelfstandig de volgende concrete stap op en rapporteer kort wat je hebt gedaan.'
-    },
-    'ftmo': {
-        'name': 'FTMO Telemetry Sync',
-        'conversation_id': '6ab611aa-d5c4-83eb-940c-498aa3dbe0e1',
-        'prompt': 'Ga verder met project FTMO Telemetry Sync. Deze chat is uitsluitend voor FTMO, niet voor HaxLab/HaxBall of andere projecten. Controleer eerst de actuele FTMO-handoff en projectstatus. Pak daarna zelfstandig de volgende concrete stap op en rapporteer kort wat je hebt gedaan.'
+    pid: {
+        'name': project['name'],
+        'conversation_id': KNOWN_RUNNER_CONVERSATIONS.get(pid, ''),
+        'prompt': project_runner_prompt(pid, project['name'])
     }
+    for pid, project in PROJECT_INDEX.items()
 }
 LAYOUT_FILE = ROOT / 'project-layout.json'
 
@@ -108,10 +119,16 @@ def init_db():
         if 'assistant_chars' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN assistant_chars INTEGER')
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_ts ON runner_events(project_id,ts)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')
+        target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
+        migrated_active='active' not in target_columns
+        if migrated_active:
+            c.execute('ALTER TABLE runner_targets ADD COLUMN active INTEGER NOT NULL DEFAULT 0')
+            c.execute("UPDATE runner_targets SET active=1 WHERE project_id IN ('haxlab','ftmo')")
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         for project_id,target in RUNNER_DEFAULTS.items():
-            c.execute('INSERT OR IGNORE INTO runner_targets(project_id,name,conversation_id,prompt) VALUES(?,?,?,?)',
+            c.execute('INSERT INTO runner_targets(project_id,name,conversation_id,prompt,active) VALUES(?,?,?,?,0) '
+                      'ON CONFLICT(project_id) DO UPDATE SET name=excluded.name,prompt=excluded.prompt',
                       (project_id,target['name'],target['conversation_id'],target['prompt']))
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_ts ON runner_events(ts)')
         enhancements.init_db(c)
@@ -276,9 +293,10 @@ def compact_history(pid, limit=24):
 
 def runner_targets():
     with connect() as c:
-        rows=c.execute('SELECT project_id,name,conversation_id,prompt FROM runner_targets ORDER BY project_id').fetchall()
+        rows=c.execute('SELECT project_id,name,conversation_id,prompt,active FROM runner_targets ORDER BY project_id').fetchall()
     return {r['project_id']:{'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
-                            'url':'https://chatgpt.com/c/'+r['conversation_id'],'prompt':r['prompt']} for r in rows}
+                            'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
+                            'prompt':r['prompt'],'active':bool(r['active'])} for r in rows}
 
 def runner_record(payload):
     event=str(payload.get('event') or 'unknown')[:64]
@@ -300,10 +318,10 @@ def runner_record(payload):
     with connect() as c:
         if not project_id and target:
             for pid,t in runner_targets().items():
-                if t['conversation_id'] in target: project_id=pid; break
+                if t['conversation_id'] and t['conversation_id'] in target: project_id=pid; break
         c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error,project_id,progress_at,assistant_chars) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                   (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error,project_id or None,progress_at,assistant_chars))
-        if event == 'conversation-adopted' and project_id in RUNNER_DEFAULTS and match:
+        if event == 'conversation-adopted' and project_id in runner_targets() and match:
             c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
@@ -313,8 +331,11 @@ def runner_status(project_id=None):
     with connect() as c:
         if project_id in target_cfg:
             cfg=target_cfg[project_id]
-            where='(project_id=? OR (project_id IS NULL AND target LIKE ?))'
-            args=(project_id,'%'+cfg['conversation_id']+'%')
+            if cfg['conversation_id']:
+                where='(project_id=? OR (project_id IS NULL AND target LIKE ?))'
+                args=(project_id,'%'+cfg['conversation_id']+'%')
+            else:
+                where='project_id=?'; args=(project_id,)
         else:
             where='1=1'; args=()
         latest=c.execute('SELECT * FROM runner_events WHERE '+where+' ORDER BY id DESC LIMIT 1',args).fetchone()
@@ -326,8 +347,10 @@ def runner_status(project_id=None):
     def info(row):
         if not row:return None
         return {'time':row['ts'],'event':row['event'],'reason':row['reason'] or None,'error':row['error'] or None}
+    cfg=target_cfg.get(project_id,{})
+    active=bool(cfg.get('active'))
     if not latest:
-        return {'project_id':project_id,'name':target_cfg.get(project_id,{}).get('name'),'state':'offline','age_seconds':None,
+        return {'project_id':project_id,'name':cfg.get('name'),'state':'offline' if active else 'paused','active':active,'age_seconds':None,
                 'generating':False,'sending':False,'last_event':None,'last_heartbeat':None,
                 'last_prompt_sent':None,'last_generation_started':None,'last_generation_finished':None,
                 'command':dict(command) if command else None}
@@ -338,10 +361,9 @@ def runner_status(project_id=None):
     except Exception: progress_age=None
     generating=bool(latest['generating'])
     stalled=bool(generating and progress_age is not None and progress_age>=20*60)
-    state='stalled' if stalled else 'live' if age<=90 else 'stale' if age<=300 else 'offline'
-    cfg=target_cfg.get(project_id,{})
-    return {'project_id':project_id,'name':cfg.get('name') or latest['title'],'state':state,'age_seconds':age,
-            'generating':generating,'sending':bool(latest['sending']),'stalled':stalled,
+    state=('paused' if not active else 'stalled' if stalled else 'live' if age<=90 else 'stale' if age<=300 else 'offline')
+    return {'project_id':project_id,'name':cfg.get('name') or latest['title'],'state':state,'active':active,'age_seconds':age,
+            'generating':generating if active else False,'sending':bool(latest['sending']) if active else False,'stalled':stalled if active else False,
             'progress_age_seconds':progress_age,'assistant_characters':latest['assistant_chars'],
             'title':latest['title'] or cfg.get('name'),'target':latest['target'] or cfg.get('url'),
             'tab_id':latest['tab_id'],'error':latest['error'] or None,'event':latest['event'],
@@ -483,18 +505,26 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:
                         logging.exception('Firefox runner restart failed')
                         return self.reply({'error':'Firefox-initiator kon niet worden herstart','detail':str(e)[:200]},500)
-                if project_id not in RUNNER_DEFAULTS or action!='new_chat':return self.reply({'error':'Ongeldige runneractie'},400)
+                configs=runner_targets()
+                if project_id not in configs or action not in ('start','pause','new_chat','push'):return self.reply({'error':'Ongeldige runneractie'},400)
                 with connect() as c:
-                    recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND status IN ('pending','completed') ORDER BY id DESC LIMIT 1",(project_id,)).fetchone()
+                    recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND action=? AND status IN ('pending','completed') ORDER BY id DESC LIMIT 1",(project_id,action)).fetchone()
                     if recent:
                         try:
                             seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
-                            if seconds<60:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)
+                            cooldown=5 if action in ('push','start','pause') else 30
+                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)
                         except Exception: pass
+                    if action=='push' and not configs[project_id].get('active'):
+                        return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
+                    if action in ('start','new_chat'):
+                        c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
+                    elif action=='pause':
+                        c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
                     ts=now()
                     cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
                     command_id=cur.lastrowid
-                return self.reply({'ok':True,'command_id':command_id,'status':'pending'})
+                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause'})
             if u.path=='/api/resource-priority':
                 if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
                 project=str(payload.get('project') or '')
