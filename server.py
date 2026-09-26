@@ -183,6 +183,55 @@ def connect():
     finally:
         c.close()
 
+def request_actor(handler):
+    addr=str((handler.client_address or ["unknown"])[0] or "unknown")
+    hinted=str(handler.headers.get("X-ZCloud-Actor") or "").strip()
+    if hinted:
+        hinted=re.sub(r"[^a-zA-Z0-9._:@/-]+","_",hinted)[:80]
+        return (hinted+"@"+addr)[:128]
+    origin=str(handler.headers.get("Origin") or "").strip()
+    return (("dashboard@" if origin else "api@")+addr)[:128]
+
+def _audit_json(value):
+    return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":"))
+
+def record_config_audit(config_key,target,actor,old_value,new_value,result,detail="",connection=None):
+    row=(
+        now(),str(actor or "unknown")[:128],str(config_key or "")[:80],
+        str(target or "")[:160],_audit_json(old_value),_audit_json(new_value),
+        str(result or "")[:32],str(detail or "")[:500]
+    )
+    sql=("INSERT INTO config_audit(ts,actor,config_key,target,old_value_json,new_value_json,result,detail) "
+         "VALUES(?,?,?,?,?,?,?,?)")
+    if connection is not None:
+        connection.execute(sql,row)
+        return
+    with connect() as c:
+        c.execute(sql,row)
+
+def config_audit(limit=80,config_key=None,target=None):
+    limit=max(1,min(int(limit or 80),500))
+    query="SELECT id,ts,actor,config_key,target,old_value_json,new_value_json,result,detail FROM config_audit"
+    where=[];args=[]
+    if config_key:
+        where.append("config_key=?");args.append(str(config_key))
+    if target:
+        where.append("target=?");args.append(str(target))
+    if where:
+        query+=" WHERE "+" AND ".join(where)
+    query+=" ORDER BY id DESC LIMIT ?";args.append(limit)
+    with connect() as c:
+        rows=c.execute(query,args).fetchall()
+    out=[]
+    for row in rows:
+        item=dict(row)
+        for field in ("old_value_json","new_value_json"):
+            key="old_value" if field.startswith("old_") else "new_value"
+            try:item[key]=json.loads(item.pop(field))
+            except Exception:item[key]=item.pop(field)
+        out.append(item)
+    return out
+
 def init_db():
     with connect() as c:
         c.execute('PRAGMA journal_mode=WAL')
@@ -215,6 +264,9 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
         c.execute('CREATE INDEX IF NOT EXISTS task_claims_lease_until ON task_claims(lease_until)')
         c.execute("CREATE TABLE IF NOT EXISTS improvement_loops(project_id TEXT PRIMARY KEY, state TEXT NOT NULL, iteration_count INTEGER NOT NULL DEFAULT 0, clean_reviews INTEGER NOT NULL DEFAULT 0, stop_reason TEXT, last_green_commit TEXT, audit_result TEXT, updated_at TEXT NOT NULL)")
+        c.execute("CREATE TABLE IF NOT EXISTS config_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')")
+        c.execute("CREATE INDEX IF NOT EXISTS config_audit_ts ON config_audit(ts,id)")
+        c.execute("CREATE INDEX IF NOT EXISTS config_audit_key_target ON config_audit(config_key,target,id)")
         c.execute("INSERT OR IGNORE INTO improvement_loops(project_id,state,iteration_count,clean_reviews,stop_reason,last_green_commit,audit_result,updated_at) VALUES('cloud','running',0,0,NULL,NULL,NULL,?)",(datetime.now(timezone.utc).isoformat(),))
         for project_id,target in RUNNER_DEFAULTS.items():
             c.execute('INSERT INTO runner_targets(project_id,name,conversation_id,prompt,active) VALUES(?,?,?,?,0) '
@@ -973,30 +1025,60 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'error':str(e)},400)
             if u.path=='/api/runner-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                actor=request_actor(self)
                 project_id=str(payload.get('project_id') or '')
                 try: worker_count=int(payload.get('worker_count'))
                 except Exception: return self.reply({'error':'Aantal ChatGPT-tabs moet een geheel getal zijn'},400)
                 if project_id not in runner_targets():return self.reply({'error':'Onbekend project'},404)
                 if worker_count<1 or worker_count>MAX_CHATGPT_WORKERS:return self.reply({'error':f'Kies 1 t/m {MAX_CHATGPT_WORKERS} ChatGPT-tabs'},400)
                 with connect() as c:
+                    before=c.execute('SELECT worker_count FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+                    old_count=max(1,int((before or {'worker_count':1})['worker_count'] or 1))
                     c.execute('UPDATE runner_targets SET worker_count=? WHERE project_id=?',(worker_count,project_id))
                     primary=c.execute('SELECT conversation_id FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
                     for slot in range(1,worker_count+1):
                         c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
                                   (project_id,slot,(primary['conversation_id'] if slot==1 and primary else '') or ''))
+                    record_config_audit(
+                        'runner.worker_count',project_id,actor,old_count,worker_count,
+                        'no_change' if old_count==worker_count else 'succeeded',
+                        connection=c,
+                    )
                 return self.reply({'ok':True,'project_id':project_id,'worker_count':worker_count,'max_workers':MAX_CHATGPT_WORKERS})
             if u.path=='/api/resource-priority':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                actor=request_actor(self)
                 project=str(payload.get('project') or '')
                 priority=str(payload.get('priority') or '')
-                try: result=enhancements.set_priority(project,priority)
-                except ValueError as e: return self.reply({'error':str(e)},400)
+                old_priority=(enhancements.load_resource_policy().get(project) or {}).get('priority')
+                try:
+                    result=enhancements.set_priority(project,priority)
+                except ValueError as e:
+                    record_config_audit('resource.priority',project,actor,old_priority,priority,'rejected',str(e))
+                    return self.reply({'error':str(e)},400)
+                except Exception as e:
+                    record_config_audit('resource.priority',project,actor,old_priority,priority,'failed',str(e)[:300])
+                    raise
+                record_config_audit(
+                    'resource.priority',project,actor,old_priority,result.get('priority'),
+                    'no_change' if old_priority==result.get('priority') else 'succeeded'
+                )
                 return self.reply({'ok':True,'resource':result,'time':now()})
             if u.path=='/api/project-layout':
                 if 'application/json' not in self.headers.get('Content-Type',''):return self.reply({'error':'JSON vereist'},415)
+                actor=request_actor(self)
                 with LOCK:data=CACHE
                 if data is None:return self.reply({'error':'Monitor start op'},503)
-                layout=save_project_layout(payload,data['projects'])
+                old_layout=load_project_layout(data['projects'])
+                try:
+                    layout=save_project_layout(payload,data['projects'])
+                except Exception as e:
+                    record_config_audit('project.layout','portfolio',actor,old_layout,payload,'failed',str(e)[:300])
+                    raise
+                record_config_audit(
+                    'project.layout','portfolio',actor,old_layout,layout,
+                    'no_change' if old_layout==layout else 'succeeded'
+                )
                 return self.reply({'ok':True,'layout':layout,'time':now()})
             return self.reply({'error':'Niet gevonden'},404)
         except Exception:
@@ -1006,6 +1088,11 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
+        if u.path=='/api/config-audit':
+            if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+            try: limit=int(q.get('limit',['80'])[0])
+            except Exception: limit=80
+            return self.reply({'items':config_audit(limit,q.get('key',[''])[0] or None,q.get('target',[''])[0] or None),'time':now()})
         if u.path=='/api/improvement-loop':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'improvement':improvement_loop_state(q.get('project',[IMPROVEMENT_PROJECT_ID])[0] or IMPROVEMENT_PROJECT_ID),'time':now()})
