@@ -48,3 +48,15 @@ python3 scripts/zcloud_recovery.py rollback
 ```
 
 Rollback verifies the stored snapshot hashes first, backs up the current managed source/config tree, stops only `zennay-cloud.service`, restores the last-known-good tree, starts the service to the recorded state, checks `/api/status`, and verifies that the project/chat mapping fingerprint in `history.db` did not change. If restore or health validation fails, it automatically restores the pre-rollback files and records the failure in `recovery.log`.
+## Durable worker/task claims
+
+zCloud keeps active task/capability ownership in SQLite so parallel workers cannot silently take the same work item.
+
+- POST /api/task-claims with action=acquire, project_id, claim_key, owner_id, optional worker_id and lease_seconds.
+- action=heartbeat renews only the current, unexpired owner.
+- action=release releases only the current owner.
+- GET /api/task-claims?project=<id> lists active claims and automatically removes expired leases.
+- Claim acquisition is a single SQLite upsert guarded by the existing (project_id, claim_key) primary key, so concurrent contenders produce one owner and conflicts return HTTP 409.
+- Lease duration is bounded to 15–3600 seconds. A stale/expired claim can be atomically recovered by the next worker.
+
+The endpoint uses the same trusted-management boundary as other zCloud control actions. Do not put secrets in claim metadata.
