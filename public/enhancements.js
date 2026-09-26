@@ -45,21 +45,21 @@
     if(!r||!r.available)return '';
     function pct(v){return v==null?'—':num(v)+'%'}
     var capability='<div class="readiness-summary">'
-      +'<div><span>2-Step rules</span><strong>'+(r.two_step_configured?'Geconfigureerd':'Ontbreekt')+'</strong></div>'
-      +'<div><span>1-Step rules</span><strong>'+(r.one_step_configured?'Geconfigureerd':'Nog niet')+'</strong></div>'
+      +'<div><span>2-Step regels</span><strong>'+(r.two_step_configured?'Geconfigureerd':'Ontbreekt')+'</strong></div>'
+      +'<div><span>1-Step regels</span><strong>'+(r.one_step_configured?'Geconfigureerd':'Nog niet')+'</strong></div>'
       +'<div><span>Simulator</span><strong>'+(r.simulator_ready?'Klaar':'Ontbreekt')+'</strong></div>'
-      +'<div><span>Candidate path test</span><strong>'+(r.measured?'Gemeten':'Nog niet gedraaid')+'</strong></div>'
+      +'<div><span>Simulatietest</span><strong>'+(r.measured?'Gemeten':'Nog niet gedraaid')+'</strong></div>'
       +'</div>';
     var runs=r.runs||[];
     var table='';
     if(runs.length){
-      table='<div class="readiness-table"><div class="readiness-row head"><span>Risk / trade</span><span>Pass</span><span>Daily breach</span><span>Total breach</span><span>P95 DD</span><span>Median target</span></div>'
+      table='<div class="readiness-table"><div class="readiness-row head"><span>Risico per trade</span><span>Geslaagd</span><span>Daglimiet geraakt</span><span>Totale limiet geraakt</span><span>Zware terugval</span><span>Typisch doelmoment</span></div>'
         +runs.map(function(x){return '<div class="readiness-row"><strong>'+esc(x.risk_pct==null?'—':x.risk_pct+'%')+'</strong><span>'+pct(x.pass_rate)+'</span><span>'+pct(x.daily_loss_breach_rate)+'</span><span>'+pct(x.total_loss_breach_rate)+'</span><span>'+pct(x.max_drawdown_p95)+'</span><span>'+esc(x.median_days_to_target==null?'—':x.median_days_to_target+' d')+'</span></div>'}).join('')
         +'</div>';
     }else{
-      table='<div class="readiness-risk-grid">'+(r.planned_risk_pct||[]).map(function(x){return '<div><span>'+esc(x)+'% risk</span><strong>—</strong><small>wacht op chronologische R-path test</small></div>'}).join('')+'</div>';
+      table='<div class="readiness-risk-grid">'+(r.planned_risk_pct||[]).map(function(x){return '<div><span>'+esc(x)+'% risico per trade</span><strong>—</strong><small>wacht op realistische FTMO-simulatietest</small></div>'}).join('')+'</div>';
     }
-    return '<div class="panel readiness-panel"><div class="panel-header"><div><h2>FTMO readiness</h2><div class="panel-subtitle">Challenge-path testing · los van pips/win-rate</div></div><span class="readiness-state '+(r.measured?'ready':'pending')+'">'+(r.measured?'GEMETEN':'PENDING')+'</span></div>'+capability+table+'<div class="detail-note">'+esc(r.note||'')+'</div></div>';
+    return '<div class="panel readiness-panel"><div class="panel-header"><div><h2>FTMO-teststatus</h2><div class="panel-subtitle">Realistische FTMO-simulatietest · los van alleen winst of winstpercentage</div></div><span class="readiness-state '+(r.measured?'ready':'pending')+'">'+(r.measured?'Gemeten':'Nog niet gemeten')+'</span></div>'+capability+'<details class="section-details readiness-details"><summary>Technische testdetails</summary>'+table+'</details><div class="detail-note">'+esc(r.note||'')+'</div></div>';
   }
 
   function resourcePanel(){
@@ -99,7 +99,7 @@
       var pct=Math.round(Number(m.progress==null?(m.done?100:0):m.progress)*10)/10;
       return '<div class="milestone '+(pct>=100?'done':(m.title===p.next?'next':''))+'"><span class="milestone-check">'+(pct>=100?'✓':String(i+1).padStart(2,'0'))+'</span><div class="milestone-main"><span>'+esc(m.title)+'</span><div class="milestone-mini"><i style="width:'+pct+'%"></i></div></div><em>'+num(pct)+'%</em></div>';
     }).join('');
-    return '<div class="panel milestone-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Milestone progress</h2><div class="panel-subtitle">Meer detail dan alleen het totale projectpercentage</div></div><span class="count">'+p.completed+' / '+p.milestones.length+'</span></div><div class="milestones">'+rows+'</div></div>';
+    return '<div class="panel milestone-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Voortgang per projectstap</h2><div class="panel-subtitle">Meer detail dan alleen het totale projectpercentage</div></div><span class="count">'+p.completed+' / '+p.milestones.length+'</span></div><div class="milestones">'+rows+'</div></div>';
   }
 
   var baseProjectCard=projectCard;
@@ -145,7 +145,7 @@
     }catch(err){
       el.value=previous;
       $('notice').hidden=false;
-      $('notice').textContent='Resource priority kon niet worden opgeslagen: '+(err.message||err);
+      $('notice').textContent='Projectvoorrang kon niet worden opgeslagen: '+(err.message||err);
     }finally{
       el.disabled=false;
     }
