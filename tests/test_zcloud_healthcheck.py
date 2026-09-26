@@ -47,6 +47,7 @@ class ZCloudHealthcheckTests(unittest.TestCase):
                 CREATE TABLE task_claims(id INTEGER PRIMARY KEY);
                 CREATE TABLE improvement_loops(id INTEGER PRIMARY KEY);
                 CREATE TABLE config_audit(id INTEGER PRIMARY KEY);
+                CREATE TABLE feature_flags(name TEXT PRIMARY KEY);
             """)
             conn.execute(
                 "INSERT INTO runner_targets VALUES(?,?,?,?,?,?)",
