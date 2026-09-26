@@ -38,7 +38,7 @@ SQL
 before_cloud="$(sqlite3 "$tmp/history.db" "SELECT active||':'||worker_count||':'||conversation_id FROM runner_targets WHERE project_id='cloud';")"
 before_ftmo="$(sqlite3 "$tmp/history.db" "SELECT active||':'||worker_count||':'||conversation_id FROM runner_targets WHERE project_id='ftmo';")"
 
-ZCLOUD_ROOT="$tmp" ZCLOUD_DB="$tmp/history.db" ZCLOUD_PROJECTS="$tmp/projects.json" ZCLOUD_LAYOUT="$tmp/project-layout.json" ZCLOUD_BIRDSEYE_DRY_RUN=1 "$SCRIPT"
+ZCLOUD_ROOT="$tmp" ZCLOUD_DB="$tmp/history.db" ZCLOUD_PROJECTS="$tmp/projects.json" ZCLOUD_LAYOUT="$tmp/project-layout.json" ZCLOUD_BIRDSEYE_DRY_RUN=1 bash "$SCRIPT"
 
 prompt="$(sqlite3 "$tmp/history.db" "SELECT prompt FROM runner_targets WHERE project_id='portfolio-review';")"
 grep -q "cloud" <<<"$prompt"
