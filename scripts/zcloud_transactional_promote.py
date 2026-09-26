@@ -81,6 +81,10 @@ BLOCKED_PREFIXES = (
     "alert-state.json",
 )
 
+CREATABLE_PATHS = {
+    "firefox-extension/recovery.js",
+}
+
 
 class PromotionError(RuntimeError):
     pass
@@ -149,8 +153,11 @@ def validate_candidate(candidate: Path, root: Path, paths: list[str]) -> dict[st
         target = root / rel
         if not source.is_file():
             raise PromotionError(f"candidate file missing: {rel}")
-        if not target.exists() or not target.is_file():
-            raise PromotionError(f"live target file missing: {rel}")
+        if not target.exists():
+            if rel not in CREATABLE_PATHS:
+                raise PromotionError(f"live target file missing: {rel}")
+        elif not target.is_file():
+            raise PromotionError(f"live target is not a file: {rel}")
         hashes[rel] = sha256_file(source)
     return hashes
 
@@ -162,6 +169,12 @@ def syntax_check(candidate: Path, paths: list[str]) -> None:
         run([sys.executable, "-m", "py_compile", *python_files])
     for js in js_files:
         run(["node", "--check", js])
+    for rel in paths:
+        if rel.endswith(".json"):
+            try:
+                json.loads((candidate / rel).read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise PromotionError(f"invalid JSON candidate {rel}: {exc}") from exc
 
 
 def http_healthy(url: str = HEALTH_URL, timeout: float = 3.0) -> bool:
@@ -349,7 +362,8 @@ def transactional_replace(
             dst = root / rel
             old = backup / rel
             old.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(dst, old)
+            if dst.exists():
+                shutil.copy2(dst, old)
             os.replace(staged / rel, dst)
             completed.append(rel)
             if fail_after is not None and len(completed) >= fail_after:
@@ -357,8 +371,11 @@ def transactional_replace(
     except Exception:
         for rel in reversed(completed):
             old = backup / rel
+            dst = root / rel
             if old.exists():
-                os.replace(old, root / rel)
+                os.replace(old, dst)
+            elif dst.exists():
+                dst.unlink()
         raise
 
     return {rel: sha256_file(root / rel) for rel in normalized}
@@ -369,50 +386,69 @@ def sync_firefox_runtime(
     runtime_extension: Path,
     reload_helper: Path,
     tx_root: Path,
-) -> Path | None:
-    source = root / "firefox-extension/background.js"
-    if not source.exists():
-        return None
-    backup = tx_root / "firefox-runtime.backup.js"
-    if runtime_extension.exists():
-        shutil.copy2(runtime_extension, backup)
-    runtime_extension.parent.mkdir(parents=True, exist_ok=True)
-    stage = runtime_extension.with_name(runtime_extension.name + f".zcloud-new-{os.getpid()}")
-    shutil.copy2(source, stage)
-    os.replace(stage, runtime_extension)
+    extension_paths: list[str],
+) -> dict[str, Path | None]:
+    runtime_root = runtime_extension.parent
+    selected = [
+        validate_relpath(rel) for rel in extension_paths
+        if validate_relpath(rel).startswith("firefox-extension/")
+    ]
+    if not selected:
+        return {}
+
+    backup_root = tx_root / "firefox-runtime-backup"
+    backups: dict[str, Path | None] = {}
     try:
+        for rel in selected:
+            source = root / rel
+            relative = Path(rel).relative_to("firefox-extension")
+            runtime = runtime_root / relative
+            backup = backup_root / relative
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            if runtime.exists():
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(runtime, backup)
+                backups[rel] = backup
+            else:
+                backups[rel] = None
+            stage = runtime.with_name(runtime.name + f".zcloud-new-{os.getpid()}")
+            shutil.copy2(source, stage)
+            os.replace(stage, runtime)
+
         if not reload_helper.exists():
             raise PromotionError(f"Firefox reload helper missing: {reload_helper}")
         run(["node", str(reload_helper)])
-        if sha256_file(source) != sha256_file(runtime_extension):
-            raise PromotionError("Firefox source/runtime mismatch after sync")
+
+        for rel in selected:
+            source = root / rel
+            runtime = runtime_root / Path(rel).relative_to("firefox-extension")
+            if sha256_file(source) != sha256_file(runtime):
+                raise PromotionError(f"Firefox source/runtime mismatch after sync: {rel}")
+        return backups
     except Exception:
-        if backup.exists():
-            restore_stage = runtime_extension.with_name(
-                runtime_extension.name + f".zcloud-sync-revert-{os.getpid()}"
-            )
-            shutil.copy2(backup, restore_stage)
-            os.replace(restore_stage, runtime_extension)
-            if reload_helper.exists():
-                try:
-                    run(["node", str(reload_helper)])
-                except Exception:
-                    pass
+        restore_firefox_runtime(runtime_extension, backups, reload_helper)
         raise
-    return backup if backup.exists() else None
 
 
 def restore_firefox_runtime(
     runtime_extension: Path,
-    runtime_backup: Path | None,
+    runtime_backups: dict[str, Path | None],
     reload_helper: Path,
 ) -> None:
-    if runtime_backup and runtime_backup.exists():
-        stage = runtime_extension.with_name(runtime_extension.name + f".zcloud-rollback-{os.getpid()}")
-        shutil.copy2(runtime_backup, stage)
-        os.replace(stage, runtime_extension)
-        if reload_helper.exists():
-            run(["node", str(reload_helper)])
+    if not runtime_backups:
+        return
+    runtime_root = runtime_extension.parent
+    for rel, backup in runtime_backups.items():
+        runtime = runtime_root / Path(rel).relative_to("firefox-extension")
+        if backup is None:
+            if runtime.exists():
+                runtime.unlink()
+            continue
+        stage = runtime.with_name(runtime.name + f".zcloud-rollback-{os.getpid()}")
+        shutil.copy2(backup, stage)
+        os.replace(stage, runtime)
+    if reload_helper.exists():
+        run(["node", str(reload_helper)])
 
 
 def promote(
@@ -467,7 +503,8 @@ def promote(
         tx_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{os.getpid()}"
         tx_root = state / "promotion-transactions" / tx_id
         log = state / "promotion.log"
-        runtime_backup: Path | None = None
+        runtime_backups: dict[str, Path | None] = {}
+        created_source_paths = [rel for rel in normalized if not (root / rel).exists()]
         source_promoted = False
         write_json_line(
             log,
@@ -483,9 +520,12 @@ def promote(
             source_promoted = True
             service_restart()
 
-            if "firefox-extension/background.js" in normalized:
-                runtime_backup = sync_firefox_runtime(
-                    root, runtime_extension, reload_helper, tx_root
+            extension_paths = [
+                rel for rel in normalized if rel.startswith("firefox-extension/")
+            ]
+            if extension_paths:
+                runtime_backups = sync_firefox_runtime(
+                    root, runtime_extension, reload_helper, tx_root, extension_paths
                 )
 
             post = run_postdeploy(
@@ -525,8 +565,18 @@ def promote(
                     rollback_lkg(root, state)
                 except Exception as rollback_exc:
                     rollback_error = str(rollback_exc)
+            for rel in created_source_paths:
+                created = root / rel
+                if created.exists():
+                    try:
+                        created.unlink()
+                    except Exception as cleanup_exc:
+                        rollback_error = (
+                            (rollback_error + "; " if rollback_error else "")
+                            + f"created source cleanup failed for {rel}: {cleanup_exc}"
+                        )
             try:
-                restore_firefox_runtime(runtime_extension, runtime_backup, reload_helper)
+                restore_firefox_runtime(runtime_extension, runtime_backups, reload_helper)
             except Exception as runtime_exc:
                 rollback_error = (
                     (rollback_error + "; " if rollback_error else "")
