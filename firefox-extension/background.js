@@ -195,6 +195,7 @@ function runProject(cfg) {
       }
       return;
     }
+    if (SINGLE_RUN) return;
     const draft = composerText();
     if (draft === null) {
       if (!composerMissingSince) composerMissingSince = now;
