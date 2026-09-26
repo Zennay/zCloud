@@ -113,16 +113,117 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual(409, status)
         self.assertIn("Start dit project eerst", body["error"])
 
-    def test_repeated_start_is_rate_limited(self):
-        first_status, _ = self.request(
+    def test_repeated_start_reuses_pending_command(self):
+        first_status, first = self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
         )
+        second_status, second = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "start"}
+        )
+        self.assertEqual(200, first_status, first)
+        self.assertEqual(200, second_status, second)
+        self.assertEqual(first["command_id"], second["command_id"])
+        self.assertTrue(second.get("deduplicated"))
+
+    def test_recently_completed_start_is_rate_limited(self):
+        first_status, first = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "start"}
+        )
+        self.assertEqual(200, first_status, first)
+        result_status, result = self.request(
+            "/api/runner-command-result",
+            {"command_id": first["command_id"], "status": "completed", "result": "started"},
+        )
+        self.assertEqual(200, result_status, result)
         second_status, body = self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
         )
-        self.assertEqual(200, first_status)
         self.assertEqual(429, second_status)
         self.assertIn("net al een actie", body["error"])
+
+    def test_pending_retry_after_cooldown_reuses_command(self):
+        self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "start"}
+        )
+        first_status, first = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "push"}
+        )
+        self.assertEqual(200, first_status, first)
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE runner_commands SET created_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+                (first["command_id"],),
+            )
+
+        second_status, second = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "push"}
+        )
+        self.assertEqual(200, second_status, second)
+        self.assertEqual(first["command_id"], second["command_id"])
+        self.assertTrue(second.get("deduplicated"))
+        with server.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) n FROM runner_commands "
+                "WHERE project_id='cloud' AND action='push' AND status='pending'"
+            ).fetchone()["n"]
+        self.assertEqual(1, count)
+
+    def test_concurrent_duplicate_push_creates_one_pending_command(self):
+        self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "start"}
+        )
+        barrier = threading.Barrier(3)
+        results = []
+        errors = []
+
+        def send_push():
+            try:
+                barrier.wait(timeout=3)
+                results.append(
+                    self.request(
+                        "/api/runner-control",
+                        {"project_id": "cloud", "action": "push"},
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=send_push) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=3)
+        for thread in threads:
+            thread.join(timeout=5)
+
+        self.assertFalse(errors, errors)
+        self.assertEqual(2, len(results))
+        self.assertEqual([200, 200], sorted(status for status, _ in results))
+        command_ids = {body["command_id"] for _, body in results}
+        self.assertEqual(1, len(command_ids), results)
+        self.assertTrue(any(body.get("deduplicated") for _, body in results))
+        with server.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) n FROM runner_commands "
+                "WHERE project_id='cloud' AND action='push' AND status='pending'"
+            ).fetchone()["n"]
+        self.assertEqual(1, count)
+
+    def test_new_intent_after_opposite_pending_action_is_not_deduplicated(self):
+        first_status, first = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "start"}
+        )
+        pause_status, pause = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "pause"}
+        )
+        second_status, second = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "start"}
+        )
+        self.assertEqual(200, first_status, first)
+        self.assertEqual(200, pause_status, pause)
+        self.assertEqual(200, second_status, second)
+        self.assertNotEqual(first["command_id"], second["command_id"])
+        self.assertFalse(second.get("deduplicated"))
+        self.assertGreater(second["command_id"], pause["command_id"])
 
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
