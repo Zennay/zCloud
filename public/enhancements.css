@@ -108,3 +108,30 @@
   .alert-row time{grid-column:2;font-size:11px;margin-top:2px}
   .events-link{font-size:12px;padding-top:2px}
 }
+.worker-panel{margin-bottom:23px}
+.worker-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:18px 22px 22px}
+.worker-card{min-width:0;border:1px solid #2a313d;border-radius:11px;background:#11151c;padding:15px}
+.worker-card.worker-needs-attention{border-color:#694b32}
+.worker-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:13px}
+.worker-card-head>div{display:grid;gap:4px}
+.worker-card-head strong{font-size:13px;font-weight:600}
+.worker-number,.worker-last{font-size:10px;color:var(--muted)}
+.worker-last{text-align:right;max-width:42%}
+.worker-main{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.worker-main small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}
+.worker-main p{font-size:12px;line-height:1.45;margin:0;color:#d8e0e9}
+.worker-warning{margin:0 0 12px;padding:9px 10px;border:1px solid #6a4b31;border-radius:8px;background:#2a2016;color:#f0c78d;font-size:11px;line-height:1.4}
+.worker-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #252c36}
+.worker-details{margin-top:12px;border-top:1px solid #252c36;padding-top:10px}
+.worker-details summary{cursor:pointer;color:#aab5c4;font-size:11px;list-style:none}
+.worker-details summary::-webkit-details-marker{display:none}
+.worker-details summary:after{content:' +';color:#6f7a89}
+.worker-details[open] summary:after{content:' −'}
+.worker-details dl{display:grid;gap:8px;margin:12px 0 0}
+.worker-details dl>div{display:grid;grid-template-columns:105px minmax(0,1fr);gap:10px}
+.worker-details dt{font-size:10px;color:var(--muted)}
+.worker-details dd{font-size:10px;color:#c9d2dc;overflow-wrap:anywhere;margin:0}
+.project-runner-state>span{display:grid;gap:2px}
+.project-runner-state small{font-size:9px;color:#748191;font-weight:400}
+@media(max-width:900px){.worker-list{grid-template-columns:1fr}}
+@media(max-width:760px){.worker-list{padding:15px 17px 18px}.worker-main{grid-template-columns:1fr}.worker-actions .runner-action{width:auto;flex:1 1 130px}.worker-card-head{align-items:center}}
