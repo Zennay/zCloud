@@ -328,7 +328,7 @@ def _ftmo_readiness():
         "note": (
             "Kandidaat-specifieke FTMO path test gemeten."
             if measured else
-            "Simulator + 2-Step-regels zijn aanwezig; kandidaat-specifieke chronologische R-paths/pass-rates zijn nog niet gegenereerd. Geen score wordt afgeleid uit alleen pips of win-rate."
+            "Simulator + 2-Step-regels zijn aanwezig; kandidaat-specifieke realistische FTMO-simulatietests/pass-rates zijn nog niet gegenereerd. Geen score wordt afgeleid uit alleen pips of win-rate."
         ),
     }
 
@@ -579,7 +579,7 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
                 continue
             if state=="stale" and (age is None or age < 180):
                 continue
-            label="Geen tekstvoortgang" if state=="stalled" else "Worker niet verbonden" if state=="offline" else "Worker heartbeat loopt achter"
+            label="Geen tekstvoortgang" if state=="stalled" else "Worker niet verbonden" if state=="offline" else "Worker is te lang niet actief geweest"
             items.append({
                 "id": "worker:%s" % str(worker.get("worker_id") or project),
                 "project": project,
