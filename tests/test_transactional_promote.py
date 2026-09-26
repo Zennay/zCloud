@@ -125,6 +125,17 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertFalse((self.root / "firefox-extension/recovery.js").exists())
         self.assertEqual("old-server\n", (self.root / "server.py").read_text())
 
+    def test_firefox_only_paths_do_not_restart_zcloud_service(self):
+        self.assertFalse(promote.needs_service_restart([
+            "firefox-extension/background.js",
+            "firefox-extension/manifest.json",
+            "firefox-extension/recovery.js",
+        ]))
+        self.assertTrue(promote.needs_service_restart([
+            "firefox-extension/background.js",
+            "server.py",
+        ]))
+
     def test_promotion_lock_is_fail_closed(self):
         state = Path(self.tmp.name) / "state"
         with promote.promotion_lock(state):
