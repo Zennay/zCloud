@@ -882,43 +882,57 @@ class Handler(BaseHTTPRequestHandler):
                 if base_project_id not in configs or action not in allowed:return self.reply({'error':'Ongeldige runneractie'},400)
                 if base_project_id==IMPROVEMENT_PROJECT_ID and action=='push' and not configs[base_project_id].get('auto_continue',True):
                     return self.reply({'error':'zCloud improvements staan op Finished / Maintain. Gebruik Resume improvements om bewust verder te gaan.','improvement':configs[base_project_id].get('improvement')},409)
-                with connect() as c:
-                    recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND action=? AND status IN ('pending','completed') ORDER BY id DESC LIMIT 1",(project_id,action)).fetchone()
-                    if recent:
-                        try:
-                            seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
-                            cooldown=5 if action in ('push','start','pause','drain') else 30
-                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
-                        except Exception: pass
-                    if is_worker:
-                        if not configs[base_project_id].get('active') and action!='pause':
-                            return self.reply({'error':'Start eerst het project voordat je deze worker bedient'},409)
-                        slot=int(worker_cfg.get('worker_slot') or 1)
-                        current=worker_cfg.get('desired_state') or 'running'
-                        if action=='push' and current!='running':
-                            return self.reply({'error':'Deze worker is niet beschikbaar voor een nieuwe push'},409)
-                        if action in ('start','new_chat'):
-                            c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
-                        elif action=='pause':
-                            c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
-                        elif action=='drain':
-                            c.execute("UPDATE runner_workers SET desired_state='draining' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
-                    else:
-                        if action=='push' and not configs[project_id].get('active'):
-                            return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
-                        if action=='push' and not any(w.get('active') for w in worker_configs.values() if w.get('base_project_id')==project_id):
-                            return self.reply({'error':'Geen actieve workers om te pushen'},409)
-                        if action in ('start','new_chat'):
-                            c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
-                            c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
-                        elif action=='pause':
-                            c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
-                            c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
-                    ts=now()
-                    cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
-                    command_id=cur.lastrowid
                 desired_state=('draining' if action=='drain' else 'paused' if action=='pause' else 'running')
-                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause','desired_state':desired_state})
+                command_id=None;deduplicated=False;rate_limited=False
+                with connect() as c:
+                    # Serialize same-project action admission so concurrent retries cannot
+                    # both observe an empty queue and enqueue duplicate browser work.
+                    c.execute('BEGIN IMMEDIATE')
+                    inflight=c.execute(
+                        "SELECT id,action FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
+                        (project_id,)
+                    ).fetchone()
+                    if inflight and inflight['action']==action:
+                        command_id=int(inflight['id']);deduplicated=True
+                    else:
+                        recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND action=? AND status='completed' ORDER BY id DESC LIMIT 1",(project_id,action)).fetchone()
+                        if recent:
+                            try:
+                                seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
+                                cooldown=5 if action in ('push','start','pause','drain') else 30
+                                rate_limited=seconds<cooldown
+                            except Exception: pass
+                        if not rate_limited:
+                            if is_worker:
+                                if not configs[base_project_id].get('active') and action!='pause':
+                                    return self.reply({'error':'Start eerst het project voordat je deze worker bedient'},409)
+                                slot=int(worker_cfg.get('worker_slot') or 1)
+                                current=worker_cfg.get('desired_state') or 'running'
+                                if action=='push' and current!='running':
+                                    return self.reply({'error':'Deze worker is niet beschikbaar voor een nieuwe push'},409)
+                                if action in ('start','new_chat'):
+                                    c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
+                                elif action=='pause':
+                                    c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
+                                elif action=='drain':
+                                    c.execute("UPDATE runner_workers SET desired_state='draining' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
+                            else:
+                                if action=='push' and not configs[project_id].get('active'):
+                                    return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
+                                if action=='push' and not any(w.get('active') for w in worker_configs.values() if w.get('base_project_id')==project_id):
+                                    return self.reply({'error':'Geen actieve workers om te pushen'},409)
+                                if action in ('start','new_chat'):
+                                    c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
+                                    c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
+                                elif action=='pause':
+                                    c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
+                                    c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
+                            ts=now()
+                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
+                            command_id=cur.lastrowid
+                if rate_limited:
+                    return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
+                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause','desired_state':desired_state,'deduplicated':deduplicated})
             if u.path=='/api/improvement-loop':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or IMPROVEMENT_PROJECT_ID).strip()
