@@ -535,7 +535,11 @@ class Handler(BaseHTTPRequestHandler):
                     command_id=cur.lastrowid
                 return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause'})
             if u.path=='/api/resource-priority':
-                if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
+                auth=self.headers.get('Authorization','')
+                supplied=auth[7:] if auth.startswith('Bearer ') else ''
+                expected=RUNNER_CONTROL_FILE.read_text().strip() if RUNNER_CONTROL_FILE.exists() else ''
+                local=self.client_address[0] in ('127.0.0.1','::1')
+                if not local and (not expected or not hmac.compare_digest(supplied,expected)):return self.reply({'error':'Unauthorized'},401)
                 project=str(payload.get('project') or '')
                 priority=str(payload.get('priority') or '')
                 try: result=enhancements.set_priority(project,priority)
@@ -590,7 +594,7 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
             return self.reply({'error':'Niet gevonden'},404)
-        files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest'}
+        files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/ftmo-readiness.css':'ftmo-readiness.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest'}
         if u.path not in files:return self.reply({'error':'Niet gevonden'},404)
         path=ROOT/'public'/files[u.path]
         return self.reply(path.read_bytes(),kind=mimetypes.guess_type(path.name)[0] or 'application/octet-stream')

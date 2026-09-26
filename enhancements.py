@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from contextlib import contextmanager
 import hashlib, json, re, sqlite3, subprocess, time
 
 ROOT = Path("/home/ubuntu/zennay-cloud")
@@ -22,11 +23,24 @@ PROJECT_UNITS = {
     ],
     "cloud": ["zennay-cloud.service"],
     "supa": [],
+    "raiseai": [],
 }
 _RESOURCE_PREV = {}
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+@contextmanager
+def _db_connect(db_path):
+    c = sqlite3.connect(db_path)
+    try:
+        yield c
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+    finally:
+        c.close()
 
 def _json(path, sudo=False):
     p = str(path)
@@ -43,6 +57,7 @@ def load_resource_policy():
         "haxlab": {"priority": "background"},
         "ftmo": {"priority": "high"},
         "supa": {"priority": "normal"},
+        "raiseai": {"priority": "normal"},
         "cloud": {"priority": "normal"},
     }
     try:
@@ -107,10 +122,11 @@ def set_priority(project, priority):
     tmp = RESOURCE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(policy, ensure_ascii=False, indent=2) + "\n")
     tmp.replace(RESOURCE_FILE)
-    subprocess.check_output(
-        ["sudo", "-n", "/usr/local/sbin/zennay-resource-control", "apply", project],
-        text=True, stderr=subprocess.STDOUT, timeout=12
-    )
+    if PROJECT_UNITS.get(project):
+        subprocess.check_output(
+            ["sudo", "-n", "/usr/local/sbin/zennay-resource-control", "apply", project],
+            text=True, stderr=subprocess.STDOUT, timeout=12
+        )
     return {"project": project, "priority": priority, "weight": PRIORITY_WEIGHTS[priority]}
 
 def _find_metrics_dict(data):
@@ -207,6 +223,65 @@ def _pips(value):
     except Exception:
         return None
 
+def _as_pct(value):
+    try:
+        value = float(value)
+        if abs(value) <= 1:
+            value *= 100
+        return round(value, 1)
+    except Exception:
+        return None
+
+def _ftmo_readiness():
+    root = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo")
+    simulator = root / "src/prop_trading_ai/simulator/batch.py"
+    two_step = root / "configs/prop_firms/ftmo_cfd_2step_standard_2026_09_15.json"
+    prop_configs = root / "configs/prop_firms"
+    one_step = next(iter(prop_configs.glob("*1step*.json")), None) if prop_configs.exists() else None
+    canonical = root / "artifacts/ftmo_readiness/latest.json"
+
+    raw = _json(canonical) if canonical.exists() else None
+    runs = []
+    if isinstance(raw, dict):
+        source_runs = raw.get("runs") or raw.get("risk_scenarios") or []
+        if isinstance(source_runs, list):
+            for row in source_runs:
+                if not isinstance(row, dict):
+                    continue
+                risk = row.get("risk_pct")
+                if risk is None and row.get("risk_fraction") is not None:
+                    try:
+                        risk = float(row["risk_fraction"]) * 100
+                    except Exception:
+                        risk = None
+                runs.append({
+                    "program": row.get("program") or row.get("product") or "2-Step",
+                    "risk_pct": round(float(risk), 2) if risk is not None else None,
+                    "pass_rate": _as_pct(row.get("pass_rate") if row.get("pass_rate") is not None else row.get("challenge_pass_rate")),
+                    "daily_loss_breach_rate": _as_pct(row.get("daily_loss_breach_rate")),
+                    "total_loss_breach_rate": _as_pct(row.get("total_loss_breach_rate") if row.get("total_loss_breach_rate") is not None else row.get("max_loss_breach_rate")),
+                    "max_drawdown_p95": _as_pct(row.get("max_drawdown_p95") if row.get("max_drawdown_p95") is not None else row.get("p95_max_drawdown")),
+                    "median_days_to_target": row.get("median_days_to_target"),
+                })
+
+    measured = any(row.get("pass_rate") is not None for row in runs)
+    return {
+        "available": simulator.exists() or two_step.exists(),
+        "measured": measured,
+        "status": "measured" if measured else "pending",
+        "simulator_ready": simulator.exists(),
+        "two_step_configured": two_step.exists(),
+        "one_step_configured": bool(one_step),
+        "artifact": str(canonical) if canonical.exists() else None,
+        "runs": runs,
+        "planned_risk_pct": [0.10, 0.25, 0.50, 0.75],
+        "note": (
+            "Kandidaat-specifieke FTMO path test gemeten."
+            if measured else
+            "Simulator + 2-Step-regels zijn aanwezig; kandidaat-specifieke chronologische R-paths/pass-rates zijn nog niet gegenereerd. Geen score wordt afgeleid uit alleen pips of win-rate."
+        ),
+    }
+
 def _ftmo_quality():
     cand = _ftmo_candidate()
     rel = _ftmo_release()
@@ -248,6 +323,7 @@ def _ftmo_quality():
         "items": [x for x in items if x.get("value") is not None],
         "stage": stage,
         "meta": meta,
+        "readiness": _ftmo_readiness(),
     }
 
 def quality_for(project):
@@ -285,7 +361,7 @@ def _emit(c, project, kind, severity, title, detail, fingerprint, cooldown=0):
 
 def list_alerts(db_path, limit=20, important_only=False):
     try:
-        with sqlite3.connect(db_path) as c:
+        with _db_connect(db_path) as c:
             c.row_factory = sqlite3.Row
             where = "WHERE important=1" if important_only else ""
             rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (limit,)).fetchall()
@@ -310,7 +386,7 @@ def evaluate_alerts(data, runner, db_path):
         previous = json.loads(ALERT_STATE_FILE.read_text())
     except Exception:
         previous = None
-    with sqlite3.connect(db_path) as c:
+    with _db_connect(db_path) as c:
         init_db(c)
         for p in data.get("projects", []):
             if p.get("status") == "archived":

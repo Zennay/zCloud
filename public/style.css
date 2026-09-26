@@ -10,3 +10,18 @@
 .archived-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px dashed #303744;border-radius:11px;padding:14px 16px;margin:-10px 0 28px;color:#8d98a8}.archived-panel>div:first-child{display:grid;gap:2px}.archived-panel strong{font-size:13px;color:#c5ccd6}.archived-panel span{font-size:11px}.archived-list{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.archived-list button{border:1px solid #323a46;background:#151922;color:#a8b2c0;border-radius:999px;padding:7px 10px;display:flex;align-items:center;gap:7px;font-size:12px}.archived-list button b{font-size:10px;color:var(--lime);font-weight:500}
 @media(max-width:760px){.project-card{cursor:default}.drag-handle{display:none}.archive-button{min-height:38px;padding:8px 10px}.archived-panel{align-items:flex-start;flex-direction:column}.archived-list{justify-content:flex-start}.section-title .reduced{max-width:165px;text-align:right}}
 .project-runner-controls{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:15px -21px -21px;padding:13px 21px;border-top:1px solid #242933;background:#11151b}.project-runner-state{display:inline-flex;align-items:center;gap:7px;color:#8e99a8;font-size:11px;white-space:nowrap}.project-runner-state i{width:7px;height:7px;border-radius:50%;background:#6b7481}.project-runner-state.active{color:#b9e8cd}.project-runner-state.active i{background:#5ddc9d}.project-runner-buttons,.runner-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.runner-action-secondary{background:#171b22!important;border-color:#343b47!important;color:#aab4c2!important}.project-runner-controls .runner-action{padding:7px 9px;font-size:10px}.project-card:has(.project-runner-controls button:hover){transform:none}@media(max-width:1200px){.project-runner-controls{margin:15px -17px -17px;padding:12px 17px}}@media(max-width:760px){.project-runner-controls{margin:17px -21px -21px;padding:14px 21px}.project-runner-controls .runner-action{min-height:38px;padding:8px 11px}.project-runner-buttons{gap:8px}}
+
+/* Project runner quick controls */
+.runner-toggle{width:42px;height:42px;flex:0 0 42px;border-radius:50%;display:grid;place-items:center;border:1px solid #2d704e;background:linear-gradient(145deg,#193a29,#10271c);color:#67e7a2;box-shadow:0 7px 20px #0003,0 0 0 1px #67e7a20a inset;transition:transform .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease}
+.runner-toggle:hover:not(:disabled){transform:translateY(-1px) scale(1.04);border-color:#5fe49b;box-shadow:0 9px 24px #0005,0 0 18px #49d58a1f}
+.runner-toggle.is-active{border-color:#7b3b45;background:linear-gradient(145deg,#421f25,#2c151a);color:#ff7f8a;box-shadow:0 7px 20px #0003,0 0 0 1px #ff7f8a0a inset}
+.runner-toggle.is-active:hover:not(:disabled){border-color:#ff7783;box-shadow:0 9px 24px #0005,0 0 18px #ff66751f}
+.runner-toggle .icon{width:18px;height:18px;fill:currentColor;stroke:currentColor;stroke-width:1.2}
+.runner-toggle.is-idle .icon{transform:translateX(1px)}
+.runner-toggle-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.detail-heading-actions{display:flex;align-items:center;gap:13px}
+.runner-toggle-detail{width:58px;height:58px;flex-basis:58px;border-width:1px}
+.runner-toggle-detail .icon{width:23px;height:23px}
+.project-card-actions .runner-toggle{margin-right:2px}
+.project-card:has(.runner-toggle:hover){transform:none}
+@media(max-width:760px){.detail-heading-actions{gap:9px}.runner-toggle-detail{width:50px;height:50px;flex-basis:50px}.project-card-actions{gap:6px}.runner-toggle{width:40px;height:40px;flex-basis:40px}.archive-button{padding:7px 8px}.drag-handle{padding:7px}}

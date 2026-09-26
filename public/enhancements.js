@@ -13,6 +13,29 @@
     }).join('');
     return '<div class="panel quality-panel"><div class="panel-header"><div><h2>Live kwaliteit</h2><div class="panel-subtitle">'+esc(q.stage||'Evidence-backed')+'</div></div>'+icon('pulse')+'</div><div class="quality-hero">'+esc(q.headline.label)+'<strong>'+esc(q.headline.value)+esc(q.headline.unit||'')+'</strong><span>'+esc(q.headline.note||'')+'</span></div><div class="quality-grid">'+items+'</div></div>';
   }
+  function readinessPanel(p){
+    if(!p||p.id!=='ftmo')return '';
+    var r=p.quality&&p.quality.readiness;
+    if(!r||!r.available)return '';
+    function pct(v){return v==null?'—':num(v)+'%'}
+    var capability='<div class="readiness-summary">'
+      +'<div><span>2-Step rules</span><strong>'+(r.two_step_configured?'Geconfigureerd':'Ontbreekt')+'</strong></div>'
+      +'<div><span>1-Step rules</span><strong>'+(r.one_step_configured?'Geconfigureerd':'Nog niet')+'</strong></div>'
+      +'<div><span>Simulator</span><strong>'+(r.simulator_ready?'Klaar':'Ontbreekt')+'</strong></div>'
+      +'<div><span>Candidate path test</span><strong>'+(r.measured?'Gemeten':'Nog niet gedraaid')+'</strong></div>'
+      +'</div>';
+    var runs=r.runs||[];
+    var table='';
+    if(runs.length){
+      table='<div class="readiness-table"><div class="readiness-row head"><span>Risk / trade</span><span>Pass</span><span>Daily breach</span><span>Total breach</span><span>P95 DD</span><span>Median target</span></div>'
+        +runs.map(function(x){return '<div class="readiness-row"><strong>'+esc(x.risk_pct==null?'—':x.risk_pct+'%')+'</strong><span>'+pct(x.pass_rate)+'</span><span>'+pct(x.daily_loss_breach_rate)+'</span><span>'+pct(x.total_loss_breach_rate)+'</span><span>'+pct(x.max_drawdown_p95)+'</span><span>'+esc(x.median_days_to_target==null?'—':x.median_days_to_target+' d')+'</span></div>'}).join('')
+        +'</div>';
+    }else{
+      table='<div class="readiness-risk-grid">'+(r.planned_risk_pct||[]).map(function(x){return '<div><span>'+esc(x)+'% risk</span><strong>—</strong><small>wacht op chronologische R-path test</small></div>'}).join('')+'</div>';
+    }
+    return '<div class="panel readiness-panel"><div class="panel-header"><div><h2>FTMO readiness</h2><div class="panel-subtitle">Challenge-path testing · los van pips/win-rate</div></div><span class="readiness-state '+(r.measured?'ready':'pending')+'">'+(r.measured?'GEMETEN':'PENDING')+'</span></div>'+capability+table+'<div class="detail-note">'+esc(r.note||'')+'</div></div>';
+  }
+
   function resourcePanel(){
     var list=(DATA.projects||[]).filter(function(p){return !!p.resource});
     if(!list.length)return '';
@@ -20,10 +43,10 @@
       var r=p.resource||{};
       var cpu=r.cpu_percent==null?'meten…':num(r.cpu_percent)+'%';
       var mem=r.memory_bytes?num(r.memory_bytes/1048576)+' MB':'—';
-      var disabled=' disabled';
-      return '<div class="resource-row"><div><strong>'+esc(p.name)+'</strong><small>'+(r.managed?'CPU '+cpu+' · RAM '+mem:'Geen persistente VPS-worker')+'</small></div><select data-resource-priority="'+esc(p.id)+'"'+disabled+'><option value="background" '+(r.priority==='background'?'selected':'')+'>Background</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal</option><option value="high" '+(r.priority==='high'?'selected':'')+'>High</option></select></div>';
+      var detail=r.managed?'CPU '+cpu+' · RAM '+mem:'Geen persistente VPS-worker · instelling wordt bewaard';
+      return '<div class="resource-row"><div><strong>'+esc(p.name)+'</strong><small>'+detail+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Resourceprioriteit '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Achtergrond · 100</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal · 400</option><option value="high" '+(r.priority==='high'?'selected':'')+'>Hoog · 800</option></select></div>';
     }).join('');
-    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource priority</h2><div class="panel-subtitle">Relatieve CPU/IO-prioriteit · geen harde cap</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div><div class="detail-note">Background blijft doorwerken en mag vrije CPU gebruiken; bij contention krijgen High-projecten voorrang. Wijzigen is bewust geblokkeerd zolang het dashboard geen login heeft.</div></div>';
+    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource priority</h2><div class="panel-subtitle">CPU/IO-weight per project · 100 / 400 / 800</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div><div class="detail-note">Achtergrond blijft doorwerken en mag vrije capaciteit gebruiken; Hoog krijgt bij contention duidelijk voorrang. Wijzigingen zijn beveiligd met dezelfde zCloud-actiesleutel als de runner-controls.</div></div>';
   }
   function alertsPanel(){
     var a=DATA.alerts||[];
@@ -58,7 +81,7 @@
   var baseDetail=detail;
   detail=function(p){
     var html=baseDetail(p);
-    var extras=qPanel(p)+milestonePanel(p);
+    var extras=qPanel(p)+readinessPanel(p)+milestonePanel(p);
     return html.replace('<div class="detail-columns">',extras+'<div class="detail-columns">');
   };
 
@@ -71,13 +94,20 @@
     var el=e.target.closest&&e.target.closest('[data-resource-priority]');
     if(!el)return;
     e.stopImmediatePropagation();
+    var previous=el.dataset.previousValue||'normal';
+    var token=sessionStorage.getItem('zcloud-runner-control')||'';
+    if(!token){token=window.prompt('Voer de zCloud actiesleutel in om resource-prioriteit te wijzigen.');if(!token){el.value=previous;return}sessionStorage.setItem('zcloud-runner-control',token)}
     el.disabled=true;
     try{
-      await post('/api/resource-priority',{project:el.dataset.resourcePriority,priority:el.value});
+      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
+      var data=await response.json().catch(function(){return {}});
+      if(!response.ok){if(response.status===401)sessionStorage.removeItem('zcloud-runner-control');throw new Error(data.error||'Opslaan mislukt')}
+      el.dataset.previousValue=el.value;
       await refresh(true);
     }catch(err){
+      el.value=previous;
       $('notice').hidden=false;
-      $('notice').textContent='Resource priority kon niet worden opgeslagen.';
+      $('notice').textContent='Resource priority kon niet worden opgeslagen: '+(err.message||err);
     }finally{
       el.disabled=false;
     }
