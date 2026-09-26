@@ -273,9 +273,15 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
     return manifest
 
 
+def systemctl_command(action: str) -> list[str]:
+    if os.geteuid() == 0:
+        return ["systemctl", action, SERVICE]
+    return ["sudo", "-n", "systemctl", action, SERVICE]
+
+
 def set_service(active: bool) -> None:
     action = "start" if active else "stop"
-    run(["systemctl", action, SERVICE], check=True)
+    run(systemctl_command(action), check=True)
 
 
 def wait_service_healthy(active: bool, timeout=20) -> None:
@@ -315,7 +321,7 @@ def rollback(root: Path, state: Path, *, manage_service=True, verify_health=True
     except Exception as exc:
         try:
             if manage_service:
-                run(["systemctl", "stop", SERVICE])
+                run(systemctl_command("stop"))
             restore_managed(pre, root)
             if manage_service:
                 set_service(before_service.get("active_state") == "active")
