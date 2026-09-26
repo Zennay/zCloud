@@ -22,3 +22,5 @@ jobs:
         run: node tests/test_reload_extension.mjs
       - name: Verify fail-closed pre-change guard
         run: python3 -m unittest -v tests.test_prechange_guard
+      - name: Verify post-deploy canary checks
+        run: python3 -m unittest -v tests.test_postdeploy_canary
