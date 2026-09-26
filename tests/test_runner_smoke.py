@@ -175,6 +175,89 @@ class RunnerSmokeTests(unittest.TestCase):
             targets["projects"]["cloud::w2"]["url"],
         )
 
+    def test_worker_pause_is_individual_and_persistent(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        self.request("/api/runner-workers", {"project_id": "cloud", "worker_count": 2})
+        status, body = self.request(
+            "/api/runner-control", {"project_id": "cloud::w2", "action": "pause"}
+        )
+        self.assertEqual(200, status, body)
+        self.assertTrue(self.active("cloud"))
+        with server.connect() as conn:
+            row = conn.execute(
+                "SELECT desired_state FROM runner_workers WHERE project_id='cloud' AND worker_slot=2"
+            ).fetchone()
+        self.assertEqual("paused", row["desired_state"])
+        status, targets = self.request("/api/runner-targets")
+        self.assertEqual(200, status)
+        self.assertTrue(targets["projects"]["cloud::w1"]["active"])
+        self.assertFalse(targets["projects"]["cloud::w2"]["active"])
+        server.init_db()
+        with server.connect() as conn:
+            row = conn.execute(
+                "SELECT desired_state FROM runner_workers WHERE project_id='cloud' AND worker_slot=2"
+            ).fetchone()
+        self.assertEqual("paused", row["desired_state"])
+
+    def test_worker_drain_finishes_into_paused_state(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        self.request("/api/runner-workers", {"project_id": "cloud", "worker_count": 2})
+        status, body = self.request(
+            "/api/runner-control", {"project_id": "cloud::w2", "action": "drain"}
+        )
+        self.assertEqual(200, status, body)
+        self.assertEqual("draining", body["desired_state"])
+        status, targets = self.request("/api/runner-targets")
+        self.assertTrue(targets["projects"]["cloud::w2"]["active"])
+        self.assertEqual("draining", targets["projects"]["cloud::w2"]["desired_state"])
+        status, body = self.request(
+            "/api/runner-status",
+            {"event": "runner-drained", "projectId": "cloud::w2",
+             "baseProjectId": "cloud", "workerSlot": 2, "title": "zCloud · worker 2/2"},
+        )
+        self.assertEqual(200, status, body)
+        with server.connect() as conn:
+            desired = conn.execute(
+                "SELECT desired_state FROM runner_workers WHERE project_id='cloud' AND worker_slot=2"
+            ).fetchone()["desired_state"]
+        self.assertEqual("paused", desired)
+
+    def test_project_push_rejects_when_all_workers_are_paused(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        self.request("/api/runner-workers", {"project_id": "cloud", "worker_count": 2})
+        first, _ = self.request(
+            "/api/runner-control", {"project_id": "cloud::w1", "action": "pause"}
+        )
+        second, _ = self.request(
+            "/api/runner-control", {"project_id": "cloud::w2", "action": "pause"}
+        )
+        self.assertEqual((200, 200), (first, second))
+        status, body = self.request(
+            "/api/runner-control", {"project_id": "cloud", "action": "push"}
+        )
+        self.assertEqual(409, status)
+        self.assertIn("Geen actieve workers", body["error"])
+
+    def test_worker_status_exposes_task_claim_and_advanced_metadata(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        server.task_claim_acquire(
+            "cloud", "notion:abc", "owner-a", "cloud::w1", 300,
+            {"task": "Veilige workerkaart bouwen", "branch": "worker/test"},
+        )
+        self.request(
+            "/api/runner-status",
+            {"event": "heartbeat", "projectId": "cloud::w1",
+             "baseProjectId": "cloud", "workerSlot": 1, "title": "zCloud · worker 1/1"},
+        )
+        cloud = server.runner_statuses()["cloud"]
+        self.assertEqual(1, cloud["desired_worker_count"])
+        self.assertEqual(1, cloud["active_worker_count"])
+        worker = cloud["workers"][0]
+        self.assertEqual("cloud::w1", worker["worker_id"])
+        self.assertTrue(worker["work_area"])
+        self.assertEqual("Veilige workerkaart bouwen", worker["current_task"]["title"])
+        self.assertEqual("worker/test", worker["current_task"]["branch"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
