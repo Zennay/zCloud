@@ -4,8 +4,17 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+import sys
+import types
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+
+# Runner-control smoke tests deliberately isolate unrelated VPS telemetry/resource helpers.
+# The production enhancements module has host-specific import side effects, so use the
+# smallest stub needed by server.init_db() in this portable test process.
+enhancements_stub = types.ModuleType("enhancements")
+enhancements_stub.init_db = lambda conn: None
+sys.modules["enhancements"] = enhancements_stub
 
 import server
 
