@@ -1,5 +1,3 @@
-[Reading 98 lines from start (total: 98 lines, 0 remaining)]
-
 import importlib.util
 import json
 import sqlite3
