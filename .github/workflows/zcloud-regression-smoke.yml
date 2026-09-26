@@ -16,3 +16,5 @@ jobs:
         run: python3 -m unittest discover -v
       - name: Verify 12h Birdseye shell scheduler isolation
         run: bash tests/test_birds_eye_review.sh
+      - name: Verify zCloud self-improvement stop-gate browser isolation
+        run: bash tests/test_improvement_stopgate_js.sh
