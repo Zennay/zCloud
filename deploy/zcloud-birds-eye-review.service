@@ -6,4 +6,4 @@ Wants=chatgpt-firefox.service
 [Service]
 Type=oneshot
 WorkingDirectory=/home/ubuntu/zennay-cloud
-ExecStart=/home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
+ExecStart=/usr/bin/bash /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
