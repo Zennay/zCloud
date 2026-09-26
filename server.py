@@ -91,6 +91,17 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
             'Gebruik verborgen validation/holdout-resultaten nooit voor ontwerpkeuzes en red of retune afgewezen '
             'generaties niet. Parallel voorbereid werk is alleen toegestaan wanneer het outcome-free blijft.'
         )
+    if project_id=='cloud':
+        coordination += (
+            ' Voor zCloud self-improvement geldt een persistent finish-protocol. Controleer vóór een write-iteratie '
+            'via de live zCloud improvement-state hoeveel implementatie-iteraties al zijn afgerond. Als de teller op 9 '
+            'staat, is dit de tiende/harde laatste iteratie en moet je in hetzelfde slotrapport ook de eind-audit doen. '
+            'Alleen na een daadwerkelijk afgeronde implementatie-iteratie zet je exact de losse marker ZCLOUD_ITERATION_COMPLETE in je slotrapport. '
+            'Wanneer je expliciet de senior finish-gate beoordeelt, voeg exact één marker toe: '
+            'ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 als de finish-gate groen is en er geen nieuwe P0/P1 is, anders '
+            'ZCLOUD_FINISH_REVIEW: OPEN_P0P1. Bij de eind-audit na de harde iteratiegrens gebruik je exact '
+            'ZCLOUD_FINAL_AUDIT: GREEN of ZCLOUD_FINAL_AUDIT: FAIL. Gebruik deze markers niet voor read-only prep.'
+        )
     return base_prompt + coordination
 RUNNER_DEFAULTS = {
     pid: {
@@ -186,8 +197,7 @@ def init_db():
         if 'assistant_chars' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN assistant_chars INTEGER')
         if 'worker_slot' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN worker_slot INTEGER NOT NULL DEFAULT 1')
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_ts ON runner_events(project_id,ts)')
-        c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')
-        target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
+        c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')        target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
         migrated_active='active' not in target_columns
         if migrated_active:
             c.execute('ALTER TABLE runner_targets ADD COLUMN active INTEGER NOT NULL DEFAULT 0')
@@ -200,6 +210,8 @@ def init_db():
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
         c.execute('CREATE INDEX IF NOT EXISTS task_claims_lease_until ON task_claims(lease_until)')
+        c.execute("CREATE TABLE IF NOT EXISTS improvement_loops(project_id TEXT PRIMARY KEY, state TEXT NOT NULL, iteration_count INTEGER NOT NULL DEFAULT 0, clean_reviews INTEGER NOT NULL DEFAULT 0, stop_reason TEXT, last_green_commit TEXT, audit_result TEXT, updated_at TEXT NOT NULL)")
+        c.execute("INSERT OR IGNORE INTO improvement_loops(project_id,state,iteration_count,clean_reviews,stop_reason,last_green_commit,audit_result,updated_at) VALUES('cloud','running',0,0,NULL,NULL,NULL,?)",(datetime.now(timezone.utc).isoformat(),))
         for project_id,target in RUNNER_DEFAULTS.items():
             c.execute('INSERT INTO runner_targets(project_id,name,conversation_id,prompt,active) VALUES(?,?,?,?,0) '
                       'ON CONFLICT(project_id) DO UPDATE SET name=excluded.name,prompt=excluded.prompt',
@@ -384,7 +396,6 @@ def _claim_lease_seconds(raw):
 
 def _claim_timestamp(seconds=0):
     return datetime.fromtimestamp(time.time()+seconds,timezone.utc).isoformat()
-
 def _claim_payload(row):
     if not row:
         return None
@@ -395,6 +406,70 @@ def _claim_payload(row):
         item['metadata']={}
         item.pop('metadata_json',None)
     return item
+
+IMPROVEMENT_PROJECT_ID = 'cloud'
+IMPROVEMENT_RUNNING = 'running'
+
+def canonical_main_sha():
+    for ref in ('origin/main', 'main', 'HEAD'):
+        value=(cmd(['git','-C',str(ROOT),'rev-parse',ref]) or '').strip()
+        if re.fullmatch(r'[0-9a-f]{40}',value,re.I):
+            return value
+    return None
+
+def improvement_loop_state(project_id=IMPROVEMENT_PROJECT_ID):
+    with connect() as c:
+        row=c.execute('SELECT * FROM improvement_loops WHERE project_id=?',(project_id,)).fetchone()
+    if not row:
+        return {'project_id':project_id,'state':IMPROVEMENT_RUNNING,'iteration_count':0,'clean_reviews':0,
+                'stop_reason':None,'last_green_commit':None,'audit_result':None,'updated_at':None,'auto_continue':True}
+    item=dict(row)
+    item['auto_continue']=item['state']==IMPROVEMENT_RUNNING
+    return item
+
+def improvement_loop_record(project_id, signal, *, finish_gate_green=None, p0p1_open=None, audit_green=None):
+    if project_id != IMPROVEMENT_PROJECT_ID:
+        return improvement_loop_state(project_id)
+    ts=now()
+    with connect() as c:
+        row=c.execute('SELECT * FROM improvement_loops WHERE project_id=?',(project_id,)).fetchone()
+        if not row:
+            c.execute("INSERT INTO improvement_loops(project_id,state,iteration_count,clean_reviews,updated_at) VALUES(?,?,?,?,?)",
+                      (project_id,IMPROVEMENT_RUNNING,0,0,ts))
+            row=c.execute('SELECT * FROM improvement_loops WHERE project_id=?',(project_id,)).fetchone()
+        state=row['state']; iterations=int(row['iteration_count'] or 0); clean=int(row['clean_reviews'] or 0)
+        stop_reason=row['stop_reason']; audit=row['audit_result']; green_commit=row['last_green_commit']
+        if signal=='iteration' and state==IMPROVEMENT_RUNNING:
+            iterations += 1
+            if iterations >= 10:
+                state='audit_required'; stop_reason='hard_iteration_limit_waiting_final_audit'
+        elif signal=='review':
+            if state==IMPROVEMENT_RUNNING and bool(finish_gate_green) and not bool(p0p1_open):
+                clean += 1; green_commit=canonical_main_sha() or green_commit
+                if clean >= 2:
+                    state='finished'; stop_reason='two_consecutive_clean_senior_reviews'
+            elif state==IMPROVEMENT_RUNNING:
+                clean=0
+        elif signal=='audit' and state=='audit_required':
+            audit='green' if bool(audit_green) else 'failed'
+            if bool(audit_green):
+                state='finished'; stop_reason='hard_iteration_limit_final_audit_green'
+                green_commit=canonical_main_sha() or green_commit
+            else:
+                state='audit_failed'; stop_reason='hard_iteration_limit_final_audit_failed'
+        c.execute(
+            'UPDATE improvement_loops SET state=?,iteration_count=?,clean_reviews=?,stop_reason=?,last_green_commit=?,audit_result=?,updated_at=? WHERE project_id=?',
+            (state,iterations,clean,stop_reason,green_commit,audit,ts,project_id))
+    return improvement_loop_state(project_id)
+
+def improvement_loop_resume(project_id=IMPROVEMENT_PROJECT_ID):
+    ts=now()
+    with connect() as c:
+        c.execute(
+            'INSERT INTO improvement_loops(project_id,state,iteration_count,clean_reviews,stop_reason,last_green_commit,audit_result,updated_at) '
+            'VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET state=excluded.state,iteration_count=0,clean_reviews=0,stop_reason=NULL,audit_result=NULL,updated_at=excluded.updated_at',
+            (project_id,IMPROVEMENT_RUNNING,0,0,None,None,None,ts))
+    return improvement_loop_state(project_id)
 
 def task_claims(project_id=None):
     ts=now()
@@ -413,10 +488,13 @@ def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=
     worker_id=str(worker_id or '').strip()[:160]
     if not project_id or not claim_key or not owner_id:
         raise ValueError('project_id, claim_key en owner_id zijn verplicht')
+    metadata=metadata if isinstance(metadata,dict) else {}
+    if project_id==IMPROVEMENT_PROJECT_ID and metadata.get('loop')=='self_improvement' and not improvement_loop_state(project_id)['auto_continue']:
+        return {'acquired':False,'blocked':'improvement_loop_finished','claim':None}
     lease_seconds=_claim_lease_seconds(lease_seconds)
     ts=now()
     until=_claim_timestamp(lease_seconds)
-    metadata_json=json.dumps(metadata if isinstance(metadata,dict) else {},ensure_ascii=False,separators=(',',':'))[:4000]
+    metadata_json=json.dumps(metadata,ensure_ascii=False,separators=(',',':'))[:4000]
     with connect() as c:
         cur=c.execute(
             """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
@@ -455,9 +533,15 @@ def task_claim_release(project_id,claim_key,owner_id):
 def runner_targets():
     with connect() as c:
         rows=c.execute('SELECT project_id,name,conversation_id,prompt,active,worker_count FROM runner_targets ORDER BY project_id').fetchall()
-    return {r['project_id']:{'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
-                            'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
-                            'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1))} for r in rows}
+    out={}
+    for r in rows:
+        improvement=improvement_loop_state(r['project_id']) if r['project_id']==IMPROVEMENT_PROJECT_ID else None
+        out[r['project_id']]={'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
+                              'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
+                              'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
+                              'auto_continue':bool(improvement['auto_continue']) if improvement else True,
+                              'improvement':improvement}
+    return out
 
 def runner_worker_targets():
     base=runner_targets()
@@ -475,7 +559,8 @@ def runner_worker_targets():
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
-                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),'active':bool(cfg['active'])
+                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),'active':bool(cfg['active']),
+                    'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')
                 }
     return out
 
@@ -510,8 +595,18 @@ def runner_record(payload):
                       (project_id,worker_slot,match.group(1)))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
-        cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
-        c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
+        cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()        c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
+    if project_id==IMPROVEMENT_PROJECT_ID:
+        if event=='improvement-iteration-complete':
+            improvement_loop_record(project_id,'iteration')
+        elif event=='improvement-review-green':
+            improvement_loop_record(project_id,'review',finish_gate_green=True,p0p1_open=False)
+        elif event=='improvement-review-open':
+            improvement_loop_record(project_id,'review',finish_gate_green=False,p0p1_open=True)
+        elif event=='improvement-audit-green':
+            improvement_loop_record(project_id,'audit',audit_green=True)
+        elif event=='improvement-audit-failed':
+            improvement_loop_record(project_id,'audit',audit_green=False)
 
 def runner_status(project_id=None):
     target_cfg=runner_targets()
@@ -540,7 +635,7 @@ def runner_status(project_id=None):
         return {'project_id':project_id,'name':cfg.get('name'),'state':'offline' if active else 'paused','active':active,'age_seconds':None,
                 'generating':False,'sending':False,'last_event':None,'last_heartbeat':None,
                 'last_prompt_sent':None,'last_generation_started':None,'last_generation_finished':None,
-                'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None}
+                'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None,'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')}
     try: age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(latest['ts'])).total_seconds()))
     except Exception: age=999999
     progress_time=latest['progress_at'] or (heartbeat['progress_at'] if heartbeat else None)
@@ -556,7 +651,7 @@ def runner_status(project_id=None):
             'tab_id':latest['tab_id'],'error':latest['error'] or None,'event':latest['event'],
             'last_event':info(latest),'last_heartbeat':info(heartbeat),'last_prompt_sent':info(prompt),
             'last_generation_started':info(started),'last_generation_finished':info(finished),
-            'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None}
+            'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None,'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')}
 
 def runner_statuses():
     return {pid:runner_status(pid) for pid in runner_targets()}
@@ -691,14 +786,15 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'error':'Firefox-initiator kon niet worden herstart','detail':str(e)[:200]},500)
                 configs=runner_targets()
                 if project_id not in configs or action not in ('start','pause','new_chat','push'):return self.reply({'error':'Ongeldige runneractie'},400)
+                if project_id==IMPROVEMENT_PROJECT_ID and action=='push' and not configs[project_id].get('auto_continue',True):
+                    return self.reply({'error':'zCloud improvements staan op Finished / Maintain. Gebruik Resume improvements om bewust verder te gaan.','improvement':configs[project_id].get('improvement')},409)
                 with connect() as c:
                     recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND action=? AND status IN ('pending','completed') ORDER BY id DESC LIMIT 1",(project_id,action)).fetchone()
                     if recent:
                         try:
                             seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
                             cooldown=5 if action in ('push','start','pause') else 30
-                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)
-                        except Exception: pass
+                            if seconds<cooldown:return self.reply({'error':'Er is net al een actie voor dit project gestart'},429)                        except Exception: pass
                     if action=='push' and not configs[project_id].get('active'):
                         return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
                     if action in ('start','new_chat'):
@@ -709,6 +805,18 @@ class Handler(BaseHTTPRequestHandler):
                     cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
                     command_id=cur.lastrowid
                 return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause'})
+            if u.path=='/api/improvement-loop':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                project_id=str(payload.get('project_id') or IMPROVEMENT_PROJECT_ID).strip()
+                if project_id!=IMPROVEMENT_PROJECT_ID:return self.reply({'error':'Alleen de zCloud self-improvement loop wordt door deze gate beheerd'},400)
+                action=str(payload.get('action') or '').strip()
+                if action=='resume': return self.reply({'ok':True,'improvement':improvement_loop_resume(project_id)})
+                if action=='review':
+                    result=improvement_loop_record(project_id,'review',finish_gate_green=payload.get('finish_gate_green'),p0p1_open=payload.get('p0p1_open'))
+                    return self.reply({'ok':True,'improvement':result})
+                if action=='iteration': return self.reply({'ok':True,'improvement':improvement_loop_record(project_id,'iteration')})
+                if action=='audit': return self.reply({'ok':True,'improvement':improvement_loop_record(project_id,'audit',audit_green=payload.get('green'))})
+                return self.reply({'error':'Ongeldige improvement-loop actie'},400)
             if u.path=='/api/task-claims':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 action=str(payload.get('action') or 'acquire')
@@ -763,6 +871,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
+        if u.path=='/api/improvement-loop':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            return self.reply({'improvement':improvement_loop_state(q.get('project',[IMPROVEMENT_PROJECT_ID])[0] or IMPROVEMENT_PROJECT_ID),'time':now()})
         if u.path=='/api/task-claims':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
             return self.reply({'claims':task_claims(q.get('project',[''])[0] or None),'time':now()})
