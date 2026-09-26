@@ -1,12 +1,15 @@
+[Reading 704 lines from start (total: 704 lines, 0 remaining)]
+
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
-import hashlib, json, re, sqlite3, subprocess, time
+import hashlib, json, os, re, sqlite3, subprocess, time
 
 ROOT = Path("/home/ubuntu/zennay-cloud")
 RESOURCE_FILE = ROOT / "resource-policy.json"
 ALERT_STATE_FILE = ROOT / "alert-state.json"
 SIGNALS_DIR = ROOT / "signals"
+RECOVERY_DIR = Path(os.environ.get("ZCLOUD_RECOVERY_DIR", str(Path.home() / ".local/state/zcloud/recovery")))
 
 PRIORITY_WEIGHTS = {"background": 100, "normal": 400, "high": 800, "turbo": 3000}
 PROJECT_UNITS = {
@@ -425,6 +428,200 @@ def _emit(c, project, kind, severity, title, detail, fingerprint, cooldown=0):
     aid = hashlib.sha256((effective_fingerprint + "|" + ts).encode()).hexdigest()[:20]
     c.execute("INSERT INTO alerts VALUES(?,?,?,?,?,?,?,?,?)", (aid, ts, project, kind, severity, title, detail, 1, effective_fingerprint))
     return True
+
+def emit_incident(db_path, project, kind, severity, title, detail, fingerprint, cooldown=0):
+    try:
+        with _db_connect(db_path) as c:
+            init_db(c)
+            created = _emit(c, str(project or "cloud"), str(kind or "incident"), str(severity or "warning"),
+                            str(title or "Aandacht nodig"), str(detail or ""), str(fingerprint), cooldown)
+            c.commit()
+        return created
+    except Exception:
+        return False
+
+def recovery_status(recovery_dir=None):
+    root = Path(recovery_dir) if recovery_dir else RECOVERY_DIR
+    latest = _json(root / "last-known-good.json") or {}
+    events = []
+    try:
+        lines=(root / "recovery.log").read_text(encoding="utf-8").splitlines()[-200:]
+        for line in lines:
+            try:
+                event=json.loads(line)
+                if isinstance(event,dict):
+                    events.append(event)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    rollback_events=[e for e in events if str(e.get("event") or "").startswith("rollback_")]
+    last_rollback=rollback_events[-1] if rollback_events else None
+    failed=bool(last_rollback and "failed" in str(last_rollback.get("event") or ""))
+    available=bool(latest.get("snapshot_id"))
+    if failed:
+        status="problem"; label="Herstelactie had een fout"
+    elif last_rollback and last_rollback.get("event")=="rollback_succeeded":
+        status="tested"; label="Herstelpad getest"
+    elif last_rollback and last_rollback.get("event")=="rollback_started":
+        status="in_progress"; label="Herstelactie loopt"
+    elif available:
+        status="ready"; label="Herstelpunt klaar"
+    else:
+        status="missing"; label="Geen herstelpunt beschikbaar"
+    return {
+        "available": available,
+        "status": status,
+        "label": label,
+        "snapshot_id": latest.get("snapshot_id"),
+        "updated_at": latest.get("updated_at"),
+        "last_rollback": last_rollback,
+    }
+
+_INCIDENT_META = {
+    "claim_conflict": {
+        "type": "claim_conflict",
+        "title": "Taakclaim botst",
+        "cause": "Deze taak is al door een andere worker geclaimd.",
+        "impact": "Dubbelwerk is voorkomen; deze worker kan deze taak nu niet veilig overnemen.",
+        "action": "Laat de huidige eigenaar doorgaan of kies een andere vrije taak.",
+        "ttl": 30 * 60,
+    },
+    "stale_handoff": {
+        "type": "stale_handoff",
+        "title": "Projecthandoff is verouderd",
+        "cause": "De handoff loopt achter op recent projectwerk.",
+        "impact": "Een nieuwe worker kan starten met verouderde projectinformatie.",
+        "action": "Werk de handoff bij vóór de volgende zelfstandige projectstap.",
+        "ttl": 24 * 3600,
+    },
+    "deploy_failed": {
+        "type": "deploy_failed",
+        "title": "Deploy is mislukt",
+        "cause": "De laatste deploy kon niet veilig worden afgerond.",
+        "impact": "De live versie kan achterlopen of extra controle nodig hebben.",
+        "action": "Gebruik de last-known-good status en herstel of herhaal pas na een groene check.",
+        "ttl": 24 * 3600,
+    },
+    "recovery_failed": {
+        "type": "recovery_failed",
+        "title": "Herstelactie heeft aandacht nodig",
+        "cause": "Een rollback of herstelactie is niet schoon afgerond.",
+        "impact": "De betrouwbaarheid van de live state moet opnieuw worden bevestigd.",
+        "action": "Controleer recovery.log en valideer service, API en project/chat mapping.",
+        "ttl": 24 * 3600,
+    },
+}
+
+def _incident_from_alert(alert, recovery, now_ts):
+    kind=str(alert.get("kind") or "").strip().lower().replace("-", "_")
+    if kind=="breakthrough":
+        return None
+    if kind=="automation" and "stil" in str(alert.get("title") or "").lower():
+        # Current runner state is a better source for stale/offline workers.
+        return None
+    meta=_INCIDENT_META.get(kind)
+    if not meta:
+        return None
+    try:
+        age=(now_ts-datetime.fromisoformat(str(alert.get("ts")))).total_seconds()
+    except Exception:
+        age=0
+    if age > meta["ttl"]:
+        return None
+    severity=str(alert.get("severity") or "warning").lower()
+    return {
+        "id": str(alert.get("id") or hashlib.sha256((kind+str(alert.get("ts"))).encode()).hexdigest()[:16]),
+        "project": str(alert.get("project") or "cloud"),
+        "type": meta["type"],
+        "severity": severity,
+        "title": meta["title"],
+        "cause": meta["cause"],
+        "impact": meta["impact"],
+        "health": "Kritiek" if severity in ("critical","error") else "Aandacht",
+        "action": meta["action"],
+        "detected_at": alert.get("ts"),
+        "technical_detail": str(alert.get("detail") or ""),
+        "rollback": recovery,
+    }
+
+def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None):
+    recovery=recovery_status(recovery_dir)
+    now_ts=datetime.now(timezone.utc)
+    items=[]
+    for alert in list_alerts(db_path,80,False):
+        incident=_incident_from_alert(alert,recovery,now_ts)
+        if incident:
+            items.append(incident)
+    for project in (data or {}).get("projects", []):
+        if project.get("health")=="healthy" or project.get("status")=="archived":
+            continue
+        bad=next((x for x in project.get("services",[]) if x.get("state") not in ("active","activating","waiting")),None) or {}
+        service=str(bad.get("name") or "vereiste service")
+        state=str(bad.get("state") or "aandacht")
+        items.append({
+            "id": "service:%s:%s" % (project.get("id"),service),
+            "project": str(project.get("id") or "cloud"),
+            "type": "service_health",
+            "severity": "high",
+            "title": "Projectservice heeft aandacht nodig",
+            "cause": "%s staat op %s." % (service,state),
+            "impact": "Projectwerk kan vertragen of tijdelijk stoppen.",
+            "health": "Aandacht",
+            "action": "Controleer deze service en herstel alleen als de oorzaak duidelijk is.",
+            "detected_at": (bad.get("last_run") or (data or {}).get("time")),
+            "technical_detail": "%s · state=%s · result=%s" % (service,state,bad.get("result")),
+            "rollback": recovery,
+        })
+    for project,status in (runners or {}).items():
+        for worker in status.get("workers") or []:
+            state=str(worker.get("state") or "")
+            age=worker.get("age_seconds")
+            if state not in ("stalled","offline","stale"):
+                continue
+            if state=="stale" and (age is None or age < 180):
+                continue
+            label="Geen tekstvoortgang" if state=="stalled" else "Worker niet verbonden" if state=="offline" else "Worker heartbeat loopt achter"
+            items.append({
+                "id": "worker:%s" % str(worker.get("worker_id") or project),
+                "project": project,
+                "type": "stale_worker",
+                "severity": "high" if state in ("stalled","offline") else "warning",
+                "title": label,
+                "cause": "Deze worker stuurt geen recente gezonde voortgang meer.",
+                "impact": "De taak van deze worker kan stilstaan terwijl het project actief lijkt.",
+                "health": "Aandacht",
+                "action": "Controleer de workerstatus; herstart alleen deze worker als hij echt vastzit.",
+                "detected_at": (worker.get("last_event") or {}).get("time"),
+                "technical_detail": "state=%s · age_seconds=%s" % (state,age),
+                "rollback": recovery,
+            })
+    if recovery.get("status")=="problem":
+        items.append({
+            "id": "recovery:last-failed",
+            "project": "cloud",
+            "type": "recovery_failed",
+            "severity": "critical",
+            "title": "Herstelactie heeft aandacht nodig",
+            "cause": "De meest recente rollback eindigde niet schoon.",
+            "impact": "De live state moet worden geverifieerd vóór een nieuwe deploy.",
+            "health": "Kritiek",
+            "action": "Controleer recovery.log en bevestig service, API en project/chat mapping.",
+            "detected_at": (recovery.get("last_rollback") or {}).get("time"),
+            "technical_detail": json.dumps(recovery.get("last_rollback") or {},ensure_ascii=False,separators=(",",":")),
+            "rollback": recovery,
+        })
+    priority={"critical":0,"error":0,"high":1,"warning":2}
+    dedup={}
+    for item in items:
+        key=(item["project"],item["type"],item["title"])
+        old=dedup.get(key)
+        if old is None or str(item.get("detected_at") or "") > str(old.get("detected_at") or ""):
+            dedup[key]=item
+    ordered=list(dedup.values())
+    ordered.sort(key=lambda x:str(x.get("detected_at") or ""),reverse=True)
+    ordered.sort(key=lambda x:priority.get(str(x.get("severity") or "").lower(),3))
+    return {"count":len(ordered),"items":ordered[:max(1,int(limit))],"recovery":recovery}
 
 def list_alerts(db_path, limit=20, important_only=False):
     try:
