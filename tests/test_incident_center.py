@@ -18,6 +18,17 @@ class IncidentCenterTests(unittest.TestCase):
         self.db=self.root/"history.db"
         with sqlite3.connect(self.db) as c:
             enhancements.init_db(c)
+            c.execute("""CREATE TABLE task_claims(
+                project_id TEXT NOT NULL,
+                claim_key TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL DEFAULT '',
+                acquired_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                lease_until TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY(project_id,claim_key)
+            )""")
         self.recovery=self.root/"recovery"
         self.recovery.mkdir()
         (self.recovery/"last-known-good.json").write_text(json.dumps({
@@ -59,9 +70,25 @@ class IncidentCenterTests(unittest.TestCase):
         self.assertEqual("service_health",item["type"])
         self.assertIn("Research timer",item["cause"])
 
-    def test_stale_handoff_failed_deploy_and_claim_conflict_are_recognized(self):
-        for kind in ("stale_handoff","deploy_failed","claim_conflict"):
-            self.emit(kind)
+    def test_stale_handoff_failed_deploy_and_active_claim_conflict_are_recognized(self):
+        self.emit("stale_handoff")
+        self.emit("deploy_failed")
+        claim_key="notion:active-task"
+        now=enhancements.datetime.now(enhancements.timezone.utc)
+        with sqlite3.connect(self.db) as c:
+            c.execute(
+                "INSERT INTO task_claims VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "cloud",claim_key,"owner-a","cloud::w1",
+                    now.isoformat(),now.isoformat(),
+                    (now+enhancements.timedelta(minutes=15)).isoformat(),"{}",
+                ),
+            )
+        enhancements.emit_incident(
+            self.db,"cloud","claim_conflict","warning","Conflict",
+            claim_key+" · huidige eigenaar owner-a · nieuwe poging owner-b",
+            "claim-conflict:cloud:active-task",
+        )
         center=enhancements.incident_center(self.db,{},self.recovery)
         kinds={x["type"] for x in center["items"]}
         self.assertTrue({"stale_handoff","deploy_failed","claim_conflict"}.issubset(kinds))
@@ -70,6 +97,37 @@ class IncidentCenterTests(unittest.TestCase):
             self.assertTrue(item["impact"])
             self.assertTrue(item["action"])
             self.assertIn("status",item["rollback"])
+
+    def test_released_claim_conflict_disappears_from_attention(self):
+        claim_key="notion:released-task"
+        enhancements.emit_incident(
+            self.db,"cloud","claim_conflict","warning","Conflict",
+            claim_key+" · huidige eigenaar owner-a · nieuwe poging owner-b",
+            "claim-conflict:cloud:released-task",
+        )
+        center=enhancements.incident_center(self.db,{},self.recovery)
+        self.assertNotIn("claim_conflict",{x["type"] for x in center["items"]})
+
+    def test_expired_claim_conflict_disappears_from_attention(self):
+        claim_key="notion:expired-task"
+        now=enhancements.datetime.now(enhancements.timezone.utc)
+        with sqlite3.connect(self.db) as c:
+            c.execute(
+                "INSERT INTO task_claims VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "cloud",claim_key,"owner-a","cloud::w1",
+                    (now-enhancements.timedelta(minutes=20)).isoformat(),
+                    (now-enhancements.timedelta(minutes=20)).isoformat(),
+                    (now-enhancements.timedelta(minutes=5)).isoformat(),"{}",
+                ),
+            )
+        enhancements.emit_incident(
+            self.db,"cloud","claim_conflict","warning","Conflict",
+            claim_key+" · huidige eigenaar owner-a · nieuwe poging owner-b",
+            "claim-conflict:cloud:expired-task",
+        )
+        center=enhancements.incident_center(self.db,{},self.recovery)
+        self.assertNotIn("claim_conflict",{x["type"] for x in center["items"]})
 
 
     def test_main_renderer_uses_incidents_not_raw_alert_stream(self):
