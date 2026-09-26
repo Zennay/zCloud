@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_transactional_promote.py"
@@ -126,6 +127,70 @@ class TransactionalPromotionTests(unittest.TestCase):
             )
         self.assertFalse((self.root / "firefox-extension/recovery.js").exists())
         self.assertEqual("old-server\n", (self.root / "server.py").read_text())
+
+    def test_blast_radius_classification_is_conservative_but_keeps_small_changes_free(self):
+        low = promote.promotion_blast_radius(["server.py"])
+        self.assertFalse(low["high"])
+        self.assertEqual(["service"], low["planes"])
+
+        cross = promote.promotion_blast_radius([
+            "server.py",
+            "firefox-extension/background.js",
+        ])
+        self.assertTrue(cross["high"])
+        self.assertIn("service+browser", cross["reasons"])
+
+        broad = promote.promotion_blast_radius([
+            "public/a.js","public/b.js","public/c.js",
+            "public/d.js","public/e.js","public/f.js",
+        ])
+        self.assertTrue(broad["high"])
+        self.assertIn("six_or_more_files", broad["reasons"])
+
+    def test_high_blast_gate_is_default_off_allows_live_ttl_and_reblocks_after_expiry(self):
+        db = self.root / "history.db"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "CREATE TABLE feature_flags("
+                "name TEXT PRIMARY KEY, enabled INTEGER NOT NULL, expires_at TEXT, "
+                "updated_at TEXT NOT NULL, actor TEXT NOT NULL)"
+            )
+
+        # Low blast never requires a flag.
+        gate = promote.enforce_blast_radius_gate(db, ["server.py"])
+        self.assertFalse(gate["blast_radius"]["high"])
+        self.assertEqual("not_required", gate["feature_flag"]["reason"])
+
+        # Cross-plane promotion is blocked while the flag is absent/default-off.
+        with self.assertRaises(promote.PromotionError):
+            promote.enforce_blast_radius_gate(
+                db, ["server.py", "firefox-extension/background.js"]
+            )
+
+        future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO feature_flags VALUES(?,?,?,?,?)",
+                (
+                    promote.HIGH_BLAST_FLAG, 1, future,
+                    datetime.now(timezone.utc).isoformat(), "test",
+                ),
+            )
+        gate = promote.enforce_blast_radius_gate(
+            db, ["server.py", "firefox-extension/background.js"]
+        )
+        self.assertTrue(gate["feature_flag"]["effective"])
+
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE feature_flags SET expires_at=? WHERE name=?",
+                (expired, promote.HIGH_BLAST_FLAG),
+            )
+        with self.assertRaises(promote.PromotionError):
+            promote.enforce_blast_radius_gate(
+                db, ["server.py", "firefox-extension/background.js"]
+            )
 
     def test_firefox_only_paths_do_not_restart_zcloud_service(self):
         self.assertFalse(promote.needs_service_restart([

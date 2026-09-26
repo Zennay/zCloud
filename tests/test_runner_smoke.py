@@ -342,6 +342,62 @@ class RunnerSmokeTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNotNone(row)
 
+    def test_high_blast_feature_flag_defaults_off_and_is_ttl_bounded(self):
+        status, flags = self.request("/api/feature-flags")
+        self.assertEqual(200, status, flags)
+        flag = next(item for item in flags["items"] if item["name"] == "high_blast_radius_promotion")
+        self.assertFalse(flag["effective"])
+        self.assertFalse(flag["enabled"])
+
+        status, body = self.request(
+            "/api/feature-flags",
+            {
+                "name": "high_blast_radius_promotion",
+                "enabled": True,
+                "ttl_seconds": 120,
+            },
+            {"X-ZCloud-Actor": "flag-test"},
+        )
+        self.assertEqual(200, status, body)
+        self.assertTrue(body["feature_flag"]["effective"])
+        self.assertIsNotNone(body["feature_flag"]["expires_at"])
+        self.assertTrue(body["feature_flag"]["actor"].startswith("flag-test@"))
+
+        _, audit = self.request(
+            "/api/config-audit?key=feature.flag&target=high_blast_radius_promotion&limit=1"
+        )
+        self.assertEqual("succeeded", audit["items"][0]["result"])
+        self.assertFalse(audit["items"][0]["old_value"]["enabled"])
+        self.assertTrue(audit["items"][0]["new_value"]["enabled"])
+
+        status, body = self.request(
+            "/api/feature-flags",
+            {"name": "high_blast_radius_promotion", "enabled": False},
+            {"X-ZCloud-Actor": "flag-test"},
+        )
+        self.assertEqual(200, status, body)
+        self.assertFalse(body["feature_flag"]["effective"])
+        self.assertIsNone(body["feature_flag"]["expires_at"])
+
+    def test_high_blast_feature_flag_rejects_unsafe_ttl_and_unknown_flag(self):
+        status, body = self.request(
+            "/api/feature-flags",
+            {
+                "name": "high_blast_radius_promotion",
+                "enabled": True,
+                "ttl_seconds": 7200,
+            },
+        )
+        self.assertEqual(400, status, body)
+        self.assertIn("ttl_seconds", body["error"])
+
+        status, body = self.request(
+            "/api/feature-flags",
+            {"name": "unknown_flag", "enabled": True, "ttl_seconds": 120},
+        )
+        self.assertEqual(400, status, body)
+        self.assertIn("Onbekende", body["error"])
+
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
             "/api/runner-workers", {"project_id": "cloud", "worker_count": 3}

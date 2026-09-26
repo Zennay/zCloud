@@ -28,6 +28,7 @@ REQUIRED_TABLES = {
     "task_claims",
     "improvement_loops",
     "config_audit",
+    "feature_flags",
 }
 VALID_DESIRED_STATES = {"running", "paused", "draining"}
 

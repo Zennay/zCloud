@@ -92,6 +92,8 @@ AUDITED_CONFIG_PATHS = {
     "resource-policy.json": ("resource.policy", "portfolio"),
 }
 
+HIGH_BLAST_FLAG = "high_blast_radius_promotion"
+
 
 class PromotionError(RuntimeError):
     pass
@@ -222,6 +224,92 @@ def write_config_audit(
                     (f"tx={transaction_id}; path={change['path']}; {detail}").strip()[:500],
                 ),
             )
+
+
+def promotion_blast_radius(paths: list[str]) -> dict:
+    normalized=[validate_relpath(rel) for rel in paths]
+    planes=set()
+    for rel in normalized:
+        if rel in AUDITED_CONFIG_PATHS:
+            planes.add("config")
+        elif rel.startswith("firefox-extension/"):
+            planes.add("browser")
+        elif rel.startswith("public/"):
+            planes.add("ui")
+        elif rel in ("server.py","enhancements.py") or rel.startswith(("scripts/","deploy/")):
+            planes.add("service")
+        else:
+            planes.add("other")
+    reasons=[]
+    if "service" in planes and "browser" in planes:
+        reasons.append("service+browser")
+    if len(planes)>=3:
+        reasons.append("three_or_more_control_planes")
+    if len(normalized)>=6:
+        reasons.append("six_or_more_files")
+    return {
+        "high":bool(reasons),
+        "planes":sorted(planes),
+        "paths":normalized,
+        "reasons":reasons,
+    }
+
+
+def feature_flag_state(db_path: Path, name: str) -> dict:
+    if not db_path.exists():
+        return {"name":name,"enabled":False,"effective":False,"reason":"state_store_missing"}
+    try:
+        conn=sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=2)
+        conn.row_factory=sqlite3.Row
+        table=conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='feature_flags'"
+        ).fetchone()
+        if not table:
+            conn.close()
+            return {"name":name,"enabled":False,"effective":False,"reason":"table_missing"}
+        row=conn.execute(
+            "SELECT enabled,expires_at,updated_at,actor FROM feature_flags WHERE name=?",
+            (name,),
+        ).fetchone()
+        conn.close()
+    except Exception as exc:
+        return {"name":name,"enabled":False,"effective":False,"reason":f"lookup_failed:{exc}"}
+    if not row:
+        return {"name":name,"enabled":False,"effective":False,"reason":"flag_missing"}
+    enabled=bool(row["enabled"])
+    expires_at=row["expires_at"]
+    expired=False
+    if enabled and expires_at:
+        try:
+            expired=datetime.fromisoformat(str(expires_at)).astimezone(timezone.utc) <= datetime.now(timezone.utc)
+        except Exception:
+            expired=True
+    return {
+        "name":name,
+        "enabled":enabled,
+        "effective":enabled and not expired,
+        "expires_at":expires_at,
+        "updated_at":row["updated_at"],
+        "actor":row["actor"],
+        "reason":"expired" if expired else ("enabled" if enabled else "disabled"),
+    }
+
+
+def enforce_blast_radius_gate(db_path: Path, paths: list[str]) -> dict:
+    blast=promotion_blast_radius(paths)
+    state=feature_flag_state(db_path,HIGH_BLAST_FLAG) if blast["high"] else {
+        "name":HIGH_BLAST_FLAG,
+        "enabled":False,
+        "effective":False,
+        "reason":"not_required",
+    }
+    result={"blast_radius":blast,"feature_flag":state}
+    if blast["high"] and not state.get("effective"):
+        reasons=",".join(blast["reasons"]) or "high_blast_radius"
+        raise PromotionError(
+            f"high-blast promotion blocked ({reasons}); enable {HIGH_BLAST_FLAG} temporarily"
+        )
+    return result
 
 
 def syntax_check(candidate: Path, paths: list[str]) -> None:
@@ -539,6 +627,7 @@ def promote(
     normalized = [validate_relpath(rel) for rel in paths]
     candidate_hashes = validate_candidate(candidate, root, normalized)
     syntax_check(candidate, normalized)
+    feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
     pending_config_changes = config_changes(candidate, root, normalized)
     config_validation = run_config_validation(
         config_validator,
@@ -558,6 +647,7 @@ def promote(
                 "paths": normalized,
                 "candidate_hashes": candidate_hashes,
                 "config_validation": config_validation,
+                "feature_gate": feature_gate,
                 "config_changes": pending_config_changes,
                 "prechange_snapshot": pre.get("snapshot_id"),
                 "mapping_sha256": mapping_sha,
@@ -583,6 +673,7 @@ def promote(
             paths=normalized,
             mapping_sha256=mapping_sha,
             lkg_snapshot=before.get("snapshot_id"),
+            feature_gate=feature_gate,
         )
         try:
             deployed_hashes = transactional_replace(candidate, root, normalized, tx_root)
@@ -633,6 +724,7 @@ def promote(
                 "paths": normalized,
                 "deployed_hashes": deployed_hashes,
                 "mapping_sha256": mapping_sha,
+                "feature_gate": feature_gate,
                 "postdeploy": post,
                 "new_lkg": after.get("snapshot_id"),
             }
