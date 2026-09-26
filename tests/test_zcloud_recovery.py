@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts import zcloud_recovery as recovery
@@ -47,6 +48,18 @@ class RecoveryTests(unittest.TestCase):
             service_state=self.fake_service,
             browser_state={"active_state": "active"},
         )
+
+    def test_systemctl_command_uses_noninteractive_sudo_for_service_user(self):
+        with patch.object(recovery.os, "geteuid", return_value=1000):
+            self.assertEqual(
+                ["sudo", "-n", "systemctl", "stop", recovery.SERVICE],
+                recovery.systemctl_command("stop"),
+            )
+        with patch.object(recovery.os, "geteuid", return_value=0):
+            self.assertEqual(
+                ["systemctl", "start", recovery.SERVICE],
+                recovery.systemctl_command("start"),
+            )
 
     def test_capture_records_visible_lkg_without_runtime_secrets(self):
         manifest = self.capture()
