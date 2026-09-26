@@ -19,7 +19,9 @@ function runProject(cfg) {
   if (window[marker]) return;
   window[marker] = true;
   const PROMPT = cfg.prompt;
-  const SINGLE_RUN = (cfg.base_project_id || cfg.projectId) === "portfolio-review";
+  const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
+  const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
+  let autoContinue = cfg.auto_continue !== false;
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
@@ -71,11 +73,11 @@ function runProject(cfg) {
     const nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
     return nodes.length ? (nodes[nodes.length - 1].innerText || "").trim() : "";
   }
-  function status(event, extra = {}) {
+  function statusPayload(event, extra = {}) {
     const text = assistantText();
-    const payload = {
+    return {
       projectId: cfg.projectId,
-      baseProjectId: cfg.base_project_id || cfg.projectId,
+      baseProjectId: BASE_PROJECT,
       workerSlot: cfg.worker_slot || 1,
       projectName: cfg.name,
       target: location.href,
@@ -89,8 +91,42 @@ function runProject(cfg) {
       assistantCharacters: text.length,
       ...extra
     };
+  }
+  function status(event, extra = {}) {
+    const payload = statusPayload(event, extra);
     window.__ZC_RUNNER_STATUS__ = payload;
     try { browser.runtime.sendMessage({type: "runner-status", payload: payload}).catch(() => {}); } catch (_) {}
+  }
+  async function syncStatus(event, extra = {}) {
+    const payload = statusPayload(event, extra);
+    window.__ZC_RUNNER_STATUS__ = payload;
+    try { await browser.runtime.sendMessage({type: "runner-status-sync", payload: payload}); } catch (_) {}
+  }
+  async function canAutoContinue() {
+    if (SINGLE_RUN) return false;
+    try {
+      const policy = await browser.runtime.sendMessage({type: "runner-policy-check", projectId: cfg.projectId});
+      if (policy && typeof policy.auto_continue === "boolean") autoContinue = policy.auto_continue;
+      return autoContinue;
+    } catch (_) {
+      return BASE_PROJECT === "cloud" ? false : autoContinue;
+    }
+  }
+  async function reportFinishSignals(text) {
+    if (BASE_PROJECT !== "cloud" || !text) return;
+    if (text.includes("ZCLOUD_ITERATION_COMPLETE")) {
+      await syncStatus("improvement-iteration-complete", {reason: "assistant-marker"});
+    }
+    if (text.includes("ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1")) {
+      await syncStatus("improvement-review-green", {reason: "assistant-marker"});
+    } else if (text.includes("ZCLOUD_FINISH_REVIEW: OPEN_P0P1")) {
+      await syncStatus("improvement-review-open", {reason: "assistant-marker"});
+    }
+    if (text.includes("ZCLOUD_FINAL_AUDIT: GREEN")) {
+      await syncStatus("improvement-audit-green", {reason: "assistant-marker"});
+    } else if (text.includes("ZCLOUD_FINAL_AUDIT: FAIL")) {
+      await syncStatus("improvement-audit-failed", {reason: "assistant-marker"});
+    }
   }
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   async function fill(text) {
@@ -158,7 +194,10 @@ function runProject(cfg) {
       finishedAt = 0;
       if (text !== lastText) { lastText = text; lastProgressAt = now; status("generation-progress"); }
       if (now - lastProgressAt >= STALL_MS && !sending && !recoveryRequested) {
-        recoveryRequested = true;
+        if (!(await canAutoContinue())) {
+          status("auto-continue-blocked", {reason: "finished-maintain"});
+          return;
+        }        recoveryRequested = true;
         status("stall-detected", {reason: "no-response-progress-for-20m"});
         const stop = stopButton();
         if (stop) stop.click();
@@ -190,8 +229,10 @@ function runProject(cfg) {
         sawGeneration = false;
         finishedAt = 0;
         lastText = text;
+        await reportFinishSignals(text);
         if (SINGLE_RUN) { status("scheduled-run-complete", {reason: "single-run"}); return; }
-        if (!paused) await send("antwoord klaar");
+        if (!paused && await canAutoContinue()) await send("antwoord klaar");
+        else if (!paused) status("auto-continue-blocked", {reason: "finished-maintain"});
       }
       return;
     }
@@ -204,6 +245,10 @@ function runProject(cfg) {
         status("startup-waiting", {reason: "composer-missing"});
       }
       if (now - composerMissingSince >= COMPOSER_RECOVERY_MS && !recoveryRequested) {
+        if (!(await canAutoContinue())) {
+          status("auto-continue-blocked", {reason: "finished-maintain"});
+          return;
+        }
         recoveryRequested = true;
         status("composer-stalled", {reason: "composer-missing-for-90s"});
         browser.runtime.sendMessage({type: "runner-new-chat", projectId: cfg.projectId, reason: "composer-missing"}).catch(() => {});
@@ -215,6 +260,10 @@ function runProject(cfg) {
         (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
       if (draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
+        if (!(await canAutoContinue())) {
+          status("auto-continue-blocked", {reason: "finished-maintain"});
+          return;
+        }
         lastStartupAttemptAt = now;
         await send(lastPromptSentAt ? "idle-retry" : "startup-retry");
       } else if (draft !== PROMPT && now - lastStartupStatusAt >= 30000) {
@@ -228,6 +277,10 @@ function runProject(cfg) {
     if (message.type === "runner-push") {
       return (async () => {
         if (paused) return {ok: false, reason: "paused"};
+        if (!(await canAutoContinue())) {
+          status("auto-continue-blocked", {reason: "finished-maintain"});
+          return {ok: false, reason: "improvement-finished"};
+        }
         if (stopButton() || sending || awaitingGeneration) {
           status("push-skipped", {reason: "runner-busy"});
           return {ok: false, reason: "runner-busy"};
@@ -250,9 +303,10 @@ function runProject(cfg) {
   });
   status("runner-started");
   heartbeatTimer = setInterval(() => status("heartbeat"), 60000);
-  setTimeout(() => {
+  setTimeout(async () => {
     if (paused) return;
     if (SINGLE_RUN) { status("scheduled-ready", {reason: "awaiting-daily-push"}); return; }
+    if (!(await canAutoContinue())) { status("auto-continue-blocked", {reason: "finished-maintain"}); return; }
     if (stopButton()) { status("startup-blocked", {reason: "generation-active"}); return; }
     const draft = composerText();
     if (draft === null) { status("startup-waiting", {reason: "composer-missing"}); return; }
@@ -342,8 +396,7 @@ async function inject(tabId, target) {
 }
 async function commandResult(commandId, status, result) {
   if (!commandId) return;
-  await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",
-    body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
+  await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",    body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
 }
 async function newProjectChat(projectId, reason, commandId) {
   const workerKeys = workerKeysFor(projectId);
@@ -490,6 +543,10 @@ async function pushProject(projectId, commandId) {
     await commandResult(commandId, "completed", "Runner is al bezig; extra prompt was niet nodig");
     return;
   }
+  if (result?.reason === "improvement-finished") {
+    await commandResult(commandId, "failed", "zCloud improvements staan op Finished / Maintain");
+    return;
+  }
   await newProjectChat(projectId, "dashboard-push-recovery", commandId);
 }
 const lastHealthRecovery = Object.create(null);
@@ -499,7 +556,7 @@ async function watchRunnerHealth() {
     if (!response.ok) return;
     const data = await response.json();
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
-      if (!status.active) continue;
+      if (!status.active || status.auto_continue === false) continue;
       const stale = status.age_seconds != null && status.age_seconds > 300;
       const stalled = status.stalled === true;
       if ((!stale && !stalled) || Date.now() - (lastHealthRecovery[projectId] || 0) < 900000) continue;
@@ -527,8 +584,18 @@ async function pollCommands() {
 browser.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === "runner-status" && message.payload) {
     postStatus({...message.payload, tabId: sender?.tab?.id ?? null});
-  } else if (message?.type === "runner-new-chat" && message.projectId) {
-    newProjectChat(message.projectId, message.reason || "stall-recovery", null);
+  } else if (message?.type === "runner-status-sync" && message.payload) {
+    return postStatus({...message.payload, tabId: sender?.tab?.id ?? null}).then(() => ({ok:true}));
+  } else if (message?.type === "runner-policy-check" && message.projectId) {
+    return fetch(API + "/runner-targets", {cache: "no-store"})
+      .then(response => response.ok ? response.json() : Promise.reject(new Error("policy HTTP " + response.status)))
+      .then(data => {
+        const target = (data.projects || {})[message.projectId];
+        const base = message.projectId.split("::w", 1)[0];
+        return {auto_continue: target ? target.auto_continue !== false : base !== "cloud"};
+      })
+      .catch(() => ({auto_continue: message.projectId.split("::w", 1)[0] !== "cloud"}));
+  } else if (message?.type === "runner-new-chat" && message.projectId) {    newProjectChat(message.projectId, message.reason || "stall-recovery", null);
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
