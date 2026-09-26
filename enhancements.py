@@ -145,6 +145,28 @@ def _find_metrics_dict(data):
                 return hit
     return None
 
+def _comparison_point(label, value, unit="", note="", source=None, validated=False):
+    if value is None or value == "":
+        return None
+    point = {
+        "label": str(label),
+        "value": value,
+        "unit": str(unit or ""),
+        "note": str(note or ""),
+        "validated": bool(validated),
+    }
+    if source:
+        point["source"] = str(source)
+    return point
+
+def _comparison_view(latest=None, current=None, best=None):
+    return {
+        "latest": latest,
+        "current": current,
+        "best": best,
+        "available": any(x is not None for x in (latest, current, best)),
+    }
+
 def _hax_quality():
     current = _json("/var/lib/haxlab/derived/champions/elite-player/current.json", sudo=True) or {}
     live = _json("/var/lib/haxlab/derived/champions/elite-player/live.json", sudo=True) or {}
@@ -173,12 +195,40 @@ def _hax_quality():
             "unit": "%",
             "note": "Frozen-holdout joint action accuracy; geen win-rate.",
         }
+    latest_version = current.get("version_id") or version
+    live_version = live.get("version_id")
+    current_point = _comparison_point(
+        "Huidige live champion",
+        live_version,
+        note="Live health groen" if live_healthy else "Live health niet groen",
+        source=live.get("metrics_path") or live.get("source"),
+        validated=live_healthy,
+    )
+    best_point = _comparison_point(
+        "Beste gevalideerde champion",
+        live_version,
+        note="Gepromoveerde live champion" if live_healthy else "Champion bestaat, maar live health is niet groen",
+        source=live.get("metrics_path") or live.get("source"),
+        validated=live_healthy,
+    )
+    comparison = _comparison_view(
+        latest=_comparison_point(
+            "Nieuwste candidate",
+            latest_version,
+            note=("Frozen-holdout joint accuracy %.1f%%" % (float(joint) * 100)) if joint is not None else "Nieuwste offline candidate",
+            source=current.get("metrics_path"),
+            validated=joint is not None,
+        ),
+        current=current_point,
+        best=best_point if live_healthy else None,
+    )
     return {
         "available": bool(headline),
         "headline": headline,
         "items": items,
         "stage": "live champion" if live else "offline validation",
         "meta": {"version_id": version, "live_healthy": live_healthy},
+        "comparison": comparison,
     }
 
 def _gen_number(text):
@@ -289,6 +339,8 @@ def _ftmo_quality():
     headline = None
     meta = {}
     stage = "research"
+    latest_point = None
+    current_point = None
     if cand:
         gen, trial_path, trial, result, review = cand
         pips = _pips(result.get("total_pnl"))
@@ -306,6 +358,13 @@ def _ftmo_quality():
         ])
         meta["candidate_hash"] = trial.get("trial_hash")
         meta["candidate_generation"] = gen
+        latest_point = _comparison_point(
+            "Nieuwste development candidate",
+            ("Generation %s" % gen),
+            note=("%s pips · development-only" % pips) if pips is not None else "Development-only; nog geen validated release",
+            source=str(trial_path),
+            validated=False,
+        )
         stage = "generation %s candidate" % gen
     if rel:
         gen, release, released, holdout = rel
@@ -317,12 +376,21 @@ def _ftmo_quality():
         ])
         meta["release_hash"] = release.get("paper_release_hash")
         meta["release_generation"] = gen
+        validated_pips = _pips(hres.get("total_pnl"))
+        current_point = _comparison_point(
+            "Huidige gevalideerde release",
+            ("Generation %s" % gen),
+            note=("%s pips · frozen holdout" % validated_pips) if validated_pips is not None else "Frozen-holdout release",
+            source=release.get("paper_release_hash") or released.get("trial_hash"),
+            validated=True,
+        )
     return {
         "available": bool(headline),
         "headline": headline,
         "items": [x for x in items if x.get("value") is not None],
         "stage": stage,
         "meta": meta,
+        "comparison": _comparison_view(latest=latest_point, current=current_point),
         "readiness": _ftmo_readiness(),
     }
 
@@ -331,7 +399,7 @@ def quality_for(project):
         return _hax_quality()
     if project == "ftmo":
         return _ftmo_quality()
-    return {"available": False, "headline": None, "items": [], "stage": None, "meta": {}}
+    return {"available": False, "headline": None, "items": [], "stage": None, "meta": {}, "comparison": _comparison_view()}
 
 def init_db(c):
     c.execute("""CREATE TABLE IF NOT EXISTS alerts(
