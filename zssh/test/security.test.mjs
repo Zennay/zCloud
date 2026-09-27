@@ -80,3 +80,19 @@ test("main-entry detection follows symlinks used by atomic live releases", async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test("safe runner defaults cwd to the first configured allowed root", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "zssh-default-cwd-"));
+  const previousRoots = process.env.ZSSH_ALLOWED_ROOTS;
+  process.env.ZSSH_ALLOWED_ROOTS = root;
+  try {
+    const result = await runSafeProgram("pwd", [], undefined, 5);
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout.trim(), root);
+  } finally {
+    if (previousRoots === undefined) delete process.env.ZSSH_ALLOWED_ROOTS;
+    else process.env.ZSSH_ALLOWED_ROOTS = previousRoots;
+    await rm(root, { recursive: true, force: true });
+  }
+});
