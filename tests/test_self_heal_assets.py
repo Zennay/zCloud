@@ -23,6 +23,13 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn("curl -fsS --max-time 5", text)
         self.assertIn('systemctl restart "${SERVICE}"', text)
         self.assertIn("for _ in {1..20}", text)
+        self.assertIn(".disable-runtime-heal", text)
+        self.assertIn("haxlab-autonomy.timer", text)
+        self.assertIn("ftmo-autonomous.timer", text)
+        self.assertIn("raise-gateway.service", text)
+        self.assertIn("zssh.service", text)
+        self.assertIn('systemctl enable "${service}"', text)
+        self.assertIn('user_systemctl enable "${service}"', text)
 
 if __name__ == "__main__":
     unittest.main()
