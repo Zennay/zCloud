@@ -185,8 +185,9 @@ function runProject(cfg) {
   if (window[marker]) return;
   window[marker] = true;
   const REPLACEMENT_HANDOFF = cfg.replacement_handoff || null;
-  const PROMPT = REPLACEMENT_HANDOFF
-    ? cfg.prompt + "\n\n" +
+  const BASE_PROMPT = cfg.prompt;
+  let PROMPT = REPLACEMENT_HANDOFF
+    ? BASE_PROMPT + "\n\n" +
       "BEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
       "Neem GEEN nieuwe taakclaim zolang onderstaande bestaande claim nog geldig is. " +
       "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen; " +
@@ -338,6 +339,7 @@ function runProject(cfg) {
       button.click();
       if (replacementHandoffPending) {
         replacementHandoffPending = false;
+        PROMPT = BASE_PROMPT;
         try {
           await browser.runtime.sendMessage({
             type: "runner-replacement-handoff-consumed",
