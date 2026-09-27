@@ -22,6 +22,7 @@ ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 MAX_CHATGPT_WORKERS = 8
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
+TASK_CLAIM_ALTERNATIVE_MAX = 12
 FEATURE_FLAG_DEFINITIONS = {
     'high_blast_radius_promotion': {
         'default': False,
@@ -94,7 +95,9 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'De preflight moet de gecontroleerde Notion-bronnen en GitHub repo/main/open PRs/branches bevatten; zCloud '
         'controleert zelf de actuele claimset en VPS-health. Geef bij iedere autonome write-claim metadata.conflict_scope '
         'mee met capabilities en concrete repo-relatieve files/paden die je verwacht te wijzigen; zCloud blokkeert '
-        'overlap met actieve claims van andere owners. Pak alleen een concrete work-item die niet al actief door '
+        'overlap met actieve claims van andere owners. Als je meerdere veilige onafhankelijke kandidaten uit de '
+        'actuele backlog hebt, mag je ze geordend als alternatives meesturen zodat zCloud atomair de eerste vrije '
+        'kandidaat claimt. Pak alleen een concrete work-item die niet al actief door '
         'een andere worker wordt uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion '
         'en leg je claim vast voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe '
         'alleen read-only validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
@@ -886,50 +889,133 @@ def task_claims(project_id=None):
             rows=c.execute('SELECT * FROM task_claims ORDER BY project_id,claim_key').fetchall()
     return [_claim_payload(row) for row in rows]
 
-def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=300,metadata=None):
-    project_id=str(project_id or '').strip()[:80]
+def _claim_candidate(project_id,claim_key,metadata):
     claim_key=str(claim_key or '').strip()[:240]
+    if not claim_key:
+        raise ValueError('claim_key is verplicht')
+    metadata=metadata if isinstance(metadata,dict) else {}
+    scope=_normalize_conflict_scope(metadata)
+    if scope is not None:
+        metadata={**metadata,'conflict_scope':scope}
+    if project_id==IMPROVEMENT_PROJECT_ID and metadata.get('loop')=='self_improvement':
+        if not scope or (not scope.get('capabilities') and not scope.get('files')):
+            raise ValueError('metadata.conflict_scope is verplicht voor autonome zCloud-writes')
+        if not str(metadata.get('task') or '').strip():
+            raise ValueError('metadata.task is verplicht voor alternatieve zCloud-taken')
+    return {
+        'claim_key':claim_key,
+        'metadata':metadata,
+        'scope':scope,
+        'metadata_json':_claim_metadata_json(metadata),
+    }
+
+def _claim_candidates(project_id,claim_key,metadata,alternatives=None):
+    items=[_claim_candidate(project_id,claim_key,metadata)]
+    raw=alternatives or []
+    if not isinstance(raw,list):
+        raise ValueError('alternatives moet een lijst zijn')
+    if len(raw)>TASK_CLAIM_ALTERNATIVE_MAX:
+        raise ValueError(f'alternatives mag maximaal {TASK_CLAIM_ALTERNATIVE_MAX} kandidaten bevatten')
+    seen={items[0]['claim_key']}
+    for index,entry in enumerate(raw):
+        if not isinstance(entry,dict):
+            raise ValueError(f'alternatives[{index}] moet een object zijn')
+        candidate=_claim_candidate(project_id,entry.get('claim_key'),entry.get('metadata'))
+        if candidate['claim_key'] in seen:
+            raise ValueError('alternatieve claim_keys moeten uniek zijn')
+        seen.add(candidate['claim_key'])
+        items.append(candidate)
+    return items
+
+def _attempt_claim_candidate(connection,project_id,candidate,owner_id,worker_id,ts,until):
+    conflict=_claim_scope_conflict(connection,project_id,owner_id,candidate['scope'],ts)
+    if conflict:
+        return {
+            'acquired':False,
+            'blocked':'scope_conflict',
+            'claim':conflict['claim'],
+            'conflict':conflict,
+        }
+    cur=connection.execute(
+        """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
+           VALUES(?,?,?,?,?,?,?,?)
+           ON CONFLICT(project_id,claim_key) DO UPDATE SET
+             owner_id=excluded.owner_id,
+             worker_id=excluded.worker_id,
+             acquired_at=CASE WHEN task_claims.owner_id=excluded.owner_id THEN task_claims.acquired_at ELSE excluded.acquired_at END,
+             heartbeat_at=excluded.heartbeat_at,
+             lease_until=excluded.lease_until,
+             metadata_json=excluded.metadata_json
+           WHERE task_claims.owner_id=excluded.owner_id OR task_claims.lease_until<=excluded.acquired_at""",
+        (project_id,candidate['claim_key'],owner_id,worker_id,ts,ts,until,candidate['metadata_json'])
+    )
+    row=connection.execute(
+        'SELECT * FROM task_claims WHERE project_id=? AND claim_key=?',
+        (project_id,candidate['claim_key'])
+    ).fetchone()
+    acquired=bool(cur.rowcount>0 and row and row['owner_id']==owner_id)
+    if acquired:
+        return {'acquired':True,'claim':_claim_payload(row)}
+    return {
+        'acquired':False,
+        'blocked':'task_conflict',
+        'claim':_claim_payload(row),
+        'conflict':{
+            'claim':_claim_payload(row),
+            'claim_key':candidate['claim_key'],
+            'owner_id':row['owner_id'] if row else None,
+            'worker_id':row['worker_id'] if row else None,
+            'overlap':{'capabilities':[],'files':[]},
+        } if row else None,
+    }
+
+def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=300,metadata=None,alternatives=None):
+    project_id=str(project_id or '').strip()[:80]
     owner_id=str(owner_id or '').strip()[:160]
     worker_id=str(worker_id or '').strip()[:160]
-    if not project_id or not claim_key or not owner_id:
-        raise ValueError('project_id, claim_key en owner_id zijn verplicht')
+    if not project_id or not owner_id:
+        raise ValueError('project_id en owner_id zijn verplicht')
     metadata=metadata if isinstance(metadata,dict) else {}
-    conflict_scope=_normalize_conflict_scope(metadata)
     if project_id==IMPROVEMENT_PROJECT_ID and metadata.get('loop')=='self_improvement' and not improvement_loop_state(project_id)['auto_continue']:
         return {'acquired':False,'blocked':'improvement_loop_finished','claim':None}
+    candidates=_claim_candidates(project_id,claim_key,metadata,alternatives)
     lease_seconds=_claim_lease_seconds(lease_seconds)
     ts=now()
     until=_claim_timestamp(lease_seconds)
-    if conflict_scope is not None:
-        metadata={**metadata,'conflict_scope':conflict_scope}
-    metadata_json=_claim_metadata_json(metadata)
+    attempted=[]
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
-        conflict=_claim_scope_conflict(c,project_id,owner_id,conflict_scope,ts)
-        if conflict:
-            return {
-                'acquired':False,
-                'blocked':'scope_conflict',
-                'claim':conflict['claim'],
-                'conflict':conflict,
-            }
-        cur=c.execute(
-            """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
-               VALUES(?,?,?,?,?,?,?,?)
-               ON CONFLICT(project_id,claim_key) DO UPDATE SET
-                 owner_id=excluded.owner_id,
-                 worker_id=excluded.worker_id,
-                 acquired_at=CASE WHEN task_claims.owner_id=excluded.owner_id THEN task_claims.acquired_at ELSE excluded.acquired_at END,
-                 heartbeat_at=excluded.heartbeat_at,
-                 lease_until=excluded.lease_until,
-                 metadata_json=excluded.metadata_json
-               WHERE task_claims.owner_id=excluded.owner_id OR task_claims.lease_until<=excluded.acquired_at""",
-            (project_id,claim_key,owner_id,worker_id,ts,ts,until,metadata_json)
-        )
-        changed=cur.rowcount>0
-        row=c.execute('SELECT * FROM task_claims WHERE project_id=? AND claim_key=?',(project_id,claim_key)).fetchone()
-    return {'acquired':bool(changed and row and row['owner_id']==owner_id),'claim':_claim_payload(row)}
+        for index,candidate in enumerate(candidates):
+            result=_attempt_claim_candidate(c,project_id,candidate,owner_id,worker_id,ts,until)
+            if result['acquired']:
+                return {
+                    **result,
+                    'selected_claim_key':candidate['claim_key'],
+                    'selected_from':'primary' if index==0 else 'alternative',
+                    'selected_index':index-1 if index else None,
+                    'attempted':attempted,
+                }
+            attempted.append({
+                'claim_key':candidate['claim_key'],
+                'blocked':result.get('blocked'),
+                'conflict':result.get('conflict'),
+            })
+    if len(candidates)==1:
+        result=attempted[0]
+        return {
+            'acquired':False,
+            'blocked':result.get('blocked'),
+            'claim':(result.get('conflict') or {}).get('claim'),
+            'conflict':result.get('conflict'),
+        }
+    return {
+        'acquired':False,
+        'blocked':'no_safe_alternative',
+        'claim':(attempted[0].get('conflict') or {}).get('claim') if attempted else None,
+        'conflict':attempted[0].get('conflict') if attempted else None,
+        'attempted':attempted,
+    }
 
 def task_claim_heartbeat(project_id,claim_key,owner_id,lease_seconds=300):
     lease_seconds=_claim_lease_seconds(lease_seconds)
@@ -1394,7 +1480,13 @@ class Handler(BaseHTTPRequestHandler):
                                 return self.reply({'error':'override_reason is verplicht voor een handmatige taakclaim'},400)
                             metadata={**metadata,'manual_override':True,'manual_override_reason':reason[:300],
                                       'manual_override_actor':request_actor(self)}
-                        result=task_claim_acquire(project_id,claim_key,owner_id,worker_id,payload.get('lease_seconds') or 300,metadata)
+                        alternatives=payload.get('alternatives')
+                        if alternatives is not None and not isinstance(alternatives,list):
+                            return self.reply({'error':'alternatives moet een lijst zijn','blocked':'invalid_alternatives'},400)
+                        result=task_claim_acquire(
+                            project_id,claim_key,owner_id,worker_id,
+                            payload.get('lease_seconds') or 300,metadata,alternatives
+                        )
                         if not result['acquired'] and result.get('claim'):
                             holder=result['claim'].get('owner_id') or 'andere worker'
                             blocker_key=(result.get('conflict') or {}).get('claim_key') or claim_key
