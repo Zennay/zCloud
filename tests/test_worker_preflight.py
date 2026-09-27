@@ -375,6 +375,76 @@ class WorkerPreflightTests(unittest.TestCase):
         self.assertEqual("no_safe_alternative", blocked["blocked"])
         self.assertEqual(2, len(blocked["attempted"]))
 
+    def test_claim_landscape_change_between_api_preflight_and_admission_is_blocked_atomically(self):
+        status, initial = self.request("/api/worker-preflight", self.payload("owner-a", "cloud::w1"))
+        self.assertEqual(200, status, initial)
+        self.assertTrue(initial["ok"])
+
+        original = server.worker_preflight_state
+        injected = {"done": False}
+
+        def race_preflight(project_id, worker_id, owner_id):
+            result = original(project_id, worker_id, owner_id)
+            if owner_id == "owner-a" and result.get("ok") and not injected["done"]:
+                injected["done"] = True
+                other = server.task_claim_acquire(
+                    "cloud",
+                    "backlog:interloper",
+                    "owner-b",
+                    "cloud::w2",
+                    120,
+                    {
+                        "conflict_scope": {
+                            "capabilities": ["unrelated-capability"],
+                            "files": ["unrelated.py"],
+                        }
+                    },
+                )
+                self.assertTrue(other["acquired"])
+            return result
+
+        server.worker_preflight_state = race_preflight
+        try:
+            status, blocked = self.request(
+                "/api/task-claims",
+                {
+                    "action": "acquire",
+                    "project_id": "cloud",
+                    "claim_key": "backlog:primary-after-race",
+                    "owner_id": "owner-a",
+                    "worker_id": "cloud::w1",
+                    "metadata": {
+                        "loop": "self_improvement",
+                        "task": "primary after race",
+                        "conflict_scope": {
+                            "capabilities": ["primary-capability"],
+                            "files": ["server.py"],
+                        },
+                    },
+                    "alternatives": [
+                        {
+                            "claim_key": "backlog:alternative-after-race",
+                            "metadata": {
+                                "loop": "self_improvement",
+                                "task": "alternative after race",
+                                "conflict_scope": {
+                                    "capabilities": ["alternative-capability"],
+                                    "files": ["tests/free.py"],
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+        finally:
+            server.worker_preflight_state = original
+
+        self.assertTrue(injected["done"])
+        self.assertEqual(428, status, blocked)
+        self.assertEqual("claim_landscape_changed", blocked["blocked"])
+        claims = server.task_claims("cloud")
+        self.assertEqual(["backlog:interloper"], [x["claim_key"] for x in claims])
+
     def test_valid_preflight_allows_claim_and_exposes_read_only_status(self):
         status, preflight = self.request("/api/worker-preflight", self.payload())
         self.assertEqual(200, status, preflight)
