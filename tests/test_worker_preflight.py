@@ -136,6 +136,96 @@ class WorkerPreflightTests(unittest.TestCase):
         self.assertTrue(manual["claim"]["metadata"]["manual_override"])
         self.assertEqual("operator recovery", manual["claim"]["metadata"]["manual_override_reason"])
 
+    def test_zcloud_self_improvement_claim_requires_conflict_scope(self):
+        status, _ = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(200, status)
+        status, blocked = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:no-scope",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+                "metadata": {"loop": "self_improvement"},
+            },
+        )
+        self.assertEqual(428, status, blocked)
+        self.assertEqual("conflict_scope_required", blocked["blocked"])
+
+        status, allowed = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:scoped",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "conflict_scope": {
+                        "capabilities": ["claim-admission"],
+                        "files": ["server.py"],
+                    },
+                },
+            },
+        )
+        self.assertEqual(200, status, allowed)
+        self.assertTrue(allowed["acquired"])
+        self.assertEqual(
+            ["claim-admission"],
+            allowed["claim"]["metadata"]["conflict_scope"]["capabilities"],
+        )
+
+    def test_scope_conflict_blocks_different_claim_key_after_fresh_preflight(self):
+        status, _ = self.request("/api/worker-preflight", self.payload("owner-a", "cloud::w1"))
+        self.assertEqual(200, status)
+        status, first = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:first",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "conflict_scope": {
+                        "capabilities": ["shared-feature"],
+                        "files": ["server.py"],
+                    },
+                },
+            },
+        )
+        self.assertEqual(200, status, first)
+
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='cloud'")
+        status, preflight = self.request("/api/worker-preflight", self.payload("owner-b", "cloud::w2"))
+        self.assertEqual(200, status, preflight)
+        self.assertEqual("backlog:first", preflight["claims"][0]["claim_key"])
+
+        status, conflict = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:second",
+                "owner_id": "owner-b",
+                "worker_id": "cloud::w2",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "conflict_scope": {
+                        "capabilities": ["shared-feature"],
+                        "files": ["tests/other.py"],
+                    },
+                },
+            },
+        )
+        self.assertEqual(409, status, conflict)
+        self.assertEqual("scope_conflict", conflict["blocked"])
+        self.assertEqual("backlog:first", conflict["conflict"]["claim_key"])
+
     def test_valid_preflight_allows_claim_and_exposes_read_only_status(self):
         status, preflight = self.request("/api/worker-preflight", self.payload())
         self.assertEqual(200, status, preflight)
