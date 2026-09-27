@@ -226,6 +226,155 @@ class WorkerPreflightTests(unittest.TestCase):
         self.assertEqual("scope_conflict", conflict["blocked"])
         self.assertEqual("backlog:first", conflict["conflict"]["claim_key"])
 
+    def test_api_selects_first_safe_self_improvement_alternative(self):
+        status, _ = self.request("/api/worker-preflight", self.payload("owner-a", "cloud::w1"))
+        self.assertEqual(200, status)
+        status, blocker = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:blocker",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "task": "blocking task",
+                    "conflict_scope": {"capabilities": ["shared"], "files": ["server.py"]},
+                },
+            },
+        )
+        self.assertEqual(200, status, blocker)
+
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='cloud'")
+        status, preflight = self.request("/api/worker-preflight", self.payload("owner-b", "cloud::w2"))
+        self.assertEqual(200, status, preflight)
+        self.assertEqual("backlog:blocker", preflight["claims"][0]["claim_key"])
+
+        status, selected = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:primary",
+                "owner_id": "owner-b",
+                "worker_id": "cloud::w2",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "task": "primary task",
+                    "conflict_scope": {"capabilities": ["shared"], "files": ["server.py"]},
+                },
+                "alternatives": [
+                    {
+                        "claim_key": "backlog:alt-conflict",
+                        "metadata": {
+                            "loop": "self_improvement",
+                            "task": "conflicting fallback",
+                            "conflict_scope": {"capabilities": ["shared"], "files": ["other.py"]},
+                        },
+                    },
+                    {
+                        "claim_key": "backlog:alt-free",
+                        "metadata": {
+                            "loop": "self_improvement",
+                            "task": "safe fallback",
+                            "conflict_scope": {"capabilities": ["independent"], "files": ["tests/free.py"]},
+                        },
+                    },
+                ],
+            },
+        )
+        self.assertEqual(200, status, selected)
+        self.assertTrue(selected["acquired"])
+        self.assertEqual("backlog:alt-free", selected["selected_claim_key"])
+        self.assertEqual("alternative", selected["selected_from"])
+        self.assertEqual(1, selected["selected_index"])
+
+    def test_api_invalid_alternative_rejects_before_primary_claim(self):
+        status, _ = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(200, status)
+        status, invalid = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:primary-free",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "task": "primary task",
+                    "conflict_scope": {"capabilities": ["primary"], "files": ["server.py"]},
+                },
+                "alternatives": [
+                    {
+                        "claim_key": "backlog:bad-alt",
+                        "metadata": {
+                            "loop": "self_improvement",
+                            "task": "missing scope",
+                        },
+                    }
+                ],
+            },
+        )
+        self.assertEqual(400, status, invalid)
+        claims = server.task_claims("cloud")
+        self.assertEqual([], claims)
+
+    def test_api_all_conflicted_alternatives_return_no_safe_alternative(self):
+        status, _ = self.request("/api/worker-preflight", self.payload("owner-a", "cloud::w1"))
+        self.assertEqual(200, status)
+        status, blocker = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:block-all",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "task": "blocking task",
+                    "conflict_scope": {"capabilities": ["shared"], "files": ["server.py"]},
+                },
+            },
+        )
+        self.assertEqual(200, status, blocker)
+
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='cloud'")
+        status, _ = self.request("/api/worker-preflight", self.payload("owner-b", "cloud::w2"))
+        self.assertEqual(200, status)
+        status, blocked = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "backlog:primary-blocked",
+                "owner_id": "owner-b",
+                "worker_id": "cloud::w2",
+                "metadata": {
+                    "loop": "self_improvement",
+                    "task": "primary blocked",
+                    "conflict_scope": {"capabilities": ["shared"], "files": ["server.py"]},
+                },
+                "alternatives": [
+                    {
+                        "claim_key": "backlog:alt-blocked",
+                        "metadata": {
+                            "loop": "self_improvement",
+                            "task": "also blocked",
+                            "conflict_scope": {"capabilities": ["shared"], "files": ["elsewhere.py"]},
+                        },
+                    }
+                ],
+            },
+        )
+        self.assertEqual(409, status, blocked)
+        self.assertEqual("no_safe_alternative", blocked["blocked"])
+        self.assertEqual(2, len(blocked["attempted"]))
+
     def test_valid_preflight_allows_claim_and_exposes_read_only_status(self):
         status, preflight = self.request("/api/worker-preflight", self.payload())
         self.assertEqual(200, status, preflight)

@@ -260,6 +260,113 @@ class TaskClaimTests(unittest.TestCase):
             result["conflict"]["overlap"]["capabilities"],
         )
 
+    def test_conflicted_primary_selects_first_safe_alternative(self):
+        blocker=server.task_claim_acquire(
+            "cloud","task:blocker","owner-a","cloud::w1",120,
+            {"conflict_scope":{"capabilities":["shared"],"files":["server.py"]}},
+        )
+        self.assertTrue(blocker["acquired"])
+        result=server.task_claim_acquire(
+            "cloud","task:primary","owner-b","cloud::w2",120,
+            {"conflict_scope":{"capabilities":["shared"],"files":["server.py"]}},
+            [
+                {
+                    "claim_key":"task:alt-conflict",
+                    "metadata":{"conflict_scope":{"capabilities":["shared"],"files":["other.py"]}},
+                },
+                {
+                    "claim_key":"task:alt-free",
+                    "metadata":{"conflict_scope":{"capabilities":["independent"],"files":["tests/free.py"]}},
+                },
+            ],
+        )
+        self.assertTrue(result["acquired"],result)
+        self.assertEqual("task:alt-free",result["selected_claim_key"])
+        self.assertEqual("alternative",result["selected_from"])
+        self.assertEqual(1,result["selected_index"])
+        self.assertEqual(["task:primary","task:alt-conflict"],[x["claim_key"] for x in result["attempted"]])
+
+    def test_exact_task_conflict_can_fall_back_to_alternative(self):
+        first=server.task_claim_acquire(
+            "cloud","task:same","owner-a","cloud::w1",120,
+            {"conflict_scope":{"capabilities":["alpha"],"files":["a.py"]}},
+        )
+        self.assertTrue(first["acquired"])
+        result=server.task_claim_acquire(
+            "cloud","task:same","owner-b","cloud::w2",120,
+            {"conflict_scope":{"capabilities":["beta"],"files":["b.py"]}},
+            [{
+                "claim_key":"task:fallback",
+                "metadata":{"conflict_scope":{"capabilities":["gamma"],"files":["c.py"]}},
+            }],
+        )
+        self.assertTrue(result["acquired"],result)
+        self.assertEqual("task:fallback",result["selected_claim_key"])
+        self.assertEqual("task_conflict",result["attempted"][0]["blocked"])
+
+    def test_no_safe_alternative_fails_closed_without_extra_claim(self):
+        blocker=server.task_claim_acquire(
+            "cloud","task:blocker","owner-a","cloud::w1",120,
+            {"conflict_scope":{"capabilities":["shared"],"files":["server.py"]}},
+        )
+        self.assertTrue(blocker["acquired"])
+        result=server.task_claim_acquire(
+            "cloud","task:primary","owner-b","cloud::w2",120,
+            {"conflict_scope":{"capabilities":["shared"],"files":["server.py"]}},
+            [
+                {"claim_key":"task:alt-a","metadata":{"conflict_scope":{"capabilities":["shared"],"files":["a.py"]}}},
+                {"claim_key":"task:alt-b","metadata":{"conflict_scope":{"capabilities":["shared"],"files":["b.py"]}}},
+            ],
+        )
+        self.assertFalse(result["acquired"])
+        self.assertEqual("no_safe_alternative",result["blocked"])
+        self.assertEqual(3,len(result["attempted"]))
+        claims=server.task_claims("cloud")
+        self.assertEqual(["task:blocker"],[x["claim_key"] for x in claims])
+
+    def test_invalid_alternative_rejects_entire_request_before_primary_write(self):
+        oversized=["cap-"+str(i)+"-"+"x"*140 for i in range(45)]
+        with self.assertRaises(ValueError):
+            server.task_claim_acquire(
+                "cloud","task:primary","owner-a","cloud::w1",120,
+                {"conflict_scope":{"capabilities":["primary"],"files":["server.py"]}},
+                [{
+                    "claim_key":"task:huge",
+                    "metadata":{"conflict_scope":{"capabilities":oversized,"files":["huge.py"]}},
+                }],
+            )
+        self.assertEqual([],server.task_claims("cloud"))
+
+    def test_alternative_selection_race_assigns_distinct_safe_tasks(self):
+        blocker=server.task_claim_acquire(
+            "cloud","task:blocker","owner-blocker","cloud::w1",120,
+            {"conflict_scope":{"capabilities":["blocked"],"files":["blocked.py"]}},
+        )
+        self.assertTrue(blocker["acquired"])
+        barrier=threading.Barrier(3)
+        results=[]
+        lock=threading.Lock()
+        alternatives=[
+            {"claim_key":"task:free-a","metadata":{"conflict_scope":{"capabilities":["free-a"],"files":["free-a.py"]}}},
+            {"claim_key":"task:free-b","metadata":{"conflict_scope":{"capabilities":["free-b"],"files":["free-b.py"]}}},
+        ]
+        def worker(owner):
+            barrier.wait()
+            result=server.task_claim_acquire(
+                "cloud","task:blocked-"+owner,owner,owner,120,
+                {"conflict_scope":{"capabilities":["blocked"],"files":["blocked.py"]}},
+                alternatives,
+            )
+            with lock:
+                results.append(result)
+
+        threads=[threading.Thread(target=worker,args=("owner-a",)),threading.Thread(target=worker,args=("owner-b",))]
+        for thread in threads: thread.start()
+        barrier.wait()
+        for thread in threads: thread.join(timeout=5)
+        self.assertTrue(all(x["acquired"] for x in results),results)
+        self.assertEqual({"task:free-a","task:free-b"},{x["selected_claim_key"] for x in results})
+
     def test_heartbeat_requires_current_unexpired_owner(self):
         first = server.task_claim_acquire("cloud", "notion:heartbeat", "owner-a", "cloud::w1", 60)
         before = first["claim"]["lease_until"]
