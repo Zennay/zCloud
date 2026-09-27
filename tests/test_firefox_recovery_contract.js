@@ -28,8 +28,34 @@ for (const marker of [
   "target-tab-recovered",
   "await setRecoveryTag(opened.id",
   "await clearRecoveryTag(tabId)",
+  "const intentionalTabClosures = new Set()",
+  "const pendingTabHandoffs = new Set()",
+  "async function closeRunnerTab",
+  "async function recoverClosedWorker",
+  "worker-handoff-started",
+  "worker-handoff-opened",
+  "worker-handoff-failed",
+  "intentionalTabClosures.delete(tabId)",
+  'recoverClosedWorker(target, "unexpected-tab-closed")',
+  'target.desired_state === "paused"',
+  'target.desired_state === "draining"',
 ]) {
   assert.ok(background.includes(marker), "missing recovery contract marker: " + marker);
+}
+
+
+const directRemoveCalls = background.match(/browser\.tabs\.remove\(/g) || [];
+assert.equal(
+  directRemoveCalls.length,
+  1,
+  "all intentional worker-tab closes must flow through closeRunnerTab"
+);
+for (const marker of [
+  "await closeRunnerTab(tabId)",
+  "await closeRunnerTab(assignedTabId)",
+  "await closeRunnerTab(oldTab)",
+]) {
+  assert.ok(background.includes(marker), "intentional close is not handoff-suppressed: " + marker);
 }
 
 console.log("Firefox recovery manifest/background contract checks passed.");
