@@ -5,6 +5,8 @@ const projectTabs = Object.create(null);
 const pendingAdoptions = Object.create(null);
 const runningActions = new Set();
 const processedCommands = new Set();
+const intentionalTabClosures = new Set();
+const pendingTabHandoffs = new Set();
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
@@ -16,6 +18,65 @@ async function setRecoveryTag(tabId, projectId) {
 async function clearRecoveryTag(tabId) {
   if (tabId == null) return;
   try { await browser.sessions.removeTabValue(tabId, Recovery.SESSION_KEY); } catch (_) {}
+}
+
+async function closeRunnerTab(tabId) {
+  if (tabId == null) return;
+  intentionalTabClosures.add(tabId);
+  try {
+    await browser.tabs.remove(tabId);
+  } catch (_) {
+    intentionalTabClosures.delete(tabId);
+  }
+}
+
+async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
+  if (!target?.project_id || pendingTabHandoffs.has(target.project_id)) return;
+  if (projectTabs[target.project_id] != null) return;
+  if (!target.active || target.desired_state === "paused" || target.desired_state === "draining") return;
+  pendingTabHandoffs.add(target.project_id);
+  postStatus({
+    projectId: target.project_id,
+    baseProjectId: target.base_project_id,
+    workerSlot: target.worker_slot,
+    projectName: target.name,
+    target: target.url,
+    event: "worker-handoff-started",
+    reason,
+    at: new Date().toISOString()
+  });
+  try {
+    const opened = await browser.tabs.create({url: target.url || "https://chatgpt.com/", active: false});
+    tabTargets[opened.id] = target;
+    projectTabs[target.project_id] = opened.id;
+    await setRecoveryTag(opened.id, target.project_id);
+    if (!target.conversation_id) pendingAdoptions[opened.id] = target.project_id;
+    postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      projectName: target.name,
+      target: target.url,
+      event: "worker-handoff-opened",
+      reason,
+      at: new Date().toISOString(),
+      tabId: opened.id
+    });
+  } catch (error) {
+    postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      projectName: target.name,
+      target: target.url,
+      event: "worker-handoff-failed",
+      reason,
+      error: String(error?.message || error),
+      at: new Date().toISOString()
+    });
+  } finally {
+    pendingTabHandoffs.delete(target.project_id);
+  }
 }
 
 async function sessionAssignments(tabs) {
@@ -404,7 +465,7 @@ async function refreshTargets() {
       if (tabId != null) {
         try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: id, reason: "worker-count-reduced"}); } catch (_) {}
         await clearRecoveryTag(tabId);
-        try { await browser.tabs.remove(tabId); } catch (_) {}
+        await closeRunnerTab(tabId);
         delete tabTargets[tabId];
         delete pendingAdoptions[tabId];
       }
@@ -421,12 +482,13 @@ async function refreshTargets() {
       Object.values(projectTabs).filter(tabId => tabId != null)
     );
     for (const target of Object.values(targets)) {
+      if (pendingTabHandoffs.has(target.project_id)) continue;
       const assignedTabId = projectTabs[target.project_id];
       if (!target.active) {
         if (assignedTabId != null) {
           try { await browser.tabs.sendMessage(assignedTabId, {type: "runner-stop", projectId: target.project_id, reason: "project-paused"}); } catch (_) {}
           await clearRecoveryTag(assignedTabId);
-          try { await browser.tabs.remove(assignedTabId); } catch (_) {}
+          await closeRunnerTab(assignedTabId);
           delete tabTargets[assignedTabId];
           delete projectTabs[target.project_id];
           delete pendingAdoptions[assignedTabId];
@@ -522,7 +584,7 @@ async function newProjectChat(projectId, reason, commandId) {
     if (oldTab != null) {
       try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
       await clearRecoveryTag(oldTab);
-      try { await browser.tabs.remove(oldTab); } catch (_) {}
+      await closeRunnerTab(oldTab);
       delete tabTargets[oldTab];
       delete pendingAdoptions[oldTab];
     }
@@ -599,7 +661,7 @@ async function pauseProject(projectId, commandId) {
   if (tabId != null) {
     try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: projectId, reason: "dashboard-pause"}); } catch (_) {}
     await clearRecoveryTag(tabId);
-    try { await browser.tabs.remove(tabId); } catch (_) {}
+    await closeRunnerTab(tabId);
     delete tabTargets[tabId];
     delete projectTabs[projectId];
     delete pendingAdoptions[tabId];
@@ -751,9 +813,13 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 browser.tabs.onRemoved.addListener(tabId => {
   const target = tabTargets[tabId];
+  const intentional = intentionalTabClosures.delete(tabId);
   if (target && projectTabs[target.project_id] === tabId) delete projectTabs[target.project_id];
   delete tabTargets[tabId];
   delete pendingAdoptions[tabId];
+  if (target && !intentional) {
+    recoverClosedWorker(target, "unexpected-tab-closed").catch(() => {});
+  }
 });
 refreshTargets();
 setInterval(refreshTargets, 120000);
