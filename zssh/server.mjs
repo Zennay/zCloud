@@ -11,7 +11,7 @@ import { z } from "zod";
 
 const VERSION = "0.1.0";
 const PORT = Number(process.env.PORT || 8788);
-const EXEC_MODE = process.env.ZSSH_EXEC_MODE === "full" ? "full" : "safe";
+const EXEC_MODE = process.env.ZSSH_EXEC_MODE === "full" ? "full" : "disabled";
 const COMMAND_TIMEOUT_SECONDS = clampInt(process.env.ZSSH_COMMAND_TIMEOUT_SECONDS, 1, 300, 30);
 const MAX_OUTPUT_BYTES = clampInt(process.env.ZSSH_MAX_OUTPUT_BYTES, 4096, 1048576, 131072);
 const MAX_FILE_BYTES = clampInt(process.env.ZSSH_MAX_FILE_BYTES, 1024, 1048576, 131072);
@@ -111,9 +111,14 @@ async function audit(event) {
 
 async function execute(command, cwd, timeoutSeconds) {
   const risk = classifyCommand(command);
-  if (risk === "destructive" && EXEC_MODE !== "full") {
+  if (EXEC_MODE !== "full") {
     await audit({ action: "exec", risk, outcome: "blocked", command, cwd });
-    return { ok: false, blocked: true, risk, error: "destructive command blocked by ZSSH_EXEC_MODE=safe" };
+    return {
+      ok: false,
+      blocked: true,
+      risk,
+      error: "raw shell is disabled by default; enable ZSSH_EXEC_MODE=full only for an explicitly trusted/disposable target"
+    };
   }
 
   const resolvedCwd = await resolveAllowedPath(cwd || process.cwd());
@@ -298,7 +303,7 @@ function createMcpServer() {
     "zssh_exec",
     {
       title: "Execute command",
-      description: "Run one bounded shell command on the connected Linux target. Safe mode blocks destructive command classes.",
+      description: "Run one bounded shell command on the connected Linux target. Raw shell is disabled by default and must be explicitly enabled for a trusted/disposable target.",
       inputSchema: {
         command: z.string().min(1).max(4096),
         cwd: z.string().min(1).optional(),
