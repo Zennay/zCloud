@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { classifyCommand, redactSecrets, resolveAllowedPath } from "../server.mjs";
+import { validateReadonlyCommand } from "../safe-exec.mjs";
 
 test("classifies read-only commands", () => {
   assert.equal(classifyCommand("systemctl status nginx"), "read_only");
@@ -40,4 +41,12 @@ test("allowed path gate accepts inside root and rejects outside root", async () 
     else process.env.ZSSH_ALLOWED_ROOTS = previous;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("read-only execution uses an exact program and argument allowlist", () => {
+  assert.deepEqual(validateReadonlyCommand("uname", ["-a"]), { program: "uname", args: ["-a"] });
+  assert.deepEqual(validateReadonlyCommand("df", ["-h"]), { program: "df", args: ["-h"] });
+  assert.throws(() => validateReadonlyCommand("rm", ["-rf", "/"]), /not in the zSSH read-only allowlist/);
+  assert.throws(() => validateReadonlyCommand("uname", ["; touch /tmp/pwned"]), /argument is not allowed/);
+  assert.throws(() => validateReadonlyCommand("df", ["/etc"]), /argument is not allowed/);
 });
