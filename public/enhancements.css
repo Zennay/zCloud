@@ -168,3 +168,12 @@
 .incident-action b{color:var(--text)}
 .incident-details{margin-top:8px;padding-left:0;padding-right:0;padding-bottom:0}
 @media(max-width:760px){.incident-list{padding:8px 18px 14px}.incident-card{padding:14px}.incident-card-head strong{font-size:14px}.incident-card dd,.incident-action{font-size:12px}}
+/* Compact operational truth on overview project cards. */
+.project-card-ops{margin:0 18px 12px;padding:10px 12px;border:1px solid #252d38;border-radius:9px;background:#10151b;display:grid;gap:7px}
+.project-card-op{display:grid;grid-template-columns:88px minmax(0,1fr);gap:9px;align-items:start;min-width:0}
+.project-card-op small{color:var(--muted);font-size:10px;line-height:1.4}
+.project-card-op strong,.project-card-op span{min-width:0;color:#d7dfe8;font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.project-card-op strong{font-weight:600}
+.project-card-problem{padding-top:7px;border-top:1px solid #3f2d31}
+.project-card-problem small,.project-card-problem span{color:#f0a6b3}
+@media(max-width:760px){.project-card-ops{margin:0 14px 11px;padding:10px}.project-card-op{grid-template-columns:76px minmax(0,1fr)}.project-card-op strong,.project-card-op span{font-size:12px}}

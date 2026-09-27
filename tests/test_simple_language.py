@@ -28,6 +28,30 @@ class SimpleLanguageTests(unittest.TestCase):
         ):
             self.assertIn(expected, app)
 
+    def test_project_cards_show_plain_operational_truth(self):
+        app = (ROOT / "public" / "app.js").read_text()
+        css = (ROOT / "public" / "enhancements.css").read_text()
+        for expected in (
+            "function projectCardOps(p)",
+            "<small>Nu</small>",
+            "<small>Laatste actie</small>",
+            "<small>Probleem</small>",
+            "current_task",
+            "last_generation_finished",
+            "last_prompt_sent",
+            "projectCardOps(p)",
+            "nog geen taak geclaimd",
+        ):
+            self.assertIn(expected, app)
+        self.assertIn(".project-card-ops", css)
+        self.assertIn(".project-card-problem", css)
+        for forbidden in (
+            "<small>Heartbeat</small>",
+            "<small>Tab ID</small>",
+            "<small>Branch</small>",
+        ):
+            self.assertNotIn(forbidden, app)
+
     def test_ftmo_raw_metrics_are_progressively_disclosed(self):
         js = (ROOT / "public" / "enhancements.js").read_text()
         for old in (
