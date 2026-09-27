@@ -24,6 +24,11 @@ class TaskClaimTests(unittest.TestCase):
         self.original_cache = server.CACHE
         server.DB = Path(self.tmp.name) / "history.db"
         server.CACHE = None
+        self.original_vps_health = server.coordination_vps_health
+        server.coordination_vps_health = lambda: {
+            "ok": True,
+            "checks": {"zcloud_service": True, "firefox_automation": True, "state_store": True},
+        }
         server.init_db()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -37,6 +42,7 @@ class TaskClaimTests(unittest.TestCase):
         self.thread.join(timeout=2)
         server.DB = self.original_db
         server.CACHE = self.original_cache
+        server.coordination_vps_health = self.original_vps_health
         self.tmp.cleanup()
 
     def request(self, path, payload=None):
@@ -56,6 +62,31 @@ class TaskClaimTests(unittest.TestCase):
                 return exc.code, json.load(exc)
             finally:
                 exc.close()
+
+    def preflight(self, owner, worker):
+        status, body = self.request(
+            "/api/worker-preflight",
+            {
+                "project_id": "cloud",
+                "worker_id": worker,
+                "owner_id": owner,
+                "notion": {
+                    "checked": True,
+                    "project_ref": "notion://cloud",
+                    "handoff_ref": "notion://cloud-handoff",
+                },
+                "github": {
+                    "checked": True,
+                    "repo": "Zennay/zCloud",
+                    "main_sha": "abcdef1",
+                    "open_prs": [],
+                    "branches": [],
+                },
+            },
+        )
+        self.assertEqual(200, status, body)
+        self.assertTrue(body["ok"])
+        return body
 
     def test_claim_is_durable_across_init_db(self):
         result = server.task_claim_acquire("cloud", "notion:task-1", "owner-a", "cloud::w1", 120)
@@ -112,11 +143,14 @@ class TaskClaimTests(unittest.TestCase):
         self.assertGreater(renewed["claim"]["lease_until"], before)
 
     def test_claim_api_conflict_release_and_reacquire(self):
+        self.preflight("owner-a", "cloud::w1")
         status, first = self.request(
             "/api/task-claims",
             {"action": "acquire", "project_id": "cloud", "claim_key": "notion:api", "owner_id": "owner-a", "worker_id": "cloud::w1", "lease_seconds": 120},
         )
         self.assertEqual(200, status, first)
+
+        self.preflight("owner-b", "cloud::w2")
         status, conflict = self.request(
             "/api/task-claims",
             {"action": "acquire", "project_id": "cloud", "claim_key": "notion:api", "owner_id": "owner-b", "worker_id": "cloud::w2", "lease_seconds": 120},
@@ -129,6 +163,9 @@ class TaskClaimTests(unittest.TestCase):
             {"action": "release", "project_id": "cloud", "claim_key": "notion:api", "owner_id": "owner-a"},
         )
         self.assertEqual(200, status, released)
+
+        # Claim landscape changed after owner-b's prior preflight, so refresh it.
+        self.preflight("owner-b", "cloud::w2")
         status, second = self.request(
             "/api/task-claims",
             {"action": "acquire", "project_id": "cloud", "claim_key": "notion:api", "owner_id": "owner-b", "worker_id": "cloud::w2", "lease_seconds": 120},
