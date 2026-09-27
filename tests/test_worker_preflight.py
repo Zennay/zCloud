@@ -82,7 +82,7 @@ class WorkerPreflightTests(unittest.TestCase):
             },
         }
 
-    def test_worker_claim_without_preflight_is_blocked_but_manual_claim_stays_available(self):
+    def test_worker_claim_without_preflight_is_blocked_and_manual_override_is_explicit(self):
         status, blocked = self.request(
             "/api/task-claims",
             {
@@ -96,6 +96,30 @@ class WorkerPreflightTests(unittest.TestCase):
         self.assertEqual(428, status, blocked)
         self.assertEqual("preflight_required", blocked["blocked"])
 
+        status, implicit = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "manual:implicit",
+                "owner_id": "human-operator",
+            },
+        )
+        self.assertEqual(428, status, implicit)
+        self.assertEqual("worker_identity_required", implicit["blocked"])
+
+        status, missing_reason = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "manual:no-reason",
+                "owner_id": "human-operator",
+                "manual_override": True,
+            },
+        )
+        self.assertEqual(400, status, missing_reason)
+
         status, manual = self.request(
             "/api/task-claims",
             {
@@ -103,10 +127,14 @@ class WorkerPreflightTests(unittest.TestCase):
                 "project_id": "cloud",
                 "claim_key": "manual:recovery",
                 "owner_id": "human-operator",
+                "manual_override": True,
+                "override_reason": "operator recovery",
             },
         )
         self.assertEqual(200, status, manual)
         self.assertTrue(manual["acquired"])
+        self.assertTrue(manual["claim"]["metadata"]["manual_override"])
+        self.assertEqual("operator recovery", manual["claim"]["metadata"]["manual_override_reason"])
 
     def test_valid_preflight_allows_claim_and_exposes_read_only_status(self):
         status, preflight = self.request("/api/worker-preflight", self.payload())
