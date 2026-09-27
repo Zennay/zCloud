@@ -16,7 +16,7 @@ This branch proves the smallest safe foundation:
 - configured filesystem roots;
 - secret redaction in tool output and audit data;
 - JSONL audit trail;
-- destructive command classification blocked by default;
+- raw shell disabled by default; command classification is audit/UX metadata, not the security boundary;
 - Node unit tests for classification, redaction, and path boundaries.
 
 ## Architecture direction
