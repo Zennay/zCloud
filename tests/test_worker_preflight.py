@@ -1,0 +1,217 @@
+import json
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+import sys
+import types
+from datetime import datetime, timedelta, timezone
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+enhancements_stub = types.ModuleType("enhancements")
+enhancements_stub.init_db = lambda conn: None
+sys.modules["enhancements"] = enhancements_stub
+
+import server
+
+
+class WorkerPreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-preflight-")
+        self.original_db = server.DB
+        self.original_cache = server.CACHE
+        self.original_vps_health = server.coordination_vps_health
+        server.DB = Path(self.tmp.name) / "history.db"
+        server.CACHE = None
+        server.coordination_vps_health = lambda: {
+            "ok": True,
+            "checks": {"zcloud_service": True, "firefox_automation": True, "state_store": True},
+        }
+        server.init_db()
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.httpd.server_address
+        self.base_url = f"http://{host}:{port}"
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2)
+        server.DB = self.original_db
+        server.CACHE = self.original_cache
+        server.coordination_vps_health = self.original_vps_health
+        self.tmp.cleanup()
+
+    def request(self, path, payload=None):
+        data = None
+        headers = {}
+        method = "GET"
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+            method = "POST"
+        req = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                return response.status, json.load(response)
+        except urllib.error.HTTPError as exc:
+            try:
+                return exc.code, json.load(exc)
+            finally:
+                exc.close()
+
+    def payload(self, owner="owner-a", worker="cloud::w1"):
+        return {
+            "project_id": "cloud",
+            "worker_id": worker,
+            "owner_id": owner,
+            "notion": {
+                "checked": True,
+                "project_ref": "https://notion.test/cloud",
+                "handoff_ref": "https://notion.test/cloud-handoff",
+            },
+            "github": {
+                "checked": True,
+                "repo": "Zennay/zCloud",
+                "main_sha": "1234567abcdef",
+                "open_prs": [],
+                "branches": ["main"],
+            },
+        }
+
+    def test_worker_claim_without_preflight_is_blocked_but_manual_claim_stays_available(self):
+        status, blocked = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "notion:blocked",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+            },
+        )
+        self.assertEqual(428, status, blocked)
+        self.assertEqual("preflight_required", blocked["blocked"])
+
+        status, manual = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "manual:recovery",
+                "owner_id": "human-operator",
+            },
+        )
+        self.assertEqual(200, status, manual)
+        self.assertTrue(manual["acquired"])
+
+    def test_valid_preflight_allows_claim_and_exposes_read_only_status(self):
+        status, preflight = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(200, status, preflight)
+        self.assertTrue(preflight["ok"])
+        self.assertEqual([], preflight["claims"])
+        self.assertTrue(preflight["vps"]["ok"])
+
+        status, claim = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "notion:allowed",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+            },
+        )
+        self.assertEqual(200, status, claim)
+        self.assertTrue(claim["acquired"])
+
+        status, state = self.request(
+            "/api/worker-preflight?project=cloud&worker=cloud::w1&owner=owner-a"
+        )
+        self.assertEqual(200, status, state)
+        self.assertTrue(state["ok"], state)
+
+    def test_other_owner_claim_change_invalidates_receipt(self):
+        status, preflight = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(200, status, preflight)
+        server.task_claim_acquire(
+            "cloud", "notion:parallel", "owner-b", "cloud::w2", 120
+        )
+        status, blocked = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "notion:mine",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+            },
+        )
+        self.assertEqual(428, status, blocked)
+        self.assertEqual("claim_landscape_changed", blocked["blocked"])
+
+    def test_own_claim_does_not_invalidate_same_owner_preflight(self):
+        status, _ = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(200, status)
+        for key in ("notion:first", "notion:second"):
+            status, claim = self.request(
+                "/api/task-claims",
+                {
+                    "action": "acquire",
+                    "project_id": "cloud",
+                    "claim_key": key,
+                    "owner_id": "owner-a",
+                    "worker_id": "cloud::w1",
+                },
+            )
+            self.assertEqual(200, status, claim)
+            self.assertTrue(claim["acquired"])
+
+    def test_expired_preflight_blocks_claim(self):
+        status, _ = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(200, status)
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE worker_preflights SET expires_at=? WHERE project_id=? AND worker_id=? AND owner_id=?",
+                (expired, "cloud", "cloud::w1", "owner-a"),
+            )
+        status, blocked = self.request(
+            "/api/task-claims",
+            {
+                "action": "acquire",
+                "project_id": "cloud",
+                "claim_key": "notion:expired",
+                "owner_id": "owner-a",
+                "worker_id": "cloud::w1",
+            },
+        )
+        self.assertEqual(428, status, blocked)
+        self.assertEqual("preflight_expired", blocked["blocked"])
+
+    def test_unhealthy_vps_and_incomplete_external_evidence_do_not_create_receipt(self):
+        server.coordination_vps_health = lambda: {
+            "ok": False,
+            "checks": {"zcloud_service": True, "firefox_automation": False, "state_store": True},
+        }
+        status, blocked = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(409, status, blocked)
+        self.assertEqual("vps_unhealthy", blocked["blocked"])
+
+        server.coordination_vps_health = self.original_vps_health
+        bad = self.payload()
+        bad["github"]["open_prs"] = "not-a-list"
+        status, invalid = self.request("/api/worker-preflight", bad)
+        self.assertEqual(400, status, invalid)
+        self.assertIn("open_prs", invalid["error"])
+
+        with server.connect() as conn:
+            count = conn.execute("SELECT COUNT(*) n FROM worker_preflights").fetchone()["n"]
+        self.assertEqual(0, count)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
