@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, realpathSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
@@ -536,6 +536,12 @@ export function start() {
   return httpServer;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  start();
+if (process.argv[1]) {
+  let entryUrl = "";
+  try {
+    entryUrl = pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    // A missing/unresolvable entrypoint cannot be this module.
+  }
+  if (import.meta.url === entryUrl) start();
 }
