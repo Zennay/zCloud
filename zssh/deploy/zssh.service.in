@@ -1,0 +1,21 @@
+[Unit]
+Description=zSSH secure remote MCP gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/zssh/gateway.env
+WorkingDirectory=%h/.local/share/zssh/current
+ExecStart=@NODE_BIN@ %h/.local/share/zssh/current/server.mjs
+Restart=always
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
