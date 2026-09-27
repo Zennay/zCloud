@@ -72,8 +72,8 @@ class TaskClaimTests(unittest.TestCase):
                 "owner_id": owner,
                 "notion": {
                     "checked": True,
-                    "project_ref": "notion://cloud",
-                    "handoff_ref": "notion://cloud-handoff",
+                    "project_ref": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8",
+                    "handoff_ref": "https://app.notion.com/p/3e79e19ac955819e9ccee5bec98bbb9c",
                 },
                 "github": {
                     "checked": True,
