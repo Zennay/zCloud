@@ -51,6 +51,9 @@ for (const marker of [
   "Neem GEEN nieuwe taakclaim",
   "runner-replacement-handoff-consumed",
   "worker-replacement-handoff-consumed",
+  "const BASE_PROMPT = cfg.prompt",
+  "let PROMPT = REPLACEMENT_HANDOFF",
+  "PROMPT = BASE_PROMPT",
   "await clearReplacementHandoffTag(tabId)",
   'target.desired_state === "paused"',
   'target.desired_state === "draining"',
@@ -100,6 +103,11 @@ const runStart = background.indexOf("function runProject");
 const refreshStart = background.indexOf("function postStatus");
 assert.ok(runStart >= 0 && refreshStart > runStart, "runProject block missing");
 const runBlock = background.slice(runStart, refreshStart);
+assert.ok(
+  runBlock.indexOf("PROMPT = BASE_PROMPT") >
+    runBlock.indexOf("button.click();"),
+  "replacement prompt must become one-shot only after the first send succeeds"
+);
 assert.ok(
   runBlock.indexOf("button.click();") <
     runBlock.indexOf('type: "runner-replacement-handoff-consumed"'),
