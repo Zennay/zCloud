@@ -91,7 +91,9 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'en de live VPS-status. Registreer daarna vóór een write-taakclaim een verse coordination preflight in zCloud '
         'voor deze project/worker/owner-combinatie; zonder geldige preflight blokkeert /api/task-claims de claim. '
         'De preflight moet de gecontroleerde Notion-bronnen en GitHub repo/main/open PRs/branches bevatten; zCloud '
-        'controleert zelf de actuele claimset en VPS-health. Pak alleen een concrete work-item die niet al actief door '
+        'controleert zelf de actuele claimset en VPS-health. Geef bij iedere autonome write-claim metadata.conflict_scope '
+        'mee met capabilities en concrete repo-relatieve files/paden die je verwacht te wijzigen; zCloud blokkeert '
+        'overlap met actieve claims van andere owners. Pak alleen een concrete work-item die niet al actief door '
         'een andere worker wordt uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion '
         'en leg je claim vast voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe '
         'alleen read-only validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
@@ -793,6 +795,76 @@ def worker_preflight_state(project_id,worker_id,owner_id):
         'vps':json.loads(row['vps_json']),
     }
 
+def _normalize_conflict_scope(metadata):
+    metadata=metadata if isinstance(metadata,dict) else {}
+    raw=metadata.get('conflict_scope')
+    if raw is None:
+        return None
+    if not isinstance(raw,dict):
+        raise ValueError('metadata.conflict_scope moet een object zijn')
+    capabilities=[]
+    for value in raw.get('capabilities') or []:
+        item=re.sub(r'[^a-z0-9._:/-]+','-',str(value or '').strip().lower()).strip('-')
+        if item and item not in capabilities:
+            capabilities.append(item[:160])
+    files=[]
+    for value in raw.get('files') or []:
+        item=str(value or '').strip().replace('\\','/')
+        while item.startswith('./'):
+            item=item[2:]
+        item=item.strip('/')
+        if not item:
+            continue
+        parts=[part for part in item.split('/') if part not in ('','.')]
+        if not parts or any(part=='..' for part in parts):
+            raise ValueError('conflict_scope files moeten veilige repo-relatieve paden zijn')
+        item='/'.join(parts)
+        if item not in files:
+            files.append(item[:300])
+    return {'capabilities':capabilities[:100],'files':files[:200]}
+
+def _conflict_scope_overlap(left,right):
+    left=left or {'capabilities':[],'files':[]}
+    right=right or {'capabilities':[],'files':[]}
+    shared_caps=sorted(set(left.get('capabilities') or []) & set(right.get('capabilities') or []))
+    shared_files=[]
+    for a in left.get('files') or []:
+        for b in right.get('files') or []:
+            if a==b or a.startswith(b.rstrip('/')+'/') or b.startswith(a.rstrip('/')+'/'):
+                pair=a if len(a)<=len(b) else b
+                if pair not in shared_files:
+                    shared_files.append(pair)
+    return {'capabilities':shared_caps,'files':sorted(shared_files)}
+
+def _claim_scope_conflict(connection,project_id,owner_id,new_scope,ts):
+    if not new_scope or (not new_scope.get('capabilities') and not new_scope.get('files')):
+        return None
+    rows=connection.execute(
+        'SELECT * FROM task_claims WHERE project_id=? AND owner_id<>? AND lease_until>? ORDER BY acquired_at,claim_key',
+        (project_id,owner_id,ts),
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata=json.loads(row['metadata_json'] or '{}')
+        except Exception:
+            metadata={}
+        try:
+            existing_scope=_normalize_conflict_scope(metadata)
+        except ValueError:
+            existing_scope=None
+        if not existing_scope:
+            continue
+        overlap=_conflict_scope_overlap(new_scope,existing_scope)
+        if overlap['capabilities'] or overlap['files']:
+            return {
+                'claim':_claim_payload(row),
+                'claim_key':row['claim_key'],
+                'owner_id':row['owner_id'],
+                'worker_id':row['worker_id'],
+                'overlap':overlap,
+            }
+    return None
+
 def task_claims(project_id=None):
     ts=now()
     with connect() as c:
@@ -811,13 +883,26 @@ def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=
     if not project_id or not claim_key or not owner_id:
         raise ValueError('project_id, claim_key en owner_id zijn verplicht')
     metadata=metadata if isinstance(metadata,dict) else {}
+    conflict_scope=_normalize_conflict_scope(metadata)
     if project_id==IMPROVEMENT_PROJECT_ID and metadata.get('loop')=='self_improvement' and not improvement_loop_state(project_id)['auto_continue']:
         return {'acquired':False,'blocked':'improvement_loop_finished','claim':None}
     lease_seconds=_claim_lease_seconds(lease_seconds)
     ts=now()
     until=_claim_timestamp(lease_seconds)
+    if conflict_scope is not None:
+        metadata={**metadata,'conflict_scope':conflict_scope}
     metadata_json=json.dumps(metadata,ensure_ascii=False,separators=(',',':'))[:4000]
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+        conflict=_claim_scope_conflict(c,project_id,owner_id,conflict_scope,ts)
+        if conflict:
+            return {
+                'acquired':False,
+                'blocked':'scope_conflict',
+                'claim':conflict['claim'],
+                'conflict':conflict,
+            }
         cur=c.execute(
             """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
                VALUES(?,?,?,?,?,?,?,?)
@@ -1283,6 +1368,13 @@ class Handler(BaseHTTPRequestHandler):
                             preflight=worker_preflight_state(project_id,worker_id,owner_id)
                             if not preflight.get('ok'):
                                 return self.reply({'error':'Verse worker-preflight vereist vóór een write-taakclaim','blocked':preflight.get('blocked'),'preflight':preflight},428)
+                            if project_id==IMPROVEMENT_PROJECT_ID and metadata.get('loop')=='self_improvement':
+                                try:
+                                    scope=_normalize_conflict_scope(metadata)
+                                except ValueError as e:
+                                    return self.reply({'error':str(e),'blocked':'invalid_conflict_scope'},400)
+                                if not scope or (not scope['capabilities'] and not scope['files']):
+                                    return self.reply({'error':'metadata.conflict_scope is verplicht voor autonome zCloud-writes','blocked':'conflict_scope_required'},428)
                         else:
                             if payload.get('manual_override') is not True:
                                 return self.reply({'error':'worker_id is verplicht voor autonome taakclaims; gebruik alleen bewust een handmatige override','blocked':'worker_identity_required'},428)
@@ -1294,11 +1386,12 @@ class Handler(BaseHTTPRequestHandler):
                         result=task_claim_acquire(project_id,claim_key,owner_id,worker_id,payload.get('lease_seconds') or 300,metadata)
                         if not result['acquired'] and result.get('claim'):
                             holder=result['claim'].get('owner_id') or 'andere worker'
+                            blocker_key=(result.get('conflict') or {}).get('claim_key') or claim_key
                             emit=getattr(enhancements,'emit_incident',None)
                             if emit:
                                 emit(DB, project_id, 'claim_conflict', 'warning', 'Taakclaim botst',
-                                     f'{claim_key} · huidige eigenaar {holder} · nieuwe poging {owner_id}',
-                                     f'claim-conflict:{project_id}:{claim_key}:{holder}', 15*60)
+                                     f'{blocker_key} · huidige eigenaar {holder} · nieuwe poging {owner_id}',
+                                     f'claim-conflict:{project_id}:{blocker_key}:{holder}', 15*60)
                         return self.reply(result,200 if result['acquired'] else 409)
                     if action=='heartbeat':
                         result=task_claim_heartbeat(project_id,claim_key,owner_id,payload.get('lease_seconds') or 300)
