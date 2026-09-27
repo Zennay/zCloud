@@ -21,6 +21,7 @@ WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() 
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 MAX_CHATGPT_WORKERS = 8
 WORKER_PREFLIGHT_TTL_SECONDS = 600
+TASK_CLAIM_METADATA_MAX_BYTES = 4000
 FEATURE_FLAG_DEFINITIONS = {
     'high_blast_radius_promotion': {
         'default': False,
@@ -846,12 +847,16 @@ def _claim_scope_conflict(connection,project_id,owner_id,new_scope,ts):
     for row in rows:
         try:
             metadata=json.loads(row['metadata_json'] or '{}')
-        except Exception:
-            metadata={}
-        try:
             existing_scope=_normalize_conflict_scope(metadata)
-        except ValueError:
-            existing_scope=None
+        except Exception:
+            return {
+                'claim':_claim_payload(row),
+                'claim_key':row['claim_key'],
+                'owner_id':row['owner_id'],
+                'worker_id':row['worker_id'],
+                'overlap':{'capabilities':['unreadable-claim-metadata'],'files':[]},
+                'reason':'unreadable_claim_metadata',
+            }
         if not existing_scope:
             continue
         overlap=_conflict_scope_overlap(new_scope,existing_scope)
@@ -864,6 +869,12 @@ def _claim_scope_conflict(connection,project_id,owner_id,new_scope,ts):
                 'overlap':overlap,
             }
     return None
+
+def _claim_metadata_json(metadata):
+    raw=json.dumps(metadata,ensure_ascii=False,separators=(',',':'))
+    if len(raw.encode('utf-8')) > TASK_CLAIM_METADATA_MAX_BYTES:
+        raise ValueError(f'claimmetadata is te groot; maximum is {TASK_CLAIM_METADATA_MAX_BYTES} bytes')
+    return raw
 
 def task_claims(project_id=None):
     ts=now()
@@ -891,7 +902,7 @@ def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=
     until=_claim_timestamp(lease_seconds)
     if conflict_scope is not None:
         metadata={**metadata,'conflict_scope':conflict_scope}
-    metadata_json=json.dumps(metadata,ensure_ascii=False,separators=(',',':'))[:4000]
+    metadata_json=_claim_metadata_json(metadata)
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
