@@ -1,10 +1,10 @@
 # zSSH
 
-zSSH is the security-first remote operations plugin being built as a zCloud subproject.
+zSSH is a **standalone security-first remote operations project**. zCloud is its control-plane/dashboard integration, not its parent project.
 
 ## Current milestone
 
-**M0 — Genesis + zCloud registration.**
+**M0 — Genesis + portfolio registration.**
 
 This branch proves the smallest safe foundation:
 
@@ -18,6 +18,15 @@ This branch proves the smallest safe foundation:
 - JSONL audit trail;
 - raw shell disabled by default; command classification is audit/UX metadata, not the security boundary;
 - Node unit tests for classification, redaction, and path boundaries.
+
+## Project ownership
+
+zSSH has its own mission, roadmap, handoff, release lifecycle, security gates, and project identity. The current source directory is temporarily hosted at `Zennay/zCloud/zssh/` so it can reuse the existing CI/deployment plumbing while repository extraction remains unavailable through the current GitHub connector. That temporary source placement does **not** make zSSH a zCloud or HaxLab subproject.
+
+zCloud only:
+- registers zSSH as a first-class project in `projects.json`;
+- displays its status/progress;
+- provides shared runner/control-plane infrastructure where useful.
 
 ## Architecture direction
 
