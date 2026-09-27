@@ -39,6 +39,7 @@ for (const marker of [
   'recoverClosedWorker(target, "unexpected-tab-closed")',
   'target.desired_state === "paused"',
   'target.desired_state === "draining"',
+  "if (pendingTabHandoffs.has(target.project_id)) continue;",
 ]) {
   assert.ok(background.includes(marker), "missing recovery contract marker: " + marker);
 }
