@@ -241,7 +241,7 @@ function createMcpServer() {
     {
       title: "Server info",
       description: "Read basic identity and zSSH policy state for the connected Linux target.",
-      inputSchema: z.object({}),
+      inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
     async () => result({
@@ -262,7 +262,7 @@ function createMcpServer() {
     {
       title: "Read file",
       description: "Read a UTF-8 text file inside configured zSSH allowed roots. Secret-like values are redacted.",
-      inputSchema: z.object({ path: z.string().min(1) }),
+      inputSchema: { path: z.string().min(1) },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
     async ({ path: filePath }) => {
@@ -279,10 +279,10 @@ function createMcpServer() {
     {
       title: "Write file",
       description: "Atomically replace or create a UTF-8 text file inside configured zSSH allowed roots.",
-      inputSchema: z.object({
+      inputSchema: {
         path: z.string().min(1),
         content: z.string()
-      }),
+      },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
     },
     async ({ path: filePath, content }) => {
@@ -299,11 +299,11 @@ function createMcpServer() {
     {
       title: "Execute command",
       description: "Run one bounded shell command on the connected Linux target. Safe mode blocks destructive command classes.",
-      inputSchema: z.object({
+      inputSchema: {
         command: z.string().min(1).max(4096),
         cwd: z.string().min(1).optional(),
         timeout_seconds: z.number().int().min(1).max(300).optional()
-      }),
+      },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
     },
     async ({ command, cwd, timeout_seconds }) => {
