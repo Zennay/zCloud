@@ -17,6 +17,16 @@ const MAX_OUTPUT_BYTES = clampInt(process.env.ZSSH_MAX_OUTPUT_BYTES, 4096, 10485
 const MAX_FILE_BYTES = clampInt(process.env.ZSSH_MAX_FILE_BYTES, 1024, 1048576, 131072);
 const DEV_TOKEN = process.env.ZSSH_DEV_BEARER_TOKEN || "";
 const AUDIT_LOG = path.resolve(process.env.ZSSH_AUDIT_LOG || "./data/audit.jsonl");
+const SAFE_PROGRAM_PATHS = Object.freeze({
+  uptime: "/usr/bin/uptime",
+  whoami: "/usr/bin/whoami",
+  id: "/usr/bin/id",
+  uname: "/usr/bin/uname",
+  pwd: "/usr/bin/pwd",
+  df: "/usr/bin/df",
+  free: "/usr/bin/free"
+});
+const SAFE_PROGRAM_NAMES = Object.freeze(Object.keys(SAFE_PROGRAM_PATHS));
 
 function clampInt(value, min, max, fallback) {
   const n = Number(value);
@@ -60,6 +70,12 @@ export function classifyCommand(command) {
 function getAllowedRoots() {
   const raw = process.env.ZSSH_ALLOWED_ROOTS || process.cwd();
   return raw.split(",").map(v => path.resolve(v.trim())).filter(Boolean);
+}
+
+function getEnabledSafePrograms() {
+  const raw = process.env.ZSSH_SAFE_PROGRAMS || SAFE_PROGRAM_NAMES.join(",");
+  const requested = raw.split(",").map(v => v.trim()).filter(Boolean);
+  return [...new Set(requested)].filter(name => Object.hasOwn(SAFE_PROGRAM_PATHS, name));
 }
 
 function isWithin(root, candidate) {
@@ -107,6 +123,111 @@ async function audit(event) {
   if (safeEvent.command) safeEvent.command = redactSecrets(safeEvent.command);
   await fs.mkdir(path.dirname(AUDIT_LOG), { recursive: true, mode: 0o700 });
   await fs.appendFile(AUDIT_LOG, JSON.stringify(safeEvent) + "\n", { encoding: "utf8", mode: 0o600 });
+}
+
+
+export async function runSafeProgram(program, args = [], cwd, timeoutSeconds) {
+  const name = String(program || "").trim();
+  const enabled = getEnabledSafePrograms();
+
+  if (!enabled.includes(name)) {
+    await audit({ action: "run_safe", program: name, args: Array.isArray(args) ? args.map(redactSecrets) : [], outcome: "blocked" });
+    return {
+      ok: false,
+      blocked: true,
+      program: name,
+      error: "program is not in the zSSH safe allowlist"
+    };
+  }
+
+  if (!Array.isArray(args) || args.length > 32 || args.some(arg => typeof arg !== "string" || arg.length > 512)) {
+    throw new Error("args must contain at most 32 strings of at most 512 characters");
+  }
+
+  const resolvedCwd = await resolveAllowedPath(cwd || process.cwd());
+  const timeoutMs = clampInt(timeoutSeconds, 1, 300, COMMAND_TIMEOUT_SECONDS) * 1000;
+  const startedAt = Date.now();
+
+  return await new Promise((resolve) => {
+    const child = spawn(SAFE_PROGRAM_PATHS[name], args, {
+      cwd: resolvedCwd,
+      env: safeEnvironment(),
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    let stdout = Buffer.alloc(0);
+    let stderr = Buffer.alloc(0);
+    let limited = false;
+    let timedOut = false;
+    let settled = false;
+
+    const append = (target, chunk) => {
+      const next = Buffer.concat([target, chunk]);
+      if (next.length > MAX_OUTPUT_BYTES) {
+        limited = true;
+        return next.subarray(0, MAX_OUTPUT_BYTES);
+      }
+      return next;
+    };
+
+    child.stdout.on("data", chunk => {
+      stdout = append(stdout, chunk);
+      if (limited) child.kill("SIGTERM");
+    });
+    child.stderr.on("data", chunk => {
+      stderr = append(stderr, chunk);
+      if (limited) child.kill("SIGTERM");
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 1500).unref();
+    }, timeoutMs);
+
+    const finish = async (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const durationMs = Date.now() - startedAt;
+      const value = {
+        ...payload,
+        program: name,
+        timed_out: timedOut,
+        output_limited: limited,
+        duration_ms: durationMs,
+        stdout: redactSecrets(stdout.toString("utf8")),
+        stderr: redactSecrets(stderr.toString("utf8"))
+      };
+
+      try {
+        await audit({
+          action: "run_safe",
+          program: name,
+          args: args.map(redactSecrets),
+          cwd: resolvedCwd,
+          outcome: value.ok ? "ok" : "error",
+          exit_code: value.exit_code,
+          timed_out: timedOut,
+          output_limited: limited,
+          duration_ms: durationMs
+        });
+      } catch {
+        // Audit failure must not leak secret-bearing arguments into the response.
+      }
+
+      resolve(value);
+    };
+
+    child.on("error", err => finish({ ok: false, exit_code: null, error: err.message }));
+    child.on("close", (code, signal) => finish({
+      ok: code === 0 && !timedOut && !limited,
+      exit_code: code,
+      signal: signal || null,
+      error: timedOut ? "program timed out" : limited ? "output limit exceeded" : code === 0 ? null : "program exited non-zero"
+    }));
+  });
 }
 
 async function execute(command, cwd, timeoutSeconds) {
@@ -256,6 +377,7 @@ function createMcpServer() {
       arch: process.arch,
       uid: typeof process.getuid === "function" ? process.getuid() : null,
       exec_mode: EXEC_MODE,
+      safe_programs: getEnabledSafePrograms(),
       allowed_roots: getAllowedRoots(),
       timeout_seconds: COMMAND_TIMEOUT_SECONDS,
       max_output_bytes: MAX_OUTPUT_BYTES
@@ -293,6 +415,30 @@ function createMcpServer() {
     async ({ path: filePath, content }) => {
       try {
         return result({ ok: true, ...(await writeTextFile(filePath, content)) });
+      } catch (err) {
+        return result({ ok: false, error: String(err?.message || err) }, true);
+      }
+    }
+  );
+
+
+  server.registerTool(
+    "zssh_run_safe",
+    {
+      title: "Run safe program",
+      description: "Run one hard-allowlisted read-only Linux program without a shell. Arguments are passed directly as argv and are never shell-interpreted.",
+      inputSchema: {
+        program: z.enum(SAFE_PROGRAM_NAMES),
+        args: z.array(z.string().max(512)).max(32).optional(),
+        cwd: z.string().min(1).optional(),
+        timeout_seconds: z.number().int().min(1).max(300).optional()
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ program, args, cwd, timeout_seconds }) => {
+      try {
+        const value = await runSafeProgram(program, args || [], cwd, timeout_seconds);
+        return result(value, !value.ok);
       } catch (err) {
         return result({ ok: false, error: String(err?.message || err) }, true);
       }

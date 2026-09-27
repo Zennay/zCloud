@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { classifyCommand, redactSecrets, resolveAllowedPath } from "../server.mjs";
+import { classifyCommand, redactSecrets, resolveAllowedPath, runSafeProgram } from "../server.mjs";
 
 test("classifies read-only commands", () => {
   assert.equal(classifyCommand("systemctl status nginx"), "read_only");
@@ -35,6 +35,32 @@ test("allowed path gate accepts inside root and rejects outside root", async () 
   try {
     assert.equal(await resolveAllowedPath(file), file);
     await assert.rejects(() => resolveAllowedPath("/etc/hosts"), /outside allowed roots/);
+  } finally {
+    if (previous === undefined) delete process.env.ZSSH_ALLOWED_ROOTS;
+    else process.env.ZSSH_ALLOWED_ROOTS = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test("safe runner blocks programs outside the hard allowlist", async () => {
+  const result = await runSafeProgram("sh", ["-c", "echo nope"], process.cwd(), 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocked, true);
+  assert.match(result.error, /allowlist/);
+});
+
+test("safe runner executes an allowlisted program without a shell", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "zssh-run-test-"));
+  const previous = process.env.ZSSH_ALLOWED_ROOTS;
+  process.env.ZSSH_ALLOWED_ROOTS = root;
+  try {
+    const result = await runSafeProgram("whoami", [], root, 5);
+    assert.equal(result.ok, true);
+    assert.equal(result.program, "whoami");
+    assert.ok(result.stdout.trim().length > 0);
+    assert.equal(result.timed_out, false);
+    assert.equal(result.output_limited, false);
   } finally {
     if (previous === undefined) delete process.env.ZSSH_ALLOWED_ROOTS;
     else process.env.ZSSH_ALLOWED_ROOTS = previous;

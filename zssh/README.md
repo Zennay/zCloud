@@ -10,7 +10,7 @@ This branch proves the smallest safe foundation:
 
 - remote MCP endpoint at `/mcp`;
 - development bearer authentication;
-- `zssh_server_info`, `zssh_exec`, `zssh_read_file`, and `zssh_write_file`;
+- `zssh_server_info`, `zssh_run_safe`, `zssh_exec`, `zssh_read_file`, and `zssh_write_file`;
 - non-root startup guard;
 - command timeout and output limits;
 - configured filesystem roots;
@@ -57,9 +57,11 @@ The server binds to `127.0.0.1` by default. Put TLS/reverse proxy or a developme
 
 ## Policy
 
-`ZSSH_EXEC_MODE=safe` is the default. It blocks known destructive classes such as recursive forced deletion, filesystem formatting, reboot/shutdown, destructive systemd actions, and destructive git reset/clean patterns.
+`ZSSH_EXEC_MODE=disabled` is the default for raw shell. Full raw shell remains an explicit trusted/disposable-target mode and command classification is never treated as an authorization boundary.
 
-This classifier is only a defense-in-depth layer. Production hardening still requires a dedicated service account, scoped sudo/capabilities, stronger approval semantics, rate limiting, OAuth-compatible user auth, agent pairing, and review against current ChatGPT plugin requirements.
+For normal M1 inspection, `zssh_run_safe` uses a fixed read-only binary allowlist and `spawn(..., { shell: false })`, so user arguments are passed as argv instead of being interpreted by a shell. The default allowlist is `uptime`, `whoami`, `id`, `uname`, `pwd`, `df`, and `free`; operators may reduce it further with `ZSSH_SAFE_PROGRAMS`.
+
+Production hardening still requires a dedicated service account, scoped sudo/capabilities, stronger approval semantics, rate limiting, OAuth-compatible user auth, agent pairing, and review against current ChatGPT plugin requirements.
 
 ## ChatGPT integration status
 
