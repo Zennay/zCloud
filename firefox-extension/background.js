@@ -482,6 +482,7 @@ async function refreshTargets() {
       Object.values(projectTabs).filter(tabId => tabId != null)
     );
     for (const target of Object.values(targets)) {
+      if (pendingTabHandoffs.has(target.project_id)) continue;
       const assignedTabId = projectTabs[target.project_id];
       if (!target.active) {
         if (assignedTabId != null) {
