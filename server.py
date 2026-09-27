@@ -688,6 +688,34 @@ def _preflight_external_evidence(payload,label):
         'branches':[str(x)[:200] for x in branches[:200]],
     }
 
+def _canonical_github_repo(project_id):
+    project=PROJECT_INDEX.get(project_id,{})
+    repo_url=str(project.get('repo_url') or '').strip()
+    if repo_url:
+        match=re.search(r'github\.com[/:]([^/]+/[^/#]+)',repo_url,re.I)
+        if match:return match.group(1).removesuffix('.git')
+    path=str(project.get('repo') or (ROOT if project_id=='cloud' else '')).strip()
+    if path:
+        try:
+            origin=git(path,'config','--get','remote.origin.url')
+            match=re.search(r'github\.com[/:]([^/]+/[^/#]+)',origin,re.I)
+            if match:return match.group(1).removesuffix('.git')
+        except Exception:
+            pass
+    return None
+
+def _verify_preflight_sources(project_id,notion_evidence,github_evidence):
+    project=PROJECT_INDEX.get(project_id,{})
+    expected_project=str(project.get('notion_url') or '').strip()
+    expected_handoff=str(project.get('handoff_url') or '').strip()
+    if expected_project and notion_evidence.get('project_ref')!=expected_project:
+        raise ValueError('Notion project_ref wijkt af van de canonieke projectbron')
+    if expected_handoff and notion_evidence.get('handoff_ref')!=expected_handoff:
+        raise ValueError('Notion handoff_ref wijkt af van de canonieke handoff')
+    expected_repo=_canonical_github_repo(project_id)
+    if expected_repo and str(github_evidence.get('repo') or '').lower().removesuffix('.git')!=expected_repo.lower():
+        raise ValueError('GitHub repo wijkt af van de canonieke projectrepo')
+
 def worker_preflight_record(project_id,worker_id,owner_id,notion,github):
     project_id=str(project_id or '').strip()[:80]
     worker_id=str(worker_id or '').strip()[:160]
@@ -699,6 +727,7 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github):
         raise ValueError('worker_id hoort niet bij dit project')
     notion_evidence=_preflight_external_evidence(notion,'Notion')
     github_evidence=_preflight_external_evidence(github,'GitHub')
+    _verify_preflight_sources(project_id,notion_evidence,github_evidence)
     vps=coordination_vps_health()
     if not vps.get('ok'):
         return {'ok':False,'blocked':'vps_unhealthy','vps':vps}
