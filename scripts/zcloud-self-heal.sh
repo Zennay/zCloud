@@ -5,6 +5,8 @@ SERVICE="${ZCLOUD_SERVICE:-zennay-cloud.service}"
 URL="${ZCLOUD_HEALTH_URL:-http://127.0.0.1:8765/api/status}"
 DISABLE_FILE="${ZCLOUD_SELF_HEAL_DISABLE_FILE:-/home/ubuntu/zennay-cloud/.disable-self-heal}"
 RUNTIME_DISABLE_DIR="${ZCLOUD_RUNTIME_HEAL_DISABLE_DIR:-/home/ubuntu/zennay-cloud/.disable-runtime-heal}"
+RUNTIME_USER="${ZCLOUD_RUNTIME_USER:-ubuntu}"
+RUNTIME_USER_UID="${ZCLOUD_RUNTIME_USER_UID:-1000}"
 LOCK_FILE="${ZCLOUD_SELF_HEAL_LOCK_FILE:-/run/zcloud-self-heal.lock}"
 
 [[ -e "${DISABLE_FILE}" ]] && exit 0
@@ -58,10 +60,18 @@ heal_system_unit() {
 }
 
 user_systemctl() {
-  local uid="${ZCLOUD_RUNTIME_USER_UID:-1000}"
-  XDG_RUNTIME_DIR="/run/user/${uid}" \
-  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
-    systemctl --user "$@"
+  local runtime_dir="/run/user/${RUNTIME_USER_UID}"
+  local bus="unix:path=${runtime_dir}/bus"
+  if [[ "${EUID}" -eq 0 ]]; then
+    runuser -u "${RUNTIME_USER}" -- env \
+      XDG_RUNTIME_DIR="${runtime_dir}" \
+      DBUS_SESSION_BUS_ADDRESS="${bus}" \
+      systemctl --user "$@"
+  else
+    XDG_RUNTIME_DIR="${runtime_dir}" \
+    DBUS_SESSION_BUS_ADDRESS="${bus}" \
+      systemctl --user "$@"
+  fi
 }
 
 heal_user_unit() {
