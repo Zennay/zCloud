@@ -554,7 +554,7 @@ def _claim_conflict_is_active(db_path, alert, now_ts):
         # Backward-compatible for legacy alerts without structured claim detail.
         return True
     try:
-        with sqlite3.connect(db_path) as c:
+        with _db_connect(db_path) as c:
             c.row_factory=sqlite3.Row
             if not c.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_claims'"
