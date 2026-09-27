@@ -54,7 +54,7 @@ for (const marker of [
   "const BASE_PROMPT = cfg.prompt",
   "let PROMPT = REPLACEMENT_HANDOFF",
   "PROMPT = BASE_PROMPT",
-  "await clearReplacementHandoffTag(tabId)",
+  "return clearReplacementHandoffTag(tabId).then",
   'target.desired_state === "paused"',
   'target.desired_state === "draining"',
   "if (pendingTabHandoffs.has(target.project_id)) continue;",
