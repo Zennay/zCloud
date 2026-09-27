@@ -9,7 +9,7 @@ persistent runtime state. Every production run is gated by:
   3. per-file atomic replacement with immediate partial-write recovery
   4. zCloud service restart
   5. optional Firefox runtime sync + in-place addon reload
-  6. read-only post-deploy canary with mapping preservation
+  6. read-only post-deploy canary with strict mapping preservation or an explicit extension-only contract
   7. new LKG capture only after the canary is green
 
 Any failure after source promotion invokes the existing LKG rollback. Firefox
@@ -372,6 +372,104 @@ def mapping_from_recovery_status(root: Path, state: Path) -> str:
     return str(value)
 
 
+def mapping_rows(db_path: Path) -> dict:
+    """Return the durable runner mapping rows used by extension-only validation."""
+    if not db_path.exists():
+        raise PromotionError("history.db missing while reading runner mapping")
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        conn.row_factory = sqlite3.Row
+        targets = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT project_id,active,worker_count,conversation_id "
+                "FROM runner_targets ORDER BY project_id"
+            )
+        ]
+        workers = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT project_id,worker_slot,conversation_id "
+                "FROM runner_workers ORDER BY project_id,worker_slot"
+            )
+        ]
+        conn.close()
+    except Exception as exc:
+        raise PromotionError(f"runner mapping rows unavailable: {exc}") from exc
+    return {"targets": targets, "workers": workers}
+
+
+def validate_mapping_extension(before: dict, after: dict) -> dict:
+    """Allow only additive mapping rows; every pre-existing row must be byte-equivalent."""
+    def indexed(rows: list[dict], keys: tuple[str, ...], label: str) -> dict[tuple, dict]:
+        result = {}
+        for row in rows:
+            key = tuple(row.get(name) for name in keys)
+            if key in result:
+                raise PromotionError(f"duplicate {label} mapping key: {key}")
+            result[key] = row
+        return result
+
+    before_targets = indexed(before.get("targets") or [], ("project_id",), "target")
+    after_targets = indexed(after.get("targets") or [], ("project_id",), "target")
+    before_workers = indexed(
+        before.get("workers") or [], ("project_id", "worker_slot"), "worker"
+    )
+    after_workers = indexed(
+        after.get("workers") or [], ("project_id", "worker_slot"), "worker"
+    )
+
+    changed = []
+    for label, old, new in (
+        ("target", before_targets, after_targets),
+        ("worker", before_workers, after_workers),
+    ):
+        for key, row in old.items():
+            if key not in new:
+                changed.append({"kind": label, "key": list(key), "reason": "removed"})
+            elif new[key] != row:
+                changed.append({
+                    "kind": label,
+                    "key": list(key),
+                    "reason": "changed",
+                    "before": row,
+                    "after": new[key],
+                })
+    if changed:
+        raise PromotionError(
+            "mapping extension modified existing mapping rows: "
+            + json.dumps(changed[:5], ensure_ascii=False, sort_keys=True)
+        )
+
+    added_targets = sorted(
+        key[0] for key in after_targets.keys() - before_targets.keys()
+    )
+    added_workers = sorted(
+        [list(key) for key in after_workers.keys() - before_workers.keys()]
+    )
+    return {
+        "ok": True,
+        "policy": "extension_only",
+        "targets_before": len(before_targets),
+        "targets_after": len(after_targets),
+        "workers_before": len(before_workers),
+        "workers_after": len(after_workers),
+        "added_targets": added_targets,
+        "added_workers": added_workers,
+    }
+
+
+def validate_mapping_extension_scope(paths: list[str], enabled: bool) -> None:
+    if not enabled:
+        return
+    allowed = {"projects.json", "project-layout.json"}
+    selected = set(paths)
+    if not selected or not selected.issubset(allowed):
+        raise PromotionError(
+            "--allow-mapping-extension is restricted to projects.json/project-layout.json"
+        )
+
+
 def run_prechange(prechange: Path, root: Path, state: Path) -> dict:
     proc = run([
         str(prechange),
@@ -445,7 +543,7 @@ def run_postdeploy(
     postdeploy: Path,
     *,
     root: Path,
-    expected_mapping_sha: str,
+    expected_mapping_sha: str | None,
     require_worker_read_model: bool,
     require_incidents: bool,
 ) -> dict:
@@ -453,9 +551,10 @@ def run_postdeploy(
         str(postdeploy),
         "--root", str(root),
         "--db", str(root / "history.db"),
-        "--expect-mapping-sha", expected_mapping_sha,
         "--json",
     ]
+    if expected_mapping_sha:
+        args.extend(["--expect-mapping-sha", expected_mapping_sha])
     if require_worker_read_model:
         args.append("--require-worker-read-model")
     if require_incidents:
@@ -463,7 +562,14 @@ def run_postdeploy(
     proc = run(args, check=False)
     payload = parse_json_output(proc, "post-deploy canary")
     if proc.returncode or not payload.get("ok"):
-        raise PromotionError("post-deploy canary is not green")
+        detail = "; ".join(
+            f"{item.get('name')}={item.get('detail')}"
+            for item in (payload.get("checks") or [])
+            if not item.get("ok")
+        )
+        raise PromotionError(
+            "post-deploy canary is not green" + (f": {detail}" if detail else "")
+        )
     return payload
 
 
@@ -618,6 +724,7 @@ def promote(
     reload_helper: Path = DEFAULT_RELOAD_HELPER,
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
+    allow_mapping_extension: bool = False,
     dry_run: bool = False,
     actor: str = "transactional-promote",
 ) -> dict:
@@ -625,6 +732,7 @@ def promote(
     root = root.resolve()
     state = state.resolve()
     normalized = [validate_relpath(rel) for rel in paths]
+    validate_mapping_extension_scope(normalized, allow_mapping_extension)
     candidate_hashes = validate_candidate(candidate, root, normalized)
     syntax_check(candidate, normalized)
     feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
@@ -639,6 +747,9 @@ def promote(
     with promotion_lock(state):
         pre = run_prechange(prechange, root, state)
         mapping_sha = mapping_from_recovery_status(root, state)
+        mapping_before = (
+            mapping_rows(root / "history.db") if allow_mapping_extension else None
+        )
         if dry_run:
             return {
                 "ok": True,
@@ -651,6 +762,9 @@ def promote(
                 "config_changes": pending_config_changes,
                 "prechange_snapshot": pre.get("snapshot_id"),
                 "mapping_sha256": mapping_sha,
+                "mapping_policy": (
+                    "extension_only" if allow_mapping_extension else "unchanged"
+                ),
             }
 
         before = capture_lkg(
@@ -672,6 +786,9 @@ def promote(
             candidate=str(candidate),
             paths=normalized,
             mapping_sha256=mapping_sha,
+            mapping_policy=(
+                "extension_only" if allow_mapping_extension else "unchanged"
+            ),
             lkg_snapshot=before.get("snapshot_id"),
             feature_gate=feature_gate,
         )
@@ -692,10 +809,20 @@ def promote(
             post = run_postdeploy(
                 postdeploy,
                 root=root,
-                expected_mapping_sha=mapping_sha,
+                expected_mapping_sha=(
+                    None if allow_mapping_extension else mapping_sha
+                ),
                 require_worker_read_model=require_worker_read_model,
                 require_incidents=require_incidents,
             )
+            mapping_contract = None
+            if allow_mapping_extension:
+                assert mapping_before is not None
+                mapping_contract = validate_mapping_extension(
+                    mapping_before,
+                    mapping_rows(root / "history.db"),
+                )
+            mapping_after_sha = ((post.get("mapping") or {}).get("sha256"))
             write_config_audit(
                 root / "history.db",
                 pending_config_changes,
@@ -708,7 +835,9 @@ def promote(
                 root,
                 state,
                 "transactional promotion green: POSTDEPLOY_GREEN; "
-                f"tx={tx_id}; mapping={mapping_sha}",
+                f"tx={tx_id}; mapping_policy="
+                f"{'extension_only' if allow_mapping_extension else 'unchanged'}; "
+                f"mapping_before={mapping_sha}; mapping_after={mapping_after_sha}",
             )
             write_json_line(
                 log,
@@ -716,6 +845,7 @@ def promote(
                 transaction_id=tx_id,
                 deployed_hashes=deployed_hashes,
                 postdeploy=post,
+                mapping_contract=mapping_contract,
                 new_lkg=after.get("snapshot_id"),
             )
             return {
@@ -723,7 +853,12 @@ def promote(
                 "transaction_id": tx_id,
                 "paths": normalized,
                 "deployed_hashes": deployed_hashes,
-                "mapping_sha256": mapping_sha,
+                "mapping_sha256_before": mapping_sha,
+                "mapping_sha256_after": mapping_after_sha,
+                "mapping_policy": (
+                    "extension_only" if allow_mapping_extension else "unchanged"
+                ),
+                "mapping_contract": mapping_contract,
                 "feature_gate": feature_gate,
                 "postdeploy": post,
                 "new_lkg": after.get("snapshot_id"),
@@ -793,6 +928,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reload-helper", type=Path, default=DEFAULT_RELOAD_HELPER)
     parser.add_argument("--require-worker-read-model", action="store_true")
     parser.add_argument("--require-incidents", action="store_true")
+    parser.add_argument(
+        "--allow-mapping-extension",
+        action="store_true",
+        help=(
+            "Allow only additive runner mapping rows; restricted to "
+            "projects.json/project-layout.json promotions"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--actor", default="transactional-promote")
     parser.add_argument("--json", action="store_true")
@@ -810,6 +953,7 @@ def main(argv: list[str] | None = None) -> int:
             reload_helper=args.reload_helper,
             require_worker_read_model=args.require_worker_read_model,
             require_incidents=args.require_incidents,
+            allow_mapping_extension=args.allow_mapping_extension,
             dry_run=args.dry_run,
             actor=args.actor,
         )
