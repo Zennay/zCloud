@@ -352,5 +352,59 @@
       }
     ],
     "priority": "normal"
+  },
+  {
+    "id": "zssh",
+    "name": "zSSH",
+    "eyebrow": "SECURE REMOTE OPERATIONS",
+    "goal": "Veilige Linux/VPS-operaties vanuit normale ChatGPT-chats via een gepubliceerde remote MCP-plugin.",
+    "icon": "server",
+    "accent": "#f6c56f",
+    "phase": "M0 · Genesis + safe MCP scaffold",
+    "status": "active",
+    "next_step": "Valideer de MCP-scaffold met unit tests en MCP Inspector; sluit daarna M0 en start de paired-agent proof.",
+    "milestone_revision": "zssh-genesis-v1",
+    "progress_basis": "Bouwvoortgang is het gemiddelde van bewijsgerichte milestones; productiegeschiktheid telt pas mee na auth/security/review-validatie.",
+    "milestones": [
+      {
+        "title": "M0 · Genesis + zCloud registration",
+        "done": false,
+        "progress": 60
+      },
+      {
+        "title": "M1 · Safe local execution proof",
+        "done": false,
+        "progress": 20
+      },
+      {
+        "title": "M2 · Paired target agent",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · systemd/git/process capabilities",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M4 · Production auth + hardening",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M5 · ChatGPT plugin submission",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M6 · Normal-chat OVH validation",
+        "done": false,
+        "progress": 0
+      }
+    ],
+    "priority": "high",
+    "repo_url": "https://github.com/Zennay/zCloud",
+    "notion_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634",
+    "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8"
   }
 ]
