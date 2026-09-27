@@ -150,6 +150,8 @@ class TaskClaimTests(unittest.TestCase):
         )
         self.assertEqual(200, status, first)
 
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='cloud'")
         self.preflight("owner-b", "cloud::w2")
         status, conflict = self.request(
             "/api/task-claims",
