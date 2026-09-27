@@ -4,13 +4,13 @@ zSSH is the security-first remote operations plugin being built as a zCloud subp
 
 ## Current milestone
 
-**M0 — Genesis + zCloud registration.**
+**M1 — Safe local execution proof.**
 
 This branch proves the smallest safe foundation:
 
 - remote MCP endpoint at `/mcp`;
 - development bearer authentication;
-- `zssh_server_info`, `zssh_exec`, `zssh_read_file`, and `zssh_write_file`;
+- `zssh_server_info`, `zssh_exec_readonly`, `zssh_exec`, `zssh_read_file`, and `zssh_write_file`;
 - non-root startup guard;
 - command timeout and output limits;
 - configured filesystem roots;
@@ -57,9 +57,9 @@ The server binds to `127.0.0.1` by default. Put TLS/reverse proxy or a developme
 
 ## Policy
 
-`ZSSH_EXEC_MODE=safe` is the default. It blocks known destructive classes such as recursive forced deletion, filesystem formatting, reboot/shutdown, destructive systemd actions, and destructive git reset/clean patterns.
+`zssh_exec_readonly` is the M1 safe execution path. It never invokes a shell: the server accepts only a fixed executable allowlist and validates every argument separately. Raw `zssh_exec` remains disabled by default and only activates with `ZSSH_EXEC_MODE=full` on an explicitly trusted/disposable target.
 
-This classifier is only a defense-in-depth layer. Production hardening still requires a dedicated service account, scoped sudo/capabilities, stronger approval semantics, rate limiting, OAuth-compatible user auth, agent pairing, and review against current ChatGPT plugin requirements.
+`classifyCommand()` remains audit/UX metadata only and is not an authorization boundary. Production hardening still requires a dedicated service account, scoped sudo/capabilities, stronger approval semantics, rate limiting, OAuth-compatible user auth, agent pairing, and review against current ChatGPT plugin requirements.
 
 ## ChatGPT integration status
 
