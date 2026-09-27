@@ -1337,6 +1337,13 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
+        if u.path=='/api/worker-preflight':
+            if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip()
+            worker_id=str(q.get('worker',[''])[0] or '').strip()
+            owner_id=str(q.get('owner',[''])[0] or '').strip()
+            if not project_id or not worker_id or not owner_id:return self.reply({'error':'project, worker en owner zijn verplicht'},400)
+            return self.reply(worker_preflight_state(project_id,worker_id,owner_id))
         if u.path=='/api/config-audit':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
             try: limit=int(q.get('limit',['80'])[0])
