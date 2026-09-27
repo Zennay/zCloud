@@ -900,8 +900,6 @@ def _claim_candidate(project_id,claim_key,metadata):
     if project_id==IMPROVEMENT_PROJECT_ID and metadata.get('loop')=='self_improvement':
         if not scope or (not scope.get('capabilities') and not scope.get('files')):
             raise ValueError('metadata.conflict_scope is verplicht voor autonome zCloud-writes')
-        if not str(metadata.get('task') or '').strip():
-            raise ValueError('metadata.task is verplicht voor alternatieve zCloud-taken')
     return {
         'claim_key':claim_key,
         'metadata':metadata,
@@ -910,19 +908,34 @@ def _claim_candidate(project_id,claim_key,metadata):
     }
 
 def _claim_candidates(project_id,claim_key,metadata,alternatives=None):
-    items=[_claim_candidate(project_id,claim_key,metadata)]
+    primary=_claim_candidate(project_id,claim_key,metadata)
+    items=[primary]
     raw=alternatives or []
     if not isinstance(raw,list):
         raise ValueError('alternatives moet een lijst zijn')
     if len(raw)>TASK_CLAIM_ALTERNATIVE_MAX:
         raise ValueError(f'alternatives mag maximaal {TASK_CLAIM_ALTERNATIVE_MAX} kandidaten bevatten')
-    seen={items[0]['claim_key']}
+    primary_self_improvement=(
+        project_id==IMPROVEMENT_PROJECT_ID and
+        primary['metadata'].get('loop')=='self_improvement'
+    )
+    seen={primary['claim_key']}
     for index,entry in enumerate(raw):
         if not isinstance(entry,dict):
             raise ValueError(f'alternatives[{index}] moet een object zijn')
         candidate=_claim_candidate(project_id,entry.get('claim_key'),entry.get('metadata'))
         if candidate['claim_key'] in seen:
             raise ValueError('alternatieve claim_keys moeten uniek zijn')
+        if primary_self_improvement:
+            if candidate['metadata'].get('loop')!='self_improvement':
+                raise ValueError('alternatieve zCloud-taken moeten loop=self_improvement behouden')
+            if not candidate['scope'] or (
+                not candidate['scope'].get('capabilities') and
+                not candidate['scope'].get('files')
+            ):
+                raise ValueError('alternatieve zCloud-taken vereisen een eigen conflict_scope')
+            if not str(candidate['metadata'].get('task') or '').strip():
+                raise ValueError('alternatieve zCloud-taken vereisen metadata.task')
         seen.add(candidate['claim_key'])
         items.append(candidate)
     return items
