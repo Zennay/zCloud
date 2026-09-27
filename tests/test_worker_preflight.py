@@ -70,8 +70,8 @@ class WorkerPreflightTests(unittest.TestCase):
             "owner_id": owner,
             "notion": {
                 "checked": True,
-                "project_ref": "https://notion.test/cloud",
-                "handoff_ref": "https://notion.test/cloud-handoff",
+                "project_ref": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8",
+                "handoff_ref": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8-handoff",
             },
             "github": {
                 "checked": True,
