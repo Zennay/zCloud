@@ -133,6 +133,95 @@ class TaskClaimTests(unittest.TestCase):
         self.assertTrue(result["acquired"])
         self.assertEqual("new-owner", result["claim"]["owner_id"])
 
+    def test_different_claim_keys_with_same_capability_conflict(self):
+        first = server.task_claim_acquire(
+            "cloud", "task:a", "owner-a", "cloud::w1", 120,
+            {"conflict_scope": {"capabilities": ["runner-control"], "files": []}},
+        )
+        self.assertTrue(first["acquired"])
+        second = server.task_claim_acquire(
+            "cloud", "task:b", "owner-b", "cloud::w2", 120,
+            {"conflict_scope": {"capabilities": ["runner-control"], "files": []}},
+        )
+        self.assertFalse(second["acquired"])
+        self.assertEqual("scope_conflict", second["blocked"])
+        self.assertEqual("task:a", second["conflict"]["claim_key"])
+        self.assertEqual(["runner-control"], second["conflict"]["overlap"]["capabilities"])
+
+    def test_file_scope_prefix_conflicts_but_disjoint_scope_does_not(self):
+        first = server.task_claim_acquire(
+            "cloud", "task:ui", "owner-a", "cloud::w1", 120,
+            {"conflict_scope": {"capabilities": [], "files": ["public/"]}},
+        )
+        self.assertTrue(first["acquired"])
+        blocked = server.task_claim_acquire(
+            "cloud", "task:app", "owner-b", "cloud::w2", 120,
+            {"conflict_scope": {"capabilities": [], "files": ["public/app.js"]}},
+        )
+        self.assertFalse(blocked["acquired"])
+        self.assertEqual(["public"], blocked["conflict"]["overlap"]["files"])
+
+        allowed = server.task_claim_acquire(
+            "cloud", "task:server", "owner-b", "cloud::w2", 120,
+            {"conflict_scope": {"capabilities": ["api"], "files": ["server.py"]}},
+        )
+        self.assertTrue(allowed["acquired"])
+
+    def test_same_owner_may_hold_overlapping_scopes(self):
+        scope={"conflict_scope": {"capabilities": ["claims"], "files": ["server.py"]}}
+        first=server.task_claim_acquire("cloud","task:first","owner-a","cloud::w1",120,scope)
+        second=server.task_claim_acquire("cloud","task:second","owner-a","cloud::w1",120,scope)
+        self.assertTrue(first["acquired"])
+        self.assertTrue(second["acquired"])
+
+    def test_expired_overlapping_scope_is_ignored(self):
+        expired=(datetime.now(timezone.utc)-timedelta(seconds=5)).isoformat()
+        old=(datetime.now(timezone.utc)-timedelta(minutes=2)).isoformat()
+        metadata=json.dumps({"conflict_scope":{"capabilities":["claims"],"files":["server.py"]}})
+        with server.connect() as conn:
+            conn.execute(
+                """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                ("cloud","task:old","owner-a","cloud::w1",old,old,expired,metadata),
+            )
+        result=server.task_claim_acquire(
+            "cloud","task:new","owner-b","cloud::w2",120,
+            {"conflict_scope":{"capabilities":["claims"],"files":["server.py"]}},
+        )
+        self.assertTrue(result["acquired"])
+
+    def test_scope_conflict_race_allows_exactly_one_owner(self):
+        barrier=threading.Barrier(3)
+        results=[]
+        lock=threading.Lock()
+        metadata={"conflict_scope":{"capabilities":["race-capability"],"files":["server.py"]}}
+
+        def worker(owner,key):
+            barrier.wait()
+            result=server.task_claim_acquire("cloud",key,owner,owner,120,metadata)
+            with lock:
+                results.append((owner,result["acquired"],result.get("blocked")))
+
+        threads=[
+            threading.Thread(target=worker,args=("owner-a","task:race-a")),
+            threading.Thread(target=worker,args=("owner-b","task:race-b")),
+        ]
+        for thread in threads: thread.start()
+        barrier.wait()
+        for thread in threads: thread.join(timeout=5)
+
+        winners=[owner for owner,acquired,_ in results if acquired]
+        self.assertEqual(1,len(winners),results)
+        losers=[blocked for _,acquired,blocked in results if not acquired]
+        self.assertEqual(["scope_conflict"],losers)
+
+    def test_unsafe_conflict_scope_path_is_rejected(self):
+        with self.assertRaises(ValueError):
+            server.task_claim_acquire(
+                "cloud","task:unsafe","owner-a","cloud::w1",120,
+                {"conflict_scope":{"files":["../server.py"]}},
+            )
+
     def test_heartbeat_requires_current_unexpired_owner(self):
         first = server.task_claim_acquire("cloud", "notion:heartbeat", "owner-a", "cloud::w1", 60)
         before = first["claim"]["lease_until"]
