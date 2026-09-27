@@ -644,23 +644,30 @@ def improvement_loop_resume(project_id=IMPROVEMENT_PROJECT_ID):
             (project_id,IMPROVEMENT_RUNNING,0,0,None,None,None,ts))
     return improvement_loop_state(project_id)
 
-def _coordination_claim_rows(project_id, exclude_owner=None):
-    ts=now()
-    with connect() as c:
-        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
-        rows=c.execute(
-            'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? ORDER BY claim_key,owner_id,worker_id',
-            (project_id,),
-        ).fetchall()
+def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None):
+    ts=ts or now()
+    connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+    rows=connection.execute(
+        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? ORDER BY claim_key,owner_id,worker_id',
+        (project_id,),
+    ).fetchall()
     return [
         {'project_id':r['project_id'],'claim_key':r['claim_key'],'owner_id':r['owner_id'],'worker_id':r['worker_id']}
         for r in rows if not exclude_owner or r['owner_id']!=exclude_owner
     ]
 
-def _coordination_claims_fingerprint(project_id, exclude_owner=None):
-    rows=_coordination_claim_rows(project_id,exclude_owner)
+def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None):
+    rows=_coordination_claim_rows_locked(connection,project_id,exclude_owner,ts)
     raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
     return hashlib.sha256(raw).hexdigest(),rows
+
+def _coordination_claim_rows(project_id, exclude_owner=None):
+    with connect() as c:
+        return _coordination_claim_rows_locked(c,project_id,exclude_owner)
+
+def _coordination_claims_fingerprint(project_id, exclude_owner=None):
+    with connect() as c:
+        return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner)
 
 def coordination_vps_health():
     checks={}
@@ -771,20 +778,31 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github):
         )
     return worker_preflight_state(project_id,worker_id,owner_id)
 
-def worker_preflight_state(project_id,worker_id,owner_id):
-    with connect() as c:
-        row=c.execute(
-            'SELECT * FROM worker_preflights WHERE project_id=? AND worker_id=? AND owner_id=?',
-            (project_id,worker_id,owner_id),
-        ).fetchone()
+def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None):
+    row=connection.execute(
+        'SELECT * FROM worker_preflights WHERE project_id=? AND worker_id=? AND owner_id=?',
+        (project_id,worker_id,owner_id),
+    ).fetchone()
     if not row:
         return {'ok':False,'blocked':'preflight_required','project_id':project_id,'worker_id':worker_id,'owner_id':owner_id}
     try:
-        expired=datetime.fromisoformat(row['expires_at']).astimezone(timezone.utc)<=datetime.now(timezone.utc)
+        reference=datetime.fromisoformat(ts).astimezone(timezone.utc) if ts else datetime.now(timezone.utc)
+    except Exception:
+        reference=datetime.now(timezone.utc)
+    try:
+        expired=datetime.fromisoformat(row['expires_at']).astimezone(timezone.utc)<=reference
     except Exception:
         expired=True
-    fingerprint,current_claims=_coordination_claims_fingerprint(project_id,owner_id)
+    fingerprint,current_claims=_coordination_claims_fingerprint_locked(
+        connection,project_id,owner_id,ts or reference.isoformat()
+    )
     claims_changed=fingerprint!=row['claims_fingerprint']
+    try:notion=json.loads(row['notion_json'])
+    except Exception:notion={}
+    try:github=json.loads(row['github_json'])
+    except Exception:github={}
+    try:vps=json.loads(row['vps_json'])
+    except Exception:vps={'ok':False,'checks':{}}
     return {
         'ok':not expired and not claims_changed,
         'blocked':'preflight_expired' if expired else 'claim_landscape_changed' if claims_changed else None,
@@ -793,11 +811,15 @@ def worker_preflight_state(project_id,worker_id,owner_id):
         'owner_id':owner_id,
         'checked_at':row['checked_at'],
         'expires_at':row['expires_at'],
-        'notion':json.loads(row['notion_json']),
-        'github':json.loads(row['github_json']),
+        'notion':notion,
+        'github':github,
         'claims':current_claims,
-        'vps':json.loads(row['vps_json']),
+        'vps':vps,
     }
+
+def worker_preflight_state(project_id,worker_id,owner_id):
+    with connect() as c:
+        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id)
 
 def _normalize_conflict_scope(metadata):
     metadata=metadata if isinstance(metadata,dict) else {}
@@ -982,7 +1004,7 @@ def _attempt_claim_candidate(connection,project_id,candidate,owner_id,worker_id,
         } if row else None,
     }
 
-def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=300,metadata=None,alternatives=None):
+def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=300,metadata=None,alternatives=None,require_preflight=False):
     project_id=str(project_id or '').strip()[:80]
     owner_id=str(owner_id or '').strip()[:160]
     worker_id=str(worker_id or '').strip()[:160]
@@ -999,6 +1021,17 @@ def task_claim_acquire(project_id,claim_key,owner_id,worker_id='',lease_seconds=
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+        if require_preflight:
+            if not worker_id:
+                return {'acquired':False,'blocked':'worker_identity_required','claim':None}
+            atomic_preflight=_worker_preflight_state_locked(c,project_id,worker_id,owner_id,ts)
+            if not atomic_preflight.get('ok'):
+                return {
+                    'acquired':False,
+                    'blocked':atomic_preflight.get('blocked') or 'preflight_required',
+                    'claim':None,
+                    'preflight':atomic_preflight,
+                }
         for index,candidate in enumerate(candidates):
             result=_attempt_claim_candidate(c,project_id,candidate,owner_id,worker_id,ts,until)
             if result['acquired']:
@@ -1498,7 +1531,8 @@ class Handler(BaseHTTPRequestHandler):
                             return self.reply({'error':'alternatives moet een lijst zijn','blocked':'invalid_alternatives'},400)
                         result=task_claim_acquire(
                             project_id,claim_key,owner_id,worker_id,
-                            payload.get('lease_seconds') or 300,metadata,alternatives
+                            payload.get('lease_seconds') or 300,metadata,alternatives,
+                            require_preflight=bool(worker_id)
                         )
                         if not result['acquired'] and result.get('claim'):
                             holder=result['claim'].get('owner_id') or 'andere worker'
@@ -1508,7 +1542,11 @@ class Handler(BaseHTTPRequestHandler):
                                 emit(DB, project_id, 'claim_conflict', 'warning', 'Taakclaim botst',
                                      f'{blocker_key} · huidige eigenaar {holder} · nieuwe poging {owner_id}',
                                      f'claim-conflict:{project_id}:{blocker_key}:{holder}', 15*60)
-                        return self.reply(result,200 if result['acquired'] else 409)
+                        status=200 if result['acquired'] else (
+                            428 if result.get('blocked') in ('preflight_required','preflight_expired','claim_landscape_changed','worker_identity_required')
+                            else 409
+                        )
+                        return self.reply(result,status)
                     if action=='heartbeat':
                         result=task_claim_heartbeat(project_id,claim_key,owner_id,payload.get('lease_seconds') or 300)
                         return self.reply(result,200 if result['renewed'] else 409)
