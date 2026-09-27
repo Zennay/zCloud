@@ -1,0 +1,9 @@
+[Unit]
+Description=zCloud API self-heal probe
+After=network-online.target zennay-cloud.service
+Wants=network-online.target
+ConditionPathExists=!/home/ubuntu/zennay-cloud/.disable-self-heal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcloud-self-heal
