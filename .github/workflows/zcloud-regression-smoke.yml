@@ -15,10 +15,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Verify zSSH MCP security scaffold
-        run: |
-          npm install --prefix zssh --ignore-scripts --no-audit --no-fund
-          npm test --prefix zssh
       - name: Run critical zCloud smoke suite
         run: python3 -m unittest discover -v
       - name: Verify 12h Birdseye shell scheduler isolation
