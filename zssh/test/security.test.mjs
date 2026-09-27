@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { classifyCommand, redactSecrets, resolveAllowedPath, runSafeProgram } from "../server.mjs";
+import { classifyCommand, redactSecrets, resolveAllowedPath, runSafeProgram, isMainEntry } from "../server.mjs";
 
 test("classifies read-only commands", () => {
   assert.equal(classifyCommand("systemctl status nginx"), "read_only");
@@ -64,6 +64,19 @@ test("safe runner executes an allowlisted program without a shell", async () => 
   } finally {
     if (previous === undefined) delete process.env.ZSSH_ALLOWED_ROOTS;
     else process.env.ZSSH_ALLOWED_ROOTS = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test("main-entry detection follows symlinks used by atomic live releases", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "zssh-entry-test-"));
+  const link = path.join(root, "server-current.mjs");
+  const realServer = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "server.mjs");
+  try {
+    await symlink(realServer, link);
+    assert.equal(isMainEntry(link), true);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
