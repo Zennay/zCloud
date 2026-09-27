@@ -15,7 +15,8 @@ CPU_PREV = None
 RUNNERS = {'haxlab': 'actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service', 'ftmo': 'actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service'}
 SUPA_SYNC = 'zennay-supa-sync.timer'
 FIREFOX_RUNNER_SERVICE = 'chatgpt-firefox.service'
-SERVICES = ['haxlab-analyzer.service', 'haxlab-ingest.service', 'haxlab-worker.service', 'ftmo-autonomous.service', 'ftmo-autonomous.timer', SUPA_SYNC, *RUNNERS.values()]
+USER_RUNTIME_SERVICES = ['raise-gateway.service', 'zssh.service']
+SERVICES = ['haxlab-analyzer.service', 'haxlab-ingest.service', 'haxlab-worker.service', 'haxlab-autonomy.timer', 'haxlab-autonomy.service', 'ftmo-autonomous.service', 'ftmo-autonomous.timer', SUPA_SYNC, *RUNNERS.values()]
 WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
@@ -404,6 +405,17 @@ def service_states():
     out = cmd(['systemctl','show',*SERVICES,'--property=Id,ActiveState,SubState,Result,ExecMainExitTimestamp,LastTriggerUSec'])
     return {b['Id']:b for b in [dict(l.split('=',1) for l in block.splitlines() if '=' in l) for block in out.split('\n\n')] if 'Id' in b}
 
+def user_service_states():
+    states={}
+    for name in USER_RUNTIME_SERVICES:
+        try:
+            raw=user_systemctl('show',name,'--property=Id,ActiveState,SubState,Result,ExecMainExitTimestamp,LastTriggerUSec')
+            row=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
+            if row.get('Id'): states[row['Id']]=row
+        except Exception:
+            states[name]={'Id':name,'ActiveState':'unknown','SubState':'unknown','Result':'unknown'}
+    return states
+
 def replay_metrics():
     # Read-only connection, bounded query, no trainer commands and no state changes.
     with closing(sqlite3.connect('file:/var/lib/haxlab/state/haxlab.sqlite3?mode=ro',uri=True,timeout=1)) as c:
@@ -418,6 +430,8 @@ def collect():
     errors=[]
     try: states=service_states()
     except Exception: states={}; errors.append('Servicestatus tijdelijk niet beschikbaar')
+    try: user_states=user_service_states()
+    except Exception: user_states={}; errors.append('User-servicestatus tijdelijk niet beschikbaar')
     events=[]
     resources=enhancements.resource_snapshot()
     for p in projects:
@@ -462,7 +476,7 @@ def collect():
                 p['source_status']='unavailable'; p['message']='Git-bron tijdelijk niet beschikbaar'
         p['services']=[]
         if p['id']=='haxlab':
-            names=['haxlab-analyzer.service','haxlab-ingest.service','haxlab-worker.service',RUNNERS['haxlab']]
+            names=['haxlab-analyzer.service','haxlab-ingest.service','haxlab-worker.service','haxlab-autonomy.timer','haxlab-autonomy.service',RUNNERS['haxlab']]
             try:p['metrics']=replay_metrics()
             except Exception:p['metrics']={'available':False}
             try:p['quality']=enhancements.quality_for('haxlab')
@@ -472,14 +486,20 @@ def collect():
             try:p['quality']=enhancements.quality_for('ftmo')
             except Exception:p['quality']={'available':False,'items':[]}
         elif p['id']=='supa': names=[SUPA_SYNC]
+        elif p['id']=='raiseai': names=['raise-gateway.service']
+        elif p['id']=='zssh': names=['zssh.service']
         else: names=[]
         for name in names:
-            s=states.get(name,{})
+            s=(user_states if name in USER_RUNTIME_SERVICES else states).get(name,{})
             state=s.get('ActiveState','unknown')
             label=name.removesuffix('.service').removesuffix('.timer').replace('haxlab-','').replace('ftmo-autonomous','Research').split('.')[-1]
             if name in RUNNERS.values():label='GitHub runner'
             if name.endswith('.timer'):label='Research timer'
             if name==SUPA_SYNC:label='Repo sync'
+            if name=='haxlab-autonomy.timer':label='Autonomy timer'
+            if name=='haxlab-autonomy.service':label='Autonomy tick'
+            if name=='raise-gateway.service':label='AI gateway'
+            if name=='zssh.service':label='Remote gateway'
             if name=='ftmo-autonomous.service' and state=='inactive' and s.get('Result')=='success':state='waiting'
             p['services'].append({'name':label,'state':state,'result':s.get('Result'), 'last_run':s.get('ExecMainExitTimestamp') or None})
         p['health']='healthy' if not names or all(s['state'] in ('active','activating','waiting') for s in p['services']) else 'attention'
