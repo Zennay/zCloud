@@ -565,6 +565,16 @@ IMPROVEMENT_PROJECT_ID = 'cloud'
 IMPROVEMENT_RUNNING = 'running'
 
 def canonical_main_sha():
+    # The production checkout is intentionally divergent, so its local refs may
+    # lag canonical GitHub main. Prefer a read-only remote lookup and only fall
+    # back to local refs when the remote is temporarily unavailable.
+    try:
+        remote=(cmd(['git','-C',str(ROOT),'ls-remote','--exit-code','origin','refs/heads/main']) or '').strip()
+        value=(remote.split()[0] if remote else '').strip()
+        if re.fullmatch(r'[0-9a-f]{40}',value,re.I):
+            return value
+    except Exception:
+        pass
     for ref in ('origin/main', 'main', 'HEAD'):
         try:
             value=(cmd(['git','-C',str(ROOT),'rev-parse',ref]) or '').strip()

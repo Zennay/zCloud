@@ -65,9 +65,21 @@ class ImprovementStopGateTests(unittest.TestCase):
             ).fetchone()
         return tuple(row)
 
-    def test_canonical_main_sha_tolerates_missing_shallow_refs(self):
+    def test_canonical_main_sha_prefers_remote_main_over_stale_local_ref(self):
+        remote_sha = "b" * 40
+        stale_sha = "a" * 40
+        def fake_cmd(args):
+            if "ls-remote" in args:
+                return f"{remote_sha}\trefs/heads/main"
+            return stale_sha
+        with patch.object(server, "cmd", side_effect=fake_cmd):
+            self.assertEqual(remote_sha, server.canonical_main_sha())
+
+    def test_canonical_main_sha_tolerates_remote_and_shallow_ref_failure(self):
         sha = "a" * 40
         def fake_cmd(args):
+            if "ls-remote" in args:
+                raise RuntimeError("network unavailable")
             ref = args[-1]
             if ref in ("origin/main", "main"):
                 raise RuntimeError("missing shallow ref")
