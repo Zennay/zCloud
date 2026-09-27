@@ -30,6 +30,8 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn("zssh.service", text)
         self.assertIn('systemctl enable "${service}"', text)
         self.assertIn('user_systemctl enable "${service}"', text)
+        self.assertIn('runuser -u "${RUNTIME_USER}"', text)
+        self.assertIn('RUNTIME_USER="${ZCLOUD_RUNTIME_USER:-ubuntu}"', text)
 
 if __name__ == "__main__":
     unittest.main()
