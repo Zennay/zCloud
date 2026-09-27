@@ -122,6 +122,63 @@ class ImprovementStopGateTests(unittest.TestCase):
         self.assertEqual("running", state["state"])
         self.assertEqual(0, state["clean_reviews"])
 
+    def test_late_open_review_reopens_clean_finish_without_resetting_iteration_history(self):
+        for _ in range(4):
+            server.improvement_loop_record("cloud", "iteration")
+        server.improvement_loop_record(
+            "cloud", "review", finish_gate_green=True, p0p1_open=False
+        )
+        finished = server.improvement_loop_record(
+            "cloud", "review", finish_gate_green=True, p0p1_open=False
+        )
+        self.assertEqual("finished", finished["state"])
+        self.assertEqual(4, finished["iteration_count"])
+        green_commit = finished["last_green_commit"]
+
+        reopened = server.improvement_loop_record(
+            "cloud", "review", finish_gate_green=False, p0p1_open=True
+        )
+        self.assertEqual("running", reopened["state"])
+        self.assertTrue(reopened["auto_continue"])
+        self.assertEqual(4, reopened["iteration_count"])
+        self.assertEqual(0, reopened["clean_reviews"])
+        self.assertIsNone(reopened["stop_reason"])
+        self.assertEqual(green_commit, reopened["last_green_commit"])
+
+    def test_api_open_review_reopens_clean_finish(self):
+        server.improvement_loop_record(
+            "cloud", "review", finish_gate_green=True, p0p1_open=False
+        )
+        server.improvement_loop_record(
+            "cloud", "review", finish_gate_green=True, p0p1_open=False
+        )
+        status, body = self.request(
+            "/api/improvement-loop",
+            {
+                "project_id": "cloud",
+                "action": "review",
+                "finish_gate_green": False,
+                "p0p1_open": True,
+            },
+        )
+        self.assertEqual(200, status, body)
+        self.assertEqual("running", body["improvement"]["state"])
+        self.assertEqual(0, body["improvement"]["clean_reviews"])
+
+    def test_open_review_does_not_reopen_hard_limit_audit_finish(self):
+        for _ in range(10):
+            server.improvement_loop_record("cloud", "iteration")
+        audited = server.improvement_loop_record("cloud", "audit", audit_green=True)
+        self.assertEqual("finished", audited["state"])
+        opened = server.improvement_loop_record(
+            "cloud", "review", finish_gate_green=False, p0p1_open=True
+        )
+        self.assertEqual("finished", opened["state"])
+        self.assertFalse(opened["auto_continue"])
+        self.assertEqual(10, opened["iteration_count"])
+        self.assertEqual("hard_iteration_limit_final_audit_green", opened["stop_reason"])
+        self.assertEqual("green", opened["audit_result"])
+
     def test_hard_limit_requires_final_audit_then_finishes(self):
         for _ in range(10):
             state = server.improvement_loop_record("cloud", "iteration")
