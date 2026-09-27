@@ -29,6 +29,7 @@ REQUIRED_TABLES = {
     "improvement_loops",
     "config_audit",
     "feature_flags",
+    "worker_preflights",
 }
 VALID_DESIRED_STATES = {"running", "paused", "draining"}
 
