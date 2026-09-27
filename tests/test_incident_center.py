@@ -1,5 +1,7 @@
+import gc
 import importlib.util
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -129,6 +131,34 @@ class IncidentCenterTests(unittest.TestCase):
         center=enhancements.incident_center(self.db,{},self.recovery)
         self.assertNotIn("claim_conflict",{x["type"] for x in center["items"]})
 
+
+    def test_claim_conflict_lookup_does_not_leak_sqlite_fds(self):
+        claim_key="notion:fd-smoke"
+        now=enhancements.datetime.now(enhancements.timezone.utc)
+        with sqlite3.connect(self.db) as c:
+            c.execute(
+                "INSERT INTO task_claims VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "cloud",claim_key,"owner-a","cloud::w1",
+                    now.isoformat(),now.isoformat(),
+                    (now+enhancements.timedelta(minutes=15)).isoformat(),"{}",
+                ),
+            )
+        alert={
+            "project":"cloud",
+            "detail":claim_key+" · huidige eigenaar owner-a · nieuwe poging owner-b",
+        }
+        gc.collect()
+        baseline=len(os.listdir("/proc/self/fd"))
+        gc.disable()
+        try:
+            for _ in range(300):
+                self.assertTrue(enhancements._claim_conflict_is_active(self.db,alert,now))
+            after=len(os.listdir("/proc/self/fd"))
+        finally:
+            gc.enable()
+            gc.collect()
+        self.assertLessEqual(after,baseline+5)
 
     def test_main_renderer_uses_incidents_not_raw_alert_stream(self):
         js=(Path(__file__).resolve().parents[1]/"public/enhancements.js").read_text(encoding="utf-8")
