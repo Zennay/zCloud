@@ -222,6 +222,44 @@ class TaskClaimTests(unittest.TestCase):
                 {"conflict_scope":{"files":["../server.py"]}},
             )
 
+    def test_oversized_conflict_scope_metadata_is_rejected_before_persistence(self):
+        capabilities=["shared-capability"]+[f"cap-{i:03d}-"+"x"*120 for i in range(45)]
+        with self.assertRaisesRegex(ValueError,"claimmetadata is te groot"):
+            server.task_claim_acquire(
+                "cloud","task:oversized","owner-a","cloud::w1",120,
+                {"conflict_scope":{"capabilities":capabilities,"files":["server.py"]}},
+            )
+        with server.connect() as conn:
+            row=conn.execute(
+                "SELECT metadata_json FROM task_claims WHERE project_id=? AND claim_key=?",
+                ("cloud","task:oversized"),
+            ).fetchone()
+        self.assertIsNone(row)
+
+    def test_unreadable_existing_claim_metadata_blocks_scoped_claim_fail_closed(self):
+        now=datetime.now(timezone.utc)
+        with server.connect() as conn:
+            conn.execute(
+                """INSERT INTO task_claims(project_id,claim_key,owner_id,worker_id,acquired_at,heartbeat_at,lease_until,metadata_json)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    "cloud","task:corrupt","owner-a","cloud::w1",
+                    now.isoformat(),now.isoformat(),(now+timedelta(minutes=2)).isoformat(),
+                    '{"conflict_scope":{"capabilities":["shared-capability"]',
+                ),
+            )
+        result=server.task_claim_acquire(
+            "cloud","task:new","owner-b","cloud::w2",120,
+            {"conflict_scope":{"capabilities":["shared-capability"],"files":["server.py"]}},
+        )
+        self.assertFalse(result["acquired"])
+        self.assertEqual("scope_conflict",result["blocked"])
+        self.assertEqual("unreadable_claim_metadata",result["conflict"]["reason"])
+        self.assertIn(
+            "unreadable-claim-metadata",
+            result["conflict"]["overlap"]["capabilities"],
+        )
+
     def test_heartbeat_requires_current_unexpired_owner(self):
         first = server.task_claim_acquire("cloud", "notion:heartbeat", "owner-a", "cloud::w1", 60)
         before = first["claim"]["lease_until"]
