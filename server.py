@@ -617,12 +617,23 @@ def improvement_loop_record(project_id, signal, *, finish_gate_green=None, p0p1_
             if iterations >= 10:
                 state='audit_required'; stop_reason='hard_iteration_limit_waiting_final_audit'
         elif signal=='review':
-            if state==IMPROVEMENT_RUNNING and bool(finish_gate_green) and not bool(p0p1_open):
+            review_green=bool(finish_gate_green) and not bool(p0p1_open)
+            if state==IMPROVEMENT_RUNNING and review_green:
                 clean += 1; green_commit=canonical_main_sha() or green_commit
                 if clean >= 2:
                     state='finished'; stop_reason='two_consecutive_clean_senior_reviews'
             elif state==IMPROVEMENT_RUNNING:
                 clean=0
+            elif (
+                state=='finished'
+                and stop_reason=='two_consecutive_clean_senior_reviews'
+                and not review_green
+            ):
+                # A later evidence-backed P0/P1 invalidates a clean-review finish.
+                # Preserve iteration/provenance history; only reopen the finish gate.
+                state=IMPROVEMENT_RUNNING
+                clean=0
+                stop_reason=None
         elif signal=='audit' and state=='audit_required':
             audit='green' if bool(audit_green) else 'failed'
             if bool(audit_green):
