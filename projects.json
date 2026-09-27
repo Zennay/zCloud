@@ -360,10 +360,10 @@
     "goal": "Veilige Linux/VPS-operaties vanuit normale ChatGPT-chats via een gepubliceerde remote MCP-plugin.",
     "icon": "server",
     "accent": "#f6c56f",
-    "phase": "M0 · Genesis + safe MCP scaffold",
+    "phase": "Standalone repository · canonical source migrated",
     "status": "active",
-    "next_step": "Valideer de MCP-scaffold met unit tests en MCP Inspector; sluit daarna M0 en start de paired-agent proof.",
-    "milestone_revision": "zssh-genesis-v1",
+    "next_step": "Valideer Zennay/zSSH main en gebruik daarna de standalone deploy/runtime-gates; zCloud blijft alleen portfolio/control-plane integratie.",
+    "milestone_revision": "zssh-standalone-v2",
     "progress_basis": "Bouwvoortgang is het gemiddelde van bewijsgerichte milestones; productiegeschiktheid telt pas mee na auth/security/review-validatie.",
     "milestones": [
       {
@@ -403,7 +403,7 @@
       }
     ],
     "priority": "high",
-    "repo_url": "https://github.com/Zennay/zCloud",
+    "repo_url": "https://github.com/Zennay/zSSH",
     "notion_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634",
     "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8"
   }
