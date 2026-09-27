@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { spawnReadonlyCommand } from "./safe-exec.mjs";
 
 const VERSION = "0.1.0";
 const PORT = Number(process.env.PORT || 8788);
@@ -107,6 +108,94 @@ async function audit(event) {
   if (safeEvent.command) safeEvent.command = redactSecrets(safeEvent.command);
   await fs.mkdir(path.dirname(AUDIT_LOG), { recursive: true, mode: 0o700 });
   await fs.appendFile(AUDIT_LOG, JSON.stringify(safeEvent) + "\n", { encoding: "utf8", mode: 0o600 });
+}
+
+async function executeReadonly(program, args, cwd, timeoutSeconds) {
+  const resolvedCwd = await resolveAllowedPath(cwd || process.cwd());
+  const timeoutMs = clampInt(timeoutSeconds, 1, 300, COMMAND_TIMEOUT_SECONDS) * 1000;
+  const startedAt = Date.now();
+
+  return await new Promise((resolve) => {
+    let child;
+    try {
+      child = spawnReadonlyCommand(program, args || [], {
+        cwd: resolvedCwd,
+        env: safeEnvironment()
+      });
+    } catch (err) {
+      resolve({ ok: false, error: String(err?.message || err) });
+      return;
+    }
+
+    let stdout = Buffer.alloc(0);
+    let stderr = Buffer.alloc(0);
+    let limited = false;
+    let timedOut = false;
+    let settled = false;
+
+    const append = (target, chunk) => {
+      const next = Buffer.concat([target, chunk]);
+      if (next.length > MAX_OUTPUT_BYTES) {
+        limited = true;
+        return next.subarray(0, MAX_OUTPUT_BYTES);
+      }
+      return next;
+    };
+
+    child.stdout.on("data", chunk => {
+      stdout = append(stdout, chunk);
+      if (limited) child.kill("SIGTERM");
+    });
+    child.stderr.on("data", chunk => {
+      stderr = append(stderr, chunk);
+      if (limited) child.kill("SIGTERM");
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 1500).unref();
+    }, timeoutMs);
+
+    const finish = async (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const durationMs = Date.now() - startedAt;
+      const result = {
+        ...payload,
+        timed_out: timedOut,
+        output_limited: limited,
+        duration_ms: durationMs,
+        stdout: redactSecrets(stdout.toString("utf8")),
+        stderr: redactSecrets(stderr.toString("utf8"))
+      };
+      try {
+        await audit({
+          action: "exec_readonly",
+          program,
+          args,
+          outcome: result.ok ? "ok" : "error",
+          cwd: resolvedCwd,
+          exit_code: result.exit_code,
+          timed_out: timedOut,
+          output_limited: limited,
+          duration_ms: durationMs
+        });
+      } catch {
+        // Audit failures never expose sensitive data.
+      }
+      resolve(result);
+    };
+
+    child.on("error", err => finish({ ok: false, exit_code: null, error: err.message }));
+    child.on("close", (code, signal) => finish({
+      ok: code === 0 && !timedOut && !limited,
+      exit_code: code,
+      signal: signal || null,
+      error: timedOut ? "command timed out" : limited ? "output limit exceeded" : code === 0 ? null : "command exited non-zero"
+    }));
+  });
 }
 
 async function execute(command, cwd, timeoutSeconds) {
@@ -293,6 +382,30 @@ function createMcpServer() {
     async ({ path: filePath, content }) => {
       try {
         return result({ ok: true, ...(await writeTextFile(filePath, content)) });
+      } catch (err) {
+        return result({ ok: false, error: String(err?.message || err) }, true);
+      }
+    }
+  );
+
+
+  server.registerTool(
+    "zssh_exec_readonly",
+    {
+      title: "Execute read-only command",
+      description: "Run one shell-free command from a fixed server-side read-only allowlist. Arguments are separately validated; arbitrary shell syntax is not accepted.",
+      inputSchema: {
+        program: z.enum(["pwd", "whoami", "id", "uname", "uptime", "hostname", "date", "df", "free"]),
+        args: z.array(z.string()).max(8).optional(),
+        cwd: z.string().min(1).optional(),
+        timeout_seconds: z.number().int().min(1).max(300).optional()
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ program, args, cwd, timeout_seconds }) => {
+      try {
+        const value = await executeReadonly(program, args || [], cwd, timeout_seconds);
+        return result(value, !value.ok);
       } catch (err) {
         return result({ ok: false, error: String(err?.message || err) }, true);
       }
