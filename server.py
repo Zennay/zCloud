@@ -20,6 +20,7 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 MAX_CHATGPT_WORKERS = 8
+WORKER_PREFLIGHT_TTL_SECONDS = 600
 FEATURE_FLAG_DEFINITIONS = {
     'high_blast_radius_promotion': {
         'default': False,
@@ -87,10 +88,13 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
     coordination=(
         f' Je bent parallelle zCloud-worker {slot}/{total}. Jouw werk-lane is: {lane}. '
         'Voorkom dubbelwerk: controleer vóór iedere wijziging actuele Notion-taken/claims, open GitHub-PRs/branches '
-        'en de live VPS-status. Pak alleen een concrete work-item die niet al actief door een andere worker wordt '
-        'uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion en leg je claim vast '
-        'voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe alleen read-only '
-        'validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
+        'en de live VPS-status. Registreer daarna vóór een write-taakclaim een verse coordination preflight in zCloud '
+        'voor deze project/worker/owner-combinatie; zonder geldige preflight blokkeert /api/task-claims de claim. '
+        'De preflight moet de gecontroleerde Notion-bronnen en GitHub repo/main/open PRs/branches bevatten; zCloud '
+        'controleert zelf de actuele claimset en VPS-health. Pak alleen een concrete work-item die niet al actief door '
+        'een andere worker wordt uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion '
+        'en leg je claim vast voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe '
+        'alleen read-only validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
     )
     if project_id=='ftmo':
         coordination += (
@@ -338,6 +342,20 @@ def init_db():
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
         c.execute('CREATE INDEX IF NOT EXISTS task_claims_lease_until ON task_claims(lease_until)')
+        c.execute("""CREATE TABLE IF NOT EXISTS worker_preflights(
+            project_id TEXT NOT NULL,
+            worker_id TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            checked_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            notion_json TEXT NOT NULL,
+            github_json TEXT NOT NULL,
+            claims_fingerprint TEXT NOT NULL,
+            claims_json TEXT NOT NULL,
+            vps_json TEXT NOT NULL,
+            PRIMARY KEY(project_id,worker_id,owner_id)
+        )""")
+        c.execute('CREATE INDEX IF NOT EXISTS worker_preflights_expires ON worker_preflights(expires_at)')
         c.execute("CREATE TABLE IF NOT EXISTS improvement_loops(project_id TEXT PRIMARY KEY, state TEXT NOT NULL, iteration_count INTEGER NOT NULL DEFAULT 0, clean_reviews INTEGER NOT NULL DEFAULT 0, stop_reason TEXT, last_green_commit TEXT, audit_result TEXT, updated_at TEXT NOT NULL)")
         c.execute("CREATE TABLE IF NOT EXISTS config_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')")
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_ts ON config_audit(ts,id)")
@@ -609,6 +627,132 @@ def improvement_loop_resume(project_id=IMPROVEMENT_PROJECT_ID):
             'VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET state=excluded.state,iteration_count=0,clean_reviews=0,stop_reason=NULL,audit_result=NULL,updated_at=excluded.updated_at',
             (project_id,IMPROVEMENT_RUNNING,0,0,None,None,None,ts))
     return improvement_loop_state(project_id)
+
+def _coordination_claim_rows(project_id, exclude_owner=None):
+    ts=now()
+    with connect() as c:
+        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+        rows=c.execute(
+            'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? ORDER BY claim_key,owner_id,worker_id',
+            (project_id,),
+        ).fetchall()
+    return [
+        {'project_id':r['project_id'],'claim_key':r['claim_key'],'owner_id':r['owner_id'],'worker_id':r['worker_id']}
+        for r in rows if not exclude_owner or r['owner_id']!=exclude_owner
+    ]
+
+def _coordination_claims_fingerprint(project_id, exclude_owner=None):
+    rows=_coordination_claim_rows(project_id,exclude_owner)
+    raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
+    return hashlib.sha256(raw).hexdigest(),rows
+
+def coordination_vps_health():
+    checks={}
+    try:
+        checks['zcloud_service']=cmd(['systemctl','is-active','zennay-cloud.service'])=='active'
+    except Exception:
+        checks['zcloud_service']=False
+    firefox=firefox_runner_status()
+    checks['firefox_automation']=bool(firefox.get('active'))
+    try:
+        with connect() as c:
+            quick=c.execute('PRAGMA quick_check').fetchone()
+        checks['state_store']=bool(quick and str(quick[0]).lower()=='ok')
+    except Exception:
+        checks['state_store']=False
+    return {'ok':all(checks.values()),'checks':checks}
+
+def _preflight_external_evidence(payload,label):
+    evidence=payload if isinstance(payload,dict) else {}
+    if not evidence.get('checked'):
+        raise ValueError(f'{label} moet als gecontroleerd zijn gemarkeerd')
+    if label=='Notion':
+        project_ref=str(evidence.get('project_ref') or '').strip()
+        handoff_ref=str(evidence.get('handoff_ref') or '').strip()
+        if not project_ref or not handoff_ref:
+            raise ValueError('Notion project_ref en handoff_ref zijn verplicht')
+        return {'checked':True,'project_ref':project_ref[:500],'handoff_ref':handoff_ref[:500]}
+    repo=str(evidence.get('repo') or '').strip()
+    main_sha=str(evidence.get('main_sha') or '').strip()
+    open_prs=evidence.get('open_prs')
+    branches=evidence.get('branches')
+    if not repo or not re.fullmatch(r'[0-9a-f]{7,40}',main_sha,re.I):
+        raise ValueError('GitHub repo en geldige main_sha zijn verplicht')
+    if not isinstance(open_prs,list) or not isinstance(branches,list):
+        raise ValueError('GitHub open_prs en branches moeten lijsten zijn')
+    return {
+        'checked':True,
+        'repo':repo[:240],
+        'main_sha':main_sha.lower(),
+        'open_prs':[str(x)[:120] for x in open_prs[:100]],
+        'branches':[str(x)[:200] for x in branches[:200]],
+    }
+
+def worker_preflight_record(project_id,worker_id,owner_id,notion,github):
+    project_id=str(project_id or '').strip()[:80]
+    worker_id=str(worker_id or '').strip()[:160]
+    owner_id=str(owner_id or '').strip()[:160]
+    if not project_id or not worker_id or not owner_id:
+        raise ValueError('project_id, worker_id en owner_id zijn verplicht')
+    target=runner_worker_targets().get(worker_id)
+    if not target or target.get('base_project_id')!=project_id:
+        raise ValueError('worker_id hoort niet bij dit project')
+    notion_evidence=_preflight_external_evidence(notion,'Notion')
+    github_evidence=_preflight_external_evidence(github,'GitHub')
+    vps=coordination_vps_health()
+    if not vps.get('ok'):
+        return {'ok':False,'blocked':'vps_unhealthy','vps':vps}
+    fingerprint,claims=_coordination_claims_fingerprint(project_id,owner_id)
+    checked=datetime.now(timezone.utc)
+    expires=checked+timedelta(seconds=WORKER_PREFLIGHT_TTL_SECONDS)
+    with connect() as c:
+        c.execute(
+            """INSERT INTO worker_preflights(
+                 project_id,worker_id,owner_id,checked_at,expires_at,notion_json,github_json,
+                 claims_fingerprint,claims_json,vps_json
+               ) VALUES(?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(project_id,worker_id,owner_id) DO UPDATE SET
+                 checked_at=excluded.checked_at,expires_at=excluded.expires_at,
+                 notion_json=excluded.notion_json,github_json=excluded.github_json,
+                 claims_fingerprint=excluded.claims_fingerprint,claims_json=excluded.claims_json,
+                 vps_json=excluded.vps_json""",
+            (
+                project_id,worker_id,owner_id,checked.isoformat(),expires.isoformat(),
+                json.dumps(notion_evidence,ensure_ascii=False,separators=(',',':')),
+                json.dumps(github_evidence,ensure_ascii=False,separators=(',',':')),
+                fingerprint,json.dumps(claims,ensure_ascii=False,separators=(',',':')),
+                json.dumps(vps,ensure_ascii=False,separators=(',',':')),
+            ),
+        )
+    return worker_preflight_state(project_id,worker_id,owner_id)
+
+def worker_preflight_state(project_id,worker_id,owner_id):
+    with connect() as c:
+        row=c.execute(
+            'SELECT * FROM worker_preflights WHERE project_id=? AND worker_id=? AND owner_id=?',
+            (project_id,worker_id,owner_id),
+        ).fetchone()
+    if not row:
+        return {'ok':False,'blocked':'preflight_required','project_id':project_id,'worker_id':worker_id,'owner_id':owner_id}
+    try:
+        expired=datetime.fromisoformat(row['expires_at']).astimezone(timezone.utc)<=datetime.now(timezone.utc)
+    except Exception:
+        expired=True
+    fingerprint,current_claims=_coordination_claims_fingerprint(project_id,owner_id)
+    claims_changed=fingerprint!=row['claims_fingerprint']
+    return {
+        'ok':not expired and not claims_changed,
+        'blocked':'preflight_expired' if expired else 'claim_landscape_changed' if claims_changed else None,
+        'project_id':project_id,
+        'worker_id':worker_id,
+        'owner_id':owner_id,
+        'checked_at':row['checked_at'],
+        'expires_at':row['expires_at'],
+        'notion':json.loads(row['notion_json']),
+        'github':json.loads(row['github_json']),
+        'claims':current_claims,
+        'vps':json.loads(row['vps_json']),
+    }
 
 def task_claims(project_id=None):
     ts=now()
@@ -1076,6 +1220,16 @@ class Handler(BaseHTTPRequestHandler):
                 if action=='iteration': return self.reply({'ok':True,'improvement':improvement_loop_record(project_id,'iteration')})
                 if action=='audit': return self.reply({'ok':True,'improvement':improvement_loop_record(project_id,'audit',audit_green=payload.get('green'))})
                 return self.reply({'error':'Ongeldige improvement-loop actie'},400)
+            if u.path=='/api/worker-preflight':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                try:
+                    result=worker_preflight_record(
+                        payload.get('project_id'),payload.get('worker_id'),payload.get('owner_id'),
+                        payload.get('notion'),payload.get('github'),
+                    )
+                    return self.reply(result,200 if result.get('ok') else 409)
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
             if u.path=='/api/task-claims':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 action=str(payload.get('action') or 'acquire')
@@ -1084,7 +1238,12 @@ class Handler(BaseHTTPRequestHandler):
                 owner_id=str(payload.get('owner_id') or '').strip()
                 try:
                     if action=='acquire':
-                        result=task_claim_acquire(project_id,claim_key,owner_id,payload.get('worker_id') or '',payload.get('lease_seconds') or 300,payload.get('metadata'))
+                        worker_id=str(payload.get('worker_id') or '').strip()
+                        if worker_id:
+                            preflight=worker_preflight_state(project_id,worker_id,owner_id)
+                            if not preflight.get('ok'):
+                                return self.reply({'error':'Verse worker-preflight vereist vóór een write-taakclaim','blocked':preflight.get('blocked'),'preflight':preflight},428)
+                        result=task_claim_acquire(project_id,claim_key,owner_id,worker_id,payload.get('lease_seconds') or 300,payload.get('metadata'))
                         if not result['acquired'] and result.get('claim'):
                             holder=result['claim'].get('owner_id') or 'andere worker'
                             emit=getattr(enhancements,'emit_incident',None)
