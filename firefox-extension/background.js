@@ -7,6 +7,7 @@ const runningActions = new Set();
 const processedCommands = new Set();
 const intentionalTabClosures = new Set();
 const pendingTabHandoffs = new Set();
+const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1";
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
@@ -18,6 +19,62 @@ async function setRecoveryTag(tabId, projectId) {
 async function clearRecoveryTag(tabId) {
   if (tabId == null) return;
   try { await browser.sessions.removeTabValue(tabId, Recovery.SESSION_KEY); } catch (_) {}
+}
+
+async function setReplacementHandoffTag(tabId, handoff) {
+  if (tabId == null || !handoff) return;
+  try { await browser.sessions.setTabValue(tabId, REPLACEMENT_HANDOFF_SESSION_KEY, handoff); } catch (_) {}
+}
+
+async function getReplacementHandoffTag(tabId) {
+  if (tabId == null) return null;
+  try { return await browser.sessions.getTabValue(tabId, REPLACEMENT_HANDOFF_SESSION_KEY) || null; } catch (_) { return null; }
+}
+
+async function clearReplacementHandoffTag(tabId) {
+  if (tabId == null) return;
+  try { await browser.sessions.removeTabValue(tabId, REPLACEMENT_HANDOFF_SESSION_KEY); } catch (_) {}
+}
+
+function compactClaimForHandoff(claim) {
+  if (!claim) return null;
+  const metadata = claim.metadata && typeof claim.metadata === "object" ? claim.metadata : {};
+  return {
+    project_id: claim.project_id || "",
+    claim_key: claim.claim_key || "",
+    owner_id: claim.owner_id || "",
+    worker_id: claim.worker_id || "",
+    lease_until: claim.lease_until || "",
+    task: String(metadata.task || "").slice(0, 500),
+    notion_task: String(metadata.notion_task || "").slice(0, 500),
+    branch: String(metadata.branch || "").slice(0, 300),
+    scope: String(metadata.scope || "").slice(0, 500),
+    conflict_scope: metadata.conflict_scope && typeof metadata.conflict_scope === "object"
+      ? metadata.conflict_scope : null
+  };
+}
+
+async function prepareReplacementHandoff(target, reason) {
+  if (!target?.project_id) throw new Error("Workerconfig ontbreekt voor replacement handoff");
+  const baseProjectId = target.base_project_id || target.project_id.split("::w", 1)[0];
+  const response = await fetch(API + "/task-claims?project=" + encodeURIComponent(baseProjectId), {cache: "no-store"});
+  if (!response.ok) throw new Error("Claimcontext niet beschikbaar (HTTP " + response.status + ")");
+  const data = await response.json();
+  const claims = (data.claims || []).filter(claim => claim?.worker_id === target.project_id);
+  if (claims.length > 1) throw new Error("Replacement geblokkeerd: meerdere actieve taakclaims voor dezelfde worker");
+  const claim = claims.length === 1 ? compactClaimForHandoff(claims[0]) : null;
+  if (claim && (!claim.claim_key || !claim.owner_id || !claim.worker_id)) {
+    throw new Error("Replacement geblokkeerd: actieve claimcontext is onvolledig");
+  }
+  return {
+    version: 1,
+    reason: String(reason || "project-chat-replaced").slice(0, 120),
+    prepared_at: new Date().toISOString(),
+    project_id: target.project_id,
+    base_project_id: baseProjectId,
+    previous_conversation_id: target.conversation_id || "",
+    claim: claim
+  };
 }
 
 async function closeRunnerTab(tabId) {
@@ -50,6 +107,7 @@ async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
     tabTargets[opened.id] = target;
     projectTabs[target.project_id] = opened.id;
     await setRecoveryTag(opened.id, target.project_id);
+    if (target.replacement_handoff) await setReplacementHandoffTag(opened.id, target.replacement_handoff);
     if (!target.conversation_id) pendingAdoptions[opened.id] = target.project_id;
     postStatus({
       projectId: target.project_id,
@@ -126,7 +184,17 @@ function runProject(cfg) {
   const marker = "__ZC_RUNNER_" + cfg.projectId.replace(/[^a-z0-9]/gi, "");
   if (window[marker]) return;
   window[marker] = true;
-  const PROMPT = cfg.prompt;
+  const REPLACEMENT_HANDOFF = cfg.replacement_handoff || null;
+  const PROMPT = REPLACEMENT_HANDOFF
+    ? cfg.prompt + "\n\n" +
+      "BEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
+      "Neem GEEN nieuwe taakclaim zolang onderstaande bestaande claim nog geldig is. " +
+      "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen; " +
+      "heartbeat en release moeten dezelfde owner_id blijven gebruiken. " +
+      "Als de claim ontbreekt, verlopen is of een andere owner heeft: doe alleen read-only werk, voer een verse coordination-preflight uit en claim pas daarna veilig opnieuw. " +
+      "Handoff-context: " + JSON.stringify(REPLACEMENT_HANDOFF)
+    : cfg.prompt;
+  let replacementHandoffPending = !!REPLACEMENT_HANDOFF;
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
@@ -268,6 +336,19 @@ function runProject(cfg) {
       const button = sendButton();
       if (!button || button.disabled) { status("send-blocked", {reason: "send-button-unavailable"}); return false; }
       button.click();
+      if (replacementHandoffPending) {
+        replacementHandoffPending = false;
+        try {
+          await browser.runtime.sendMessage({
+            type: "runner-replacement-handoff-consumed",
+            projectId: cfg.projectId
+          });
+        } catch (_) {}
+        status("worker-replacement-handoff-consumed", {
+          reason: "handoff-context-sent",
+          claimKey: REPLACEMENT_HANDOFF?.claim?.claim_key || ""
+        });
+      }
       lastPromptSentAt = Date.now();
       lastProgressAt = Date.now();
       sawGeneration = false;
@@ -545,6 +626,10 @@ async function refreshTargets() {
 }
 async function inject(tabId, target) {
   try {
+    if (!target.replacement_handoff) {
+      const persistedHandoff = await getReplacementHandoffTag(tabId);
+      if (persistedHandoff) target.replacement_handoff = persistedHandoff;
+    }
     tabTargets[tabId] = target;
     projectTabs[target.project_id] = tabId;
     await setRecoveryTag(tabId, target.project_id);
@@ -580,6 +665,7 @@ async function newProjectChat(projectId, reason, commandId) {
   const target = targets[projectId];
   try {
     if (!target) throw new Error("Projectconfig ontbreekt");
+    const handoff = await prepareReplacementHandoff(target, reason);
     const oldTab = projectTabs[projectId];
     if (oldTab != null) {
       try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
@@ -589,10 +675,12 @@ async function newProjectChat(projectId, reason, commandId) {
       delete pendingAdoptions[oldTab];
     }
     target.active = true;
+    target.replacement_handoff = handoff;
     const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: false});
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
     await setRecoveryTag(tab.id, projectId);
+    await setReplacementHandoffTag(tab.id, handoff);
     pendingAdoptions[tab.id] = projectId;
     await commandResult(commandId, "completed", "Nieuwe projectchat geopend");
   } catch (error) {
@@ -796,6 +884,13 @@ browser.runtime.onMessage.addListener((message, sender) => {
       .catch(() => ({auto_continue: message.projectId.split("::w", 1)[0] !== "cloud"}));
   } else if (message?.type === "runner-new-chat" && message.projectId) {
     newProjectChat(message.projectId, message.reason || "stall-recovery", null);
+  } else if (message?.type === "runner-replacement-handoff-consumed" && message.projectId) {
+    const tabId = sender?.tab?.id ?? null;
+    const target = tabId != null ? tabTargets[tabId] : null;
+    if (!target || target.project_id !== message.projectId) return {ok:false, reason:"worker-tab-mismatch"};
+    delete target.replacement_handoff;
+    if (targets[message.projectId]) delete targets[message.projectId].replacement_handoff;
+    return clearReplacementHandoffTag(tabId).then(() => ({ok:true}));
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
