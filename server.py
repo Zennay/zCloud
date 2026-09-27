@@ -3,7 +3,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone, timedelta
-import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re
+import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib
 from contextlib import contextmanager, closing
 import enhancements
 
