@@ -22,6 +22,50 @@ function runnerToggle(p,placement='card'){
   const title=pending?(active?'ChatGPT-automatisering wordt gestopt':'ChatGPT-automatisering wordt gestart'):(active?'Stop automatisering voor '+p.name:'Start automatisering voor '+p.name);
   return `<button type="button" draggable="false" class="runner-toggle ${active?'is-active':'is-idle'} ${placement==='detail'?'runner-toggle-detail':''}" data-runner-toggle="${esc(p.id)}" data-runner-action="${action}" aria-label="${esc(title)}" title="${esc(title)}" ${pending?'disabled':''}>${icon(active?'stop':'play')}<span class="runner-toggle-label">${pending?'…':active?'Stop':'Start'}</span></button>`;
 }
+function runnerEventLabel(event){
+  const labels={
+    'generation-started':'Antwoord gestart',
+    'generation-finished':'Antwoord afgerond',
+    'prompt-sent':'Opdracht gestuurd',
+    'runner-started':'Worker gestart',
+    'target-tab-recovered':'Chat hersteld',
+    'conversation-adopted':'Chat gekoppeld',
+    'worker-paused':'Worker gepauzeerd',
+    'worker-drained':'Worker afgerond'
+  };
+  return labels[String(event||'')]||'Status bijgewerkt';
+}
+function runnerLastAction(r){
+  const candidates=[],add=(time,label)=>{if(time&&Date.parse(time))candidates.push({time,label})};
+  add(r?.last_generation_finished?.time,'Antwoord afgerond');
+  add(r?.last_prompt_sent?.time,'Opdracht gestuurd');
+  if(r?.command?.updated_at&&r?.command?.result)add(r.command.updated_at,String(r.command.result));
+  const projectEvent=r?.last_event||{};
+  if(projectEvent.time&&projectEvent.event&&projectEvent.event!=='heartbeat')add(projectEvent.time,runnerEventLabel(projectEvent.event));
+  (r?.workers||[]).forEach(w=>{
+    const event=w?.last_event||{};
+    if(event.time&&event.event&&event.event!=='heartbeat')add(event.time,runnerEventLabel(event.event));
+  });
+  candidates.sort((a,b)=>Date.parse(b.time)-Date.parse(a.time));
+  return candidates[0]||null;
+}
+function projectCardOps(p){
+  const r=(DATA?.chatgpt_runners||{})[p.id];
+  if(!r)return '';
+  const workers=Array.isArray(r.workers)?r.workers:[];
+  const activeWorkers=workers.filter(w=>w.active!==false&&w.desired_state!=='paused');
+  const tasks=[...new Set(workers.map(w=>String(w.current_task||'').trim()).filter(Boolean))];
+  let nowText='';
+  if(tasks.length)nowText=tasks.slice(0,2).join(' · ')+(tasks.length>2?' · +'+(tasks.length-2):'');
+  else if(r.generating)nowText='AI werkt nu · nog geen taak geclaimd';
+  else if(r.active||activeWorkers.length)nowText='Actief · nog geen taak geclaimd';
+  else nowText='Geen actieve taak';
+  const action=runnerLastAction(r);
+  const actionText=action?action.label+' · '+rel(action.time):'Nog geen actie vastgelegd';
+  const workerError=workers.map(w=>w.error).find(Boolean),error=String(r.error||workerError||'').trim();
+  const problem=error?'<div class="project-card-op project-card-problem"><small>Probleem</small><span>'+esc(error.length>140?error.slice(0,137)+'…':error)+'</span></div>':'';
+  return '<div class="project-card-ops"><div class="project-card-op"><small>Nu</small><strong>'+esc(nowText)+'</strong></div><div class="project-card-op"><small>Laatste actie</small><span>'+esc(actionText)+'</span></div>'+problem+'</div>';
+}
 function runnerControls(p){
   const r=(DATA?.chatgpt_runners||{})[p.id]||{active:false,state:'paused'};
   const active=!!r.active,pending=['pending','dispatched'].includes(r.command?.status);
@@ -34,7 +78,7 @@ function runnerControls(p){
     : '';
   return `<div class="project-runner-controls"><span class="project-runner-state ${active?'active':''}"><i></i><span>${esc(label)}${countLine}</span></span><div class="project-runner-buttons">${buttons}</div></div>`;
 }
-function projectCard(p){return `<article class="project-card" style="--accent:${p.accent}" draggable="true" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions">${runnerToggle(p)}<span class="drag-handle" title="Sleep om te verplaatsen" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archiveer</button></div></div><a class="project-card-link" href="#project/${p.id}" aria-label="Bekijk ${p.name}: ${num(p.progress)} procent projectstappen"><div class="card-badge-row">${badge(p)}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} projectstappen</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Fase: '+esc(p.phase):'Volgende: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a>${runnerControls(p)}</article>`}
+function projectCard(p){return `<article class="project-card" style="--accent:${p.accent}" draggable="true" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions">${runnerToggle(p)}<span class="drag-handle" title="Sleep om te verplaatsen" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archiveer</button></div></div><a class="project-card-link" href="#project/${p.id}" aria-label="Bekijk ${p.name}: ${num(p.progress)} procent projectstappen"><div class="card-badge-row">${badge(p)}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} projectstappen</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Fase: '+esc(p.phase):'Volgende: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a>${projectCardOps(p)}${runnerControls(p)}</article>`}
 function archivedPanel(){const list=DATA.archived_projects||[];if(!list.length)return '';return `<div class="archived-panel"><div><strong>Gearchiveerd</strong><span>Verborgen op dashboard en Watch</span></div><div class="archived-list">${list.map(p=>`<button type="button" data-restore="${esc(p.id)}"><span style="--accent:${p.accent}" class="project-dot"></span>${esc(p.name)}<b>Herstel</b></button>`).join('')}</div></div>`}
 function activityItem(a){const p=DATA.projects.find(p=>p.id===a.project);return `<div class="activity-item" style="--accent:${p?.accent||'#aab5c4'}"><span class="activity-symbol">${icon(a.kind==='commit'?'commit':'check')}</span><div class="activity-copy"><p>${esc(a.title)}</p><div class="activity-meta"><strong>${esc(p?.name||a.project)}</strong><span>·</span><time datetime="${esc(a.ts)}" title="${date(a.ts,true)}">${rel(a.ts)}</time><span title="${esc(a.detail)}">${a.kind==='commit'?esc(a.detail):'Projectstap'}</span></div></div></div>`}
 function activityPanel(pid='',limit=4){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>pid?a.project===pid:visible.has(a.project)).slice(0,limit);return `<div class="panel"><div class="panel-header"><div><h2>Recente activiteit</h2><div class="panel-subtitle">Code- en projectupdates</div></div>${icon('pulse')}</div><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">Nog geen activiteit vastgelegd.</div>'}</div><div class="panel-footer"><a href="#activity${pid?'?project='+pid:''}" class="text-link">Volledige historie ${icon('arrow')}</a></div></div>`}
