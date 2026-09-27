@@ -144,7 +144,7 @@ export async function runSafeProgram(program, args = [], cwd, timeoutSeconds) {
     throw new Error("args must contain at most 32 strings of at most 512 characters");
   }
 
-  const resolvedCwd = await resolveAllowedPath(cwd || process.cwd());
+  const resolvedCwd = await resolveAllowedPath(cwd || getAllowedRoots()[0] || process.cwd());
   const timeoutMs = clampInt(timeoutSeconds, 1, 300, COMMAND_TIMEOUT_SECONDS) * 1000;
   const startedAt = Date.now();
 
@@ -242,7 +242,7 @@ async function execute(command, cwd, timeoutSeconds) {
     };
   }
 
-  const resolvedCwd = await resolveAllowedPath(cwd || process.cwd());
+  const resolvedCwd = await resolveAllowedPath(cwd || getAllowedRoots()[0] || process.cwd());
   const timeoutMs = clampInt(timeoutSeconds, 1, 300, COMMAND_TIMEOUT_SECONDS) * 1000;
   const startedAt = Date.now();
 
