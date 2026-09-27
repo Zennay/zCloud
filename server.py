@@ -1268,11 +1268,20 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if action=='acquire':
                         worker_id=str(payload.get('worker_id') or '').strip()
+                        metadata=payload.get('metadata') if isinstance(payload.get('metadata'),dict) else {}
                         if worker_id:
                             preflight=worker_preflight_state(project_id,worker_id,owner_id)
                             if not preflight.get('ok'):
                                 return self.reply({'error':'Verse worker-preflight vereist vóór een write-taakclaim','blocked':preflight.get('blocked'),'preflight':preflight},428)
-                        result=task_claim_acquire(project_id,claim_key,owner_id,worker_id,payload.get('lease_seconds') or 300,payload.get('metadata'))
+                        else:
+                            if payload.get('manual_override') is not True:
+                                return self.reply({'error':'worker_id is verplicht voor autonome taakclaims; gebruik alleen bewust een handmatige override','blocked':'worker_identity_required'},428)
+                            reason=str(payload.get('override_reason') or '').strip()
+                            if not reason:
+                                return self.reply({'error':'override_reason is verplicht voor een handmatige taakclaim'},400)
+                            metadata={**metadata,'manual_override':True,'manual_override_reason':reason[:300],
+                                      'manual_override_actor':request_actor(self)}
+                        result=task_claim_acquire(project_id,claim_key,owner_id,worker_id,payload.get('lease_seconds') or 300,metadata)
                         if not result['acquired'] and result.get('claim'):
                             holder=result['claim'].get('owner_id') or 'andere worker'
                             emit=getattr(enhancements,'emit_incident',None)
