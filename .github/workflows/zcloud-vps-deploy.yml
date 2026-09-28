@@ -11,7 +11,9 @@ permissions:
 
 concurrency:
   group: zcloud-production-deploy
-  cancel-in-progress: false
+  # Only the newest green main revision is worth deploying. Superseded deploys
+  # must never block production behind an obsolete queued commit.
+  cancel-in-progress: true
 
 jobs:
   deploy:
