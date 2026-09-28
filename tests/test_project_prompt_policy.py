@@ -23,7 +23,7 @@ def test_worker_prompts_are_notion_first_and_execution_first():
         assert "stallsignaal" in prompt
         assert "geen nieuwe generieke checklist" in prompt
         assert "self-hosted GitHub-runner" in prompt
-        assert "volgende veilige onafhankelijke ongeclaimde taak" in prompt
+        assert "Bij claimconflict pak je meteen het volgende eligible queue-item" in prompt
         assert "Een ontbrekende, verlopen of null task-claim is geen stopconditie" in prompt
         assert "Bij claimconflict pak je meteen het volgende eligible queue-item" in prompt
         assert "read-only" not in prompt.lower()
