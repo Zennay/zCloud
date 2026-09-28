@@ -2,8 +2,8 @@
   "schema_version": 1,
   "default": {
     "mode": "ai_worker",
-    "auto_start": true,
-    "continue_delay_seconds": 300,
+    "auto_start": false,
+    "continue_delay_seconds": 600,
     "wait_vps_seconds": 900,
     "wait_human_seconds": 21600,
     "complete_recheck_seconds": 86400
@@ -11,19 +11,21 @@
   "projects": {
     "cloud": {
       "mode": "zcloud_stopgate",
-      "auto_start": true,
-      "continue_delay_seconds": 300
+      "auto_start": false,
+      "continue_delay_seconds": 600
     },
     "haxlab": {
       "mode": "haxlab_status",
-      "auto_start": true,
+      "auto_start": false,
       "status_file": "/var/lib/haxlab/state/autonomy-status.json",
-      "ai_states": ["NEEDS_AI"],
+      "ai_states": [
+        "NEEDS_AI"
+      ],
       "continue_delay_seconds": 600
     },
     "ftmo": {
       "mode": "ftmo_status",
-      "auto_start": true,
+      "auto_start": false,
       "status_file": "/opt/ftmo-autonomous/.scratch/autonomy/status.json",
       "ai_stages": [
         "provider_foundation",
@@ -47,18 +49,18 @@
     },
     "supa": {
       "mode": "ai_worker",
-      "auto_start": true,
-      "continue_delay_seconds": 300
+      "auto_start": false,
+      "continue_delay_seconds": 600
     },
     "raiseai": {
       "mode": "ai_worker",
-      "auto_start": true,
+      "auto_start": false,
       "continue_delay_seconds": 600
     },
     "zssh": {
       "mode": "ai_worker",
-      "auto_start": true,
-      "continue_delay_seconds": 300
+      "auto_start": false,
+      "continue_delay_seconds": 600
     }
   }
 }
