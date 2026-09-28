@@ -5,33 +5,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class ChatCooldownAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_checks_locally_without_spending_ai_every_minute(self):
+class GlobalChatAllocatorAndMobileProjectTests(unittest.TestCase):
+    def test_vps_scheduler_runs_fast_with_a_hard_global_two_worker_cap(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
-        self.assertIn("AUTONOMY_TICK_SECONDS = 60", server)
-        self.assertIn("min_ai_interval_seconds", server)
+        self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
+        self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
+        self.assertIn("def _global_chatgpt_allocation", server)
+        self.assertIn("setInterval(refreshTargets, 5000);", background)
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
         self.assertIn("if (!vpsDispatchOnly && !SINGLE_RUN", background)
-        self.assertNotIn('await send("autonomy-cooldown-complete")', background.split("if (finishSignalsReported && vpsDispatchOnly)", 1)[0])
 
-    def test_production_policy_is_vps_led_with_bounded_ai_cadence(self):
+    def test_production_policy_is_vps_led_without_dispatch_cooldown(self):
         policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
 
-        self.assertFalse(policy["default"]["auto_start"])
+        self.assertTrue(policy["default"]["auto_start"])
         self.assertEqual("vps", policy["default"]["dispatch_mode"])
-        self.assertGreaterEqual(policy["default"]["min_ai_interval_seconds"], 600)
+        self.assertEqual(0, policy["default"]["min_ai_interval_seconds"])
 
         expected_auto = {"cloud", "haxlab", "ftmo", "supa", "raiseai", "zssh"}
         for project_id, project in policy["projects"].items():
             self.assertEqual("vps", project["dispatch_mode"], project_id)
             self.assertEqual(project_id in expected_auto, project["auto_start"], project_id)
-            self.assertGreaterEqual(project["min_ai_interval_seconds"], 600, project_id)
+            self.assertEqual(0, project["min_ai_interval_seconds"], project_id)
 
-        self.assertEqual(600, policy["projects"]["supa"]["min_ai_interval_seconds"])
-        self.assertGreaterEqual(policy["projects"]["raiseai"]["min_ai_interval_seconds"], 1800)
-        self.assertGreaterEqual(policy["projects"]["zssh"]["min_ai_interval_seconds"], 1800)
         self.assertFalse(policy["projects"]["ulab"]["auto_start"])
 
     def test_mobile_projects_are_visible_and_touch_safe(self):
