@@ -964,7 +964,7 @@ browser.tabs.onRemoved.addListener(tabId => {
   }
 });
 refreshTargets();
-setInterval(refreshTargets, 120000);
+setInterval(refreshTargets, 5000);
 pollCommands();
 setInterval(pollCommands, 5000);
 watchRunnerHealth();
