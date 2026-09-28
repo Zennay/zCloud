@@ -11,7 +11,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("branches: [main]", text)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
         self.assertIn("runs-on: self-hosted", text)
-        self.assertIn("cancel-in-progress: false", text)
+        self.assertIn("cancel-in-progress: true", text)
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
