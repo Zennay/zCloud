@@ -41,7 +41,19 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("claim het item vóór inhoudelijk werk", server)
         self.assertIn("Done is alleen toegestaan", server)
         self.assertIn("Evidence concrete, verifieerbare", server)
+        self.assertIn("NO-OP/GIVE-UP GUARD", server)
+        self.assertIn("toolbeperking op één pad is op zichzelf geen blocker", server)
+        self.assertIn("ZCLOUD_WAIT_EVIDENCE", server)
+        self.assertIn("queue=no-eligible", server)
         self.assertIn("Er bestaat geen vaste", server)
+
+    def test_wait_markers_require_machine_checkable_evidence(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        self.assertIn("ZCLOUD_WAIT_EVIDENCE", background)
+        self.assertIn("queue=no-eligible", background)
+        self.assertIn("invalid-wait-vps-without-run-evidence", background)
+        self.assertIn("invalid-wait-human-without-gate-evidence", background)
+        self.assertIn('syncStatus("autonomy-continue"', background)
         self.assertIn("ZCLOUD_WORK_PROJECT:", server)
 
     def test_browser_routes_project_specific_evidence_from_queue_marker(self):
