@@ -21,9 +21,9 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
-AUTONOMY_TICK_SECONDS = 60
+AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-MAX_CHATGPT_WORKERS = 8
+MAX_CHATGPT_WORKERS = 2
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -1194,7 +1194,10 @@ def _autonomy_config(project_id):
         cfg.update(override)
     try: cfg['continue_delay_seconds']=max(30,min(3600,int(cfg.get('continue_delay_seconds') or 600)))
     except Exception: cfg['continue_delay_seconds']=600
-    try: cfg['min_ai_interval_seconds']=max(60,min(24*3600,int(cfg.get('min_ai_interval_seconds') or cfg['continue_delay_seconds'])))
+    try:
+        raw_interval=cfg.get('min_ai_interval_seconds')
+        if raw_interval is None: raw_interval=cfg['continue_delay_seconds']
+        cfg['min_ai_interval_seconds']=max(0,min(24*3600,int(raw_interval)))
     except Exception: cfg['min_ai_interval_seconds']=cfg['continue_delay_seconds']
     for key,fallback in (('wait_vps_seconds',900),('wait_human_seconds',21600),('complete_recheck_seconds',86400)):
         try: cfg[key]=max(60,min(7*86400,int(cfg.get(key) or fallback)))
@@ -1360,31 +1363,138 @@ def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
                   (ts,str(reason)[:250],project_id))
     return True
 
+def _busy_chatgpt_slots(project_id):
+    """Count currently generating/sending worker slots so reallocations never kill in-flight work."""
+    try:
+        with connect() as c:
+            rows=c.execute(
+                """SELECT e.worker_slot,e.generating,e.sending
+                   FROM runner_events e
+                   JOIN (
+                     SELECT worker_slot,MAX(id) AS max_id
+                     FROM runner_events
+                     WHERE project_id=?
+                     GROUP BY worker_slot
+                   ) latest ON latest.max_id=e.id
+                   WHERE e.project_id=?""",
+                (project_id,project_id),
+            ).fetchall()
+        return sum(1 for row in rows if bool(row['generating']) or bool(row['sending']))
+    except Exception:
+        return 0
+
+def _chatgpt_priority_score(project_id,state,target):
+    """Combine operator priority, VPS need and ChatGPT feedback into one scheduler score."""
+    fallback_weights={'low':100,'normal':400,'high':800,'system':1200}
+    score=fallback_weights.get(str((PROJECT_INDEX.get(project_id) or {}).get('priority') or 'normal'),400)
+    try:
+        policy=enhancements.load_resource_policy()
+        configured=str((policy.get(project_id) or {}).get('priority') or '')
+        weights=getattr(enhancements,'PRIORITY_WEIGHTS',{})
+        if configured in weights:
+            score=int(weights[configured])
+    except Exception:
+        pass
+
+    reason=str(state.get('reason') or '')
+    if reason=='haxlab_needs_ai' or reason.startswith('ftmo_stage_'):
+        score += 1700
+    elif reason.endswith('_status_missing'):
+        score += 900
+    if reason=='zcloud_improvement_running':
+        score += 700
+
+    signal=_latest_autonomy_signal(project_id)
+    if signal and signal.get('event')=='autonomy-continue':
+        score += 350
+    if target.get('active'):
+        score += 20
+    return score
+
+def _global_chatgpt_allocation(states,targets):
+    """Allocate a hard global maximum of two browser workers across all projects."""
+    ranked=[]
+    runtimes={}
+    for project_id,state in states.items():
+        runtime=_autonomy_initialize_project(project_id)
+        runtimes[project_id]=runtime
+        if not state.get('auto_start') or not state.get('allow_ai'):
+            continue
+        if runtime and bool(runtime.get('manual_pause')):
+            continue
+        target=targets.get(project_id) or {}
+        ranked.append((_chatgpt_priority_score(project_id,state,target),project_id))
+    ranked.sort(key=lambda item:(-item[0],item[1]))
+
+    assignments=[]
+    # Never abort a response already being generated merely because another project
+    # became more important. The next free slot is reallocated immediately.
+    for project_id,target in targets.items():
+        if not target.get('active'):
+            continue
+        busy=min(MAX_CHATGPT_WORKERS,_busy_chatgpt_slots(project_id))
+        for _ in range(busy):
+            if len(assignments)>=MAX_CHATGPT_WORKERS:
+                break
+            assignments.append(project_id)
+
+    # Prefer breadth: one slot per eligible project before giving a second slot
+    # to the highest-priority project.
+    for _,project_id in ranked:
+        if len(assignments)>=MAX_CHATGPT_WORKERS:
+            break
+        if project_id not in assignments:
+            assignments.append(project_id)
+    while len(assignments)<MAX_CHATGPT_WORKERS and ranked:
+        assignments.append(ranked[0][1])
+
+    desired={}
+    for project_id in assignments[:MAX_CHATGPT_WORKERS]:
+        desired[project_id]=desired.get(project_id,0)+1
+
+    changed=[]
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        for project_id,target in targets.items():
+            wanted=desired.get(project_id,0)
+            old_active=bool(target.get('active'))
+            old_count=max(1,int(target.get('worker_count') or 1))
+            new_active=1 if wanted else 0
+            new_count=max(1,wanted)
+            if old_active!=bool(new_active) or old_count!=new_count:
+                changed.append({'project_id':project_id,'from_active':old_active,'to_active':bool(new_active),
+                                'from_workers':old_count,'to_workers':wanted})
+            c.execute('UPDATE runner_targets SET active=?,worker_count=? WHERE project_id=?',
+                      (new_active,new_count,project_id))
+            primary=c.execute('SELECT conversation_id FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+            for slot in range(1,MAX_CHATGPT_WORKERS+1):
+                c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
+                          (project_id,slot,((primary['conversation_id'] if primary else '') if slot==1 else '') or ''))
+                c.execute("UPDATE runner_workers SET desired_state=? WHERE project_id=? AND worker_slot=?",
+                          ('running' if slot<=wanted else 'paused',project_id,slot))
+            if not wanted:
+                c.execute(
+                    "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                    "WHERE project_id=? AND status='pending' AND action IN ('start','push','new_chat')",
+                    (now(),'global-worker-reallocated',project_id),
+                )
+    return {'assignments':assignments[:MAX_CHATGPT_WORKERS],'desired':desired,'changed':changed,
+            'ranked':[{'project_id':pid,'score':score} for score,pid in ranked]}
+
 def autonomy_scheduler_tick():
     states=autonomy_states()
     targets=runner_targets()
-    started=[]
+    allocation=_global_chatgpt_allocation(states,targets)
+    targets=runner_targets()
+    started=[item['project_id'] for item in allocation['changed'] if item['to_active'] and not item['from_active']]
     pushed=[]
-    for project_id,state in states.items():
-        if not state.get('auto_start'):
-            continue
-        runtime=_autonomy_initialize_project(project_id)
-        if runtime and bool(runtime.get('manual_pause')):
-            continue
+    for project_id in dict.fromkeys(allocation['assignments']):
+        state=states.get(project_id) or {}
         if not state.get('allow_ai'):
             continue
-        target=targets.get(project_id) or {}
-        if not target.get('active'):
-            if _autonomy_enqueue_start(project_id,state.get('reason') or 'autonomy_gate_open'):
-                started.append(project_id)
-            continue
-        if state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
-            project_id,
-            state.get('reason') or 'autonomy_gate_open',
-            state.get('min_ai_interval_seconds') or 600,
-        ):
+        if _autonomy_enqueue_push(project_id,state.get('reason') or 'global_allocator',0):
             pushed.append(project_id)
-    return {'started':started,'pushed':pushed,'states':states,'time':now()}
+    return {'started':started,'pushed':pushed,'allocation':allocation,'states':states,'time':now()}
 
 def autonomy_scheduler():
     time.sleep(8)
