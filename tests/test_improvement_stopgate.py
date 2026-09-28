@@ -12,6 +12,7 @@ from pathlib import Path
 
 enhancements_stub = types.ModuleType("enhancements")
 enhancements_stub.init_db = lambda conn: None
+enhancements_stub.load_resource_policy = lambda: {}
 sys.modules["enhancements"] = enhancements_stub
 
 import server
