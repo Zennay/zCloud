@@ -175,7 +175,7 @@ async function adoptConversation(tabId, target, url) {
 function workerKeysFor(projectId, activeOnly = false) {
   if (targets[projectId]) return (!activeOnly || targets[projectId].active) ? [projectId] : [];
   return Object.values(targets)
-    .filter(t => (t.base_project_id || t.project_id) === projectId && (!activeOnly || t.active))
+    .filter(t => (t.base_project_id || t.project_id) === projectId && (!activeOnly || (t.active && t.desired_state === "running")))
     .sort((a,b) => (a.worker_slot || 1) - (b.worker_slot || 1))
     .map(t => t.project_id);
 }
