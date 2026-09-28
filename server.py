@@ -83,12 +83,18 @@ def project_runner_prompt(project_id, name):
     source_context=(' Canonieke bronnen: '+'; '.join(sources)+'.') if sources else ''
     return (
         f'Ga verder met project {name}. Deze chat is uitsluitend voor project {name}; werk niet aan andere projecten. '
-        'Controleer eerst via de gekoppelde Notion-workspace de actuele projectpagina, handoff, status, open taken, '
-        'besluiten en relevante documentatie. Gebruik daarnaast de gekoppelde GitHub/repository- en VPS-context waar '
-        'die voor dit project relevant is. Ga daarna zelfstandig verder met de eerstvolgende concrete stap die het '
-        'project aantoonbaar vooruit helpt. Behoud bestaande architectuur en eerdere beslissingen tenzij de actuele '
-        'projectdocumentatie expliciet iets anders aangeeft. Rapporteer kort wat je hebt gedaan, wat de nieuwe status '
-        'is en wat logisch als volgende stap volgt.' + source_context
+        'Notion-first is verplicht: controleer vóór het kiezen van werk via de gekoppelde Notion-workspace de actuele '
+        'projectpagina, handoff, status, open taken/claims, besluiten en relevante documentatie. Gebruik oude chatcontext '
+        'nooit als vervanging voor deze actuele broncheck. Gebruik daarnaast de gekoppelde GitHub/repository- en VPS-context '
+        'waar die voor dit project relevant is. Ga daarna zelfstandig verder met de eerstvolgende concrete stap die het '
+        'project aantoonbaar vooruit helpt. Herhaalde QA-checklists, reviewer-templates, statusrecaps of read-only voorbereiding '
+        'zonder een echte gate te sluiten gelden als stallsignaal, niet als voortgang. Bij zo\'n stallsignaal moet je de actuele '
+        'Notion/GitHub/VPS/runner- en toolroutes opnieuw controleren, inclusief toegestane alternatieve uitvoerpaden, en actief '
+        'zoeken naar de volgende veilige ongeclaimde concrete actie. Eén ontbrekende route, zoals SSH, betekent niet automatisch '
+        'dat het project geblokkeerd is als bijvoorbeeld een self-hosted GitHub-runner het werk veilig kan uitvoeren. Stop of wacht '
+        'alleen wanneer een echte externe afhankelijkheid alle veilige voortgang blokkeert. Behoud bestaande architectuur en eerdere '
+        'beslissingen tenzij de actuele projectdocumentatie expliciet iets anders aangeeft. Rapporteer kort wat je daadwerkelijk hebt '
+        'gedaan, welke evidence de nieuwe status ondersteunt en wat de volgende uitvoerbare gate is.' + source_context
     )
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total):
@@ -105,8 +111,11 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'actuele backlog hebt, mag je ze geordend als alternatives meesturen zodat zCloud atomair de eerste vrije '
         'kandidaat claimt. Pak alleen een concrete work-item die niet al actief door '
         'een andere worker wordt uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion '
-        'en leg je claim vast voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe '
-        'alleen read-only validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
+        'en leg je claim vast voordat je schrijft. Als de huidige lane geblokkeerd is, herlees eerst de actuele Notion-backlog '
+        'en zoek naar een andere veilige onafhankelijke ongeclaimde taak. Als er daarna geen veilige write-taak beschikbaar is, mag '
+        'read-only werk alleen wanneer het een echte gate sluit of materieel verandert; maak geen nieuwe generieke checklist, reviewer-template '
+        'of statusrecap om een cyclus te vullen. Detecteer je herhaald checklist/status-only gedrag, behandel dat expliciet als stallsignaal: '
+        'vernieuw de bron- en capability-check en probeer een concrete uitvoerbare stap of toegestane alternatieve route.'
     )
     coordination += (
         ' VPS-first operating rule: laat herhaalbaar, deterministisch werk zoveel mogelijk door scripts, services, timers, '
