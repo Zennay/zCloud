@@ -8,6 +8,7 @@ from pathlib import Path
 
 enhancements_stub = types.ModuleType("enhancements")
 enhancements_stub.init_db = lambda conn: None
+enhancements_stub.load_resource_policy = lambda: {}
 _previous_enhancements = sys.modules.get("enhancements")
 sys.modules["enhancements"] = enhancements_stub
 
@@ -30,6 +31,14 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.hax_status = self.root / "haxlab-status.json"
         self.ftmo_status = self.root / "ftmo-status.json"
         self.write_policy()
+        # Keep unrelated projects out of scheduler-focused tests unless a test
+        # explicitly opens their VPS gate.
+        self.hax_status.write_text(json.dumps({"state": "RUNNING"}), encoding="utf-8")
+        self.ftmo_status.write_text(json.dumps({
+            "ok": True,
+            "research": {"next_stage": "blocked"},
+            "paper_forward_shadow": {"action": "idle"},
+        }), encoding="utf-8")
         server.init_db()
 
     def tearDown(self):
