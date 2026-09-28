@@ -1,0 +1,11 @@
+[Unit]
+Description=zCloud VPS-native green-main autodeploy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/ubuntu/.local/bin/zcloud-autodeploy.py
+WorkingDirectory=/home/ubuntu/zennay-cloud
+Environment=PYTHONUNBUFFERED=1
+Nice=10
