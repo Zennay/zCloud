@@ -122,7 +122,16 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'ZCLOUD_AUTONOMY: WAIT_HUMAN bij een echte menselijke/externe gate; of ZCLOUD_AUTONOMY: COMPLETE alleen als de '
         'globale queue aantoonbaar geen eligible werk meer bevat. '
         'Gebruik daarnaast ZCLOUD_PRIORITY: HIGH/NORMAL/LOW/BACKGROUND uitsluitend als technisch signaal; de Notion queue '
-        'blijft de inhoudelijke bron van waarheid voor wat de workers daadwerkelijk kiezen.'
+        'blijft de inhoudelijke bron van waarheid voor wat de workers daadwerkelijk kiezen. '
+        'PROJECT-SPECIFIEKE SAFETY blijft gelden ongeacht welk technisch runnerlabel deze portfolio-worker heeft. '
+        'Als het gekozen queue-item FTMO betreft: houd preregistration, chronologische splits, development, walk-forward en '
+        'final holdout strikt gescheiden; gebruik verborgen validation/holdout-resultaten nooit voor ontwerpkeuzes en red of '
+        'retune afgewezen generaties niet. '
+        'Als het gekozen queue-item zCloud betreft: respecteer het persistent finish-protocol. Controleer vóór een zCloud '
+        'write-iteratie de live improvement-state en iteration_count. Alleen na een werkelijk afgeronde implementatie-iteratie '
+        'mag ZCLOUD_ITERATION_COMPLETE worden gemeld. Bij expliciete finish-review gebruik exact ZCLOUD_FINISH_REVIEW: '
+        'GREEN_NO_P0P1 of ZCLOUD_FINISH_REVIEW: OPEN_P0P1. Bij de harde eind-audit gebruik exact ZCLOUD_FINAL_AUDIT: GREEN '
+        'of ZCLOUD_FINAL_AUDIT: FAIL. Gebruik deze markers nooit voor read-only voorbereiding.'
     )
 RUNNER_DEFAULTS = {
     pid: {
