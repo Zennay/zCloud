@@ -20,6 +20,9 @@ SERVICES = ['haxlab-analyzer.service', 'haxlab-ingest.service', 'haxlab-worker.s
 WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
+AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
+AUTONOMY_TICK_SECONDS = 60
+AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 MAX_CHATGPT_WORKERS = 8
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
@@ -102,6 +105,13 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'een andere worker wordt uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion '
         'en leg je claim vast voordat je schrijft. Als er geen veilige onafhankelijke write-taak beschikbaar is, doe '
         'alleen read-only validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
+    )
+    coordination += (
+        ' Autonomy-contract: eindig iedere werkcyclus met exact één losse marker. Gebruik '
+        'ZCLOUD_AUTONOMY: CONTINUE alleen als er direct nog een veilige concrete stap uitvoerbaar is; '
+        'ZCLOUD_AUTONOMY: WAIT_VPS als lokale services, CI, een runner of een andere deterministische stap eerst moet afronden; '
+        'ZCLOUD_AUTONOMY: WAIT_HUMAN als een echte gebruiker/externe deelnemer/beslissing nodig is; of '
+        'ZCLOUD_AUTONOMY: COMPLETE als de huidige projectscope aantoonbaar klaar is. Gebruik CONTINUE nooit alleen om activiteit te houden.'
     )
     if project_id=='ftmo':
         coordination += (
@@ -368,6 +378,7 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_ts ON config_audit(ts,id)")
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_key_target ON config_audit(config_key,target,id)")
         c.execute("CREATE TABLE IF NOT EXISTS feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, expires_at TEXT, updated_at TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'system')")
+        c.execute("CREATE TABLE IF NOT EXISTS autonomy_runtime(project_id TEXT PRIMARY KEY, initialized_at TEXT NOT NULL, manual_pause INTEGER NOT NULL DEFAULT 0, last_dispatch_at TEXT, last_reason TEXT NOT NULL DEFAULT '')")
         for flag_name,definition in FEATURE_FLAG_DEFINITIONS.items():
             c.execute("INSERT OR IGNORE INTO feature_flags(name,enabled,expires_at,updated_at,actor) VALUES(?,?,?,?,?)",
                       (flag_name,1 if definition['default'] else 0,None,now(),'system-default'))
@@ -1111,17 +1122,208 @@ def task_claim_release(project_id,claim_key,owner_id):
         cur=c.execute('DELETE FROM task_claims WHERE project_id=? AND claim_key=? AND owner_id=?',(project_id,claim_key,owner_id))
     return {'released':cur.rowcount==1}
 
+def load_autonomy_policy():
+    default={
+        'schema_version':1,
+        'default':{
+            'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300,
+            'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
+        },
+        'projects':{},
+    }
+    if not AUTONOMY_POLICY_FILE.exists():
+        return default
+    try:
+        raw=json.loads(AUTONOMY_POLICY_FILE.read_text(encoding='utf-8'))
+        if not isinstance(raw,dict) or raw.get('schema_version')!=1:
+            raise ValueError('schema_version must be 1')
+        base={**default['default'],**(raw.get('default') if isinstance(raw.get('default'),dict) else {})}
+        projects=raw.get('projects') if isinstance(raw.get('projects'),dict) else {}
+        return {'schema_version':1,'default':base,'projects':projects}
+    except Exception:
+        logging.exception('Invalid autonomy policy; fail closed')
+        return {'schema_version':1,'default':{**default['default'],'mode':'manual','auto_start':False},'projects':{}}
+
+def _autonomy_config(project_id):
+    policy=load_autonomy_policy()
+    cfg={**policy['default']}
+    override=policy.get('projects',{}).get(project_id)
+    if isinstance(override,dict):
+        cfg.update(override)
+    try: cfg['continue_delay_seconds']=max(30,min(3600,int(cfg.get('continue_delay_seconds') or 300)))
+    except Exception: cfg['continue_delay_seconds']=300
+    for key,fallback in (('wait_vps_seconds',900),('wait_human_seconds',21600),('complete_recheck_seconds',86400)):
+        try: cfg[key]=max(60,min(7*86400,int(cfg.get(key) or fallback)))
+        except Exception: cfg[key]=fallback
+    cfg['auto_start']=bool(cfg.get('auto_start'))
+    return cfg
+
+def _autonomy_status_json(path):
+    try:
+        target=Path(str(path or ''))
+        if not target.is_absolute() or target.is_symlink() or not target.is_file():
+            return None
+        raw=json.loads(target.read_text(encoding='utf-8'))
+        return raw if isinstance(raw,dict) else None
+    except Exception:
+        return None
+
+def _latest_autonomy_signal(project_id):
+    try:
+        with connect() as c:
+            placeholders=','.join('?' for _ in AUTONOMY_SIGNAL_EVENTS)
+            row=c.execute(
+                f'SELECT ts,event,reason FROM runner_events WHERE project_id=? AND event IN ({placeholders}) ORDER BY id DESC LIMIT 1',
+                (project_id,*AUTONOMY_SIGNAL_EVENTS),
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+def _autonomy_signal_hold(project_id,cfg):
+    signal=_latest_autonomy_signal(project_id)
+    if not signal:
+        return None
+    event=str(signal.get('event') or '')
+    if event=='autonomy-continue':
+        return None
+    seconds={
+        'autonomy-wait-vps':cfg['wait_vps_seconds'],
+        'autonomy-wait-human':cfg['wait_human_seconds'],
+        'autonomy-complete':cfg['complete_recheck_seconds'],
+    }.get(event)
+    if not seconds:
+        return None
+    try:
+        age=max(0,(datetime.now(timezone.utc)-datetime.fromisoformat(signal['ts']).astimezone(timezone.utc)).total_seconds())
+    except Exception:
+        age=0
+    if age>=seconds:
+        return None
+    return {'event':event,'age_seconds':round(age),'hold_seconds':seconds,'until_seconds':round(seconds-age)}
+
+def project_autonomy_state(project_id):
+    cfg=_autonomy_config(project_id)
+    mode=str(cfg.get('mode') or 'manual')
+    allow=False
+    reason='manual_or_unknown_mode'
+    detail={}
+    if mode=='ai_worker':
+        allow=True;reason='bounded_ai_worker'
+    elif mode=='zcloud_stopgate':
+        improvement=improvement_loop_state(project_id)
+        allow=bool(improvement.get('auto_continue'));reason='zcloud_improvement_running' if allow else 'zcloud_finished_maintain'
+        detail={'improvement':improvement}
+    elif mode=='haxlab_status':
+        status=_autonomy_status_json(cfg.get('status_file'))
+        state=str((status or {}).get('state') or 'MISSING')
+        allowed={str(x) for x in (cfg.get('ai_states') or ['NEEDS_AI'])}
+        allow=state in allowed
+        reason='haxlab_needs_ai' if allow else 'haxlab_vps_'+state.lower()
+        detail={'vps_status':status,'state':state}
+    elif mode=='ftmo_status':
+        status=_autonomy_status_json(cfg.get('status_file'))
+        research=(status or {}).get('research') if isinstance((status or {}).get('research'),dict) else {}
+        stage=str(research.get('next_stage') or 'missing')
+        paper=(status or {}).get('paper_forward_shadow') if isinstance((status or {}).get('paper_forward_shadow'),dict) else {}
+        allowed={str(x) for x in (cfg.get('ai_stages') or [])}
+        runtime_ok=bool((status or {}).get('ok'))
+        paper_busy=paper.get('action')=='running'
+        allow=runtime_ok and stage in allowed and not paper_busy
+        reason=('ftmo_stage_'+stage) if allow else ('ftmo_paper_running' if paper_busy else 'ftmo_vps_'+('not_ok' if status and not runtime_ok else stage))
+        detail={'vps_status':status,'next_stage':stage,'paper_action':paper.get('action')}
+    elif mode=='external_gate':
+        allow=False;reason='external_or_human_gate'
+    elif mode=='manual':
+        allow=False;reason='manual_mode'
+
+    hold=_autonomy_signal_hold(project_id,cfg)
+    if allow and hold:
+        allow=False;reason=hold['event']
+    return {
+        'project_id':project_id,'mode':mode,'allow_ai':bool(allow),'auto_start':cfg['auto_start'],
+        'continue_delay_seconds':cfg['continue_delay_seconds'],'reason':reason,'hold':hold,'detail':detail,
+    }
+
+def autonomy_states():
+    return {project_id:project_autonomy_state(project_id) for project_id in RUNNER_DEFAULTS}
+
+def _autonomy_runtime(project_id):
+    with connect() as c:
+        row=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
+    return dict(row) if row else None
+
+def _autonomy_initialize_project(project_id):
+    ts=now()
+    with connect() as c:
+        c.execute('INSERT OR IGNORE INTO autonomy_runtime(project_id,initialized_at,manual_pause,last_reason) VALUES(?,?,0,?)',
+                  (project_id,ts,'autonomy_initialized'))
+        row=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
+    return dict(row) if row else None
+
+def _autonomy_enqueue_start(project_id,reason):
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        runtime=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
+        if runtime and bool(runtime['manual_pause']):
+            return False
+        target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+        if not target:
+            return False
+        if bool(target['active']):
+            return False
+        pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action='start' AND status='pending' LIMIT 1",(project_id,)).fetchone()
+        if pending:
+            return False
+        c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
+        c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
+        c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
+                  (project_id,'start','pending',ts,ts,None))
+        c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',(ts,str(reason)[:250],project_id))
+    return True
+
+def autonomy_scheduler_tick():
+    states=autonomy_states()
+    targets=runner_targets()
+    started=[]
+    for project_id,state in states.items():
+        if not state.get('auto_start'):
+            continue
+        runtime=_autonomy_initialize_project(project_id)
+        if runtime and bool(runtime.get('manual_pause')):
+            continue
+        target=targets.get(project_id) or {}
+        if target.get('active'):
+            continue
+        if state.get('allow_ai') and _autonomy_enqueue_start(project_id,state.get('reason') or 'autonomy_gate_open'):
+            started.append(project_id)
+    return {'started':started,'states':states,'time':now()}
+
+def autonomy_scheduler():
+    time.sleep(8)
+    while True:
+        try:
+            result=autonomy_scheduler_tick()
+            if result['started']:
+                logging.info('Autonomy started: %s', ','.join(result['started']))
+        except Exception:
+            logging.exception('Autonomy scheduler failed')
+        time.sleep(AUTONOMY_TICK_SECONDS)
+
 def runner_targets():
     with connect() as c:
         rows=c.execute('SELECT project_id,name,conversation_id,prompt,active,worker_count FROM runner_targets ORDER BY project_id').fetchall()
     out={}
     for r in rows:
         improvement=improvement_loop_state(r['project_id']) if r['project_id']==IMPROVEMENT_PROJECT_ID else None
+        autonomy=project_autonomy_state(r['project_id'])
         out[r['project_id']]={'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
                               'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
                               'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
-                              'auto_continue':bool(improvement['auto_continue']) if improvement else True,
-                              'improvement':improvement}
+                              'auto_continue':bool(autonomy['allow_ai']),
+                              'auto_continue_delay_seconds':autonomy['continue_delay_seconds'],
+                              'autonomy':autonomy,'improvement':improvement}
     return out
 
 def runner_worker_targets():
@@ -1143,7 +1345,9 @@ def runner_worker_targets():
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
                     'desired_state':desired_state,'active':bool(cfg['active']) and desired_state!='paused',
-                    'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')
+                    'auto_continue':bool(cfg.get('auto_continue',True)),
+                    'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 300),
+                    'autonomy':cfg.get('autonomy'),'improvement':cfg.get('improvement')
                 }
     return out
 
@@ -1490,6 +1694,11 @@ class Handler(BaseHTTPRequestHandler):
                                 elif action=='drain':
                                     c.execute("UPDATE runner_workers SET desired_state='draining' WHERE project_id=? AND worker_slot=?",(base_project_id,slot))
                             else:
+                                c.execute('INSERT OR IGNORE INTO autonomy_runtime(project_id,initialized_at,manual_pause,last_reason) VALUES(?,?,0,?)',(project_id,now(),'dashboard_control'))
+                                if action in ('start','new_chat'):
+                                    c.execute("UPDATE autonomy_runtime SET manual_pause=0,last_reason='manual_resume' WHERE project_id=?",(project_id,))
+                                elif action=='pause':
+                                    c.execute("UPDATE autonomy_runtime SET manual_pause=1,last_reason='manual_pause' WHERE project_id=?",(project_id,))
                                 if action=='push' and not configs[project_id].get('active'):
                                     return self.reply({'error':'Start dit project eerst voordat je pusht'},409)
                                 if action=='push' and not any(w.get('active') for w in worker_configs.values() if w.get('base_project_id')==project_id):
@@ -1663,6 +1872,12 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
+        if u.path=='/api/autonomy':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            states=autonomy_states()
+            for project_id,state in states.items():
+                state['runtime']=_autonomy_runtime(project_id)
+            return self.reply({'projects':states,'time':now()})
         if u.path=='/api/worker-preflight':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
             project_id=str(q.get('project',[''])[0] or '').strip()
@@ -1731,4 +1946,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     init_db()
     threading.Thread(target=sampler,daemon=True,name='cloud-monitor').start()
+    threading.Thread(target=autonomy_scheduler,daemon=True,name='zcloud-autonomy').start()
     ThreadingHTTPServer((os.getenv('ZENNAY_BIND','0.0.0.0'),int(os.getenv('ZENNAY_PORT','8765'))),Handler).serve_forever()
