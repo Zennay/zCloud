@@ -60,6 +60,9 @@ class AutonomyPolicyTests(unittest.TestCase):
                 "complete_recheck_seconds": 86400,
             },
             "projects": {
+                "cloud": {"mode": "manual", "auto_start": False},
+                "raiseai": {"mode": "manual", "auto_start": False},
+                "zssh": {"mode": "manual", "auto_start": False},
                 "haxlab": {
                     "mode": "haxlab_status",
                     "auto_start": True,
