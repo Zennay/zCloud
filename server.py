@@ -1135,7 +1135,7 @@ def load_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
-            'mode':'ai_worker','auto_start':False,'dispatch_mode':'vps','continue_delay_seconds':0,
+            'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps','continue_delay_seconds':0,
             'min_ai_interval_seconds':0,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
