@@ -46,6 +46,15 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("ZCLOUD_WAIT_EVIDENCE", server)
         self.assertIn("queue=no-eligible", server)
         self.assertIn("Er bestaat geen vaste", server)
+        self.assertIn("controleer eerst of jouw stabiele portfolio Worker 1/2", server)
+        self.assertIn("Alleen een nieuw P0 Critical item mag veilig preëmpten", server)
+
+    def test_global_worker_identity_survives_project_tab_reallocation(self):
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertIn("def _current_global_slot_map()", server)
+        self.assertIn("Keep a surviving worker on the same global Worker 1/2 identity", server)
+        self.assertIn("'global_worker_slot':global_slot", server)
+        self.assertIn("Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT}", server)
 
     def test_wait_markers_require_machine_checkable_evidence(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
