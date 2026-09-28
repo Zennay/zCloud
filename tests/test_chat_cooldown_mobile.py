@@ -6,31 +6,34 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_has_exactly_two_global_ai_slots_with_small_debounce(self):
+    def test_vps_scheduler_has_exactly_two_global_ai_slots_without_time_debounce(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("AUTONOMY_TICK_SECONDS = 2", server)
         self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
         self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
-        self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 120", server)
+        self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 0", server)
         self.assertIn("def global_worker_allocation(", server)
         self.assertIn("ai_global_slots", server)
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
         self.assertIn("setInterval(refreshTargets, 5000)", background)
+        self.assertIn("wait_until_generation_finished_then_continue", server)
+        self.assertIn("if latest and (bool(latest[\'generating\']) or bool(latest[\'sending\'])):", server)
+        self.assertIn("if prompt_id and ready_id < prompt_id:", server)
 
-    def test_production_policy_uses_two_minute_ai_debounce_not_project_quotas(self):
+    def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
         policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
 
         self.assertTrue(policy["default"]["auto_start"])
         self.assertEqual("vps", policy["default"]["dispatch_mode"])
-        self.assertEqual(120, policy["default"]["min_ai_interval_seconds"])
-        self.assertEqual(120, policy["default"]["continue_delay_seconds"])
+        self.assertEqual(0, policy["default"]["min_ai_interval_seconds"])
+        self.assertEqual(0, policy["default"]["continue_delay_seconds"])
 
         for project_id, project in policy["projects"].items():
             self.assertEqual("vps", project["dispatch_mode"], project_id)
-            self.assertEqual(120, project["min_ai_interval_seconds"], project_id)
-            self.assertEqual(120, project["continue_delay_seconds"], project_id)
+            self.assertEqual(0, project["min_ai_interval_seconds"], project_id)
+            self.assertEqual(0, project["continue_delay_seconds"], project_id)
             self.assertEqual(project_id != "ulab", project["auto_start"], project_id)
 
     def test_worker_prompt_uses_global_notion_queue_and_evidence_done_gate(self):
