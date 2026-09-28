@@ -187,13 +187,13 @@ def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int
             pid = str(worker["project_id"])
             slot = int(worker["worker_slot"])
             by_project.setdefault(pid, set()).add(slot)
-            add(errors, pid in project_ids or pid == "portfolio-review", f"history.db: unknown worker project {pid!r}")
+            add(errors, pid in project_ids or pid in ("portfolio-review","portfolio-worker"), f"history.db: unknown worker project {pid!r}")
             add(errors, 1 <= slot <= max_workers, f"history.db: worker slot out of range {pid}::{slot}")
             add(errors, worker["desired_state"] in desired, f"history.db: invalid desired_state for {pid}::{slot}")
         for target in targets:
             pid = str(target["project_id"])
             count = int(target["worker_count"])
-            add(errors, pid in project_ids or pid == "portfolio-review", f"history.db: unknown runner target {pid!r}")
+            add(errors, pid in project_ids or pid in ("portfolio-review","portfolio-worker"), f"history.db: unknown runner target {pid!r}")
             add(errors, 1 <= count <= max_workers, f"history.db: worker_count out of range for {pid}: {count}")
             missing = [slot for slot in range(1, count + 1) if slot not in by_project.get(pid, set())]
             add(errors, not missing, f"history.db: missing configured worker slots for {pid}: {missing}")
