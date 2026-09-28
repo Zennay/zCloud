@@ -199,6 +199,7 @@ function runProject(cfg) {
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
+  let autoContinueDelayMs = Math.max(30000, Number(cfg.auto_continue_delay_seconds || 300) * 1000);
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
@@ -207,6 +208,7 @@ function runProject(cfg) {
   let awaitingGeneration = false;
   let generationDeadline = 0;
   let finishedAt = 0;
+  let finishSignalsReported = false;
   let lastText = "";
   let lastProgressAt = Date.now();
   let sending = false;
@@ -285,13 +287,27 @@ function runProject(cfg) {
     try {
       const policy = await browser.runtime.sendMessage({type: "runner-policy-check", projectId: cfg.projectId});
       if (policy && typeof policy.auto_continue === "boolean") autoContinue = policy.auto_continue;
+      if (policy && Number.isFinite(Number(policy.continue_delay_seconds))) {
+        autoContinueDelayMs = Math.max(30000, Number(policy.continue_delay_seconds) * 1000);
+      }
       return autoContinue;
     } catch (_) {
-      return BASE_PROJECT === "cloud" ? false : autoContinue;
+      autoContinue = false;
+      return false;
     }
   }
   async function reportFinishSignals(text) {
-    if (BASE_PROJECT !== "cloud" || !text) return;
+    if (!text) return;
+    if (text.includes("ZCLOUD_AUTONOMY: WAIT_VPS")) {
+      await syncStatus("autonomy-wait-vps", {reason: "assistant-marker"});
+    } else if (text.includes("ZCLOUD_AUTONOMY: WAIT_HUMAN")) {
+      await syncStatus("autonomy-wait-human", {reason: "assistant-marker"});
+    } else if (text.includes("ZCLOUD_AUTONOMY: COMPLETE")) {
+      await syncStatus("autonomy-complete", {reason: "assistant-marker"});
+    } else if (text.includes("ZCLOUD_AUTONOMY: CONTINUE")) {
+      await syncStatus("autonomy-continue", {reason: "assistant-marker"});
+    }
+    if (BASE_PROJECT !== "cloud") return;
     if (text.includes("ZCLOUD_ITERATION_COMPLETE")) {
       await syncStatus("improvement-iteration-complete", {reason: "assistant-marker"});
     }
@@ -372,13 +388,14 @@ function runProject(cfg) {
     if (lastGenerating === null) {
       lastGenerating = generating;
       if (generating) {
+        finishSignalsReported = false;
         status("generation-started");
         lastProgressAt = now;
       }
     } else if (generating !== lastGenerating) {
       status(generating ? "generation-started" : "generation-finished");
       lastGenerating = generating;
-      if (generating) lastProgressAt = now;
+      if (generating) { finishSignalsReported = false; lastProgressAt = now; }
     }
     if (generating) {
       awaitingGeneration = false;
@@ -404,6 +421,7 @@ function runProject(cfg) {
         awaitingGeneration = false;
         sawGeneration = true;
         finishedAt = now;
+        finishSignalsReported = false;
         lastText = text;
         lastProgressAt = now;
         status("generation-started", {reason: "response-detected-between-polls"});
@@ -417,12 +435,16 @@ function runProject(cfg) {
       return;
     }
     if (sawGeneration) {
-      if (!finishedAt) { finishedAt = now; return; }
-      if (now - finishedAt >= 5000) {
+      if (!finishedAt) { finishedAt = now; finishSignalsReported = false; return; }
+      if (!finishSignalsReported && now - finishedAt >= 5000) {
+        finishSignalsReported = true;
+        lastText = text;
+        await reportFinishSignals(text);
+      }
+      if (now - finishedAt >= autoContinueDelayMs) {
         sawGeneration = false;
         finishedAt = 0;
         lastText = text;
-        await reportFinishSignals(text);
         if (draining) {
           paused = true;
           clearInterval(tickTimer);
@@ -431,8 +453,8 @@ function runProject(cfg) {
           return;
         }
         if (SINGLE_RUN) { status("scheduled-run-complete", {reason: "single-run"}); return; }
-        if (!paused && await canAutoContinue()) await send("antwoord klaar");
-        else if (!paused) status("auto-continue-blocked", {reason: "finished-maintain"});
+        if (!paused && await canAutoContinue()) await send("autonomy-cooldown-complete");
+        else if (!paused) status("auto-continue-blocked", {reason: "autonomy-gate-closed"});
       }
       return;
     }
@@ -881,9 +903,13 @@ browser.runtime.onMessage.addListener((message, sender) => {
       .then(data => {
         const target = (data.projects || {})[message.projectId];
         const base = message.projectId.split("::w", 1)[0];
-        return {auto_continue: target ? target.auto_continue !== false : base !== "cloud"};
+        return {
+          auto_continue: target ? target.auto_continue !== false : base !== "cloud",
+          continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds || 300) : 300,
+          autonomy: target?.autonomy || null
+        };
       })
-      .catch(() => ({auto_continue: message.projectId.split("::w", 1)[0] !== "cloud"}));
+      .catch(() => ({auto_continue: false, continue_delay_seconds: 300, autonomy: {reason:"policy-unavailable"}}));
   } else if (message?.type === "runner-new-chat" && message.projectId) {
     newProjectChat(message.projectId, message.reason || "stall-recovery", null);
   } else if (message?.type === "runner-replacement-handoff-consumed" && message.projectId) {
