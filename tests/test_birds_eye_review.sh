@@ -44,7 +44,12 @@ prompt="$(sqlite3 "$tmp/history.db" "SELECT prompt FROM runner_targets WHERE pro
 grep -q "cloud" <<<"$prompt"
 grep -q "ftmo" <<<"$prompt"
 ! grep -q "haxlab" <<<"$prompt"
-grep -q "stop, pauzeer, drain of herstart GEEN gewone projecten" <<<"$prompt"
+grep -q "stop/pauzeer/drain/herstart geen gewone projecten" <<<"$prompt"
+grep -q "Portfolio Director" <<<"$prompt"
+grep -q "40 minuten" <<<"$prompt"
+grep -q "Senior Team OS" <<<"$prompt"
+grep -q "De default is KEEP" <<<"$prompt"
+grep -q "maximaal twee uitvoerende portfolio-workers" <<<"$prompt" || grep -q "maximaal twee uitvoerende" <<<"$prompt"
 
 [[ "$before_cloud" == "$(sqlite3 "$tmp/history.db" "SELECT active||':'||worker_count||':'||conversation_id FROM runner_targets WHERE project_id='cloud';")" ]]
 [[ "$before_ftmo" == "$(sqlite3 "$tmp/history.db" "SELECT active||':'||worker_count||':'||conversation_id FROM runner_targets WHERE project_id='ftmo';")" ]]
