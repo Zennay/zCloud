@@ -194,7 +194,7 @@ def mapping_fingerprint(db: Path) -> dict:
     try:
         c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
         c.row_factory = sqlite3.Row
-        targets = [dict(r) for r in c.execute("SELECT project_id,active,worker_count,conversation_id FROM runner_targets ORDER BY project_id")]
+        targets = [dict(r) for r in c.execute("SELECT project_id,worker_count,conversation_id FROM runner_targets ORDER BY project_id")]
         workers = [dict(r) for r in c.execute("SELECT project_id,worker_slot,conversation_id FROM runner_workers ORDER BY project_id,worker_slot")]
         c.close()
         payload = json.dumps({"targets": targets, "workers": workers}, sort_keys=True, separators=(",", ":")).encode()
