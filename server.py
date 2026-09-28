@@ -26,6 +26,9 @@ AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait
 GLOBAL_CHATGPT_WORKER_LIMIT = 2
 MAX_CHATGPT_WORKERS = 2
 AI_SLOT_DIVERSITY_PENALTY = 500
+PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
+PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
+PORTFOLIO_AI_COOLDOWN_SECONDS = 120
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -74,81 +77,86 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
-    project=PROJECT_INDEX.get(project_id,{})
-    sources=[]
-    if project.get('notion_url'): sources.append('Notion project: '+project['notion_url'])
-    if project.get('handoff_url'): sources.append('handoff: '+project['handoff_url'])
-    if project.get('scorecard_url'): sources.append('scorecard: '+project['scorecard_url'])
-    if project.get('repo_url'): sources.append('GitHub: '+project['repo_url'])
-    source_context=(' Canonieke bronnen: '+'; '.join(sources)+'.') if sources else ''
     return (
-        f'Ga verder met project {name}. Deze chat is uitsluitend voor project {name}; werk niet aan andere projecten. '
-        'Notion-first is verplicht: controleer vóór het kiezen van werk via de gekoppelde Notion-workspace de actuele '
-        'projectpagina, handoff, status, open taken/claims, besluiten en relevante documentatie. Gebruik oude chatcontext '
-        'nooit als vervanging voor deze actuele broncheck. Gebruik daarnaast de gekoppelde GitHub/repository- en VPS-context '
-        'waar die voor dit project relevant is. Ga daarna zelfstandig verder met de eerstvolgende concrete stap die het '
-        'project aantoonbaar vooruit helpt. Herhaalde QA-checklists, reviewer-templates, statusrecaps of read-only voorbereiding '
-        'zonder een echte gate te sluiten gelden als stallsignaal, niet als voortgang. Bij zo\'n stallsignaal moet je de actuele '
-        'Notion/GitHub/VPS/runner- en toolroutes opnieuw controleren, inclusief toegestane alternatieve uitvoerpaden, en actief '
-        'zoeken naar de volgende veilige ongeclaimde concrete actie. Eén ontbrekende route, zoals SSH, betekent niet automatisch '
-        'dat het project geblokkeerd is als bijvoorbeeld een self-hosted GitHub-runner het werk veilig kan uitvoeren. Stop of wacht '
-        'alleen wanneer een echte externe afhankelijkheid alle veilige voortgang blokkeert. Behoud bestaande architectuur en eerdere '
-        'beslissingen tenzij de actuele projectdocumentatie expliciet iets anders aangeeft. Rapporteer kort wat je daadwerkelijk hebt '
-        'gedaan, welke evidence de nieuwe status ondersteunt en wat de volgende uitvoerbare gate is.' + source_context
+        f'Je bent één van maximaal {GLOBAL_CHATGPT_WORKER_LIMIT} dynamische zCloud portfolio-workers. '
+        f'Het technische runnerlabel "{name}" / "{project_id}" is géén vaste projecttoewijzing en mag je keuze niet sturen. '
+        f'De centrale bron voor het volgende AI-werk is de Notion database Portfolio Work Queue: {PORTFOLIO_QUEUE_URL} '
+        f'(data source {PORTFOLIO_QUEUE_DATA_SOURCE}). Begin iedere nieuwe cyclus altijd met een verse queue-check. '
+        'Kies niet automatisch hetzelfde project als in de vorige cyclus. Vergelijk opnieuw alle eligible queue-items en '
+        'pak het hoogste actuele portfolio-prioriteitswerk. De projectrelation op het gekozen item bepaalt daarna welke '
+        'Project HQ, Handoff, GitHub-repo en live/VPS-context je moet openen. Oude chatcontext is nooit een vervanging '
+        'voor die actuele broncheck. '
     )
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total):
-    lane=WORKER_LANES[(slot-1) % len(WORKER_LANES)]
-    coordination=(
-        f' Je bent parallelle zCloud-worker {slot}/{total}. Jouw werk-lane is: {lane}. '
-        'Voorkom dubbelwerk: controleer vóór iedere wijziging actuele Notion-taken/claims, open GitHub-PRs/branches '
-        'en de live VPS-status. Registreer daarna vóór een write-taakclaim een verse coordination preflight in zCloud '
-        'voor deze project/worker/owner-combinatie; zonder geldige preflight blokkeert /api/task-claims de claim. '
-        'De preflight moet de gecontroleerde Notion-bronnen en GitHub repo/main/open PRs/branches bevatten; zCloud '
-        'controleert zelf de actuele claimset en VPS-health. Geef bij iedere autonome write-claim metadata.conflict_scope '
-        'mee met capabilities en concrete repo-relatieve files/paden die je verwacht te wijzigen; zCloud blokkeert '
-        'overlap met actieve claims van andere owners. Als je meerdere veilige onafhankelijke kandidaten uit de '
-        'actuele backlog hebt, mag je ze geordend als alternatives meesturen zodat zCloud atomair de eerste vrije '
-        'kandidaat claimt. Pak alleen een concrete work-item die niet al actief door '
-        'een andere worker wordt uitgevoerd. Gebruik waar beschikbaar de bestaande Claimed by/lease-velden in Notion '
-        'en leg je claim vast voordat je schrijft. Als de huidige lane geblokkeerd is, herlees eerst de actuele Notion-backlog '
-        'en zoek naar een andere veilige onafhankelijke ongeclaimde taak. Als er daarna geen veilige write-taak beschikbaar is, mag '
-        'read-only werk alleen wanneer het een echte gate sluit of materieel verandert; maak geen nieuwe generieke checklist, reviewer-template '
-        'of statusrecap om een cyclus te vullen. Detecteer je herhaald checklist/status-only gedrag, behandel dat expliciet als stallsignaal: '
-        'vernieuw de bron- en capability-check en probeer een concrete uitvoerbare stap of toegestane alternatieve route.'
+    return base_prompt + (
+        f' Jij bent portfolio-worker {slot}/{total}. Er mogen portfolio-breed nooit meer dan {GLOBAL_CHATGPT_WORKER_LIMIT} '
+        'AI-workers tegelijk actief zijn. Voer per cyclus dit protocol uit: '
+        '1) lees de Portfolio Work Queue opnieuw; '
+        '2) herbeoordeel de top van de queue op basis van actuele blockers, deadlines, projectposture, incidenten, '
+        'dependencies, nieuwe evidence en menselijke gates; werk Priority, Eligible, Why now en Last Priority Review bij '
+        'wanneer de waarheid veranderd is. Heropen een Blocked item alleen wanneer de dependency aantoonbaar is verdwenen '
+        'of Recheck After is bereikt en verse evidence het weer uitvoerbaar maakt. Controleer ook verlopen queue-claims: '
+        'steel nooit een item op Claim Expires alleen. Verifieer eerst via zCloud/workerstatus dat de vorige eigenaar niet '
+        'meer actief/generating is en dat er geen verse task-claim/evidence is. Alleen aantoonbaar stale werk mag veilig naar '
+        'Queued terug met een korte recovery-notitie en vrijgegeven Worker/claimvelden; '
+        '3) controleer eerst of jouw stabiele portfolio Worker 1/2 al een geldig Claimed, Running of Verifying item bezit. '
+        'Als dat zo is, hervat dat item en vernieuw Claim Expires voordat je schrijft. Laat lopend werk niet verweesd achter. '
+        'Alleen een nieuw P0 Critical item mag veilig preëmpten, en alleen wanneer het huidige werk op een consistente grens '
+        'kan worden gepauzeerd; leg dan handoff/evidence vast, release de claim en zet het oude item bewust terug naar Queued '
+        'of Blocked. Anders maak je het actieve item eerst Done of Blocked; '
+        '4) als je geen actief eigen item hebt: kies het hoogste eligible item met Status=Queued dat niet al door de andere '
+        'portfolio-worker is geclaimd. Claim vóór inhoudelijk werk met Worker, Status=Claimed, Claimed At en Claim Expires '
+        '(standaard lease circa 30 minuten; vernieuw vóór lange writes/runs), haal het item direct opnieuw op en ga alleen '
+        'door als de claim nog van jou is; bij conflict pak je het volgende item; '
+        '5) zet Status=Running en open via de Project-relatie de actuele canonieke Project HQ/Handoff/repository; '
+        '6) gebruik zCloud preflight/task-claims vóór repo-writes waar die gelden en controleer open PRs/branches om '
+        'dubbelwerk te voorkomen; '
+        '7) voer echte voortgang uit. Deterministisch werk hoort zoveel mogelijk op VPS/services/timers/queues/self-hosted '
+        'GitHub Actions. Gebruik AI voor onderzoek, ontwerp, code/review, diagnose en beslissingen die redenering nodig hebben. '
+        'NO-OP/GIVE-UP GUARD: een cyclus waarin je alleen status, claims, branches, health of documentatie leest en daarna stopt '
+        'is geen geldige afgeronde werkcyclus, tenzij die read-only validatie aantoonbaar een echte gate sluit met nieuwe evidence. '
+        'Ontbreekt één route (bijv. SSH, quota of een specifieke plugin), controleer eerst toegestane alternatieven zoals een '
+        'self-hosted GitHub-runner, workflow, service, timer, queue, bestaande repo-write route of een andere onafhankelijke '
+        'portfolio-taak. Een toolbeperking op één pad is op zichzelf geen blocker. '
+        '8) als nieuw noodzakelijk werk ontstaat, maak daarvoor een apart queue-item met Project, Priority, Execution, '
+        'Eligible en concrete Completion Criteria. Maak geen dubbele taken; merge/drop verouderde duplicaten; '
+        '9) markeer een item NOOIT Done na alleen analyse, planning, checklist, statusrecap of gedeeltelijke implementatie. '
+        'Done is alleen toegestaan als ALLE Completion Criteria aantoonbaar gehaald zijn EN Evidence concrete, verifieerbare '
+        'proof bevat (bijv. commit/PR, groene tests, live canary, artifact of gemeten resultaat). Gebruik Verifying zolang '
+        'bewijs nog gecontroleerd wordt; '
+        '10) bij een echte blocker: zet Status=Blocked, leg Blocker vast, zet Eligible=false en Recheck After als er een '
+        'zinvol hercheckmoment bestaat; laat daarna de worker vrij voor ander queuewerk. Als deterministisch vervolgwerk al '
+        'loopt, leg dat vast en ga niet in ChatGPT zitten pollen; '
+        '11) na Done of Blocked begin je de volgende AI-cyclus opnieuw bij de globale queue. Er bestaat geen vaste '
+        'projectrotatie en geen vooraf bepaald aantal AI-cycli per project. '
+        'Prioriteitsvolgorde is P0 Critical > P1 High > P2 Normal > P3 Low, maar de actuele bronwaarheid mag een item '
+        'promoveren/deprioriteren. Herbeoordeel dit elke cyclus. '
+        'Rapporteer daarnaast exact één routingmarker: ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh '
+        'voor het queue-item waaraan je deze cyclus werkelijk werkte, of ZCLOUD_WORK_PROJECT: NONE als geen item is gekozen. '
+        'Deze marker is technisch nodig om projectspecifieke bewijs-events correct te routeren. '
+        'Eindig iedere cyclus met exact één marker: ZCLOUD_AUTONOMY: CONTINUE als er nog direct eligible queuewerk is; '
+        'ZCLOUD_AUTONOMY: WAIT_VPS alleen wanneer reeds gestart deterministisch werk aantoonbaar draait EN een verse queue-check '
+        'bevestigt dat er geen ander eligible werk beschikbaar is; ZCLOUD_AUTONOMY: WAIT_HUMAN alleen bij een echte '
+        'menselijke/externe gate EN eveneens geen ander eligible queuewerk; of ZCLOUD_AUTONOMY: COMPLETE alleen als de globale '
+        'queue aantoonbaar geen eligible werk meer bevat. Voor WAIT_VPS is daarnaast exact één losse evidence-regel verplicht: '
+        'ZCLOUD_WAIT_EVIDENCE: job=<run/job/service/process-id>; queue=no-eligible. Voor WAIT_HUMAN: '
+        'ZCLOUD_WAIT_EVIDENCE: human_gate=<concrete benodigde actie/beslissing>; queue=no-eligible. De runner weigert WAIT zonder '
+        'dit machine-checkable bewijs en behandelt zo\'n poging als CONTINUE zodat de portfolio-worker opnieuw werk selecteert. '
+        'Gebruik daarnaast ZCLOUD_PRIORITY: HIGH/NORMAL/LOW/BACKGROUND uitsluitend als technisch signaal; de Notion queue '
+        'blijft de inhoudelijke bron van waarheid voor wat de workers daadwerkelijk kiezen. '
+        'PROJECT-SPECIFIEKE SAFETY blijft gelden ongeacht welk technisch runnerlabel deze portfolio-worker heeft. '
+        'Als het gekozen queue-item FTMO betreft: houd preregistration, chronologische splits, development, walk-forward en '
+        'final holdout strikt gescheiden; gebruik verborgen validation/holdout-resultaten nooit voor ontwerpkeuzes en red of '
+        'retune afgewezen generaties niet. '
+        'Als het gekozen queue-item zCloud betreft: respecteer het persistent finish-protocol. Controleer vóór een zCloud '
+        'write-iteratie de live improvement-state en iteration_count. Als de teller op 9 staat, is dit de '
+        'tiende/harde laatste iteratie en moet in dezelfde cyclus ook de eind-audit worden uitgevoerd. '
+        'Alleen na een werkelijk afgeronde implementatie-iteratie '
+        'mag ZCLOUD_ITERATION_COMPLETE worden gemeld. Bij expliciete finish-review gebruik exact ZCLOUD_FINISH_REVIEW: '
+        'GREEN_NO_P0P1 of ZCLOUD_FINISH_REVIEW: OPEN_P0P1. Bij de harde eind-audit gebruik exact ZCLOUD_FINAL_AUDIT: GREEN '
+        'of ZCLOUD_FINAL_AUDIT: FAIL. Gebruik deze markers nooit voor read-only voorbereiding.'
     )
-    coordination += (
-        ' VPS-first operating rule: laat herhaalbaar, deterministisch werk zoveel mogelijk door scripts, services, timers, '
-        'queues en self-hosted GitHub Actions op de VPS uitvoeren. Gebruik ChatGPT voor onderzoek, ontwerp, review en '
-        'beslissingen die werkelijk modelredenering nodig hebben; verbruik geen volgende chatcyclus aan puur wachten, pollen '
-        'of dezelfde statuscheck. Als je deterministisch vervolgwerk hebt gestart, laat dat zelfstandig doorlopen en geef de '
-        'regie terug aan zCloud. Autonomy-contract: eindig iedere werkcyclus met exact één losse marker. Gebruik '
-        'ZCLOUD_AUTONOMY: CONTINUE alleen als er direct nog een veilige concrete stap uitvoerbaar is; '
-        'ZCLOUD_AUTONOMY: WAIT_VPS als lokale services, CI, een runner of een andere deterministische stap eerst moet afronden; '
-        'ZCLOUD_AUTONOMY: WAIT_HUMAN als een echte gebruiker/externe deelnemer/beslissing nodig is; of '
-        'ZCLOUD_AUTONOMY: COMPLETE als de huidige projectscope aantoonbaar klaar is. Gebruik CONTINUE nooit alleen om activiteit te houden. '
-        'Geef daarnaast aan het einde van iedere afgeronde AI-cyclus exact één prioriteitsmarker voor de globale zCloud-workerpool: '
-        'ZCLOUD_PRIORITY: HIGH als dit project direct nog kritisch AI-werk heeft; ZCLOUD_PRIORITY: NORMAL voor regulier nuttig AI-werk; '
-        'ZCLOUD_PRIORITY: LOW als ander projectwerk voor mag gaan; of ZCLOUD_PRIORITY: BACKGROUND als AI hier voorlopig nauwelijks nodig is.'
-    )
-    if project_id=='ftmo':
-        coordination += (
-            ' Voor FTMO blijven preregistration, chronologische splits, walk-forward en final holdout strikt gescheiden. '
-            'Gebruik verborgen validation/holdout-resultaten nooit voor ontwerpkeuzes en red of retune afgewezen '
-            'generaties niet. Parallel voorbereid werk is alleen toegestaan wanneer het outcome-free blijft.'
-        )
-    if project_id=='cloud':
-        coordination += (
-            ' Voor zCloud self-improvement geldt een persistent finish-protocol. Controleer vóór een write-iteratie '
-            'via de live zCloud improvement-state hoeveel implementatie-iteraties al zijn afgerond. Als de teller op 9 '
-            'staat, is dit de tiende/harde laatste iteratie en moet je in hetzelfde slotrapport ook de eind-audit doen. '
-            'Alleen na een daadwerkelijk afgeronde implementatie-iteratie zet je exact de losse marker ZCLOUD_ITERATION_COMPLETE in je slotrapport. '
-            'Wanneer je expliciet de senior finish-gate beoordeelt, voeg exact één marker toe: '
-            'ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 als de finish-gate groen is en er geen nieuwe P0/P1 is, anders '
-            'ZCLOUD_FINISH_REVIEW: OPEN_P0P1. Bij de eind-audit na de harde iteratiegrens gebruik je exact '
-            'ZCLOUD_FINAL_AUDIT: GREEN of ZCLOUD_FINAL_AUDIT: FAIL. Gebruik deze markers niet voor read-only prep.'
-        )
-    return base_prompt + coordination
 RUNNER_DEFAULTS = {
     pid: {
         'name': project['name'],
@@ -1146,19 +1154,19 @@ def load_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
-            'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps','continue_delay_seconds':0,
-            'min_ai_interval_seconds':0,
+            'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps','continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
+            'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
         'projects':{
             'cloud':{
                 'mode':'zcloud_stopgate','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
             'haxlab':{
                 'mode':'haxlab_status','auto_start':True,'dispatch_mode':'vps',
                 'status_file':'/var/lib/haxlab/state/autonomy-status.json',
-                'ai_states':['NEEDS_AI'],'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'ai_states':['NEEDS_AI'],'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
             'ftmo':{
                 'mode':'ftmo_status','auto_start':True,'dispatch_mode':'vps',
@@ -1168,23 +1176,23 @@ def load_autonomy_policy():
                     'development_review','close_development_reject','walk_forward',
                     'close_walk_forward_reject','final_holdout','close_validated','next_generation_design',
                 ],
-                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
             'ulab':{
                 'mode':'external_gate','auto_start':False,'dispatch_mode':'vps',
-                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
             'supa':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
             'raiseai':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
             'zssh':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
+                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
             },
         },
     }
@@ -1208,8 +1216,8 @@ def _autonomy_config(project_id):
     override=policy.get('projects',{}).get(project_id)
     if isinstance(override,dict):
         cfg.update(override)
-    try: cfg['continue_delay_seconds']=max(0,min(3600,int(cfg.get('continue_delay_seconds') if cfg.get('continue_delay_seconds') is not None else 0)))
-    except Exception: cfg['continue_delay_seconds']=0
+    try: cfg['continue_delay_seconds']=max(0,min(3600,int(cfg.get('continue_delay_seconds') if cfg.get('continue_delay_seconds') is not None else PORTFOLIO_AI_COOLDOWN_SECONDS)))
+    except Exception: cfg['continue_delay_seconds']=PORTFOLIO_AI_COOLDOWN_SECONDS
     try: cfg['min_ai_interval_seconds']=max(0,min(24*3600,int(cfg.get('min_ai_interval_seconds') if cfg.get('min_ai_interval_seconds') is not None else cfg['continue_delay_seconds'])))
     except Exception: cfg['min_ai_interval_seconds']=cfg['continue_delay_seconds']
     for key,fallback in (('wait_vps_seconds',900),('wait_human_seconds',21600),('complete_recheck_seconds',86400)):
@@ -1509,32 +1517,67 @@ def global_worker_allocation(states=None,targets=None):
         'keys':[item['worker_key'] for item in selected],
         'projects':sorted({item['project_id'] for item in selected}),
         'candidates':candidates,
+        'queue_url':PORTFOLIO_QUEUE_URL,
+        'queue_data_source':PORTFOLIO_QUEUE_DATA_SOURCE,
+        'dispatch_cooldown_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
     }
 
 def _persist_global_worker_allocation(allocation):
+    """Persist two stable portfolio slot identities across project-tab reallocation."""
     selected=list(allocation.get('workers') or [])[:GLOBAL_CHATGPT_WORKER_LIMIT]
     ts=now()
+    selected_by_key={
+        f"{item['project_id']}::w{max(1,int(item['worker_slot'] or 1))}":item
+        for item in selected
+    }
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        existing=c.execute(
+            'SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot'
+        ).fetchall()
+        existing_by_key={
+            f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":dict(row)
+            for row in existing
+        }
+        assignments={}
+        used_slots=set()
+        # Keep a surviving worker on the same global Worker 1/2 identity.
+        for worker_key in selected_by_key:
+            previous=existing_by_key.get(worker_key)
+            if not previous:
+                continue
+            slot=int(previous['slot'])
+            if 1 <= slot <= GLOBAL_CHATGPT_WORKER_LIMIT and slot not in used_slots:
+                assignments[worker_key]=(slot,previous.get('assigned_at') or ts)
+                used_slots.add(slot)
+        free_slots=[slot for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1) if slot not in used_slots]
+        for worker_key in selected_by_key:
+            if worker_key in assignments:
+                continue
+            if not free_slots:
+                break
+            assignments[worker_key]=(free_slots.pop(0),ts)
+
         c.execute('DELETE FROM ai_global_slots')
-        for global_slot,item in enumerate(selected,1):
+        for worker_key,(global_slot,assigned_at) in sorted(assignments.items(),key=lambda item:item[1][0]):
+            item=selected_by_key[worker_key]
             c.execute(
                 'INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at) VALUES(?,?,?,?)',
-                (global_slot,str(item['project_id']),int(item['worker_slot']),ts),
+                (global_slot,str(item['project_id']),int(item['worker_slot']),assigned_at),
             )
 
-def _current_global_slot_keys():
+def _current_global_slot_map():
     try:
         with connect() as c:
-            rows=c.execute('SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
+            rows=c.execute('SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
                            (GLOBAL_CHATGPT_WORKER_LIMIT,)).fetchall()
             if rows:
                 return {
-                    f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}"
+                    f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":int(row['slot'])
                     for row in rows
                 }
             # Safe bootstrap before the scheduler's first tick: preserve at most two
-            # already-active workers, never the old per-project total.
+            # already-active workers and assign deterministic portfolio slot numbers.
             targets=c.execute(
                 'SELECT project_id,worker_count FROM runner_targets WHERE active=1 ORDER BY project_id'
             ).fetchall()
@@ -1551,11 +1594,14 @@ def _current_global_slot_keys():
                         continue
                     selected.append(f'{project_id}::w{slot}')
                     if len(selected)>=GLOBAL_CHATGPT_WORKER_LIMIT:
-                        return set(selected)
-            return set(selected)
+                        return {key:index for index,key in enumerate(selected,1)}
+            return {key:index for index,key in enumerate(selected,1)}
     except Exception:
         logging.exception('Could not read global AI slot state')
-        return set()
+        return {}
+
+def _current_global_slot_keys():
+    return set(_current_global_slot_map())
 
 def _autonomy_deactivate_project(project_id,reason):
     with connect() as c:
@@ -1641,7 +1687,7 @@ def runner_targets():
 
 def runner_worker_targets():
     base=runner_targets()
-    selected=_current_global_slot_keys()
+    global_slots=_current_global_slot_map()
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
@@ -1653,13 +1699,19 @@ def runner_worker_targets():
                 conversation_id=(row['conversation_id'] if row else '') or ''
                 desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
-                allocated=worker_key in selected
+                global_slot=global_slots.get(worker_key)
+                allocated=global_slot is not None
                 active=allocated and desired_state!='paused'
+                prompt_slot=int(global_slot or slot)
+                prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
+                worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
+                             if allocated else f"{cfg['name']} · worker {slot}/{count}")
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
-                    'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
+                    'global_worker_slot':global_slot,'global_worker_count':GLOBAL_CHATGPT_WORKER_LIMIT,
+                    'name':worker_name,'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
-                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
+                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total),
                     'desired_state':desired_state,'active':active,
                     'auto_continue':active and bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
