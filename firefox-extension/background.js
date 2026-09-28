@@ -292,7 +292,8 @@ function runProject(cfg) {
       }
       return autoContinue;
     } catch (_) {
-      return BASE_PROJECT === "cloud" ? false : autoContinue;
+      autoContinue = false;
+      return false;
     }
   }
   async function reportFinishSignals(text) {
