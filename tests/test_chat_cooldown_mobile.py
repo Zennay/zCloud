@@ -53,6 +53,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("queue=no-eligible", background)
         self.assertIn("invalid-wait-vps-without-run-evidence", background)
         self.assertIn("invalid-wait-human-without-gate-evidence", background)
+        self.assertIn(r"text.match(/ZCLOUD_WAIT_EVIDENCE:\s*([^\n]+)/i)", background)
+        self.assertIn(r"/(?:^|;)\s*queue=no-eligible(?:;|$)/i", background)
         self.assertIn('syncStatus("autonomy-continue"', background)
         self.assertIn("ZCLOUD_WORK_PROJECT:", server)
 
