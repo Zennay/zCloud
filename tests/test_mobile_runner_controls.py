@@ -13,6 +13,13 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("${mobileRunnerControls(p)}${runnerControls(p)}", app)
         self.assertIn("${mobileRunnerControls(p,'detail')}${workerDetailPanel(p)}", app)
 
+
+    def test_project_card_tap_opens_detail_without_pointer_heuristic(self):
+        app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("const projectCardTarget=e.target.closest('[data-project-id]')", app)
+        self.assertIn("location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId)", app)
+        self.assertNotIn("const mobileCard=e.target.closest('[data-project-id]');if(mobileCard&&window.matchMedia", app)
+
     def test_mobile_controls_have_visible_responsive_styles(self):
         css = (ROOT / "public" / "style.css").read_text(encoding="utf-8")
         self.assertIn(".mobile-runner-controls{display:none}", css)
