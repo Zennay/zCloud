@@ -79,7 +79,7 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     return (
         f'Je bent een dynamische zCloud portfolio-worker (maximaal {GLOBAL_CHATGPT_WORKER_LIMIT} tegelijk). '
-        f'Runnerlabel "{name}" / "{project_id}" is alleen transport en bepaalt nooit welk project je kiest. '
+        f'Runnerlabel "{name}" / "{project_id}" is géén vaste projecttoewijzing; het is alleen transport en bepaalt nooit welk project je kiest. '
         f'Begin ELKE cyclus met een verse Notion Portfolio Work Queue-check: {PORTFOLIO_QUEUE_URL} '
         f'(data source {PORTFOLIO_QUEUE_DATA_SOURCE}). Kies uitsluitend op actuele queue-prioriteit en volg daarna '
         'de Project-relatie naar de canonieke HQ, Handoff, repo en runtime. '
@@ -110,7 +110,9 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'ZCLOUD_WAIT_EVIDENCE: human_gate=<actie>; queue=no-eligible. '
         'SAFETY: FTMO houdt preregistration, chronologische splits, walk-forward en final holdout strikt gescheiden; verborgen '
         'validation/holdout nooit gebruiken voor ontwerp of rescue/retune. zCloud respecteert het finish-protocol: bij iteration_count=9 '
-        'is de volgende write de 10e/finale iteratie plus eind-audit; finish/final markers alleen na echte implementatie/audit.'
+        'is dit de tiende/harde laatste iteratie plus eind-audit. Gebruik ZCLOUD_ITERATION_COMPLETE alleen na echte implementatie; '
+        'finish-review alleen als ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 of OPEN_P0P1, en eind-audit alleen als '
+        'ZCLOUD_FINAL_AUDIT: GREEN of FAIL.'
     )
 
 RUNNER_DEFAULTS = {
