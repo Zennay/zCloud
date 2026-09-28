@@ -1466,6 +1466,7 @@ def global_worker_allocation(states=None,targets=None):
     resource_policy=enhancements.load_resource_policy()
     busy=_busy_ai_worker_keys()
     desired=_worker_desired_states()
+    currently_allocated=_current_global_slot_keys()
     candidates=[]
     for project_id,target in targets.items():
         state=states.get(project_id) or project_autonomy_state(project_id)
@@ -1479,14 +1480,17 @@ def global_worker_allocation(states=None,targets=None):
         for slot in range(1,project_cap+1):
             worker_key=f'{project_id}::w{slot}'
             worker_state=desired.get(worker_key,'running')
-            if worker_state in ('paused','draining'):
+            if worker_state=='paused':
+                continue
+            if worker_state=='draining' and worker_key not in currently_allocated:
                 continue
             score=base_score-(slot-1)*AI_SLOT_DIVERSITY_PENALTY
-            if worker_key in busy:
+            if worker_key in busy or worker_state=='draining':
                 score += 100000
             candidates.append({
                 'worker_key':worker_key,'project_id':project_id,'worker_slot':slot,
                 'score':score,'reason':state.get('reason') or 'eligible',
+                'desired_state':worker_state,
             })
     candidates.sort(key=lambda item:(-item['score'],item['project_id'],item['worker_slot']))
     selected=candidates[:GLOBAL_CHATGPT_WORKER_LIMIT]
@@ -1534,7 +1538,7 @@ def _current_global_slot_keys():
                         'SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',
                         (project_id,slot),
                     ).fetchone()
-                    if row and str(row['desired_state'] or 'running') in ('paused','draining'):
+                    if row and str(row['desired_state'] or 'running')=='paused':
                         continue
                     selected.append(f'{project_id}::w{slot}')
                     if len(selected)>=GLOBAL_CHATGPT_WORKER_LIMIT:
@@ -1566,6 +1570,10 @@ def autonomy_scheduler_tick():
     allocation=global_worker_allocation(states,targets)
     _persist_global_worker_allocation(allocation)
     selected_projects=set(allocation['projects'])
+    selected_running_projects={
+        item['project_id'] for item in allocation['workers']
+        if item.get('desired_state','running')=='running'
+    }
 
     started=[]
     paused=[]
@@ -1576,7 +1584,7 @@ def autonomy_scheduler_tick():
             if not target.get('active'):
                 if _autonomy_enqueue_start(project_id,'global-slot:'+str(state.get('reason') or 'eligible')):
                     started.append(project_id)
-            elif state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
+            elif project_id in selected_running_projects and state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
                 project_id,
                 'global-slot:'+str(state.get('reason') or 'eligible'),
                 state.get('min_ai_interval_seconds') or 0,
