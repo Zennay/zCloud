@@ -140,7 +140,20 @@
       var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
       var data=await response.json().catch(function(){return {}});
       if(!response.ok){throw new Error(data.error||'Opslaan mislukt')}
-      el.dataset.previousValue=el.value;
+      var saved=(data.resource&&data.resource.priority)||el.value;
+      el.value=saved;
+      el.dataset.previousValue=saved;
+      var project=(DATA.projects||[]).find(function(p){return p.id===el.dataset.resourcePriority});
+      if(project){
+        project.resource=project.resource||{};
+        project.resource.priority=saved;
+        if(data.resource&&data.resource.weight!=null)project.resource.weight=data.resource.weight;
+        if(data.resource&&data.resource.applied!=null)project.resource.applied=!!data.resource.applied;
+      }
+      if(data.resource&&data.resource.applied===false){
+        $('notice').hidden=false;
+        $('notice').textContent='Voorrang is opgeslagen. De live VPS-weight kon nog niet worden toegepast; zCloud houdt je keuze wel vast.';
+      }
       await refresh(true);
     }catch(err){
       el.value=previous;

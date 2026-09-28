@@ -275,6 +275,11 @@ class RunnerSmokeTests(unittest.TestCase):
 
         server.enhancements.load_resource_policy = load_policy
         server.enhancements.set_priority = set_priority
+        server.CACHE = {
+            "projects": [
+                {"id": "cloud", "resource": {"priority": "normal", "weight": 400}},
+            ]
+        }
 
         status, body = self.request(
             "/api/resource-priority",
@@ -282,6 +287,8 @@ class RunnerSmokeTests(unittest.TestCase):
             {"X-ZCloud-Actor": "resource-test"},
         )
         self.assertEqual(200, status, body)
+        self.assertEqual("high", server.CACHE["projects"][0]["resource"]["priority"])
+        self.assertEqual(1, server.CACHE["projects"][0]["resource"]["weight"])
         _, audit = self.request(
             "/api/config-audit?key=resource.priority&target=cloud"
         )

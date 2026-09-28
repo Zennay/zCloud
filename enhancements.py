@@ -122,12 +122,36 @@ def set_priority(project, priority):
     tmp = RESOURCE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(policy, ensure_ascii=False, indent=2) + "\n")
     tmp.replace(RESOURCE_FILE)
+
+    # Persistence is the source of truth for the dashboard. Applying the live
+    # systemd weight is best-effort: a sudo/helper failure must never make the
+    # UI pretend the user's saved priority was rejected.
+    applied = not bool(PROJECT_UNITS.get(project))
+    apply_error = None
     if PROJECT_UNITS.get(project):
-        subprocess.check_output(
-            ["sudo", "-n", "/usr/local/sbin/zennay-resource-control", "apply", project],
-            text=True, stderr=subprocess.STDOUT, timeout=12
-        )
-    return {"project": project, "priority": priority, "weight": PRIORITY_WEIGHTS[priority]}
+        try:
+            subprocess.check_output(
+                ["sudo", "-n", "/usr/local/sbin/zennay-resource-control", "apply", project],
+                text=True, stderr=subprocess.STDOUT, timeout=12
+            )
+            applied = True
+        except Exception as exc:
+            apply_error = str(exc)[:300]
+
+    saved = (load_resource_policy().get(project) or {}).get("priority")
+    if saved != priority:
+        raise RuntimeError("Prioriteit kon niet duurzaam worden opgeslagen")
+
+    result = {
+        "project": project,
+        "priority": priority,
+        "weight": PRIORITY_WEIGHTS[priority],
+        "persisted": True,
+        "applied": applied,
+    }
+    if apply_error:
+        result["apply_error"] = apply_error
+    return result
 
 def _find_metrics_dict(data):
     if not isinstance(data, dict):

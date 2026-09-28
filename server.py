@@ -1936,8 +1936,26 @@ class Handler(BaseHTTPRequestHandler):
                     raise
                 record_config_audit(
                     'resource.priority',project,actor,old_priority,result.get('priority'),
-                    'no_change' if old_priority==result.get('priority') else 'succeeded'
+                    'no_change' if old_priority==result.get('priority') else 'succeeded',
+                    None if result.get('applied', True) else ('saved; live apply warning: '+str(result.get('apply_error') or 'unknown'))[:300]
                 )
+                # Keep /api/status coherent immediately. The normal sampler only
+                # rebuilds project telemetry every 60 seconds, which otherwise
+                # makes a freshly saved priority appear to jump back.
+                with LOCK:
+                    if CACHE:
+                        for item in CACHE.get('projects', []):
+                            if item.get('id') != project:
+                                continue
+                            resource=dict(item.get('resource') or {})
+                            resource.update({
+                                'priority': result.get('priority'),
+                                'weight': result.get('weight'),
+                            })
+                            if 'applied' in result:
+                                resource['applied']=bool(result.get('applied'))
+                            item['resource']=resource
+                            break
                 return self.reply({'ok':True,'resource':result,'time':now()})
             if u.path=='/api/project-layout':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
