@@ -199,7 +199,7 @@ function runProject(cfg) {
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
-  let autoContinueDelayMs = Math.max(30000, Number(cfg.auto_continue_delay_seconds || 300) * 1000);
+  let autoContinueDelayMs = Math.max(30000, Number(cfg.auto_continue_delay_seconds || 600) * 1000);
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
@@ -905,7 +905,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         const base = message.projectId.split("::w", 1)[0];
         return {
           auto_continue: target ? target.auto_continue !== false : base !== "cloud",
-          continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds || 300) : 300,
+          continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds || 600) : 600,
           autonomy: target?.autonomy || null
         };
       })
