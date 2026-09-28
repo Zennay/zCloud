@@ -21,7 +21,7 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
-AUTONOMY_TICK_SECONDS = 600
+AUTONOMY_TICK_SECONDS = 60
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 MAX_CHATGPT_WORKERS = 8
 WORKER_PREFLIGHT_TTL_SECONDS = 600
@@ -1130,30 +1130,46 @@ def load_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
-            'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600,
+            'mode':'ai_worker','auto_start':False,'dispatch_mode':'vps','continue_delay_seconds':600,
+            'min_ai_interval_seconds':600,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
         'projects':{
-            'cloud':{'mode':'zcloud_stopgate','auto_start':False,'continue_delay_seconds':600},
+            'cloud':{
+                'mode':'zcloud_stopgate','auto_start':True,'dispatch_mode':'vps',
+                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+            },
             'haxlab':{
-                'mode':'haxlab_status','auto_start':False,
+                'mode':'haxlab_status','auto_start':True,'dispatch_mode':'vps',
                 'status_file':'/var/lib/haxlab/state/autonomy-status.json',
-                'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,
+                'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,'min_ai_interval_seconds':600,
             },
             'ftmo':{
-                'mode':'ftmo_status','auto_start':False,
+                'mode':'ftmo_status','auto_start':True,'dispatch_mode':'vps',
                 'status_file':'/opt/ftmo-autonomous/.scratch/autonomy/status.json',
                 'ai_stages':[
                     'provider_foundation','freeze_data_split','await_preregistration','development',
                     'development_review','close_development_reject','walk_forward',
                     'close_walk_forward_reject','final_holdout','close_validated','next_generation_design',
                 ],
-                'continue_delay_seconds':600,
+                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
             },
-            'ulab':{'mode':'external_gate','auto_start':False,'continue_delay_seconds':3600},
-            'supa':{'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600},
-            'raiseai':{'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600},
-            'zssh':{'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600},
+            'ulab':{
+                'mode':'external_gate','auto_start':False,'dispatch_mode':'vps',
+                'continue_delay_seconds':3600,'min_ai_interval_seconds':3600,
+            },
+            'supa':{
+                'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
+                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+            },
+            'raiseai':{
+                'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
+                'continue_delay_seconds':1800,'min_ai_interval_seconds':1800,
+            },
+            'zssh':{
+                'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
+                'continue_delay_seconds':1800,'min_ai_interval_seconds':1800,
+            },
         },
     }
     if not AUTONOMY_POLICY_FILE.exists():
@@ -1178,10 +1194,13 @@ def _autonomy_config(project_id):
         cfg.update(override)
     try: cfg['continue_delay_seconds']=max(30,min(3600,int(cfg.get('continue_delay_seconds') or 600)))
     except Exception: cfg['continue_delay_seconds']=600
+    try: cfg['min_ai_interval_seconds']=max(60,min(24*3600,int(cfg.get('min_ai_interval_seconds') or cfg['continue_delay_seconds'])))
+    except Exception: cfg['min_ai_interval_seconds']=cfg['continue_delay_seconds']
     for key,fallback in (('wait_vps_seconds',900),('wait_human_seconds',21600),('complete_recheck_seconds',86400)):
         try: cfg[key]=max(60,min(7*86400,int(cfg.get(key) or fallback)))
         except Exception: cfg[key]=fallback
     cfg['auto_start']=bool(cfg.get('auto_start'))
+    cfg['dispatch_mode']='vps' if str(cfg.get('dispatch_mode') or 'vps').lower()=='vps' else 'browser'
     return cfg
 
 def _autonomy_status_json(path):
@@ -1268,7 +1287,8 @@ def project_autonomy_state(project_id):
         allow=False;reason=hold['event']
     return {
         'project_id':project_id,'mode':mode,'allow_ai':bool(allow),'auto_start':cfg['auto_start'],
-        'continue_delay_seconds':cfg['continue_delay_seconds'],'reason':reason,'hold':hold,'detail':detail,
+        'dispatch_mode':cfg['dispatch_mode'],'continue_delay_seconds':cfg['continue_delay_seconds'],
+        'min_ai_interval_seconds':cfg['min_ai_interval_seconds'],'reason':reason,'hold':hold,'detail':detail,
     }
 
 def autonomy_states():
@@ -1295,36 +1315,76 @@ def _autonomy_enqueue_start(project_id,reason):
         if runtime and bool(runtime['manual_pause']):
             return False
         target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
-        if not target:
+        if not target or bool(target['active']):
             return False
-        if bool(target['active']):
-            return False
-        pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action='start' AND status='pending' LIMIT 1",(project_id,)).fetchone()
+        pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action IN ('start','push') AND status='pending' LIMIT 1",(project_id,)).fetchone()
         if pending:
             return False
         c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
         c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (project_id,'start','pending',ts,ts,None))
-        c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',(ts,str(reason)[:250],project_id))
+        c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
+    return True
+
+def _autonomy_dispatch_due(runtime,min_interval_seconds):
+    if not runtime or not runtime.get('last_dispatch_at'):
+        return True
+    try:
+        last=datetime.fromisoformat(runtime['last_dispatch_at']).astimezone(timezone.utc)
+        return (datetime.now(timezone.utc)-last).total_seconds() >= int(min_interval_seconds)
+    except Exception:
+        return True
+
+def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        runtime=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
+        if runtime and bool(runtime['manual_pause']):
+            return False
+        if not _autonomy_dispatch_due(dict(runtime) if runtime else None,min_interval_seconds):
+            return False
+        target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+        if not target or not bool(target['active']):
+            return False
+        pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action IN ('start','push','new_chat') AND status='pending' LIMIT 1",(project_id,)).fetchone()
+        if pending:
+            return False
+        latest=c.execute('SELECT generating,sending,event FROM runner_events WHERE project_id=? ORDER BY id DESC LIMIT 1',(project_id,)).fetchone()
+        if latest and (bool(latest['generating']) or bool(latest['sending'])):
+            return False
+        c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
+                  (project_id,'push','pending',ts,ts,None))
+        c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',
+                  (ts,str(reason)[:250],project_id))
     return True
 
 def autonomy_scheduler_tick():
     states=autonomy_states()
     targets=runner_targets()
     started=[]
+    pushed=[]
     for project_id,state in states.items():
         if not state.get('auto_start'):
             continue
         runtime=_autonomy_initialize_project(project_id)
         if runtime and bool(runtime.get('manual_pause')):
             continue
-        target=targets.get(project_id) or {}
-        if target.get('active'):
+        if not state.get('allow_ai'):
             continue
-        if state.get('allow_ai') and _autonomy_enqueue_start(project_id,state.get('reason') or 'autonomy_gate_open'):
-            started.append(project_id)
-    return {'started':started,'states':states,'time':now()}
+        target=targets.get(project_id) or {}
+        if not target.get('active'):
+            if _autonomy_enqueue_start(project_id,state.get('reason') or 'autonomy_gate_open'):
+                started.append(project_id)
+            continue
+        if state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
+            project_id,
+            state.get('reason') or 'autonomy_gate_open',
+            state.get('min_ai_interval_seconds') or 600,
+        ):
+            pushed.append(project_id)
+    return {'started':started,'pushed':pushed,'states':states,'time':now()}
 
 def autonomy_scheduler():
     time.sleep(8)
@@ -1333,6 +1393,8 @@ def autonomy_scheduler():
             result=autonomy_scheduler_tick()
             if result['started']:
                 logging.info('Autonomy started: %s', ','.join(result['started']))
+            if result['pushed']:
+                logging.info('VPS requested AI cycle: %s', ','.join(result['pushed']))
         except Exception:
             logging.exception('Autonomy scheduler failed')
         time.sleep(AUTONOMY_TICK_SECONDS)
@@ -1349,6 +1411,8 @@ def runner_targets():
                               'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
                               'auto_continue':bool(autonomy['allow_ai']),
                               'auto_continue_delay_seconds':autonomy['continue_delay_seconds'],
+                              'vps_dispatch_only':autonomy.get('dispatch_mode')=='vps',
+                              'ai_dispatch_interval_seconds':autonomy.get('min_ai_interval_seconds',600),
                               'autonomy':autonomy,'improvement':improvement}
     return out
 
@@ -1373,6 +1437,8 @@ def runner_worker_targets():
                     'desired_state':desired_state,'active':bool(cfg['active']) and desired_state!='paused',
                     'auto_continue':bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 600),
+                    'vps_dispatch_only':bool(cfg.get('vps_dispatch_only')),
+                    'ai_dispatch_interval_seconds':int(cfg.get('ai_dispatch_interval_seconds') or 600),
                     'autonomy':cfg.get('autonomy'),'improvement':cfg.get('improvement')
                 }
     return out
