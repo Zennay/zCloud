@@ -1906,6 +1906,15 @@ class Handler(BaseHTTPRequestHandler):
                                 if action=='push' and not any(w.get('active') for w in worker_configs.values() if w.get('base_project_id')==project_id):
                                     return self.reply({'error':'Geen actieve workers om te pushen'},409)
                                 if action in ('start','new_chat'):
+                                    current=c.execute('SELECT active,worker_count FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+                                    if current and not bool(current['active']):
+                                        other_slots=c.execute(
+                                            'SELECT COALESCE(SUM(worker_count),0) FROM runner_targets WHERE active=1 AND project_id<>?',
+                                            (project_id,),
+                                        ).fetchone()[0]
+                                        requested=max(1,int(current['worker_count'] or 1))
+                                        if int(other_slots or 0)+requested>MAX_CHATGPT_WORKERS:
+                                            return self.reply({'error':f'Globale limiet is {MAX_CHATGPT_WORKERS} actieve ChatGPT-workers; de allocator bepaalt eerst welk project een slot krijgt'},409)
                                     c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
                                     c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
                                 elif action=='pause':
@@ -2017,8 +2026,19 @@ class Handler(BaseHTTPRequestHandler):
                 if project_id not in runner_targets():return self.reply({'error':'Onbekend project'},404)
                 if worker_count<1 or worker_count>MAX_CHATGPT_WORKERS:return self.reply({'error':f'Kies 1 t/m {MAX_CHATGPT_WORKERS} ChatGPT-tabs'},400)
                 with connect() as c:
-                    before=c.execute('SELECT worker_count FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+                    before=c.execute('SELECT worker_count,active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
                     old_count=max(1,int((before or {'worker_count':1})['worker_count'] or 1))
+                    if before and bool(before['active']):
+                        other_slots=c.execute(
+                            'SELECT COALESCE(SUM(worker_count),0) FROM runner_targets WHERE active=1 AND project_id<>?',
+                            (project_id,),
+                        ).fetchone()[0]
+                        if int(other_slots or 0)+worker_count>MAX_CHATGPT_WORKERS:
+                            record_config_audit(
+                                'runner.worker_count',project_id,actor,old_count,worker_count,'rejected',
+                                f'global cap {MAX_CHATGPT_WORKERS}',connection=c,
+                            )
+                            return self.reply({'error':f'Globale limiet is {MAX_CHATGPT_WORKERS} actieve ChatGPT-workers'},409)
                     c.execute('UPDATE runner_targets SET worker_count=? WHERE project_id=?',(worker_count,project_id))
                     primary=c.execute('SELECT conversation_id FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
                     for slot in range(1,worker_count+1):
