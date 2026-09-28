@@ -1774,7 +1774,7 @@ def runner_worker_statuses(project_id):
             heartbeat=c.execute("SELECT * FROM runner_events WHERE project_id=? AND worker_slot=? AND event='heartbeat' ORDER BY id DESC LIMIT 1",args).fetchone()
             command=c.execute('SELECT id,status,action,created_at,updated_at,result FROM runner_commands WHERE project_id=? ORDER BY id DESC LIMIT 1',(worker_key,)).fetchone()
             desired=cfg.get('desired_state') or 'running'
-            active=bool(base.get('active')) and desired!='paused'
+            active=bool(cfg.get('active')) and desired!='paused'
             try:
                 age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(latest['ts'])).total_seconds())) if latest else None
             except Exception:
@@ -1786,7 +1786,7 @@ def runner_worker_statuses(project_id):
                 progress_age=None
             generating=bool(latest['generating']) if latest else False
             stalled=bool(generating and progress_age is not None and progress_age>=20*60)
-            if not base.get('active') or desired=='paused':
+            if not active or desired=='paused':
                 state='paused'
             elif desired=='draining':
                 state='draining'
