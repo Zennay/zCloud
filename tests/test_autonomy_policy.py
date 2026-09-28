@@ -8,9 +8,15 @@ from pathlib import Path
 
 enhancements_stub = types.ModuleType("enhancements")
 enhancements_stub.init_db = lambda conn: None
+_previous_enhancements = sys.modules.get("enhancements")
 sys.modules["enhancements"] = enhancements_stub
 
 import server
+
+if _previous_enhancements is None:
+    sys.modules.pop("enhancements", None)
+else:
+    sys.modules["enhancements"] = _previous_enhancements
 
 
 class AutonomyPolicyTests(unittest.TestCase):
