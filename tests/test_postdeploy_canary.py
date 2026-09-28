@@ -173,7 +173,6 @@ class PostdeployCanaryTests(unittest.TestCase):
             payload = json.dumps({
                 "targets": [{
                     "project_id": "cloud",
-                    "active": 1,
                     "worker_count": 2,
                     "conversation_id": "conversation-a",
                 }],
@@ -183,6 +182,26 @@ class PostdeployCanaryTests(unittest.TestCase):
                 ],
             }, sort_keys=True, separators=(",", ":")).encode()
             self.assertEqual(hashlib.sha256(payload).hexdigest(), result["sha256"])
+
+    def test_mapping_fingerprint_ignores_dynamic_active_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "history.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "CREATE TABLE runner_targets("
+                    "project_id TEXT, active INTEGER, worker_count INTEGER, conversation_id TEXT)"
+                )
+                conn.execute(
+                    "CREATE TABLE runner_workers("
+                    "project_id TEXT, worker_slot INTEGER, conversation_id TEXT)"
+                )
+                conn.execute("INSERT INTO runner_targets VALUES('cloud',0,1,'conversation-a')")
+                conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'conversation-a')")
+            before = canary.mapping_fingerprint(db)["sha256"]
+            with sqlite3.connect(db) as conn:
+                conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='cloud'")
+            after = canary.mapping_fingerprint(db)["sha256"]
+            self.assertEqual(before, after)
 
 
 if __name__ == "__main__":
