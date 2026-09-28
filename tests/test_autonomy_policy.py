@@ -123,43 +123,48 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertEqual("autonomy-wait-vps", after["reason"])
         self.assertIsNotNone(after["hold"])
 
-    def test_scheduler_bootstraps_once_and_manual_pause_wins(self):
-        with server.connect() as conn:
-            conn.execute("UPDATE runner_targets SET active=0 WHERE project_id='supa'")
+    def test_global_scheduler_allocates_at_most_two_and_manual_pause_wins(self):
+        self.hax_status.write_text(json.dumps({"state": "NEEDS_AI"}), encoding="utf-8")
+        self.ftmo_status.write_text(json.dumps({
+            "ok": True,
+            "research": {"next_stage": "development"},
+            "paper_forward_shadow": {"action": "idle"},
+        }), encoding="utf-8")
+
         result = server.autonomy_scheduler_tick()
-        self.assertIn("supa", result["started"])
+        self.assertLessEqual(len(result["allocation"]["assignments"]), 2)
         with server.connect() as conn:
-            target = conn.execute("SELECT active FROM runner_targets WHERE project_id='supa'").fetchone()
-            pending = conn.execute(
-                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='start' AND status='pending'"
-            ).fetchone()[0]
-            conn.execute("UPDATE runner_targets SET active=0 WHERE project_id='supa'")
-            conn.execute("UPDATE autonomy_runtime SET manual_pause=1 WHERE project_id='supa'")
-        self.assertEqual(1, target["active"])
-        self.assertEqual(1, pending)
+            rows = conn.execute(
+                "SELECT project_id,active,worker_count FROM runner_targets WHERE active=1"
+            ).fetchall()
+        self.assertLessEqual(sum(int(row["worker_count"]) for row in rows), 2)
 
+        allocated = list(dict.fromkeys(result["allocation"]["assignments"]))
+        self.assertTrue(allocated)
+        paused = allocated[0]
+        with server.connect() as conn:
+            conn.execute("UPDATE autonomy_runtime SET manual_pause=1 WHERE project_id=?", (paused,))
         again = server.autonomy_scheduler_tick()
-        self.assertNotIn("supa", again["started"])
-        with server.connect() as conn:
-            target = conn.execute("SELECT active FROM runner_targets WHERE project_id='supa'").fetchone()
-        self.assertEqual(0, target["active"])
+        self.assertNotIn(paused, again["allocation"]["assignments"])
 
-    def test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it(self):
+    def test_vps_scheduler_pushes_allocated_ai_worker_without_time_cooldown(self):
+        # Remove competing projects so Supa receives both global slots deterministically.
+        for project_id in ("haxlab", "ftmo", "cloud", "raiseai", "zssh"):
+            server._autonomy_initialize_project(project_id)
+            with server.connect() as conn:
+                conn.execute("UPDATE autonomy_runtime SET manual_pause=1 WHERE project_id=?", (project_id,))
         with server.connect() as conn:
-            conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='supa'")
             conn.execute("DELETE FROM runner_commands WHERE project_id='supa'")
         first = server.autonomy_scheduler_tick()
+        self.assertIn("supa", first["allocation"]["assignments"])
         self.assertIn("supa", first["pushed"])
         with server.connect() as conn:
             pushes = conn.execute(
                 "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
             ).fetchone()[0]
-            runtime = conn.execute(
-                "SELECT last_dispatch_at,last_reason FROM autonomy_runtime WHERE project_id='supa'"
-            ).fetchone()
         self.assertEqual(1, pushes)
-        self.assertIsNotNone(runtime["last_dispatch_at"])
 
+        # A pending command still protects against duplicate sends; there is no time-based cooldown.
         second = server.autonomy_scheduler_tick()
         self.assertNotIn("supa", second["pushed"])
         with server.connect() as conn:
