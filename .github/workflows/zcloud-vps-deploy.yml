@@ -11,46 +11,15 @@ permissions:
 
 concurrency:
   group: zcloud-production-deploy
-  # Only the newest green main revision is worth deploying. Superseded deploys
-  # must never block production behind an obsolete queued commit.
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  handoff:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
-    runs-on: self-hosted
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - name: Check out the exact green main revision
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          clean: true
-          fetch-depth: 1
-
-      - name: Promote backend and autonomy policy
+      - name: Hand off green main to VPS-native deployer
         run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path server.py \
-            --path autonomy-policy.json \
-            --actor "github-actions-vps-deploy" \
-            --json
-
-      - name: Promote Firefox runner without enabling chats
-        run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path firefox-extension/background.js \
-            --actor "github-actions-vps-deploy" \
-            --json
-
-      - name: Promote mobile UI
-        run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path public/app.js \
-            --path public/index.html \
-            --path public/style.css \
-            --actor "github-actions-vps-deploy" \
-            --json
+          echo "Green zCloud main: ${{ github.event.workflow_run.head_sha }}"
+          echo "The VPS-native zcloud-autodeploy.timer will independently verify this exact SHA and promote it transactionally."
