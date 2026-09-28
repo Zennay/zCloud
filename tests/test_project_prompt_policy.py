@@ -11,19 +11,29 @@ def test_all_active_workers_have_canonical_notion_sources():
         assert project.get("handoff_url"), project_id
 
 
-def test_worker_prompts_are_notion_first_and_execution_first():
+def test_worker_prompts_are_global_queue_first_compact_and_execution_first():
+    prompts = []
     for project_id in ACTIVE_PROJECTS:
         project = server.PROJECT_INDEX[project_id]
         base = server.project_runner_prompt(project_id, project["name"])
-        prompt = server.project_worker_prompt(project_id, project["name"], base, 1, 1)
+        prompt = server.project_worker_prompt(project_id, project["name"], base, 1, 2)
+        prompts.append(prompt)
 
-        assert "Notion-first is verplicht" in prompt
-        assert project["notion_url"] in prompt
-        assert project["handoff_url"] in prompt
-        assert "stallsignaal" in prompt
-        assert "geen nieuwe generieke checklist" in prompt
-        assert "self-hosted GitHub-runner" in prompt
-        assert "Bij claimconflict pak je meteen het volgende eligible queue-item" in prompt
-        assert "Een ontbrekende, verlopen of null task-claim is geen stopconditie" in prompt
-        assert "Bij claimconflict pak je meteen het volgende eligible queue-item" in prompt
-        assert "read-only" not in prompt.lower()
+        assert "Begin ELKE cyclus met een verse Notion Portfolio Work Queue-check" in prompt
+        assert "runnerlabel" in prompt.lower()
+        assert "VOER WERK UIT" in prompt
+        assert "status-only/read-only cyclus is ongeldig" in prompt
+        assert "CONTINUE is VERBODEN" in prompt
+        assert "self-hosted GitHub Actions" in prompt
+        assert "executeer of block/release" in prompt
+        assert "Done alleen wanneer ALLE Completion Criteria bewezen zijn" in prompt
+        assert "ZCLOUD_WORK_PROJECT:" in prompt
+        assert "ZCLOUD_AUTONOMY:" in prompt
+        assert len(prompt) < 5000
+
+    # Project labels may differ, but every project uses the same compact global protocol.
+    normalized = [
+        p.replace(server.PROJECT_INDEX[pid]["name"], "<name>").replace(pid, "<id>")
+        for p, pid in zip(prompts, ACTIVE_PROJECTS)
+    ]
+    assert len(set(normalized)) == 1
