@@ -84,6 +84,7 @@ BLOCKED_PREFIXES = (
 
 CREATABLE_PATHS = {
     "firefox-extension/recovery.js",
+    "autonomy-policy.json",
 }
 
 AUDITED_CONFIG_PATHS = {
