@@ -1,5 +1,5 @@
 [Unit]
-Description=zCloud 12-hour portfolio bird's-eye review
+Description=zCloud 40-minute Portfolio Director audit
 After=chatgpt-firefox.service
 Wants=chatgpt-firefox.service
 
