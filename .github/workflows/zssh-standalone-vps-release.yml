@@ -1,0 +1,58 @@
+name: zSSH standalone VPS release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-standalone-vps-release.yml
+      - scripts/zssh_release_coordination.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-standalone-vps-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      ZSSH_RELEASE_SHA: 7499713db2a795f346ed9d45ad45dbc91fef44e2
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+    steps:
+      - name: Check out zCloud release coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out exact green zSSH release
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_RELEASE_SHA }}
+          path: zssh-source
+          persist-credentials: false
+      - name: Check runner identity and source revision
+        run: |
+          test "$(id -un)" = ubuntu
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_RELEASE_SHA"
+          systemctl --user is-active --quiet zssh.service
+          curl --fail --silent --show-error http://127.0.0.1:8788/health
+      - name: Register fresh preflight and exclusive zSSH claim
+        run: python3 scripts/zssh_release_coordination.py acquire --sha "$ZSSH_RELEASE_SHA"
+      - name: Promote standalone release and run live MCP file proof
+        env:
+          ZSSH_EXPECTED_SHA: ${{ env.ZSSH_RELEASE_SHA }}
+        run: bash zssh-source/deploy/install-live.sh "$GITHUB_WORKSPACE/zssh-source"
+      - name: Verify live release provenance
+        run: |
+          test "$(readlink -f /home/ubuntu/.local/share/zssh/current)" = "/home/ubuntu/.local/share/zssh/releases/$ZSSH_RELEASE_SHA"
+          systemctl --user is-active --quiet zssh.service
+          curl --fail --silent --show-error http://127.0.0.1:8788/health
+          echo "ZSSH_STANDALONE_M1_LIVE_GREEN sha=$ZSSH_RELEASE_SHA"
+      - name: Release coordination claim
+        if: always()
+        run: python3 scripts/zssh_release_coordination.py release
