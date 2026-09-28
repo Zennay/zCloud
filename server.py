@@ -21,6 +21,8 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
+DEPLOY_HOLD_FILE = Path.home() / '.local/state/zcloud/deploy-hold.json'
+DEPLOY_HOLD_MAX_AGE_SECONDS = 20 * 60
 AUTONOMY_TICK_SECONDS = 2
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 GLOBAL_CHATGPT_WORKER_LIMIT = 2
@@ -1569,9 +1571,34 @@ def _autonomy_deactivate_project(project_id,reason):
         c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
     return True
 
+def deployment_hold_active():
+    try:
+        if not DEPLOY_HOLD_FILE.exists():
+            return False
+        age=max(0,time.time()-DEPLOY_HOLD_FILE.stat().st_mtime)
+        if age>DEPLOY_HOLD_MAX_AGE_SECONDS:
+            logging.warning('Ignoring stale zCloud deploy hold (age=%ss)',int(age))
+            return False
+        return True
+    except Exception:
+        logging.exception('Could not inspect zCloud deploy hold')
+        return False
+
 def autonomy_scheduler_tick():
     states=autonomy_states()
     targets=runner_targets()
+    if deployment_hold_active():
+        return {
+            'started':[],'paused':[],'pushed':[],
+            'allocation':{
+                'limit':GLOBAL_CHATGPT_WORKER_LIMIT,
+                'keys':sorted(_current_global_slot_keys()),
+                'projects':sorted({key.split('::w',1)[0] for key in _current_global_slot_keys()}),
+                'workers':[],
+                'candidates':[],
+            },
+            'states':states,'time':now(),'deployment_hold':True,
+        }
     for project_id,state in states.items():
         if state.get('auto_start'):
             _autonomy_initialize_project(project_id)
@@ -2208,7 +2235,12 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
-            return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation})
+            return self.reply({
+                'projects':runner_worker_targets(),
+                'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,
+                'global_allocation':allocation,
+                'deployment_hold':deployment_hold_active(),
+            })
         if u.path=='/api/autonomy':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             states=autonomy_states()
