@@ -38,7 +38,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("Portfolio Work Queue", server)
         self.assertIn("4162fac179f44fcbbe4072a183d2b440", server)
         self.assertIn("is géén vaste projecttoewijzing", server)
-        self.assertIn("claim het item vóór inhoudelijk werk", server)
+        self.assertIn("Claim vóór inhoudelijk werk", server)
         self.assertIn("Done is alleen toegestaan", server)
         self.assertIn("Evidence concrete, verifieerbare", server)
         self.assertIn("NO-OP/GIVE-UP GUARD", server)
