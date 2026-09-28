@@ -3,7 +3,7 @@ set -euo pipefail
 FILE="${1:-firefox-extension/background.js}"
 node --check "$FILE"
 grep -q 'runner-policy-check' "$FILE"
-grep -q 'BASE_PROJECT === "cloud" ? false' "$FILE"
+grep -q 'autoContinue = false' "$FILE"
 grep -q 'improvement-iteration-complete' "$FILE"
 grep -q 'improvement-review-green' "$FILE"
 grep -q 'improvement-audit-green' "$FILE"
