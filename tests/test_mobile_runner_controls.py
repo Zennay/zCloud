@@ -10,8 +10,8 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("function mobileRunnerControls", app)
         self.assertIn('data-runner-toggle="', app)
         self.assertIn('data-runner-workers="', app)
-        self.assertIn("\${mobileRunnerControls(p)}\${runnerControls(p)}", app)
-        self.assertIn("\${mobileRunnerControls(p,'detail')}\${workerDetailPanel(p)}", app)
+        self.assertIn("${mobileRunnerControls(p)}${runnerControls(p)}", app)
+        self.assertIn("${mobileRunnerControls(p,'detail')}${workerDetailPanel(p)}", app)
 
     def test_mobile_controls_have_visible_responsive_styles(self):
         css = (ROOT / "public" / "style.css").read_text(encoding="utf-8")
