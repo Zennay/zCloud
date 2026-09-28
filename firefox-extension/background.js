@@ -192,7 +192,7 @@ function runProject(cfg) {
       "Neem GEEN nieuwe taakclaim zolang onderstaande bestaande claim nog geldig is. " +
       "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen; " +
       "heartbeat en release moeten dezelfde owner_id blijven gebruiken. " +
-      "Als de claim ontbreekt, verlopen is of een andere owner heeft: doe alleen read-only werk, voer een verse coordination-preflight uit en claim pas daarna veilig opnieuw. " +
+      "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit en probeer in dezelfde cyclus veilig opnieuw te claimen; bij succes ga je direct verder met de taak. Een ontbrekende claim is geen reden om na statuscontrole te stoppen. " +
       "Handoff-context: " + JSON.stringify(REPLACEMENT_HANDOFF)
     : cfg.prompt;
   let replacementHandoffPending = !!REPLACEMENT_HANDOFF;
