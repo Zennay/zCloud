@@ -20,6 +20,13 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId)", app)
         self.assertNotIn("const mobileCard=e.target.closest('[data-project-id]');if(mobileCard&&window.matchMedia", app)
 
+    def test_mobile_overview_is_always_reachable(self):
+        app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('class="mobile-overview-link', app)
+        self.assertIn('data-nav="overview"', app)
+        self.assertIn("const navAction=e.target.closest('[data-nav]')", app)
+        self.assertIn('class="back" href="#overview" data-nav="overview"', app)
+
     def test_mobile_controls_have_visible_responsive_styles(self):
         css = (ROOT / "public" / "style.css").read_text(encoding="utf-8")
         self.assertIn(".mobile-runner-controls{display:none}", css)
