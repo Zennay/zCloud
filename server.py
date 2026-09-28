@@ -1129,7 +1129,28 @@ def load_autonomy_policy():
             'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
-        'projects':{},
+        'projects':{
+            'cloud':{'mode':'zcloud_stopgate','auto_start':True,'continue_delay_seconds':300},
+            'haxlab':{
+                'mode':'haxlab_status','auto_start':True,
+                'status_file':'/var/lib/haxlab/state/autonomy-status.json',
+                'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,
+            },
+            'ftmo':{
+                'mode':'ftmo_status','auto_start':True,
+                'status_file':'/opt/ftmo-autonomous/.scratch/autonomy/status.json',
+                'ai_stages':[
+                    'provider_foundation','freeze_data_split','await_preregistration','development',
+                    'development_review','close_development_reject','walk_forward',
+                    'close_walk_forward_reject','final_holdout','close_validated','next_generation_design',
+                ],
+                'continue_delay_seconds':600,
+            },
+            'ulab':{'mode':'external_gate','auto_start':False,'continue_delay_seconds':3600},
+            'supa':{'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300},
+            'raiseai':{'mode':'ai_worker','auto_start':True,'continue_delay_seconds':600},
+            'zssh':{'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300},
+        },
     }
     if not AUTONOMY_POLICY_FILE.exists():
         return default
@@ -1138,7 +1159,8 @@ def load_autonomy_policy():
         if not isinstance(raw,dict) or raw.get('schema_version')!=1:
             raise ValueError('schema_version must be 1')
         base={**default['default'],**(raw.get('default') if isinstance(raw.get('default'),dict) else {})}
-        projects=raw.get('projects') if isinstance(raw.get('projects'),dict) else {}
+        file_projects=raw.get('projects') if isinstance(raw.get('projects'),dict) else {}
+        projects={**default['projects'],**file_projects}
         return {'schema_version':1,'default':base,'projects':projects}
     except Exception:
         logging.exception('Invalid autonomy policy; fail closed')
