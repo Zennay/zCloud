@@ -300,10 +300,17 @@ function runProject(cfg) {
   }
   async function reportFinishSignals(text) {
     if (!text) return;
+    const workProjectMatch = text.match(/ZCLOUD_WORK_PROJECT:\s*(HAXLAB|FTMO|CLOUD|SUPA|RAISEAI|ULAB|ZSSH|NONE)\b/i);
+    const workProject = workProjectMatch ? workProjectMatch[1].toLowerCase() : "";
+    if (workProject) {
+      await syncStatus("portfolio-work-project", {reason: workProject});
+    }
     const priority = text.match(/ZCLOUD_PRIORITY:\s*(HIGH|NORMAL|LOW|BACKGROUND)/i);
     if (priority) {
       await syncStatus("autonomy-priority", {reason: priority[1].toLowerCase()});
     }
+    // Autonomy markers stay attached to the technical worker slot. They control
+    // whether that worker is allowed another global queue cycle.
     if (text.includes("ZCLOUD_AUTONOMY: WAIT_VPS")) {
       await syncStatus("autonomy-wait-vps", {reason: "assistant-marker"});
     } else if (text.includes("ZCLOUD_AUTONOMY: WAIT_HUMAN")) {
@@ -313,19 +320,22 @@ function runProject(cfg) {
     } else if (text.includes("ZCLOUD_AUTONOMY: CONTINUE")) {
       await syncStatus("autonomy-continue", {reason: "assistant-marker"});
     }
-    if (BASE_PROJECT !== "cloud") return;
+    // zCloud improvement markers must be attributed to the queue item's real
+    // project, not to whichever project-labelled browser tab owns this slot.
+    if (workProject !== "cloud") return;
+    const projectRoute = {reason: "assistant-marker", baseProjectId: "cloud"};
     if (text.includes("ZCLOUD_ITERATION_COMPLETE")) {
-      await syncStatus("improvement-iteration-complete", {reason: "assistant-marker"});
+      await syncStatus("improvement-iteration-complete", projectRoute);
     }
     if (text.includes("ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1")) {
-      await syncStatus("improvement-review-green", {reason: "assistant-marker"});
+      await syncStatus("improvement-review-green", projectRoute);
     } else if (text.includes("ZCLOUD_FINISH_REVIEW: OPEN_P0P1")) {
-      await syncStatus("improvement-review-open", {reason: "assistant-marker"});
+      await syncStatus("improvement-review-open", projectRoute);
     }
     if (text.includes("ZCLOUD_FINAL_AUDIT: GREEN")) {
-      await syncStatus("improvement-audit-green", {reason: "assistant-marker"});
+      await syncStatus("improvement-audit-green", projectRoute);
     } else if (text.includes("ZCLOUD_FINAL_AUDIT: FAIL")) {
-      await syncStatus("improvement-audit-failed", {reason: "assistant-marker"});
+      await syncStatus("improvement-audit-failed", projectRoute);
     }
   }
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
