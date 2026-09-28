@@ -42,6 +42,14 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("Done is alleen toegestaan", server)
         self.assertIn("Evidence concrete, verifieerbare", server)
         self.assertIn("Er bestaat geen vaste", server)
+        self.assertIn("ZCLOUD_WORK_PROJECT:", server)
+
+    def test_browser_routes_project_specific_evidence_from_queue_marker(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        self.assertIn("ZCLOUD_WORK_PROJECT:", background)
+        self.assertIn('workProject !== "cloud"', background)
+        self.assertIn('baseProjectId: "cloud"', background)
+        self.assertIn('"portfolio-work-project"', background)
 
     def test_mobile_projects_are_visible_and_touch_safe(self):
         index = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
