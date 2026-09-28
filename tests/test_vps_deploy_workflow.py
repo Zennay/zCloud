@@ -5,27 +5,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
-    def test_deploy_only_follows_green_main_regression(self):
+    def test_green_main_handoff_never_waits_for_repo_specific_vps_runner(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn('workflows: ["zCloud regression smoke"]', text)
         self.assertIn("branches: [main]", text)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
-        self.assertIn("runs-on: self-hosted", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("cancel-in-progress: true", text)
+        self.assertNotIn("runs-on: self-hosted", text)
 
-    def test_deploy_uses_transactional_promotions_without_chat_activation(self):
+    def test_workflow_only_hands_off_and_does_not_mutate_vps(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(3, text.count("scripts/zcloud_transactional_promote.py"))
-        for path in (
-            "server.py",
-            "autonomy-policy.json",
-            "firefox-extension/background.js",
-            "public/app.js",
-            "public/index.html",
-            "public/style.css",
+        self.assertIn("zcloud-autodeploy.timer", text)
+        for forbidden in (
+            "scripts/zcloud_transactional_promote.py",
+            "runner-control",
+            "action: start",
+            "chatgpt.com",
+            "sudo ",
         ):
-            self.assertIn(f"--path {path}", text)
-        for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)
 
 
