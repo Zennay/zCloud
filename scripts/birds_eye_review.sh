@@ -6,9 +6,9 @@ DB="${ZCLOUD_DB:-$ROOT/history.db}"
 PROJECTS="${ZCLOUD_PROJECTS:-$ROOT/projects.json}"
 LAYOUT="${ZCLOUD_LAYOUT:-$ROOT/project-layout.json}"
 REVIEW_ID="portfolio-review"
-REVIEW_NAME="Portfolio Birdseye Review"
-WINDOW_HOURS="${ZCLOUD_BIRDSEYE_WINDOW_HOURS:-12}"
-MIN_INTERVAL_HOURS="${ZCLOUD_BIRDSEYE_MIN_INTERVAL_HOURS:-12}"
+REVIEW_NAME="Portfolio Director"
+WINDOW_HOURS="${ZCLOUD_BIRDSEYE_WINDOW_HOURS:-24}"
+MIN_INTERVAL_MINUTES="${ZCLOUD_BIRDSEYE_MIN_INTERVAL_MINUTES:-40}"
 WAIT_TIMEOUT="${ZCLOUD_BIRDSEYE_WAIT_TIMEOUT:-90}"
 DRY_RUN="${ZCLOUD_BIRDSEYE_DRY_RUN:-0}"
 
@@ -46,9 +46,9 @@ CREATE TABLE IF NOT EXISTS daily_review_runs(
 );
 SQL
 
-recent_queued="$(sqlite3 -cmd ".timeout 8000" "$DB" "SELECT COUNT(*) FROM daily_review_runs WHERE status IN ('dispatching','queued') AND unixepoch(ts) > unixepoch('now','-${MIN_INTERVAL_HOURS} hours');")"
+recent_queued="$(sqlite3 -cmd ".timeout 8000" "$DB" "SELECT COUNT(*) FROM daily_review_runs WHERE status IN ('dispatching','queued') AND unixepoch(ts) > unixepoch('now','-${MIN_INTERVAL_MINUTES} minutes');")"
 if [[ "$recent_queued" != "0" ]]; then
-  log "last bounded review is inside the ${MIN_INTERVAL_HOURS}h guard; nothing queued"
+  log "last portfolio-director review is inside the ${MIN_INTERVAL_MINUTES}m guard; nothing queued"
   exit 0
 fi
 
@@ -74,35 +74,46 @@ project_text="$(paste -sd ',' "$changed" | sed 's/,/, /g')"
 jq -R -s -c 'split("\n") | map(select(length>0))' < "$changed" > "$project_json_file"
 
 cat > "$prompt_file" <<PROMPT
-Je bent de Portfolio Bird's-eye Reviewer. Doe precies één bounded review.
-Kijk alleen naar lopende projecten die aantoonbaar veranderd zijn in de afgelopen ${WINDOW_HOURS} uur.
-zCloud heeft lokaal deze project-ID's met activiteit gevonden: ${project_text}.
-Verifieer de actuele waarheid via gekoppelde Notion, GitHub en VPS-context voordat je conclusies trekt.
+Je bent de zCloud Portfolio Director: de derde, onafhankelijke strategische chat naast maximaal twee uitvoerende portfolio-workers.
+Je voert precies één portfolio-review uit en gaat daarna weer idle. Normale backlog-items uitvoeren is NIET jouw rol.
 
-Doel: helikopterview. Niet opnieuw hard doordrillen op de bestaande aanpak.
-Vergelijk patronen tussen projecten en vraag per relevant project of de huidige aanpak nog klopt.
-Gebruik de Senior Team OS-regel Periodic Strategy & Architecture Challenge.
-Classificeer alleen waar nuttig als KEEP, ADJUST of REDESIGN.
-Een slechte losse run is nooit genoeg voor REDESIGN.
+Lees eerst de centrale Notion Portfolio Work Queue:
+https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440
+Lees daarna de actuele Projects-database, canonical Project HQ/Handoff van relevante projecten, open claims/PRs en beschikbare VPS/runtime evidence.
+zCloud zag in de afgelopen ${WINDOW_HOURS} uur activiteit in: ${project_text}. Gebruik dat alleen als signaal; controleer ook of een stil project
+door een belangrijke blocker/deadline/prioriteitsverschuiving ten onrechte uit beeld raakt.
 
-Let vooral op herhaalde bottlenecks, dezelfde failure-mechanismen, onnodige complexiteit,
-lage informatiewinst per compute/tijd, verkeerde prioriteiten en kansen om simpeler te werken.
+Jouw drie verantwoordelijkheden:
+1. PRIORITEIT: beoordeel of P0/P1/P2/P3, Eligible, Why now, Dependencies en Recheck After in de centrale queue nog kloppen.
+   Herprioriteer alleen wanneer actuele evidence dit rechtvaardigt. Maximaal twee uitvoerende workers blijven de queue uitvoeren.
+2. RICHTING: doe een compacte portfolio/project-audit. Vraag of doel, architectuur, roadmap, experimenten en gekozen aanpak nog steeds
+   de beste bekende keuze zijn gegeven nieuwe evidence. Zoek vooral naar verkeerde aannames, lokale optimalisatie, eindeloos repareren,
+   onnodige complexiteit, lage informatiewinst en werk dat niet meer naar het echte doel leidt.
+3. SENIOR ESCALATION: als er echte strategische/architectuur/product/security/data twijfel is, stuur een gerichte Senior Team OS review
+   op dat specifieke vraagstuk aan. Senior review moet eindigen in KEEP, ADJUST of REDESIGN met evidence en concrete queue-impact.
+   Roep seniors NIET op voor routinewerk, statusupdates of omdat 40 minuten verstreken zijn.
 
-Guardrails:
-- maak geen productiecodewijzigingen vanuit deze review;
-- stop, pauzeer, drain of herstart GEEN gewone projecten of projectworkers;
-- wijzig GEEN worker-count, project-active-state of resource-priority van gewone projecten;
-- de reviewer mag uitsluitend zijn eigen runner-id portfolio-review starten/pushen;
-- verander niet iedere review architectuur om activiteit te creëren;
-- verzwak nooit security, provenance, preregistration, anti-leakage of validation gates;
-- maak alleen een concrete taak/Notion-update als de evidence een verandering echt rechtvaardigt;
-- maximaal 3 cross-project aanbevelingen per review;
-- projecten zonder relevante wijziging in ${WINDOW_HOURS} uur niet opnieuw analyseren;
-- schrijf voor de gebruiker eerst in gewone Nederlandse taal; technische details compact eronder.
+Anti-churn / autonomie-regels:
+- De default is KEEP. Geen wijziging is een geldige en vaak gewenste audituitkomst.
+- Maak niet elke review nieuwe architectuur, nieuwe taken of nieuwe prioriteiten.
+- REDESIGN vereist sterke nieuwe evidence of een herhaald structureel failure-mechanisme; één slechte run is nooit genoeg.
+- Maximaal 3 inhoudelijke portfolio-aanpassingen per review, tenzij een P0 incident/security/integrity probleem meer vereist.
+- Verwijder/merge/drop dubbele of obsolete queue-items in plaats van de backlog steeds groter te maken.
+- Zet Done nooit zonder verifieerbare completion evidence.
+- Als een taak deterministisch/repeatable kan worden uitgevoerd, geef VPS/service/timer/queue/self-hosted GitHub Actions de voorkeur.
+  ChatGPT-workers zijn voor research, ontwerp, review, diagnose en andere reasoning-gates.
+- Stop/pauzeer/drain/herstart geen gewone projecten of uitvoerende workers vanuit deze review.
+- Wijzig geen worker-count of global worker cap. De twee uitvoerende workers blijven maximaal twee.
+- De Portfolio Director telt apart als derde strategische chat en claimt geen gewone uitvoeringstaak.
+- Verzwak nooit security, provenance, preregistration, anti-leakage, validation of human-approval gates.
+- Een menselijke/externe gate blijft Blocked/Eligible=false totdat er echt nieuwe evidence is.
 
-Sluit af met: bekeken projecten, belangrijkste patronen, KEEP/ADJUST/REDESIGN waar relevant,
-maximaal 3 acties en wat bewust NIET veranderd hoeft te worden.
-Daarna blijft deze reviewchat idle tot de volgende 12-uurs trigger.
+Schrijf de audituitkomst terug naar de centrale queue en relevante canonical Handoff/strategy docs wanneer er iets materieels verandert.
+Als niets materieels verandert, leg alleen een compacte audit-evidence vast; manufacture geen werk.
+
+Sluit af met: bekeken projecten; prioriteitswijzigingen; KEEP/ADJUST/REDESIGN per relevante afwijking; eventuele Senior Team OS escalaties;
+maximaal 3 acties; wat bewust NIET veranderd is; en welke deterministische stappen door de VPS blijven lopen.
+Daarna blijft deze reviewchat idle tot de volgende ongeveer 40-minuten trigger.
 PROMPT
 
 sqlite3 -cmd ".timeout 8000" "$DB" <<SQL
