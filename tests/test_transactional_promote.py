@@ -71,13 +71,19 @@ class TransactionalPromotionTests(unittest.TestCase):
             result["server.py"],
         )
 
-    def test_only_explicit_recovery_file_may_be_created(self):
+    def test_only_explicit_bootstrap_files_may_be_created(self):
+        self._write(
+            self.candidate,
+            "autonomy-policy.json",
+            '{"schema_version":1,"default":{"auto_start":false}}\n',
+        )
         result = promote.validate_candidate(
             self.candidate,
             self.root,
-            ["firefox-extension/recovery.js"],
+            ["firefox-extension/recovery.js", "autonomy-policy.json"],
         )
         self.assertIn("firefox-extension/recovery.js", result)
+        self.assertIn("autonomy-policy.json", result)
         self._write(self.candidate, "firefox-extension/other-new.js", "nope\n")
         with self.assertRaises(promote.PromotionError):
             promote.validate_candidate(
