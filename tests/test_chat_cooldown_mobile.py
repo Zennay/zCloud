@@ -48,6 +48,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("Er bestaat geen vaste", server)
 
     def test_wait_markers_require_machine_checkable_evidence(self):
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
         self.assertIn("ZCLOUD_WAIT_EVIDENCE", background)
         self.assertIn("queue=no-eligible", background)
