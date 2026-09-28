@@ -24,7 +24,7 @@ AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 2
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 GLOBAL_CHATGPT_WORKER_LIMIT = 2
-MAX_CHATGPT_WORKERS = GLOBAL_CHATGPT_WORKER_LIMIT
+MAX_CHATGPT_WORKERS = 2
 AI_SLOT_DIVERSITY_PENALTY = 500
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
@@ -364,6 +364,8 @@ def init_db():
         worker_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_workers)').fetchall()}
         if 'desired_state' not in worker_columns:
             c.execute("ALTER TABLE runner_workers ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'running'")
+        c.execute("CREATE TABLE IF NOT EXISTS ai_global_slots(slot INTEGER PRIMARY KEY, project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, assigned_at TEXT NOT NULL)")
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS ai_global_slots_worker ON ai_global_slots(project_id,worker_slot)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
@@ -1326,7 +1328,6 @@ def _autonomy_enqueue_start(project_id,reason):
         if pending:
             return False
         c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
-        c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (project_id,'start','pending',ts,ts,None))
         c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
@@ -1418,6 +1419,17 @@ def _busy_ai_worker_keys():
         logging.exception('Could not read busy AI workers for allocator')
     return busy
 
+def _worker_desired_states():
+    try:
+        with connect() as c:
+            rows=c.execute('SELECT project_id,worker_slot,desired_state FROM runner_workers').fetchall()
+        return {
+            f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":str(row['desired_state'] or 'running')
+            for row in rows
+        }
+    except Exception:
+        return {}
+
 def _project_ai_priority_score(project_id,state,target,resource_policy):
     resource_name=str((resource_policy.get(project_id) or {}).get('priority') or 'normal')
     score={'background':0,'normal':400,'high':800,'turbo':1200}.get(resource_name,400)
@@ -1453,6 +1465,7 @@ def global_worker_allocation(states=None,targets=None):
     targets=targets or runner_targets()
     resource_policy=enhancements.load_resource_policy()
     busy=_busy_ai_worker_keys()
+    desired=_worker_desired_states()
     candidates=[]
     for project_id,target in targets.items():
         state=states.get(project_id) or project_autonomy_state(project_id)
@@ -1465,6 +1478,9 @@ def global_worker_allocation(states=None,targets=None):
         project_cap=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(target.get('worker_count') or 1)))
         for slot in range(1,project_cap+1):
             worker_key=f'{project_id}::w{slot}'
+            worker_state=desired.get(worker_key,'running')
+            if worker_state in ('paused','draining'):
+                continue
             score=base_score-(slot-1)*AI_SLOT_DIVERSITY_PENALTY
             if worker_key in busy:
                 score += 100000
@@ -1482,33 +1498,61 @@ def global_worker_allocation(states=None,targets=None):
         'candidates':candidates,
     }
 
-def _autonomy_set_worker_slots(project_id,slots):
-    slots={int(slot) for slot in slots if 1<=int(slot)<=GLOBAL_CHATGPT_WORKER_LIMIT}
+def _persist_global_worker_allocation(allocation):
+    selected=list(allocation.get('workers') or [])[:GLOBAL_CHATGPT_WORKER_LIMIT]
+    ts=now()
     with connect() as c:
-        for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
-            primary=c.execute('SELECT conversation_id FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('DELETE FROM ai_global_slots')
+        for global_slot,item in enumerate(selected,1):
             c.execute(
-                'INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
-                (project_id,slot,(primary['conversation_id'] if slot==1 and primary else '') or ''),
-            )
-            c.execute(
-                "UPDATE runner_workers SET desired_state=? WHERE project_id=? AND worker_slot=?",
-                ('running' if slot in slots else 'paused',project_id,slot),
+                'INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at) VALUES(?,?,?,?)',
+                (global_slot,str(item['project_id']),int(item['worker_slot']),ts),
             )
 
-def _autonomy_enqueue_pause(project_id,reason):
-    ts=now()
+def _current_global_slot_keys():
+    try:
+        with connect() as c:
+            rows=c.execute('SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
+                           (GLOBAL_CHATGPT_WORKER_LIMIT,)).fetchall()
+            if rows:
+                return {
+                    f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}"
+                    for row in rows
+                }
+            # Safe bootstrap before the scheduler's first tick: preserve at most two
+            # already-active workers, never the old per-project total.
+            targets=c.execute(
+                'SELECT project_id,worker_count FROM runner_targets WHERE active=1 ORDER BY project_id'
+            ).fetchall()
+            selected=[]
+            for target in targets:
+                project_id=str(target['project_id'])
+                count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(target['worker_count'] or 1)))
+                for slot in range(1,count+1):
+                    row=c.execute(
+                        'SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',
+                        (project_id,slot),
+                    ).fetchone()
+                    if row and str(row['desired_state'] or 'running') in ('paused','draining'):
+                        continue
+                    selected.append(f'{project_id}::w{slot}')
+                    if len(selected)>=GLOBAL_CHATGPT_WORKER_LIMIT:
+                        return set(selected)
+            return set(selected)
+    except Exception:
+        logging.exception('Could not read global AI slot state')
+        return set()
+
+def _autonomy_deactivate_project(project_id,reason):
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
         if not target or not bool(target['active']):
             return False
-        pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action='pause' AND status='pending' LIMIT 1",(project_id,)).fetchone()
+        # Do not touch runner_workers.desired_state here. That field belongs to
+        # explicit/manual worker pause/drain controls, not scheduler allocation.
         c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
-        c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
-        if not pending:
-            c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
-                      (project_id,'pause','pending',ts,ts,None))
         c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
     return True
 
@@ -1518,20 +1562,17 @@ def autonomy_scheduler_tick():
     for project_id,state in states.items():
         if state.get('auto_start'):
             _autonomy_initialize_project(project_id)
+
     allocation=global_worker_allocation(states,targets)
-    selected_keys=set(allocation['keys'])
-    selected_slots={}
-    for item in allocation['workers']:
-        selected_slots.setdefault(item['project_id'],set()).add(item['worker_slot'])
+    _persist_global_worker_allocation(allocation)
+    selected_projects=set(allocation['projects'])
 
     started=[]
     paused=[]
     pushed=[]
     for project_id,state in states.items():
         target=targets.get(project_id) or {}
-        slots=selected_slots.get(project_id,set())
-        _autonomy_set_worker_slots(project_id,slots)
-        if slots:
+        if project_id in selected_projects:
             if not target.get('active'):
                 if _autonomy_enqueue_start(project_id,'global-slot:'+str(state.get('reason') or 'eligible')):
                     started.append(project_id)
@@ -1542,7 +1583,7 @@ def autonomy_scheduler_tick():
             ):
                 pushed.append(project_id)
         elif target.get('active'):
-            if _autonomy_enqueue_pause(project_id,'global-slot-reallocated'):
+            if _autonomy_deactivate_project(project_id,'global-slot-reallocated'):
                 paused.append(project_id)
     return {
         'started':started,'paused':paused,'pushed':pushed,'allocation':allocation,
@@ -1583,11 +1624,7 @@ def runner_targets():
 
 def runner_worker_targets():
     base=runner_targets()
-    allocation=global_worker_allocation(
-        {project_id:cfg.get('autonomy') or project_autonomy_state(project_id) for project_id,cfg in base.items()},
-        base,
-    )
-    selected=set(allocation['keys'])
+    selected=_current_global_slot_keys()
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
@@ -1597,16 +1634,17 @@ def runner_worker_targets():
                           (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
                 row=c.execute('SELECT conversation_id,desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
                 conversation_id=(row['conversation_id'] if row else '') or ''
+                desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
                 allocated=worker_key in selected
-                desired_state='running' if allocated else 'paused'
+                active=allocated and desired_state!='paused'
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
-                    'desired_state':desired_state,'active':allocated,
-                    'auto_continue':allocated and bool(cfg.get('auto_continue',True)),
+                    'desired_state':desired_state,'active':active,
+                    'auto_continue':active and bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
                     'vps_dispatch_only':bool(cfg.get('vps_dispatch_only')),
                     'ai_dispatch_interval_seconds':int(cfg.get('ai_dispatch_interval_seconds') or 0),
