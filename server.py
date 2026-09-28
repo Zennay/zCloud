@@ -115,7 +115,9 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         '7) voer echte voortgang uit. Deterministisch werk hoort zoveel mogelijk op VPS/services/timers/queues/self-hosted '
         'GitHub Actions. Gebruik AI voor onderzoek, ontwerp, code/review, diagnose en beslissingen die redenering nodig hebben. '
         'NO-OP/GIVE-UP GUARD: een cyclus waarin je alleen status, claims, branches, health of documentatie leest en daarna stopt '
-        'is geen geldige afgeronde werkcyclus, tenzij die read-only validatie aantoonbaar een echte gate sluit met nieuwe evidence. '
+        'is nooit een geldige afgeronde werkcyclus. Een ontbrekende, verlopen of null task-claim is geen stopconditie: voer in '
+        'dezelfde cyclus een verse coordination-preflight uit, probeer de hoogste eligible taak veilig te claimen en ga na succes '
+        'direct inhoudelijk verder. Bij claimconflict pak je meteen het volgende eligible queue-item. '
         'Ontbreekt één route (bijv. SSH, quota of een specifieke plugin), controleer eerst toegestane alternatieven zoals een '
         'self-hosted GitHub-runner, workflow, service, timer, queue, bestaande repo-write route of een andere onafhankelijke '
         'portfolio-taak. Een toolbeperking op één pad is op zichzelf geen blocker. '
@@ -155,7 +157,7 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'Alleen na een werkelijk afgeronde implementatie-iteratie '
         'mag ZCLOUD_ITERATION_COMPLETE worden gemeld. Bij expliciete finish-review gebruik exact ZCLOUD_FINISH_REVIEW: '
         'GREEN_NO_P0P1 of ZCLOUD_FINISH_REVIEW: OPEN_P0P1. Bij de harde eind-audit gebruik exact ZCLOUD_FINAL_AUDIT: GREEN '
-        'of ZCLOUD_FINAL_AUDIT: FAIL. Gebruik deze markers nooit voor read-only voorbereiding.'
+        'of ZCLOUD_FINAL_AUDIT: FAIL. Gebruik deze markers nooit voor alleen voorbereiding of statuswerk.'
     )
 RUNNER_DEFAULTS = {
     pid: {
