@@ -200,8 +200,8 @@ function runProject(cfg) {
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
   let vpsDispatchOnly = cfg.vps_dispatch_only === true;
-  let autoContinueDelayMs = Math.max(30000, Number(cfg.auto_continue_delay_seconds || 600) * 1000);
-  const CHECK_MS = 5000;
+  let autoContinueDelayMs = Math.max(0, Number(cfg.auto_continue_delay_seconds ?? 0) * 1000);
+  const CHECK_MS = 2000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
   const COMPOSER_RECOVERY_MS = 45 * 1000;
@@ -290,7 +290,7 @@ function runProject(cfg) {
       if (policy && typeof policy.auto_continue === "boolean") autoContinue = policy.auto_continue;
       if (policy && typeof policy.vps_dispatch_only === "boolean") vpsDispatchOnly = policy.vps_dispatch_only;
       if (policy && Number.isFinite(Number(policy.continue_delay_seconds))) {
-        autoContinueDelayMs = Math.max(30000, Number(policy.continue_delay_seconds) * 1000);
+        autoContinueDelayMs = Math.max(0, Number(policy.continue_delay_seconds) * 1000);
       }
       return autoContinue;
     } catch (_) {
@@ -300,6 +300,10 @@ function runProject(cfg) {
   }
   async function reportFinishSignals(text) {
     if (!text) return;
+    const priority = text.match(/ZCLOUD_PRIORITY:\s*(HIGH|NORMAL|LOW|BACKGROUND)/i);
+    if (priority) {
+      await syncStatus("autonomy-priority", {reason: priority[1].toLowerCase()});
+    }
     if (text.includes("ZCLOUD_AUTONOMY: WAIT_VPS")) {
       await syncStatus("autonomy-wait-vps", {reason: "assistant-marker"});
     } else if (text.includes("ZCLOUD_AUTONOMY: WAIT_HUMAN")) {
@@ -438,7 +442,7 @@ function runProject(cfg) {
     }
     if (sawGeneration) {
       if (!finishedAt) { finishedAt = now; finishSignalsReported = false; return; }
-      if (!finishSignalsReported && now - finishedAt >= 5000) {
+      if (!finishSignalsReported && now - finishedAt >= 1000) {
         finishSignalsReported = true;
         lastText = text;
         await reportFinishSignals(text);
@@ -690,7 +694,7 @@ async function commandResult(commandId, status, result) {
     body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
 }
 async function newProjectChat(projectId, reason, commandId) {
-  const workerKeys = workerKeysFor(projectId);
+  const workerKeys = workerKeysFor(projectId, true);
   if (!targets[projectId] && workerKeys.length) {
     if (runningActions.has(projectId)) return;
     runningActions.add(projectId);
@@ -732,7 +736,7 @@ async function newProjectChat(projectId, reason, commandId) {
   } finally { runningActions.delete(projectId); }
 }
 async function startProject(projectId, commandId) {
-  const workerKeys = workerKeysFor(projectId);
+  const workerKeys = workerKeysFor(projectId, true);
   if (!targets[projectId] && workerKeys.length) {
     if (runningActions.has(projectId)) return;
     runningActions.add(projectId);
@@ -922,13 +926,13 @@ browser.runtime.onMessage.addListener((message, sender) => {
         const target = (data.projects || {})[message.projectId];
         const base = message.projectId.split("::w", 1)[0];
         return {
-          auto_continue: target ? target.auto_continue !== false : base !== "cloud",
+          auto_continue: !!target && target.active === true && target.auto_continue !== false,
           vps_dispatch_only: target ? target.vps_dispatch_only === true : true,
-          continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds || 600) : 600,
+          continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds ?? 0) : 0,
           autonomy: target?.autonomy || null
         };
       })
-      .catch(() => ({auto_continue: false, vps_dispatch_only: true, continue_delay_seconds: 300, autonomy: {reason:"policy-unavailable"}}));
+      .catch(() => ({auto_continue: false, vps_dispatch_only: true, continue_delay_seconds: 0, autonomy: {reason:"policy-unavailable"}}));
   } else if (message?.type === "runner-new-chat" && message.projectId) {
     newProjectChat(message.projectId, message.reason || "stall-recovery", null);
   } else if (message?.type === "runner-replacement-handoff-consumed" && message.projectId) {
@@ -964,7 +968,7 @@ browser.tabs.onRemoved.addListener(tabId => {
   }
 });
 refreshTargets();
-setInterval(refreshTargets, 120000);
+setInterval(refreshTargets, 5000);
 pollCommands();
 setInterval(pollCommands, 5000);
 watchRunnerHealth();
