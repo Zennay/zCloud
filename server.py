@@ -28,7 +28,7 @@ MAX_CHATGPT_WORKERS = 2
 AI_SLOT_DIVERSITY_PENALTY = 500
 PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
-PORTFOLIO_AI_COOLDOWN_SECONDS = 120
+PORTFOLIO_AI_COOLDOWN_SECONDS = 0
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -1522,6 +1522,7 @@ def global_worker_allocation(states=None,targets=None):
         'queue_url':PORTFOLIO_QUEUE_URL,
         'queue_data_source':PORTFOLIO_QUEUE_DATA_SOURCE,
         'dispatch_cooldown_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
+        'dispatch_rule':'wait_until_generation_finished_then_continue',
     }
 
 def _persist_global_worker_allocation(allocation):
