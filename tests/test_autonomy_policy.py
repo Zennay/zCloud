@@ -43,7 +43,9 @@ class AutonomyPolicyTests(unittest.TestCase):
             "default": {
                 "mode": "manual",
                 "auto_start": False,
+                "dispatch_mode": "vps",
                 "continue_delay_seconds": 300,
+                "min_ai_interval_seconds": 300,
                 "wait_vps_seconds": 900,
                 "wait_human_seconds": 21600,
                 "complete_recheck_seconds": 86400,
@@ -62,7 +64,12 @@ class AutonomyPolicyTests(unittest.TestCase):
                     "ai_stages": ["development", "await_preregistration"],
                 },
                 "ulab": {"mode": "external_gate", "auto_start": False},
-                "supa": {"mode": "ai_worker", "auto_start": True},
+                "supa": {
+                    "mode": "ai_worker",
+                    "auto_start": True,
+                    "dispatch_mode": "vps",
+                    "min_ai_interval_seconds": 300,
+                },
             },
         }
         server.AUTONOMY_POLICY_FILE.write_text(json.dumps(payload), encoding="utf-8")
@@ -136,6 +143,54 @@ class AutonomyPolicyTests(unittest.TestCase):
         with server.connect() as conn:
             target = conn.execute("SELECT active FROM runner_targets WHERE project_id='supa'").fetchone()
         self.assertEqual(0, target["active"])
+
+    def test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it(self):
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='supa'")
+            conn.execute("DELETE FROM runner_commands WHERE project_id='supa'")
+        first = server.autonomy_scheduler_tick()
+        self.assertIn("supa", first["pushed"])
+        with server.connect() as conn:
+            pushes = conn.execute(
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
+            ).fetchone()[0]
+            runtime = conn.execute(
+                "SELECT last_dispatch_at,last_reason FROM autonomy_runtime WHERE project_id='supa'"
+            ).fetchone()
+        self.assertEqual(1, pushes)
+        self.assertIsNotNone(runtime["last_dispatch_at"])
+
+        second = server.autonomy_scheduler_tick()
+        self.assertNotIn("supa", second["pushed"])
+        with server.connect() as conn:
+            pushes = conn.execute(
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
+            ).fetchone()[0]
+        self.assertEqual(1, pushes)
+
+    def test_vps_signal_project_does_not_push_ai_while_local_work_is_running(self):
+        self.hax_status.write_text(json.dumps({"state": "RUNNING"}), encoding="utf-8")
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='haxlab'")
+            conn.execute("DELETE FROM runner_commands WHERE project_id='haxlab'")
+        result = server.autonomy_scheduler_tick()
+        self.assertNotIn("haxlab", result["pushed"])
+        with server.connect() as conn:
+            pushes = conn.execute(
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='haxlab' AND action='push' AND status='pending'"
+            ).fetchone()[0]
+        self.assertEqual(0, pushes)
+
+    def test_runner_targets_expose_vps_dispatch_contract(self):
+        target = server.runner_targets()["supa"]
+        self.assertTrue(target["vps_dispatch_only"])
+        self.assertEqual(300, target["ai_dispatch_interval_seconds"])
+
+    def test_firefox_runner_waits_for_vps_after_ai_cycle(self):
+        background = (Path(__file__).resolve().parents[1] / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
+        self.assertIn("if (!vpsDispatchOnly && !SINGLE_RUN", background)
+        self.assertIn('status("vps-dispatch-ready", {reason: "awaiting-vps-command"})', background)
 
 
 if __name__ == "__main__":

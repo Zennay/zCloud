@@ -199,6 +199,7 @@ function runProject(cfg) {
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
+  let vpsDispatchOnly = cfg.vps_dispatch_only === true;
   let autoContinueDelayMs = Math.max(30000, Number(cfg.auto_continue_delay_seconds || 600) * 1000);
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
@@ -287,6 +288,7 @@ function runProject(cfg) {
     try {
       const policy = await browser.runtime.sendMessage({type: "runner-policy-check", projectId: cfg.projectId});
       if (policy && typeof policy.auto_continue === "boolean") autoContinue = policy.auto_continue;
+      if (policy && typeof policy.vps_dispatch_only === "boolean") vpsDispatchOnly = policy.vps_dispatch_only;
       if (policy && Number.isFinite(Number(policy.continue_delay_seconds))) {
         autoContinueDelayMs = Math.max(30000, Number(policy.continue_delay_seconds) * 1000);
       }
@@ -441,6 +443,21 @@ function runProject(cfg) {
         lastText = text;
         await reportFinishSignals(text);
       }
+      if (finishSignalsReported && vpsDispatchOnly) {
+        sawGeneration = false;
+        finishedAt = 0;
+        lastText = text;
+        if (draining) {
+          paused = true;
+          clearInterval(tickTimer);
+          clearInterval(heartbeatTimer);
+          status("runner-drained", {reason: "current-task-finished"});
+          return;
+        }
+        if (SINGLE_RUN) { status("scheduled-run-complete", {reason: "single-run"}); return; }
+        status("awaiting-vps-dispatch", {reason: "cycle-finished"});
+        return;
+      }
       if (now - finishedAt >= autoContinueDelayMs) {
         sawGeneration = false;
         finishedAt = 0;
@@ -485,7 +502,7 @@ function runProject(cfg) {
       return;
     }
     composerMissingSince = 0;
-    if (!SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
+    if (!vpsDispatchOnly && !SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
         (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
       if (draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
@@ -542,6 +559,7 @@ function runProject(cfg) {
     if (draining) { status("runner-draining", {reason: "restart-drain"}); return; }
     if (SINGLE_RUN) { status("scheduled-ready", {reason: "awaiting-daily-push"}); return; }
     if (!(await canAutoContinue())) { status("auto-continue-blocked", {reason: "finished-maintain"}); return; }
+    if (vpsDispatchOnly) { status("vps-dispatch-ready", {reason: "awaiting-vps-command"}); return; }
     if (stopButton()) { status("startup-blocked", {reason: "generation-active"}); return; }
     const draft = composerText();
     if (draft === null) { status("startup-waiting", {reason: "composer-missing"}); return; }
@@ -905,11 +923,12 @@ browser.runtime.onMessage.addListener((message, sender) => {
         const base = message.projectId.split("::w", 1)[0];
         return {
           auto_continue: target ? target.auto_continue !== false : base !== "cloud",
+          vps_dispatch_only: target ? target.vps_dispatch_only === true : true,
           continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds || 600) : 600,
           autonomy: target?.autonomy || null
         };
       })
-      .catch(() => ({auto_continue: false, continue_delay_seconds: 300, autonomy: {reason:"policy-unavailable"}}));
+      .catch(() => ({auto_continue: false, vps_dispatch_only: true, continue_delay_seconds: 300, autonomy: {reason:"policy-unavailable"}}));
   } else if (message?.type === "runner-new-chat" && message.projectId) {
     newProjectChat(message.projectId, message.reason || "stall-recovery", null);
   } else if (message?.type === "runner-replacement-handoff-consumed" && message.projectId) {
