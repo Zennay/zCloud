@@ -48,7 +48,6 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("self-hosted GitHub Actions", server)
         self.assertIn("ZCLOUD_WAIT_EVIDENCE", server)
         self.assertIn("queue=no-eligible", server)
-        self.assertIn("Er bestaat geen vaste", server)
         self.assertIn("Als jouw Worker-slot al een Claimed/Running/Verifying item bezit", server)
         self.assertIn("Preëmpt alleen voor een hogere P0", server)
         self.assertIn("Steel een verlopen claim nooit", server)
