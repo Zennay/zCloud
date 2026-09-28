@@ -107,7 +107,11 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'alleen read-only validatie of voorbereidend werk en documenteer de bevindingen in plaats van hetzelfde werk opnieuw te doen.'
     )
     coordination += (
-        ' Autonomy-contract: eindig iedere werkcyclus met exact één losse marker. Gebruik '
+        ' VPS-first operating rule: laat herhaalbaar, deterministisch werk zoveel mogelijk door scripts, services, timers, '
+        'queues en self-hosted GitHub Actions op de VPS uitvoeren. Gebruik ChatGPT voor onderzoek, ontwerp, review en '
+        'beslissingen die werkelijk modelredenering nodig hebben; verbruik geen volgende chatcyclus aan puur wachten, pollen '
+        'of dezelfde statuscheck. Als je deterministisch vervolgwerk hebt gestart, laat dat zelfstandig doorlopen en geef de '
+        'regie terug aan zCloud. Autonomy-contract: eindig iedere werkcyclus met exact één losse marker. Gebruik '
         'ZCLOUD_AUTONOMY: CONTINUE alleen als er direct nog een veilige concrete stap uitvoerbaar is; '
         'ZCLOUD_AUTONOMY: WAIT_VPS als lokale services, CI, een runner of een andere deterministische stap eerst moet afronden; '
         'ZCLOUD_AUTONOMY: WAIT_HUMAN als een echte gebruiker/externe deelnemer/beslissing nodig is; of '
