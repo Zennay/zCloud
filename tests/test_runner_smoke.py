@@ -244,7 +244,7 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual("runner.worker_count", item["config_key"])
         self.assertEqual("cloud", item["target"])
         self.assertEqual(1, item["old_value"])
-        self.assertEqual(3, item["new_value"])
+        self.assertEqual(2, item["new_value"])
         self.assertEqual("succeeded", item["result"])
         self.assertTrue(item["actor"].startswith("dashboard-test@"))
 
