@@ -48,6 +48,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("Er bestaat geen vaste", server)
         self.assertIn("controleer eerst of jouw stabiele portfolio Worker 1/2", server)
         self.assertIn("Alleen een nieuw P0 Critical item mag veilig preëmpten", server)
+        self.assertIn("steel nooit een item op Claim Expires alleen", server)
+        self.assertIn("Alleen aantoonbaar stale werk mag veilig naar", server)
 
     def test_global_worker_identity_survives_project_tab_reallocation(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
