@@ -1130,19 +1130,19 @@ def load_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
-            'mode':'ai_worker','auto_start':False,'dispatch_mode':'vps','continue_delay_seconds':600,
-            'min_ai_interval_seconds':600,
+            'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps','continue_delay_seconds':600,
+            'min_ai_interval_seconds':0,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
         'projects':{
             'cloud':{
                 'mode':'zcloud_stopgate','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'continue_delay_seconds':600,'min_ai_interval_seconds':0,
             },
             'haxlab':{
                 'mode':'haxlab_status','auto_start':True,'dispatch_mode':'vps',
                 'status_file':'/var/lib/haxlab/state/autonomy-status.json',
-                'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,'min_ai_interval_seconds':0,
             },
             'ftmo':{
                 'mode':'ftmo_status','auto_start':True,'dispatch_mode':'vps',
@@ -1152,23 +1152,23 @@ def load_autonomy_policy():
                     'development_review','close_development_reject','walk_forward',
                     'close_walk_forward_reject','final_holdout','close_validated','next_generation_design',
                 ],
-                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'continue_delay_seconds':600,'min_ai_interval_seconds':0,
             },
             'ulab':{
                 'mode':'external_gate','auto_start':False,'dispatch_mode':'vps',
-                'continue_delay_seconds':3600,'min_ai_interval_seconds':3600,
+                'continue_delay_seconds':3600,'min_ai_interval_seconds':0,
             },
             'supa':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'continue_delay_seconds':600,'min_ai_interval_seconds':0,
             },
             'raiseai':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':1800,'min_ai_interval_seconds':1800,
+                'continue_delay_seconds':1800,'min_ai_interval_seconds':0,
             },
             'zssh':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':1800,'min_ai_interval_seconds':1800,
+                'continue_delay_seconds':1800,'min_ai_interval_seconds':0,
             },
         },
     }
