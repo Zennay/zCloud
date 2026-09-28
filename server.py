@@ -95,10 +95,17 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         '1) lees de Portfolio Work Queue opnieuw; '
         '2) herbeoordeel de top van de queue op basis van actuele blockers, deadlines, projectposture, incidenten, '
         'dependencies, nieuwe evidence en menselijke gates; werk Priority, Eligible, Why now en Last Priority Review bij '
-        'wanneer de waarheid veranderd is; '
-        '3) kies het hoogste eligible item met Status=Queued dat niet al door de andere worker is geclaimd; '
-        '4) claim het item vóór inhoudelijk werk met Worker, Status=Claimed, Claimed At en Claim Expires, haal het item '
-        'direct opnieuw op en ga alleen door als de claim nog van jou is; bij conflict pak je het volgende item; '
+        'wanneer de waarheid veranderd is. Heropen een Blocked item alleen wanneer de dependency aantoonbaar is verdwenen '
+        'of Recheck After is bereikt en verse evidence het weer uitvoerbaar maakt; '
+        '3) controleer eerst of jouw stabiele portfolio Worker 1/2 al een geldig Claimed, Running of Verifying item bezit. '
+        'Als dat zo is, hervat dat item en vernieuw Claim Expires voordat je schrijft. Laat lopend werk niet verweesd achter. '
+        'Alleen een nieuw P0 Critical item mag veilig preëmpten, en alleen wanneer het huidige werk op een consistente grens '
+        'kan worden gepauzeerd; leg dan handoff/evidence vast, release de claim en zet het oude item bewust terug naar Queued '
+        'of Blocked. Anders maak je het actieve item eerst Done of Blocked; '
+        '4) als je geen actief eigen item hebt: kies het hoogste eligible item met Status=Queued dat niet al door de andere '
+        'portfolio-worker is geclaimd. Claim vóór inhoudelijk werk met Worker, Status=Claimed, Claimed At en Claim Expires '
+        '(standaard lease circa 30 minuten; vernieuw vóór lange writes/runs), haal het item direct opnieuw op en ga alleen '
+        'door als de claim nog van jou is; bij conflict pak je het volgende item; '
         '5) zet Status=Running en open via de Project-relatie de actuele canonieke Project HQ/Handoff/repository; '
         '6) gebruik zCloud preflight/task-claims vóór repo-writes waar die gelden en controleer open PRs/branches om '
         'dubbelwerk te voorkomen; '
@@ -1513,29 +1520,61 @@ def global_worker_allocation(states=None,targets=None):
     }
 
 def _persist_global_worker_allocation(allocation):
+    """Persist two stable portfolio slot identities across project-tab reallocation."""
     selected=list(allocation.get('workers') or [])[:GLOBAL_CHATGPT_WORKER_LIMIT]
     ts=now()
+    selected_by_key={
+        f"{item['project_id']}::w{max(1,int(item['worker_slot'] or 1))}":item
+        for item in selected
+    }
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        existing=c.execute(
+            'SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot'
+        ).fetchall()
+        existing_by_key={
+            f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":dict(row)
+            for row in existing
+        }
+        assignments={}
+        used_slots=set()
+        # Keep a surviving worker on the same global Worker 1/2 identity.
+        for worker_key in selected_by_key:
+            previous=existing_by_key.get(worker_key)
+            if not previous:
+                continue
+            slot=int(previous['slot'])
+            if 1 <= slot <= GLOBAL_CHATGPT_WORKER_LIMIT and slot not in used_slots:
+                assignments[worker_key]=(slot,previous.get('assigned_at') or ts)
+                used_slots.add(slot)
+        free_slots=[slot for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1) if slot not in used_slots]
+        for worker_key in selected_by_key:
+            if worker_key in assignments:
+                continue
+            if not free_slots:
+                break
+            assignments[worker_key]=(free_slots.pop(0),ts)
+
         c.execute('DELETE FROM ai_global_slots')
-        for global_slot,item in enumerate(selected,1):
+        for worker_key,(global_slot,assigned_at) in sorted(assignments.items(),key=lambda item:item[1][0]):
+            item=selected_by_key[worker_key]
             c.execute(
                 'INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at) VALUES(?,?,?,?)',
-                (global_slot,str(item['project_id']),int(item['worker_slot']),ts),
+                (global_slot,str(item['project_id']),int(item['worker_slot']),assigned_at),
             )
 
-def _current_global_slot_keys():
+def _current_global_slot_map():
     try:
         with connect() as c:
-            rows=c.execute('SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
+            rows=c.execute('SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
                            (GLOBAL_CHATGPT_WORKER_LIMIT,)).fetchall()
             if rows:
                 return {
-                    f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}"
+                    f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":int(row['slot'])
                     for row in rows
                 }
             # Safe bootstrap before the scheduler's first tick: preserve at most two
-            # already-active workers, never the old per-project total.
+            # already-active workers and assign deterministic portfolio slot numbers.
             targets=c.execute(
                 'SELECT project_id,worker_count FROM runner_targets WHERE active=1 ORDER BY project_id'
             ).fetchall()
@@ -1552,11 +1591,14 @@ def _current_global_slot_keys():
                         continue
                     selected.append(f'{project_id}::w{slot}')
                     if len(selected)>=GLOBAL_CHATGPT_WORKER_LIMIT:
-                        return set(selected)
-            return set(selected)
+                        return {key:index for index,key in enumerate(selected,1)}
+            return {key:index for index,key in enumerate(selected,1)}
     except Exception:
         logging.exception('Could not read global AI slot state')
-        return set()
+        return {}
+
+def _current_global_slot_keys():
+    return set(_current_global_slot_map())
 
 def _autonomy_deactivate_project(project_id,reason):
     with connect() as c:
@@ -1642,7 +1684,7 @@ def runner_targets():
 
 def runner_worker_targets():
     base=runner_targets()
-    selected=_current_global_slot_keys()
+    global_slots=_current_global_slot_map()
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
@@ -1654,13 +1696,19 @@ def runner_worker_targets():
                 conversation_id=(row['conversation_id'] if row else '') or ''
                 desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
-                allocated=worker_key in selected
+                global_slot=global_slots.get(worker_key)
+                allocated=global_slot is not None
                 active=allocated and desired_state!='paused'
+                prompt_slot=int(global_slot or slot)
+                prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
+                worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
+                             if allocated else f"{cfg['name']} · worker {slot}/{count}")
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
-                    'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
+                    'global_worker_slot':global_slot,'global_worker_count':GLOBAL_CHATGPT_WORKER_LIMIT,
+                    'name':worker_name,'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
-                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
+                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total),
                     'desired_state':desired_state,'active':active,
                     'auto_continue':active and bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
