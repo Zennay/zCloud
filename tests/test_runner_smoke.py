@@ -231,7 +231,7 @@ class RunnerSmokeTests(unittest.TestCase):
     def test_config_audit_worker_count_records_actor_and_noop(self):
         status, body = self.request(
             "/api/runner-workers",
-            {"project_id": "cloud", "worker_count": 3},
+            {"project_id": "cloud", "worker_count": 2},
             {"X-ZCloud-Actor": "dashboard-test"},
         )
         self.assertEqual(200, status, body)
@@ -243,13 +243,13 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual("runner.worker_count", item["config_key"])
         self.assertEqual("cloud", item["target"])
         self.assertEqual(1, item["old_value"])
-        self.assertEqual(3, item["new_value"])
+        self.assertEqual(2, item["new_value"])
         self.assertEqual("succeeded", item["result"])
         self.assertTrue(item["actor"].startswith("dashboard-test@"))
 
         status, body = self.request(
             "/api/runner-workers",
-            {"project_id": "cloud", "worker_count": 3},
+            {"project_id": "cloud", "worker_count": 2},
             {"X-ZCloud-Actor": "dashboard-test"},
         )
         self.assertEqual(200, status, body)
@@ -257,8 +257,8 @@ class RunnerSmokeTests(unittest.TestCase):
             "/api/config-audit?key=runner.worker_count&target=cloud"
         )
         self.assertEqual("no_change", audit["items"][0]["result"])
-        self.assertEqual(3, audit["items"][0]["old_value"])
-        self.assertEqual(3, audit["items"][0]["new_value"])
+        self.assertEqual(2, audit["items"][0]["old_value"])
+        self.assertEqual(2, audit["items"][0]["new_value"])
 
     def test_config_audit_resource_priority_success_and_rejection(self):
         policy = {"cloud": {"priority": "normal"}}
@@ -407,18 +407,18 @@ class RunnerSmokeTests(unittest.TestCase):
 
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
-            "/api/runner-workers", {"project_id": "cloud", "worker_count": 3}
+            "/api/runner-workers", {"project_id": "cloud", "worker_count": 2}
         )
         self.assertEqual(200, status, body)
-        self.assertEqual(3, body["worker_count"])
+        self.assertEqual(2, body["worker_count"])
 
         status, targets = self.request("/api/runner-targets")
         self.assertEqual(200, status)
         cloud_workers = sorted(
             key for key in targets["projects"] if key.startswith("cloud::w")
         )
-        self.assertEqual(["cloud::w1", "cloud::w2", "cloud::w3"], cloud_workers)
-        self.assertTrue(all(targets["projects"][key]["worker_count"] == 3 for key in cloud_workers))
+        self.assertEqual(["cloud::w1", "cloud::w2"], cloud_workers)
+        self.assertTrue(all(targets["projects"][key]["worker_count"] == 2 for key in cloud_workers))
 
     def test_worker_count_rejects_unsafe_value(self):
         status, body = self.request(
