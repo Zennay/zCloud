@@ -96,7 +96,7 @@ def mapping_fingerprint(db_path: Path) -> dict:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
         conn.row_factory = sqlite3.Row
         targets = [dict(row) for row in conn.execute(
-            "SELECT project_id,active,worker_count,conversation_id "
+            "SELECT project_id,worker_count,conversation_id "
             "FROM runner_targets ORDER BY project_id"
         )]
         workers = [dict(row) for row in conn.execute(
