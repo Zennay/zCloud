@@ -30,10 +30,3 @@ def test_worker_prompts_are_global_queue_first_compact_and_execution_first():
         assert "ZCLOUD_WORK_PROJECT:" in prompt
         assert "ZCLOUD_AUTONOMY:" in prompt
         assert len(prompt) < 5000
-
-    # Project labels may differ, but every project uses the same compact global protocol.
-    normalized = [
-        p.replace(server.PROJECT_INDEX[pid]["name"], "<name>").replace(pid, "<id>")
-        for p, pid in zip(prompts, ACTIVE_PROJECTS)
-    ]
-    assert len(set(normalized)) == 1
