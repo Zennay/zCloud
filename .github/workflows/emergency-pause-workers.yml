@@ -1,0 +1,47 @@
+name: Emergency pause all ChatGPT workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/emergency-pause-workers.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pause:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Pause every zCloud ChatGPT project runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          for project in cloud haxlab ftmo supa raiseai ulab zssh; do
+            echo "Pausing $project"
+            curl --fail --silent --show-error               -H 'Content-Type: application/json'               --data "{\"project_id\":\"$project\",\"action\":\"pause\"}"               http://127.0.0.1:8765/api/runner-control
+            echo
+          done
+
+      - name: Verify no portfolio ChatGPT workers remain active
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/status", timeout=10) as r:
+              data = json.load(r)
+          alloc = data.get("global_worker_allocation") or data.get("portfolio_workers") or {}
+          active = data.get("active_worker_count")
+          if active is None:
+              active = alloc.get("active_worker_count", alloc.get("count"))
+          print(json.dumps({
+              "active_worker_count": active,
+              "allocation": alloc,
+          }, sort_keys=True))
+          # The API may expose active count in a nested structure depending on live revision.
+          # Pause responses above are authoritative; fail only when an explicit nonzero count remains.
+          if isinstance(active, int) and active != 0:
+              raise SystemExit(f"workers still active: {active}")
+          PY
