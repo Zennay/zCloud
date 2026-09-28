@@ -311,10 +311,23 @@ function runProject(cfg) {
     }
     // Autonomy markers stay attached to the technical worker slot. They control
     // whether that worker is allowed another global queue cycle.
+    const waitEvidenceMatch = text.match(/ZCLOUD_WAIT_EVIDENCE:\\s*([^\\n]+)/i);
+    const waitEvidence = waitEvidenceMatch ? waitEvidenceMatch[1].trim() : "";
+    const queueExhausted = /(?:^|;)\\s*queue=no-eligible(?:;|$)/i.test(waitEvidence);
+    const vpsWaitEvidence = /(?:^|;)\\s*(?:job|run|service|process)=[^;]+/i.test(waitEvidence);
+    const humanWaitEvidence = /(?:^|;)\\s*human_gate=[^;]+/i.test(waitEvidence);
     if (text.includes("ZCLOUD_AUTONOMY: WAIT_VPS")) {
-      await syncStatus("autonomy-wait-vps", {reason: "assistant-marker"});
+      if (queueExhausted && vpsWaitEvidence) {
+        await syncStatus("autonomy-wait-vps", {reason: "assistant-marker", waitEvidence: waitEvidence.slice(0, 500)});
+      } else {
+        await syncStatus("autonomy-continue", {reason: "invalid-wait-vps-without-run-evidence"});
+      }
     } else if (text.includes("ZCLOUD_AUTONOMY: WAIT_HUMAN")) {
-      await syncStatus("autonomy-wait-human", {reason: "assistant-marker"});
+      if (queueExhausted && humanWaitEvidence) {
+        await syncStatus("autonomy-wait-human", {reason: "assistant-marker", waitEvidence: waitEvidence.slice(0, 500)});
+      } else {
+        await syncStatus("autonomy-continue", {reason: "invalid-wait-human-without-gate-evidence"});
+      }
     } else if (text.includes("ZCLOUD_AUTONOMY: COMPLETE")) {
       await syncStatus("autonomy-complete", {reason: "assistant-marker"});
     } else if (text.includes("ZCLOUD_AUTONOMY: CONTINUE")) {
