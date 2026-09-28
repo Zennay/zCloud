@@ -49,6 +49,7 @@ for (const marker of [
   "await getReplacementHandoffTag(tabId)",
   "BEWUSTE WORKER-HANDOFF",
   "Neem GEEN nieuwe taakclaim",
+  "Een ontbrekende claim is geen reden om na statuscontrole te stoppen",
   "runner-replacement-handoff-consumed",
   "worker-replacement-handoff-consumed",
   "const BASE_PROMPT = cfg.prompt",
@@ -97,6 +98,10 @@ assert.ok(
 assert.ok(
   !replacementBlock.includes('"action":"release"') && !replacementBlock.includes("'action':'release'"),
   "deliberate replacement must preserve the existing task lease instead of releasing it"
+);
+assert.ok(
+  !background.includes("doe alleen read-only werk"),
+  "replacement handoff must reclaim and continue instead of falling back to read-only work"
 );
 
 const runStart = background.indexOf("function runProject");
