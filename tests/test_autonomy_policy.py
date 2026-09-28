@@ -180,6 +180,39 @@ class AutonomyPolicyTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(1, pushes)
 
+    def test_zero_interval_waits_for_generation_boundary_then_pushes_immediately(self):
+        ts = datetime.now(timezone.utc).isoformat()
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='supa'")
+            conn.execute("DELETE FROM runner_commands WHERE project_id='supa'")
+            conn.execute(
+                "UPDATE autonomy_runtime SET last_dispatch_at=?,manual_pause=0 WHERE project_id='supa'",
+                (ts,),
+            )
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) VALUES(?,?,?,?,?,?)",
+                (ts, "prompt-sent", "supa", 1, 0, 0),
+            )
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) VALUES(?,?,?,?,?,?)",
+                (ts, "generation-started", "supa", 1, 1, 0),
+            )
+
+        self.assertFalse(server._autonomy_enqueue_push("supa", "still-generating", 0))
+
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) VALUES(?,?,?,?,?,?)",
+                (datetime.now(timezone.utc).isoformat(), "awaiting-vps-dispatch", "supa", 1, 0, 0),
+            )
+
+        self.assertTrue(server._autonomy_enqueue_push("supa", "generation-finished", 0))
+        with server.connect() as conn:
+            pushes = conn.execute(
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
+            ).fetchone()[0]
+        self.assertEqual(1, pushes)
+
     def test_vps_signal_project_does_not_push_ai_while_local_work_is_running(self):
         self.hax_status.write_text(json.dumps({"state": "RUNNING"}), encoding="utf-8")
         with server.connect() as conn:
