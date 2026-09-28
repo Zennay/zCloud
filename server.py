@@ -1218,8 +1218,8 @@ def project_autonomy_state(project_id):
         status=_autonomy_status_json(cfg.get('status_file'))
         state=str((status or {}).get('state') or 'MISSING')
         allowed={str(x) for x in (cfg.get('ai_states') or ['NEEDS_AI'])}
-        allow=state in allowed
-        reason='haxlab_needs_ai' if allow else 'haxlab_vps_'+state.lower()
+        allow=status is None or state in allowed
+        reason='haxlab_status_missing' if status is None else ('haxlab_needs_ai' if allow else 'haxlab_vps_'+state.lower())
         detail={'vps_status':status,'state':state}
     elif mode=='ftmo_status':
         status=_autonomy_status_json(cfg.get('status_file'))
@@ -1229,8 +1229,8 @@ def project_autonomy_state(project_id):
         allowed={str(x) for x in (cfg.get('ai_stages') or [])}
         runtime_ok=bool((status or {}).get('ok'))
         paper_busy=paper.get('action')=='running'
-        allow=runtime_ok and stage in allowed and not paper_busy
-        reason=('ftmo_stage_'+stage) if allow else ('ftmo_paper_running' if paper_busy else 'ftmo_vps_'+('not_ok' if status and not runtime_ok else stage))
+        allow=status is None or (runtime_ok and stage in allowed and not paper_busy)
+        reason='ftmo_status_missing' if status is None else (('ftmo_stage_'+stage) if allow else ('ftmo_paper_running' if paper_busy else 'ftmo_vps_'+('not_ok' if not runtime_ok else stage)))
         detail={'vps_status':status,'next_stage':stage,'paper_action':paper.get('action')}
     elif mode=='external_gate':
         allow=False;reason='external_or_human_gate'
