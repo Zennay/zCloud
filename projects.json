@@ -373,7 +373,7 @@
     "accent": "#f6c56f",
     "phase": "Standalone repository · canonical source migrated",
     "status": "active",
-    "next_step": "Valideer Zennay/zSSH main en gebruik daarna de standalone deploy/runtime-gates; zCloud blijft alleen portfolio/control-plane integratie.",
+    "next_step": "P0 enabling-infra gate: rond M1 live file-capability proof af en ga daarna door naar paired target identity/auth/revocation; geef zSSH voorrang zolang dit andere projectbouw direct deblokkeert.",
     "milestone_revision": "zssh-standalone-v2",
     "progress_basis": "Bouwvoortgang is het gemiddelde van bewijsgerichte milestones; productiegeschiktheid telt pas mee na auth/security/review-validatie.",
     "milestones": [
@@ -413,7 +413,7 @@
         "progress": 0
       }
     ],
-    "priority": "high",
+    "priority": "system",
     "repo_url": "https://github.com/Zennay/zSSH",
     "notion_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634",
     "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8"
