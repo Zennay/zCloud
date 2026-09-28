@@ -21,7 +21,7 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
-AUTONOMY_TICK_SECONDS = 60
+AUTONOMY_TICK_SECONDS = 600
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 MAX_CHATGPT_WORKERS = 8
 WORKER_PREFLIGHT_TTL_SECONDS = 600
@@ -1130,18 +1130,18 @@ def load_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
-            'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300,
+            'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
         'projects':{
-            'cloud':{'mode':'zcloud_stopgate','auto_start':True,'continue_delay_seconds':300},
+            'cloud':{'mode':'zcloud_stopgate','auto_start':False,'continue_delay_seconds':600},
             'haxlab':{
-                'mode':'haxlab_status','auto_start':True,
+                'mode':'haxlab_status','auto_start':False,
                 'status_file':'/var/lib/haxlab/state/autonomy-status.json',
                 'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,
             },
             'ftmo':{
-                'mode':'ftmo_status','auto_start':True,
+                'mode':'ftmo_status','auto_start':False,
                 'status_file':'/opt/ftmo-autonomous/.scratch/autonomy/status.json',
                 'ai_stages':[
                     'provider_foundation','freeze_data_split','await_preregistration','development',
@@ -1151,9 +1151,9 @@ def load_autonomy_policy():
                 'continue_delay_seconds':600,
             },
             'ulab':{'mode':'external_gate','auto_start':False,'continue_delay_seconds':3600},
-            'supa':{'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300},
-            'raiseai':{'mode':'ai_worker','auto_start':True,'continue_delay_seconds':600},
-            'zssh':{'mode':'ai_worker','auto_start':True,'continue_delay_seconds':300},
+            'supa':{'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600},
+            'raiseai':{'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600},
+            'zssh':{'mode':'ai_worker','auto_start':False,'continue_delay_seconds':600},
         },
     }
     if not AUTONOMY_POLICY_FILE.exists():
@@ -1176,8 +1176,8 @@ def _autonomy_config(project_id):
     override=policy.get('projects',{}).get(project_id)
     if isinstance(override,dict):
         cfg.update(override)
-    try: cfg['continue_delay_seconds']=max(30,min(3600,int(cfg.get('continue_delay_seconds') or 300)))
-    except Exception: cfg['continue_delay_seconds']=300
+    try: cfg['continue_delay_seconds']=max(30,min(3600,int(cfg.get('continue_delay_seconds') or 600)))
+    except Exception: cfg['continue_delay_seconds']=600
     for key,fallback in (('wait_vps_seconds',900),('wait_human_seconds',21600),('complete_recheck_seconds',86400)):
         try: cfg[key]=max(60,min(7*86400,int(cfg.get(key) or fallback)))
         except Exception: cfg[key]=fallback
@@ -1372,7 +1372,7 @@ def runner_worker_targets():
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
                     'desired_state':desired_state,'active':bool(cfg['active']) and desired_state!='paused',
                     'auto_continue':bool(cfg.get('auto_continue',True)),
-                    'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 300),
+                    'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 600),
                     'autonomy':cfg.get('autonomy'),'improvement':cfg.get('improvement')
                 }
     return out
