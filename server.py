@@ -21,9 +21,11 @@ WATCH_TOKEN_FILE = ROOT / '.watch-token'
 WATCH_TOKEN = WATCH_TOKEN_FILE.read_text().strip() if WATCH_TOKEN_FILE.exists() else ''
 ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
-AUTONOMY_TICK_SECONDS = 60
+AUTONOMY_TICK_SECONDS = 2
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-MAX_CHATGPT_WORKERS = 8
+GLOBAL_CHATGPT_WORKER_LIMIT = 2
+MAX_CHATGPT_WORKERS = 2
+AI_SLOT_DIVERSITY_PENALTY = 500
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -115,7 +117,10 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'ZCLOUD_AUTONOMY: CONTINUE alleen als er direct nog een veilige concrete stap uitvoerbaar is; '
         'ZCLOUD_AUTONOMY: WAIT_VPS als lokale services, CI, een runner of een andere deterministische stap eerst moet afronden; '
         'ZCLOUD_AUTONOMY: WAIT_HUMAN als een echte gebruiker/externe deelnemer/beslissing nodig is; of '
-        'ZCLOUD_AUTONOMY: COMPLETE als de huidige projectscope aantoonbaar klaar is. Gebruik CONTINUE nooit alleen om activiteit te houden.'
+        'ZCLOUD_AUTONOMY: COMPLETE als de huidige projectscope aantoonbaar klaar is. Gebruik CONTINUE nooit alleen om activiteit te houden. '
+        'Geef daarnaast aan het einde van iedere afgeronde AI-cyclus exact één prioriteitsmarker voor de globale zCloud-workerpool: '
+        'ZCLOUD_PRIORITY: HIGH als dit project direct nog kritisch AI-werk heeft; ZCLOUD_PRIORITY: NORMAL voor regulier nuttig AI-werk; '
+        'ZCLOUD_PRIORITY: LOW als ander projectwerk voor mag gaan; of ZCLOUD_PRIORITY: BACKGROUND als AI hier voorlopig nauwelijks nodig is.'
     )
     if project_id=='ftmo':
         coordination += (
@@ -359,6 +364,8 @@ def init_db():
         worker_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_workers)').fetchall()}
         if 'desired_state' not in worker_columns:
             c.execute("ALTER TABLE runner_workers ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'running'")
+        c.execute("CREATE TABLE IF NOT EXISTS ai_global_slots(slot INTEGER PRIMARY KEY, project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, assigned_at TEXT NOT NULL)")
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS ai_global_slots_worker ON ai_global_slots(project_id,worker_slot)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
@@ -1130,19 +1137,19 @@ def load_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
-            'mode':'ai_worker','auto_start':False,'dispatch_mode':'vps','continue_delay_seconds':600,
-            'min_ai_interval_seconds':600,
+            'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps','continue_delay_seconds':0,
+            'min_ai_interval_seconds':0,
             'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
         },
         'projects':{
             'cloud':{
                 'mode':'zcloud_stopgate','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
             'haxlab':{
                 'mode':'haxlab_status','auto_start':True,'dispatch_mode':'vps',
                 'status_file':'/var/lib/haxlab/state/autonomy-status.json',
-                'ai_states':['NEEDS_AI'],'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'ai_states':['NEEDS_AI'],'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
             'ftmo':{
                 'mode':'ftmo_status','auto_start':True,'dispatch_mode':'vps',
@@ -1152,23 +1159,23 @@ def load_autonomy_policy():
                     'development_review','close_development_reject','walk_forward',
                     'close_walk_forward_reject','final_holdout','close_validated','next_generation_design',
                 ],
-                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
             'ulab':{
                 'mode':'external_gate','auto_start':False,'dispatch_mode':'vps',
-                'continue_delay_seconds':3600,'min_ai_interval_seconds':3600,
+                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
             'supa':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':600,'min_ai_interval_seconds':600,
+                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
             'raiseai':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':1800,'min_ai_interval_seconds':1800,
+                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
             'zssh':{
                 'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':1800,'min_ai_interval_seconds':1800,
+                'continue_delay_seconds':0,'min_ai_interval_seconds':0,
             },
         },
     }
@@ -1192,9 +1199,9 @@ def _autonomy_config(project_id):
     override=policy.get('projects',{}).get(project_id)
     if isinstance(override,dict):
         cfg.update(override)
-    try: cfg['continue_delay_seconds']=max(30,min(3600,int(cfg.get('continue_delay_seconds') or 600)))
-    except Exception: cfg['continue_delay_seconds']=600
-    try: cfg['min_ai_interval_seconds']=max(60,min(24*3600,int(cfg.get('min_ai_interval_seconds') or cfg['continue_delay_seconds'])))
+    try: cfg['continue_delay_seconds']=max(0,min(3600,int(cfg.get('continue_delay_seconds') if cfg.get('continue_delay_seconds') is not None else 0)))
+    except Exception: cfg['continue_delay_seconds']=0
+    try: cfg['min_ai_interval_seconds']=max(0,min(24*3600,int(cfg.get('min_ai_interval_seconds') if cfg.get('min_ai_interval_seconds') is not None else cfg['continue_delay_seconds'])))
     except Exception: cfg['min_ai_interval_seconds']=cfg['continue_delay_seconds']
     for key,fallback in (('wait_vps_seconds',900),('wait_human_seconds',21600),('complete_recheck_seconds',86400)):
         try: cfg[key]=max(60,min(7*86400,int(cfg.get(key) or fallback)))
@@ -1321,18 +1328,21 @@ def _autonomy_enqueue_start(project_id,reason):
         if pending:
             return False
         c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
-        c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id=?",(project_id,))
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (project_id,'start','pending',ts,ts,None))
         c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
     return True
 
 def _autonomy_dispatch_due(runtime,min_interval_seconds):
-    if not runtime or not runtime.get('last_dispatch_at'):
+    try:
+        min_interval_seconds=max(0,int(min_interval_seconds or 0))
+    except Exception:
+        min_interval_seconds=0
+    if min_interval_seconds<=0 or not runtime or not runtime.get('last_dispatch_at'):
         return True
     try:
         last=datetime.fromisoformat(runtime['last_dispatch_at']).astimezone(timezone.utc)
-        return (datetime.now(timezone.utc)-last).total_seconds() >= int(min_interval_seconds)
+        return (datetime.now(timezone.utc)-last).total_seconds() >= min_interval_seconds
     except Exception:
         return True
 
@@ -1351,8 +1361,14 @@ def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
         pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action IN ('start','push','new_chat') AND status='pending' LIMIT 1",(project_id,)).fetchone()
         if pending:
             return False
-        latest=c.execute('SELECT generating,sending,event FROM runner_events WHERE project_id=? ORDER BY id DESC LIMIT 1',(project_id,)).fetchone()
+        latest=c.execute('SELECT id,generating,sending,event FROM runner_events WHERE project_id=? ORDER BY id DESC LIMIT 1',(project_id,)).fetchone()
         if latest and (bool(latest['generating']) or bool(latest['sending'])):
+            return False
+        last_prompt=c.execute("SELECT MAX(id) AS id FROM runner_events WHERE project_id=? AND event='prompt-sent'",(project_id,)).fetchone()
+        last_ready=c.execute("SELECT MAX(id) AS id FROM runner_events WHERE project_id=? AND event IN ('awaiting-vps-dispatch','generation-not-started')",(project_id,)).fetchone()
+        prompt_id=int((last_prompt or {'id':0})['id'] or 0)
+        ready_id=int((last_ready or {'id':0})['id'] or 0)
+        if prompt_id and ready_id < prompt_id:
             return False
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (project_id,'push','pending',ts,ts,None))
@@ -1360,31 +1376,227 @@ def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
                   (ts,str(reason)[:250],project_id))
     return True
 
+
+def _latest_ai_priority_hint(project_id):
+    try:
+        with connect() as c:
+            row=c.execute(
+                "SELECT ts,reason FROM runner_events WHERE project_id=? AND event='autonomy-priority' ORDER BY id DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        if not row:
+            return 0
+        try:
+            age=(datetime.now(timezone.utc)-datetime.fromisoformat(row['ts']).astimezone(timezone.utc)).total_seconds()
+            if age>6*3600:
+                return 0
+        except Exception:
+            pass
+        return {'high':900,'normal':200,'low':-250,'background':-700}.get(str(row['reason'] or '').lower(),0)
+    except Exception:
+        return 0
+
+def _busy_ai_worker_keys():
+    busy=set()
+    cutoff=datetime.fromtimestamp(time.time()-30*60,timezone.utc).isoformat()
+    try:
+        with connect() as c:
+            rows=c.execute("""
+                SELECT e.project_id,e.worker_slot,e.generating,e.sending,e.ts
+                FROM runner_events e
+                JOIN (
+                    SELECT project_id,worker_slot,MAX(id) AS id
+                    FROM runner_events
+                    WHERE project_id IS NOT NULL
+                    GROUP BY project_id,worker_slot
+                ) latest ON latest.id=e.id
+                WHERE e.ts>=?
+            """,(cutoff,)).fetchall()
+        for row in rows:
+            if bool(row['generating']) or bool(row['sending']):
+                busy.add(f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}")
+    except Exception:
+        logging.exception('Could not read busy AI workers for allocator')
+    return busy
+
+def _worker_desired_states():
+    try:
+        with connect() as c:
+            rows=c.execute('SELECT project_id,worker_slot,desired_state FROM runner_workers').fetchall()
+        return {
+            f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":str(row['desired_state'] or 'running')
+            for row in rows
+        }
+    except Exception:
+        return {}
+
+def _project_ai_priority_score(project_id,state,target,resource_policy):
+    resource_name=str((resource_policy.get(project_id) or {}).get('priority') or 'normal')
+    score={'background':0,'normal':400,'high':800,'turbo':1200}.get(resource_name,400)
+    project_priority=str((PROJECT_INDEX.get(project_id) or {}).get('priority') or 'normal')
+    score += {'low':0,'normal':200,'high':500,'system':700}.get(project_priority,200)
+    reason=str(state.get('reason') or '')
+    if reason=='haxlab_needs_ai':
+        score += 1000
+    elif reason.startswith('ftmo_stage_'):
+        score += 700
+    elif reason.endswith('_status_missing') or reason in ('haxlab_status_missing','ftmo_status_missing'):
+        score += 850
+    elif reason=='zcloud_improvement_running':
+        score += 600
+    elif reason=='bounded_ai_worker':
+        score += 300
+    score += _latest_ai_priority_hint(project_id)
+    if bool(target.get('active')):
+        score += 120
+    runtime=_autonomy_runtime(project_id)
+    if runtime and runtime.get('last_dispatch_at'):
+        try:
+            age=max(0,(datetime.now(timezone.utc)-datetime.fromisoformat(runtime['last_dispatch_at']).astimezone(timezone.utc)).total_seconds())
+            score += min(300,int(age/12))
+        except Exception:
+            pass
+    else:
+        score += 300
+    return int(score)
+
+def global_worker_allocation(states=None,targets=None):
+    states=states or autonomy_states()
+    targets=targets or runner_targets()
+    resource_policy=enhancements.load_resource_policy()
+    busy=_busy_ai_worker_keys()
+    desired=_worker_desired_states()
+    currently_allocated=_current_global_slot_keys()
+    candidates=[]
+    for project_id,target in targets.items():
+        state=states.get(project_id) or project_autonomy_state(project_id)
+        if not state.get('auto_start') or not state.get('allow_ai'):
+            continue
+        runtime=_autonomy_runtime(project_id)
+        if runtime and bool(runtime.get('manual_pause')):
+            continue
+        base_score=_project_ai_priority_score(project_id,state,target,resource_policy)
+        project_cap=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(target.get('worker_count') or 1)))
+        for slot in range(1,project_cap+1):
+            worker_key=f'{project_id}::w{slot}'
+            worker_state=desired.get(worker_key,'running')
+            if worker_state=='paused':
+                continue
+            if worker_state=='draining' and worker_key not in currently_allocated:
+                continue
+            score=base_score-(slot-1)*AI_SLOT_DIVERSITY_PENALTY
+            if worker_key in busy or worker_state=='draining':
+                score += 100000
+            candidates.append({
+                'worker_key':worker_key,'project_id':project_id,'worker_slot':slot,
+                'score':score,'reason':state.get('reason') or 'eligible',
+                'desired_state':worker_state,
+            })
+    candidates.sort(key=lambda item:(-item['score'],item['project_id'],item['worker_slot']))
+    selected=candidates[:GLOBAL_CHATGPT_WORKER_LIMIT]
+    return {
+        'limit':GLOBAL_CHATGPT_WORKER_LIMIT,
+        'workers':selected,
+        'keys':[item['worker_key'] for item in selected],
+        'projects':sorted({item['project_id'] for item in selected}),
+        'candidates':candidates,
+    }
+
+def _persist_global_worker_allocation(allocation):
+    selected=list(allocation.get('workers') or [])[:GLOBAL_CHATGPT_WORKER_LIMIT]
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('DELETE FROM ai_global_slots')
+        for global_slot,item in enumerate(selected,1):
+            c.execute(
+                'INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at) VALUES(?,?,?,?)',
+                (global_slot,str(item['project_id']),int(item['worker_slot']),ts),
+            )
+
+def _current_global_slot_keys():
+    try:
+        with connect() as c:
+            rows=c.execute('SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
+                           (GLOBAL_CHATGPT_WORKER_LIMIT,)).fetchall()
+            if rows:
+                return {
+                    f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}"
+                    for row in rows
+                }
+            # Safe bootstrap before the scheduler's first tick: preserve at most two
+            # already-active workers, never the old per-project total.
+            targets=c.execute(
+                'SELECT project_id,worker_count FROM runner_targets WHERE active=1 ORDER BY project_id'
+            ).fetchall()
+            selected=[]
+            for target in targets:
+                project_id=str(target['project_id'])
+                count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(target['worker_count'] or 1)))
+                for slot in range(1,count+1):
+                    row=c.execute(
+                        'SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',
+                        (project_id,slot),
+                    ).fetchone()
+                    if row and str(row['desired_state'] or 'running')=='paused':
+                        continue
+                    selected.append(f'{project_id}::w{slot}')
+                    if len(selected)>=GLOBAL_CHATGPT_WORKER_LIMIT:
+                        return set(selected)
+            return set(selected)
+    except Exception:
+        logging.exception('Could not read global AI slot state')
+        return set()
+
+def _autonomy_deactivate_project(project_id,reason):
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
+        if not target or not bool(target['active']):
+            return False
+        # Do not touch runner_workers.desired_state here. That field belongs to
+        # explicit/manual worker pause/drain controls, not scheduler allocation.
+        c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
+        c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
+    return True
+
 def autonomy_scheduler_tick():
     states=autonomy_states()
     targets=runner_targets()
+    for project_id,state in states.items():
+        if state.get('auto_start'):
+            _autonomy_initialize_project(project_id)
+
+    allocation=global_worker_allocation(states,targets)
+    _persist_global_worker_allocation(allocation)
+    selected_projects=set(allocation['projects'])
+    selected_running_projects={
+        item['project_id'] for item in allocation['workers']
+        if item.get('desired_state','running')=='running'
+    }
+
     started=[]
+    paused=[]
     pushed=[]
     for project_id,state in states.items():
-        if not state.get('auto_start'):
-            continue
-        runtime=_autonomy_initialize_project(project_id)
-        if runtime and bool(runtime.get('manual_pause')):
-            continue
-        if not state.get('allow_ai'):
-            continue
         target=targets.get(project_id) or {}
-        if not target.get('active'):
-            if _autonomy_enqueue_start(project_id,state.get('reason') or 'autonomy_gate_open'):
-                started.append(project_id)
-            continue
-        if state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
-            project_id,
-            state.get('reason') or 'autonomy_gate_open',
-            state.get('min_ai_interval_seconds') or 600,
-        ):
-            pushed.append(project_id)
-    return {'started':started,'pushed':pushed,'states':states,'time':now()}
+        if project_id in selected_projects:
+            if not target.get('active'):
+                if _autonomy_enqueue_start(project_id,'global-slot:'+str(state.get('reason') or 'eligible')):
+                    started.append(project_id)
+            elif project_id in selected_running_projects and state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
+                project_id,
+                'global-slot:'+str(state.get('reason') or 'eligible'),
+                state.get('min_ai_interval_seconds') or 0,
+            ):
+                pushed.append(project_id)
+        elif target.get('active'):
+            if _autonomy_deactivate_project(project_id,'global-slot-reallocated'):
+                paused.append(project_id)
+    return {
+        'started':started,'paused':paused,'pushed':pushed,'allocation':allocation,
+        'states':states,'time':now(),
+    }
 
 def autonomy_scheduler():
     time.sleep(8)
@@ -1395,6 +1607,8 @@ def autonomy_scheduler():
                 logging.info('Autonomy started: %s', ','.join(result['started']))
             if result['pushed']:
                 logging.info('VPS requested AI cycle: %s', ','.join(result['pushed']))
+            if result.get('paused'):
+                logging.info('Global AI slots reallocated away from: %s', ','.join(result['paused']))
         except Exception:
             logging.exception('Autonomy scheduler failed')
         time.sleep(AUTONOMY_TICK_SECONDS)
@@ -1418,10 +1632,11 @@ def runner_targets():
 
 def runner_worker_targets():
     base=runner_targets()
+    selected=_current_global_slot_keys()
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
-            count=max(1,min(MAX_CHATGPT_WORKERS,int(cfg.get('worker_count') or 1)))
+            count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(cfg.get('worker_count') or 1)))
             for slot in range(1,count+1):
                 c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
                           (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
@@ -1429,16 +1644,18 @@ def runner_worker_targets():
                 conversation_id=(row['conversation_id'] if row else '') or ''
                 desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
+                allocated=worker_key in selected
+                active=allocated and desired_state!='paused'
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'name':f"{cfg['name']} · worker {slot}/{count}",'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],slot,count),
-                    'desired_state':desired_state,'active':bool(cfg['active']) and desired_state!='paused',
-                    'auto_continue':bool(cfg.get('auto_continue',True)),
-                    'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 600),
+                    'desired_state':desired_state,'active':active,
+                    'auto_continue':active and bool(cfg.get('auto_continue',True)),
+                    'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
                     'vps_dispatch_only':bool(cfg.get('vps_dispatch_only')),
-                    'ai_dispatch_interval_seconds':int(cfg.get('ai_dispatch_interval_seconds') or 600),
+                    'ai_dispatch_interval_seconds':int(cfg.get('ai_dispatch_interval_seconds') or 0),
                     'autonomy':cfg.get('autonomy'),'improvement':cfg.get('improvement')
                 }
     return out
@@ -1557,7 +1774,7 @@ def runner_worker_statuses(project_id):
             heartbeat=c.execute("SELECT * FROM runner_events WHERE project_id=? AND worker_slot=? AND event='heartbeat' ORDER BY id DESC LIMIT 1",args).fetchone()
             command=c.execute('SELECT id,status,action,created_at,updated_at,result FROM runner_commands WHERE project_id=? ORDER BY id DESC LIMIT 1',(worker_key,)).fetchone()
             desired=cfg.get('desired_state') or 'running'
-            active=bool(base.get('active')) and desired!='paused'
+            active=bool(cfg.get('active')) and desired!='paused'
             try:
                 age=max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(latest['ts'])).total_seconds())) if latest else None
             except Exception:
@@ -1569,7 +1786,7 @@ def runner_worker_statuses(project_id):
                 progress_age=None
             generating=bool(latest['generating']) if latest else False
             stalled=bool(generating and progress_age is not None and progress_age>=20*60)
-            if not base.get('active') or desired=='paused':
+            if not active or desired=='paused':
                 state='paused'
             elif desired=='draining':
                 state='draining'
@@ -1981,7 +2198,8 @@ class Handler(BaseHTTPRequestHandler):
         u=urlparse(self.path);q=parse_qs(u.query)
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
-            return self.reply({'projects':runner_worker_targets(),'max_workers':MAX_CHATGPT_WORKERS})
+            allocation=global_worker_allocation()
+            return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation})
         if u.path=='/api/autonomy':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             states=autonomy_states()

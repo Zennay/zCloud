@@ -12,6 +12,7 @@ from pathlib import Path
 
 enhancements_stub = types.ModuleType("enhancements")
 enhancements_stub.init_db = lambda conn: None
+enhancements_stub.load_resource_policy = lambda: {}
 sys.modules["enhancements"] = enhancements_stub
 
 import server
@@ -110,7 +111,7 @@ class ImprovementStopGateTests(unittest.TestCase):
 
         targets = server.runner_worker_targets()
         self.assertFalse(targets["cloud::w1"]["auto_continue"])
-        self.assertTrue(targets["ftmo::w1"]["auto_continue"])
+        self.assertTrue(targets["ftmo::w1"]["autonomy"]["allow_ai"])
 
     def test_open_review_resets_clean_review_streak(self):
         server.improvement_loop_record(
