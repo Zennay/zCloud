@@ -91,10 +91,17 @@ try:
         "FROM runner_events WHERE project_id='raiseai' "
         "ORDER BY id DESC LIMIT 20"
     ).fetchall()
+    thinking_events = conn.execute(
+        "SELECT id,ts,event,reason,generating,sending,error "
+        "FROM runner_events WHERE project_id='raiseai' "
+        "AND event LIKE 'thinking-effort-high-%' "
+        "ORDER BY id DESC LIMIT 12"
+    ).fetchall()
     print(json.dumps({
         "autonomy_runtime": dict(runtime) if runtime else None,
         "recent_commands": [dict(row) for row in commands],
         "recent_events": [dict(row) for row in events],
+        "thinking_events": [dict(row) for row in thinking_events],
     }, ensure_ascii=False, sort_keys=True))
     conn.close()
 except Exception as exc:
