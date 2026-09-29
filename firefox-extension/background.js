@@ -1,5 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
+const violentmonkeyReadyProjects = new Set();
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
 const projectTabs = Object.create(null);
@@ -1137,7 +1138,10 @@ async function refreshTargets() {
           const tab = await browser.tabs.get(assignedTabId);
           const previous = tabTargets[assignedTabId];
           tabTargets[assignedTabId] = target;
-          if (tab.status === "complete" && runnerConfigChanged(previous, target)) {
+          if (tab.status === "complete" && (
+            runnerConfigChanged(previous, target) ||
+            (VIOLENTMONKEY_PRIMARY_RUNNER && !violentmonkeyReadyProjects.has(target.project_id))
+          )) {
             const synced = await syncRunnerConfig(assignedTabId, target);
             if (!synced?.ok) {
               postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
@@ -1221,6 +1225,7 @@ async function inject(tabId, target) {
       }).catch(() => [""]);
       const vmReady = Array.isArray(readiness) && readiness.some(value => String(value || "").trim());
       if (vmReady) {
+        violentmonkeyReadyProjects.add(effectiveTarget.project_id);
         // Stop any legacy injected runner that may still be alive from before
         // Violentmonkey was installed/reloaded, preventing duplicate sends.
         try {
@@ -1246,6 +1251,7 @@ async function inject(tabId, target) {
         });
         return {mode: "violentmonkey"};
       }
+      violentmonkeyReadyProjects.delete(effectiveTarget.project_id);
       postStatus({
         projectId: target.project_id,
         baseProjectId: target.base_project_id,
@@ -1505,9 +1511,15 @@ async function pollCommands() {
       const hasTarget = !!targets[command.project_id] || workerKeysFor(command.project_id).length > 0;
       if (!hasTarget || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
       processedCommands.add(command.id);
-      if (VIOLENTMONKEY_PRIMARY_RUNNER && (command.action === "push" || command.action === "drain")) {
-        // Leave database push/drain commands pending for the bound Violentmonkey worker.
-        // The userscript executes them and posts /runner-command-result itself.
+      const commandWorkerKeys = targets[command.project_id]
+        ? [command.project_id]
+        : workerKeysFor(command.project_id, true);
+      const vmOwnsCommand = VIOLENTMONKEY_PRIMARY_RUNNER &&
+        commandWorkerKeys.length > 0 &&
+        commandWorkerKeys.every(key => violentmonkeyReadyProjects.has(key));
+      if (vmOwnsCommand && (command.action === "push" || command.action === "drain")) {
+        // Leave database push/drain commands pending only when the bound
+        // Violentmonkey worker has positively announced readiness.
         continue;
       }
       if (command.action === "push") await pushProject(command.project_id, command.id);
@@ -1568,6 +1580,7 @@ browser.tabs.onRemoved.addListener(tabId => {
   const target = tabTargets[tabId];
   const intentional = intentionalTabClosures.delete(tabId);
   if (target && projectTabs[target.project_id] === tabId) delete projectTabs[target.project_id];
+  if (target?.project_id) violentmonkeyReadyProjects.delete(target.project_id);
   delete tabTargets[tabId];
   delete pendingAdoptions[tabId];
   if (target && !intentional) {
