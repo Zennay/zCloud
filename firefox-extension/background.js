@@ -239,10 +239,17 @@ function runProject(cfg) {
     const prompt = promptWithReplacementHandoff(basePrompt);
     if (!qualityRetryPending) return prompt;
     const escalation = qualityRetryCount >= 2
-      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Gebruik High thinking. Geen audit/status-only; kies een andere veilige route en bewijs echte uitvoering. "
-      : "DOE HET NU ECHT. Ga door met dezelfde assignment, gebruik High thinking en voer nu een concrete stap uit. ";
-    return prompt + "\n\nZCLOUD_QUALITY_RETRY: " + escalation +
-      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE.";
+      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. " +
+        "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
+        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
+        "Sluit NIET opnieuw af met dezelfde recoverable BLOCKED/WAIT_VPS; blijf binnen de bestaande safety-gates en bewijs de uitgevoerde stap. "
+      : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. " +
+        "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
+    return prompt + "\n\n" +
+      "ZCLOUD_QUALITY_RETRY: " + escalation +
+      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Een status-only/read-only antwoord telt niet. " +
+      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. Probeer de self-hosted runner/queue-route opnieuw wanneer die veilig beschikbaar is. " +
+      "Sluit pas af nadat je een echte write, run/job, verifier of materiële state-change hebt uitgevoerd en geef concrete ZCLOUD_QUEUE_EVIDENCE.";
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
@@ -324,6 +331,22 @@ function runProject(cfg) {
     ).trim();
   }
   const REQUIRED_THINKING_EFFORT = "high";
+  // ChatGPT's current picker has a stable test id. Keep the aria/fallback
+  // selectors because the rendered button text and Radix ids are dynamic.
+  const MODEL_PICKER_SELECTOR = [
+    '[data-testid="model-switcher-dropdown-button"]',
+    'button[aria-label="Model selector"]',
+    '[aria-label="Model selector"][aria-haspopup="menu"]',
+    '[aria-haspopup="menu"][data-testid*="model"]'
+  ].join(",");
+  const THINKING_OPTION_SELECTOR = [
+    '[role="menuitemradio"]',
+    '[role="option"]',
+    '[role="menuitem"]',
+    '[role="radio"]',
+    '[data-testid*="thinking"]',
+    '[data-testid*="reasoning"]'
+  ].join(",");
   const MODEL_CONTROL_SELECTOR = [
     "button",
     '[role="button"]',
@@ -335,10 +358,12 @@ function runProject(cfg) {
     '[aria-haspopup="listbox"]'
   ].join(",");
   function isHighLabel(value) {
-    const label = String(value || "").trim().toLowerCase();
+    const label = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
     if (!label) return false;
     if (/extra\s+high|very\s+high|zeer\s+hoog|pro\b/.test(label)) return false;
-    return /(?:^|\b)(?:high|hoog)(?:\b|$)/i.test(label);
+    return /(?:^|\s)(?:high|hoog)(?:\b|\s|$)/i.test(label) ||
+      /(?:^|\b)(?:think|denk)\s+hard(?:er)?(?:\b|$)/i.test(label) ||
+      /^(?:hard|harder)(?:\b|\s)/i.test(label);
   }
   function isModelControlLabel(value) {
     const label = String(value || "").trim().toLowerCase();
@@ -350,7 +375,23 @@ function runProject(cfg) {
     return el.getAttribute?.("aria-selected") === "true" ||
       el.getAttribute?.("aria-checked") === "true" ||
       el.getAttribute?.("aria-pressed") === "true" ||
-      state === "checked" || state === "on" || state === "active";
+      el.getAttribute?.("aria-current") === "true" ||
+      el.getAttribute?.("data-selected") === "true" ||
+      el.getAttribute?.("data-active") === "true" ||
+      state === "checked" || state === "on" || state === "active" ||
+      /(?:^|\s)(?:selected|active|checked)(?:\s|$)/i.test(String(el.className || ""));
+  }
+  function thinkingOptions() {
+    return [...document.querySelectorAll(THINKING_OPTION_SELECTOR)]
+      .filter(el => visibleElement(el));
+  }
+  function selectedHighOption() {
+    return thinkingOptions().find(el => isHighLabel(controlLabel(el)) && elementSignalsSelected(el)) || null;
+  }
+  function pickerShowsHigh() {
+    return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
+      .filter(el => visibleElement(el))
+      .some(el => isHighLabel(controlLabel(el)));
   }
   function modelControls() {
     return [...document.querySelectorAll(MODEL_CONTROL_SELECTOR)]
@@ -359,6 +400,7 @@ function runProject(cfg) {
         const label = controlLabel(el);
         const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
         return isModelControlLabel(label) ||
+          el.matches?.(MODEL_PICKER_SELECTOR) ||
           testId.includes("model") ||
           testId.includes("thinking") ||
           testId.includes("reasoning");
@@ -380,6 +422,10 @@ function runProject(cfg) {
       testId.includes("reasoning");
   }
   function modelPickerButton() {
+    const explicitPicker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
+      .find(el => visibleElement(el));
+    if (explicitPicker) return explicitPicker;
+
     const controls = modelControls();
     const explicit = controls.find(el => {
       const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
@@ -400,10 +446,7 @@ function runProject(cfg) {
     }) || null;
   }
   function highSelectionVerified() {
-    const controls = modelControls();
-    if (controls.some(el => isHighLabel(controlLabel(el)) && elementSignalsSelected(el))) return true;
-    const picker = modelPickerButton();
-    return !!(picker && isPickerLike(picker) && isHighLabel(controlLabel(picker)));
+    return pickerShowsHigh() || !!selectedHighOption();
   }
   async function waitForHighSelection(timeoutMs = 3500) {
     const deadline = Date.now() + timeoutMs;
@@ -419,7 +462,7 @@ function runProject(cfg) {
       return true;
     }
 
-    const exactHigh = /^(?:high|hoog)$/i;
+    const exactHigh = /^(?:high|hoog|think\s+hard|think\s+harder|denk\s+hard|denk\s+harder|hard|harder)(?:\b|\s)/i;
     const directHigh = modelControls().find(el =>
       exactHigh.test(controlLabel(el)) &&
       !el.closest?.('[role="menu"],[role="listbox"]')
@@ -444,8 +487,8 @@ function runProject(cfg) {
 
     picker.click();
     await sleep(500);
-    const highOption = modelControls().find(el =>
-      exactHigh.test(controlLabel(el)) &&
+    const highOption = [...new Set([...thinkingOptions(), ...modelControls()])].find(el =>
+      (exactHigh.test(controlLabel(el)) || isHighLabel(controlLabel(el))) &&
       el !== picker
     );
     if (!highOption) {
@@ -459,7 +502,21 @@ function runProject(cfg) {
     }
 
     highOption.click();
-    const verified = await waitForHighSelection();
+    let verified = await waitForHighSelection();
+    // Selecting an option normally closes the Radix menu. Re-open the same
+    // explicit picker once and verify its checked/selected radio option; a
+    // prompt is never sent on a mere click without this confirmation.
+    if (!verified) {
+      const verificationPicker = modelPickerButton();
+      if (verificationPicker && !selectedHighOption() && !pickerShowsHigh()) {
+        verificationPicker.click();
+        await sleep(350);
+        verified = await waitForHighSelection(1200);
+        if (!verified) {
+          document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+        }
+      }
+    }
     if (!verified) {
       status("thinking-effort-high-required", {
         reason: "selection-not-verifiable",
@@ -671,12 +728,13 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        // High remains the required preference and is retried on every send,
-        // but a ChatGPT UI/model-picker mismatch must never stop execution.
-        status("thinking-effort-high-unavailable-proceeding", {
-          reason: "ui-control-not-verifiable",
+        // Think Hard is a hard UI gate. Prompt wording is not a substitute for
+        // selecting and verifying the ChatGPT control.
+        status("send-blocked", {
+          reason: "high-thinking-required",
           required: REQUIRED_THINKING_EFFORT
         });
+        return false;
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
@@ -870,7 +928,7 @@ function runProject(cfg) {
     }
     composerMissingSince = 0;
     if ((forceInitialDispatch || !vpsDispatchOnly) && !SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
-        (!lastPromptSentAt || now - lastPromptSentAt >= 120000)) {
+        (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
       if (forceInitialDispatch || draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
         if (!(await canAutoContinue())) {
