@@ -52,6 +52,9 @@ jobs:
             --path public/app.js \
             --path public/index.html \
             --path public/style.css \
+            --path public/enhancements.js \
+            --path public/enhancements.css \
+            --path projects.json \
             --actor "github-actions-vps-deploy" \
             --json
 
