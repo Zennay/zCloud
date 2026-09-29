@@ -3,30 +3,30 @@
   "default": {
     "mode": "ai_worker",
     "auto_start": true,
-    "continue_delay_seconds": 0,
+    "continue_delay_seconds": 300,
     "wait_vps_seconds": 900,
     "wait_human_seconds": 21600,
     "complete_recheck_seconds": 86400,
     "dispatch_mode": "vps",
-    "min_ai_interval_seconds": 0,
+    "min_ai_interval_seconds": 300,
     "autonomy_contract_required": true
   },
   "projects": {
     "cloud": {
       "mode": "zcloud_stopgate",
       "auto_start": true,
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0
+      "min_ai_interval_seconds": 300
     },
     "haxlab": {
       "mode": "haxlab_status",
       "auto_start": true,
       "status_file": "/var/lib/haxlab/state/autonomy-status.json",
       "ai_states": [],
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0,
+      "min_ai_interval_seconds": 300,
       "local_executor_owns_states": true,
       "status_missing_fail_closed": true
     },
@@ -35,39 +35,39 @@
       "auto_start": true,
       "status_file": "/opt/ftmo-autonomous/.scratch/autonomy/status.json",
       "ai_stages": [],
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0,
+      "min_ai_interval_seconds": 300,
       "local_executor_owns_stages": true,
       "status_missing_fail_closed": true
     },
     "ulab": {
       "mode": "external_gate",
       "auto_start": false,
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0
+      "min_ai_interval_seconds": 300
     },
     "supa": {
       "mode": "ai_worker",
       "auto_start": true,
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0
+      "min_ai_interval_seconds": 300
     },
     "raiseai": {
       "mode": "ai_worker",
       "auto_start": true,
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0
+      "min_ai_interval_seconds": 300
     },
     "zssh": {
       "mode": "ai_worker",
       "auto_start": true,
-      "continue_delay_seconds": 0,
+      "continue_delay_seconds": 300,
       "dispatch_mode": "vps",
-      "min_ai_interval_seconds": 0
+      "min_ai_interval_seconds": 300
     }
   }
 }
