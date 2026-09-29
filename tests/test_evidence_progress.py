@@ -71,7 +71,7 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertIn("latest", renderer)
         self.assertIn("current", renderer)
         self.assertIn("best", renderer)
-        self.assertIn("Actuele bottleneck", renderer)
+        self.assertIn("Current bottleneck", renderer)
 
 
 if __name__ == "__main__":
