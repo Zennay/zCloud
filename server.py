@@ -23,7 +23,7 @@ ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-GLOBAL_CHATGPT_WORKER_LIMIT = 1
+GLOBAL_CHATGPT_WORKER_LIMIT = 2
 MAX_CHATGPT_WORKERS = 2
 AI_SLOT_DIVERSITY_PENALTY = 500
 PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
@@ -1482,7 +1482,7 @@ def global_worker_allocation(states=None,targets=None):
     }
 
 def _persist_global_worker_allocation(allocation):
-    """Persist stable portfolio slot identities across project-tab reallocation."""
+    """Persist two stable portfolio slot identities across project-tab reallocation."""
     selected=list(allocation.get('workers') or [])[:GLOBAL_CHATGPT_WORKER_LIMIT]
     ts=now()
     selected_by_key={
@@ -1500,7 +1500,7 @@ def _persist_global_worker_allocation(allocation):
         }
         assignments={}
         used_slots=set()
-        # Keep a surviving worker on the same global Worker identity.
+        # Keep a surviving worker on the same global Worker 1/2 identity.
         for worker_key in selected_by_key:
             previous=existing_by_key.get(worker_key)
             if not previous:
