@@ -26,6 +26,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("pendingInitialDispatches", background)
         self.assertIn("forceInitialDispatch", background)
         self.assertIn("vpsDispatchOnly && !forceInitialDispatch", background)
+        self.assertIn("(forceInitialDispatch || !vpsDispatchOnly)", background)
+        self.assertIn("forceInitialDispatch = false", background)
         self.assertIn("if latest and (bool(latest['generating']) or bool(latest['sending'])):", server)
         self.assertIn("if prompt_id and ready_id < prompt_id:", server)
         self.assertIn("A prompt from an older browser session must not permanently block", server)
