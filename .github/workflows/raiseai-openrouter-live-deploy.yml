@@ -209,6 +209,8 @@ jobs:
           print(json.dumps({"claim_verified":True,"phase":"pre-deploy"},sort_keys=True))
           PY
           bash raiseai/gateway/deploy/install-user-gateway.sh
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
           systemctl --user is-active --quiet raise-gateway.service
           echo "SERVICE_STATE=$(systemctl --user is-active raise-gateway.service)"
           echo "COMMAND_EXITCODE=0"
