@@ -220,6 +220,9 @@ function runProject(cfg) {
   const REPLACEMENT_HANDOFF = cfg.replacement_handoff || null;
   let replacementHandoffPending = !!REPLACEMENT_HANDOFF;
   let BASE_PROMPT = cfg.prompt;
+  let qualityRetryPending = false;
+  let qualityRetryCount = 0;
+  const QUALITY_RETRY_LIMIT = 1;
   function promptWithReplacementHandoff(basePrompt) {
     return replacementHandoffPending && REPLACEMENT_HANDOFF
       ? basePrompt + "\n\n" +
@@ -231,7 +234,17 @@ function runProject(cfg) {
         "Handoff-context: " + JSON.stringify(REPLACEMENT_HANDOFF)
       : basePrompt;
   }
-  let PROMPT = promptWithReplacementHandoff(BASE_PROMPT);
+  function promptWithQualityRecovery(basePrompt) {
+    const prompt = promptWithReplacementHandoff(basePrompt);
+    return qualityRetryPending
+      ? prompt + "\n\n" +
+        "ZCLOUD_QUALITY_RETRY: de vorige cyclus was kort, leeg, te snel of miste betrouwbare queue-evidence. " +
+        "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item; controleer eerst wat er in je vorige antwoord ontbrak of fout ging, " +
+        "voer de opdracht inhoudelijk uit en lever aantoonbare voortgang. Geef geen status-only antwoord. " +
+        "Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE."
+      : prompt;
+  }
+  let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
@@ -337,12 +350,30 @@ function runProject(cfg) {
   function cycleQuality(text, now) {
     const elapsedMs = lastPromptSentAt ? Math.max(0, now - lastPromptSentAt) : null;
     const hasQueueResult = /ZCLOUD_QUEUE_RESULT:\s*(DONE|BLOCKED|CONTINUE)\b/i.test(text || "");
+    const queueEvidenceMatch = (text || "").match(/ZCLOUD_QUEUE_EVIDENCE:\s*([^\n]+)/i);
+    const hasQueueEvidence = !!queueEvidenceMatch && queueEvidenceMatch[1].trim().length > 0;
     const nullLike = /(?:^|\b)(?:null|undefined|no results?|geen resultaten?)(?:\b|$)/i.test(text || "");
     const tooShort = (text || "").trim().length < WEAK_RESPONSE_CHARS;
     const tooFast = elapsedMs !== null && elapsedMs <= SHORT_CYCLE_MS;
-    const weak = !hasQueueResult && (nullLike || tooShort || tooFast);
+    const missingQueueEvidence = hasQueueResult && !hasQueueEvidence;
+    const weak = !hasQueueResult && (nullLike || tooShort || tooFast) ||
+      missingQueueEvidence;
     weakCycleStreak = weak ? weakCycleStreak + 1 : 0;
-    return {weak, hasQueueResult, nullLike, tooShort, tooFast, elapsedMs};
+    return {weak, hasQueueResult, hasQueueEvidence, missingQueueEvidence, nullLike, tooShort, tooFast, elapsedMs};
+  }
+  async function scheduleQualityRetry(reason, details = {}) {
+    if (qualityRetryCount >= QUALITY_RETRY_LIMIT) return false;
+    qualityRetryCount += 1;
+    qualityRetryPending = true;
+    PROMPT = promptWithQualityRecovery(BASE_PROMPT);
+    await syncStatus("quality-retry-scheduled", {
+      reason,
+      retryNumber: qualityRetryCount,
+      retryLimit: QUALITY_RETRY_LIMIT,
+      adjustment: "same-assignment-quality-recovery",
+      ...details
+    });
+    return true;
   }
   async function syncStatus(event, extra = {}) {
     const payload = statusPayload(event, extra);
@@ -478,9 +509,11 @@ function runProject(cfg) {
       const button = sendButton();
       if (!button || button.disabled) { status("send-blocked", {reason: "send-button-unavailable"}); return false; }
       button.click();
+      const qualityRetry = qualityRetryPending;
+      qualityRetryPending = false;
       if (replacementHandoffPending) {
         replacementHandoffPending = false;
-        PROMPT = BASE_PROMPT;
+        PROMPT = promptWithQualityRecovery(BASE_PROMPT);
         try {
           await browser.runtime.sendMessage({
             type: "runner-replacement-handoff-consumed",
@@ -498,7 +531,7 @@ function runProject(cfg) {
       awaitingGeneration = true;
       generationDeadline = Date.now() + 120000;
       finishedAt = 0;
-      status("prompt-sent", {reason: reason});
+      status("prompt-sent", {reason: reason, qualityRetry});
       return true;
     } finally {
       await sleep(1000);
@@ -560,7 +593,10 @@ function runProject(cfg) {
         await autoPauseForHealth("repeated-no-generation", {generationDeadlineMs: 120000});
         return;
       }
-      status("generation-not-started", {reason: "no-generation-after-send", weakCycleStreak});
+      const retryScheduled = await scheduleQualityRetry("no-generation-after-send", {
+        generationDeadlineMs: 120000
+      });
+      status("generation-not-started", {reason: "no-generation-after-send", weakCycleStreak, retryScheduled});
       return;
     }
     if (sawGeneration) {
@@ -570,14 +606,30 @@ function runProject(cfg) {
         lastText = text;
         const quality = cycleQuality(text, now);
         await reportFinishSignals(text);
-        if (quality.weak && weakCycleStreak >= WEAK_CYCLE_LIMIT) {
-          await autoPauseForHealth("repeated-short-or-null-result", {
+        if (quality.weak) {
+          if (weakCycleStreak >= WEAK_CYCLE_LIMIT) {
+            await autoPauseForHealth("repeated-short-or-null-result", {
+              cycleSeconds: quality.elapsedMs === null ? null : Math.round(quality.elapsedMs / 1000),
+              assistantCharacters: (text || "").length,
+              nullLike: quality.nullLike,
+              tooShort: quality.tooShort,
+              tooFast: quality.tooFast,
+              queueResultPresent: quality.hasQueueResult,
+              queueEvidencePresent: quality.hasQueueEvidence,
+              missingQueueEvidence: quality.missingQueueEvidence
+            });
+            return;
+          }
+          await scheduleQualityRetry("short-or-invalid-result", {
             cycleSeconds: quality.elapsedMs === null ? null : Math.round(quality.elapsedMs / 1000),
             assistantCharacters: (text || "").length,
             nullLike: quality.nullLike,
-            queueResultPresent: quality.hasQueueResult
+            tooShort: quality.tooShort,
+            tooFast: quality.tooFast,
+            queueResultPresent: quality.hasQueueResult,
+            queueEvidencePresent: quality.hasQueueEvidence,
+            missingQueueEvidence: quality.missingQueueEvidence
           });
-          return;
         }
       }
       if (finishSignalsReported && vpsDispatchOnly) {
@@ -673,9 +725,15 @@ function runProject(cfg) {
         status("assignment-invalid", {reason:"config-refresh-missing-or-mismatched-assignment"});
         return {ok:false, reason:"assignment-invalid"};
       }
+      const previousQueueId = String(cfg.queue_item?.queue_id || "").trim();
       Object.assign(cfg, next);
       BASE_PROMPT = nextPrompt;
-      PROMPT = promptWithReplacementHandoff(BASE_PROMPT);
+      if (previousQueueId !== queueId) {
+        weakCycleStreak = 0;
+        qualityRetryCount = 0;
+        qualityRetryPending = false;
+      }
+      PROMPT = promptWithQualityRecovery(BASE_PROMPT);
       autoContinue = next.auto_continue !== false;
       vpsDispatchOnly = next.vps_dispatch_only === true;
       autoContinueDelayMs = Math.max(0, Number(next.auto_continue_delay_seconds ?? 0) * 1000);
