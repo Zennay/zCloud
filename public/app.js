@@ -6,7 +6,7 @@ const $=id=>document.getElementById(id),num=n=>new Intl.NumberFormat('en-GB',{ma
 const date=(x,full=false)=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',day:'numeric',month:'short',...(full?{year:'numeric',hour:'2-digit',minute:'2-digit'}:{})}).format(new Date(x));
 const clock=x=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(x));
 const rel=x=>{const m=Math.floor((Date.now()-Date.parse(x))/60000);return m<1?'zojuist':m<60?m+' min geleden':m<1440?Math.floor(m/60)+' u geleden':date(x)};
-let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},route='',range='7d',filter='',busy=false,routeVersion=0;
+let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null;
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
 async function api(path){const r=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
@@ -159,18 +159,24 @@ async function setRunnerWorkers(projectId,count,input){
   finally{input.disabled=false}
 }
 function dynamicWorkerControl(){
-  const cfg=DATA?.dynamic_workers||{count:1,max_workers:8,cooldown_seconds:300};
+  const cfg=DATA?.dynamic_workers||{count:1,max_workers:8,cooldown_seconds:120};
   const count=Math.max(0,Number(cfg.count??1)),max=Math.max(1,Number(cfg.max_workers||8)),cooldown=Math.max(60,Number(cfg.cooldown_seconds||300));
   const state=count>0?'On · '+count+' active slot'+(count===1?'':'s'):'Off';
   return `<div class="dynamic-worker-control"><div class="dynamic-worker-copy"><small>Dynamic workers</small><strong>${esc(state)}</strong><span>Continuous iteration · max 1 prompt per ${Math.round(cooldown/60)} min per worker</span></div><label><span>Workers</span><input type="number" inputmode="numeric" min="0" max="${max}" step="1" value="${count}" data-dynamic-workers aria-label="Number of dynamic zCloud workers"></label></div>`;
 }
 async function setDynamicWorkers(count,input){
-  const previous=input.value;input.disabled=true;
+  const previous=input.value,requested=Number(count);
+  if(!Number.isInteger(requested))return;
+  input.disabled=true;
   try{
-    const response=await fetch('/api/dynamic-workers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:Number(count)}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/dynamic-workers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:requested}),signal:AbortSignal.timeout(10000)});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.error||'Saving dynamic worker count failed');
-    input.value=String(data.dynamic_workers?.count??count);setTimeout(()=>refresh(true),450);
+    const saved=Number(data.dynamic_workers?.count);
+    if(saved!==requested||data.dynamic_workers?.reconciled!==true)throw new Error('Worker limit was not applied to the runtime');
+    input.value=String(saved);
+    if(DATA)DATA.dynamic_workers=data.dynamic_workers;
+    setTimeout(()=>refresh(true),250);
   }catch(error){input.value=previous;window.alert(error.message||String(error))}
   finally{input.disabled=false}
 }
@@ -244,5 +250,6 @@ document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.d
 document.addEventListener('click',async e=>{const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('change',async e=>{const dynamicInput=e.target.closest?.('[data-dynamic-workers]');if(dynamicInput){await setDynamicWorkers(dynamicInput.value,dynamicInput);return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('input',e=>{const dynamicInput=e.target.closest?.('[data-dynamic-workers]');if(!dynamicInput)return;clearTimeout(dynamicWorkerSaveTimer);const value=String(dynamicInput.value||'').trim();if(value===''||!dynamicInput.validity.valid)return;dynamicWorkerSaveTimer=setTimeout(()=>{if(document.body.contains(dynamicInput))setDynamicWorkers(value,dynamicInput)},350)});
+document.addEventListener('change',async e=>{const dynamicInput=e.target.closest?.('[data-dynamic-workers]');if(dynamicInput){clearTimeout(dynamicWorkerSaveTimer);await setDynamicWorkers(dynamicInput.value,dynamicInput);return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
