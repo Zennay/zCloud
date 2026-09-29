@@ -51,7 +51,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("Geen audit/status-only", background)
         self.assertIn("Gebruik High thinking", background)
         self.assertIn("andere veilige route", background)
-                self.assertIn("recoverableBlocker", background)
+        self.assertIn("recoverableBlocker", background)
         self.assertIn("blockedResult || waitVps", background)
         self.assertIn("WAIT_HUMAN remains a real safety/dependency gate", background)
         self.assertIn("ensureHighThinking", background)
