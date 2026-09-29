@@ -33,9 +33,13 @@ def test_worker_prompt_uses_vps_queue_not_notion_for_scheduling():
     assert "query_data_sources zijn nooit een WAIT/blocker" in prompt
     assert "VOER UIT, NIET RAPPORTEREN" in prompt
     assert "status-only/read-only cyclus is ongeldig" in prompt
-    assert "RECOVERY-FIRST" in prompt
-    assert "onderzoek de root cause" in prompt
-    assert "bewijs de concrete blocker én de uitgevoerde herstelpogingen" in prompt
+    assert "RECOVERY-FIRST/ANTI-LOOP" in prompt
+    assert "oude blocker is geen waarheid" in prompt
+    assert "andere veilige uitvoeringsroute proberen" in prompt
+    assert "Ontbrekende directe SSH/MCP is geen blocker" in prompt
+    assert "workflow_dispatch" in prompt
+    assert "minimaal twee verschillende aantoonbaar mislukte uitvoeringsroutes" in prompt
+    assert "Bewijs blocker én herstelpogingen" in prompt
     assert "Done alleen wanneer ALLE Completion Criteria bewezen zijn" in prompt
     assert "ZCLOUD_QUEUE_ITEM: cloud-test" in prompt
     assert "Jij bent Worker 1/2." in prompt
