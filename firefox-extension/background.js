@@ -1038,8 +1038,17 @@ async function syncRunnerConfig(tabId, target) {
   if (!portfolioAssignmentReady(target)) return {ok:false, reason:"assignment-invalid"};
   if (VIOLENTMONKEY_PRIMARY_RUNNER) {
     try {
-      await inject(tabId, target);
-      return {ok:true, reason:"violentmonkey-config-bridged"};
+      const injected = await inject(tabId, target);
+      if (injected?.mode === "violentmonkey") {
+        return {ok:true, reason:"violentmonkey-config-bridged"};
+      }
+      // During the temporary migration fallback the legacy injected runner is
+      // still alive, so refresh its queue assignment through its message API.
+      const legacyResult = await browser.tabs.sendMessage(tabId, {
+        type:"runner-config-update", projectId:target.project_id, target
+      }).catch(() => null);
+      if (legacyResult?.ok) return legacyResult;
+      return {ok:false, reason:"legacy-fallback-config-refresh-failed"};
     } catch (_) {
       return {ok:false, reason:"violentmonkey-config-bridge-failed"};
     }
@@ -1235,7 +1244,7 @@ async function inject(tabId, target) {
           at: new Date().toISOString(),
           tabId
         });
-        return;
+        return {mode: "violentmonkey"};
       }
       postStatus({
         projectId: target.project_id,
@@ -1256,6 +1265,7 @@ async function inject(tabId, target) {
     if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-success", at: new Date().toISOString(), tabId: tabId});
+    return {mode: "legacy"};
   } catch (error) {
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-failed", error: String(error?.message || error),
