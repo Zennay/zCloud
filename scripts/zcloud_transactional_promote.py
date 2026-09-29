@@ -634,8 +634,14 @@ def promote(
     syntax_check(candidate, normalized)
     feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
     pending_config_changes = config_changes(candidate, root, normalized)
+    # Validate against the exact candidate revision that this deploy is about to promote.
+    # An explicitly supplied validator path remains authoritative for controlled tests.
+    effective_validator = config_validator
+    candidate_validator = candidate / "scripts/zcloud_config_validate.py"
+    if config_validator == DEFAULT_CONFIG_VALIDATOR and candidate_validator.is_file():
+        effective_validator = candidate_validator
     config_validation = run_config_validation(
-        config_validator,
+        effective_validator,
         candidate=candidate,
         root=root,
         paths=normalized,
