@@ -11,6 +11,33 @@ const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1";
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
+function portfolioAssignmentReady(target) {
+  if (!target) return false;
+  const queueId = String(target.queue_item?.queue_id || "").trim();
+  const slot = Number(target.global_worker_slot || 0);
+  const total = Number(target.global_worker_count || 0);
+  const prompt = String(target.prompt || "");
+  return !!queueId &&
+    Number.isInteger(slot) && slot >= 1 &&
+    Number.isInteger(total) && total >= slot &&
+    target.assignment_ready === true &&
+    prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
+    prompt.includes("Jij bent Worker " + slot + "/" + total + ".");
+}
+
+function runnerConfigChanged(previous, next) {
+  if (!previous) return true;
+  return previous.prompt !== next.prompt ||
+    previous.active !== next.active ||
+    previous.desired_state !== next.desired_state ||
+    previous.auto_continue !== next.auto_continue ||
+    previous.vps_dispatch_only !== next.vps_dispatch_only ||
+    Number(previous.auto_continue_delay_seconds || 0) !== Number(next.auto_continue_delay_seconds || 0) ||
+    String(previous.queue_item?.queue_id || "") !== String(next.queue_item?.queue_id || "") ||
+    String(previous.queue_item?.claim_expires || "") !== String(next.queue_item?.claim_expires || "") ||
+    Number(previous.global_worker_slot || 0) !== Number(next.global_worker_slot || 0);
+}
+
 async function setRecoveryTag(tabId, projectId) {
   if (tabId == null || !projectId) return;
   try { await browser.sessions.setTabValue(tabId, Recovery.SESSION_KEY, projectId); } catch (_) {}
@@ -91,6 +118,12 @@ async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
   if (!target?.project_id || pendingTabHandoffs.has(target.project_id)) return;
   if (projectTabs[target.project_id] != null) return;
   if (!target.active || target.desired_state === "paused" || target.desired_state === "draining") return;
+  if (!portfolioAssignmentReady(target)) {
+    postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
+      projectName:target.name,target:target.url,event:"assignment-invalid",
+      reason:"refused-worker-recovery-without-current-vps-assignment",at:new Date().toISOString()});
+    return;
+  }
   pendingTabHandoffs.add(target.project_id);
   postStatus({
     projectId: target.project_id,
@@ -185,17 +218,20 @@ function runProject(cfg) {
   if (window[marker]) return;
   window[marker] = true;
   const REPLACEMENT_HANDOFF = cfg.replacement_handoff || null;
-  const BASE_PROMPT = cfg.prompt;
-  let PROMPT = REPLACEMENT_HANDOFF
-    ? BASE_PROMPT + "\n\n" +
-      "BEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
-      "Neem GEEN nieuwe taakclaim zolang onderstaande bestaande claim nog geldig is. " +
-      "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen; " +
-      "heartbeat en release moeten dezelfde owner_id blijven gebruiken. " +
-      "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit en probeer in dezelfde cyclus veilig opnieuw te claimen; bij succes ga je direct verder met de taak. Een ontbrekende claim is geen reden om na statuscontrole te stoppen. " +
-      "Handoff-context: " + JSON.stringify(REPLACEMENT_HANDOFF)
-    : cfg.prompt;
   let replacementHandoffPending = !!REPLACEMENT_HANDOFF;
+  let BASE_PROMPT = cfg.prompt;
+  function promptWithReplacementHandoff(basePrompt) {
+    return replacementHandoffPending && REPLACEMENT_HANDOFF
+      ? basePrompt + "\n\n" +
+        "BEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
+        "Neem GEEN nieuwe taakclaim zolang onderstaande bestaande claim nog geldig is. " +
+        "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen; " +
+        "heartbeat en release moeten dezelfde owner_id blijven gebruiken. " +
+        "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit en probeer in dezelfde cyclus veilig opnieuw te claimen; bij succes ga je direct verder met de taak. Een ontbrekende claim is geen reden om na statuscontrole te stoppen. " +
+        "Handoff-context: " + JSON.stringify(REPLACEMENT_HANDOFF)
+      : basePrompt;
+  }
+  let PROMPT = promptWithReplacementHandoff(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
@@ -621,6 +657,31 @@ function runProject(cfg) {
   }
   browser.runtime.onMessage.addListener(message => {
     if (!message || message.projectId !== cfg.projectId) return;
+    if (message.type === "runner-config-update") {
+      const next = message.target || {};
+      const queueId = String(next.queue_item?.queue_id || "").trim();
+      const slot = Number(next.global_worker_slot || 0);
+      const total = Number(next.global_worker_count || 0);
+      const nextPrompt = String(next.prompt || "");
+      const valid = !!queueId && next.assignment_ready === true &&
+        Number.isInteger(slot) && slot >= 1 &&
+        Number.isInteger(total) && total >= slot &&
+        nextPrompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
+        nextPrompt.includes("Jij bent Worker " + slot + "/" + total + ".");
+      if (!valid) {
+        paused = true;
+        status("assignment-invalid", {reason:"config-refresh-missing-or-mismatched-assignment"});
+        return {ok:false, reason:"assignment-invalid"};
+      }
+      Object.assign(cfg, next);
+      BASE_PROMPT = nextPrompt;
+      PROMPT = promptWithReplacementHandoff(BASE_PROMPT);
+      autoContinue = next.auto_continue !== false;
+      vpsDispatchOnly = next.vps_dispatch_only === true;
+      autoContinueDelayMs = Math.max(0, Number(next.auto_continue_delay_seconds ?? 0) * 1000);
+      status("runner-config-updated", {reason:"vps-assignment-refresh", queueItem:queueId});
+      return {ok:true, queueItem:queueId};
+    }
     if (message.type === "runner-push") {
       return (async () => {
         if (paused) return {ok: false, reason: "paused"};
@@ -677,6 +738,25 @@ function runProject(cfg) {
 function postStatus(payload) {
   return fetch(API + "/runner-status", {method: "POST", mode: "no-cors", body: JSON.stringify(payload)}).catch(() => {});
 }
+async function syncRunnerConfig(tabId, target) {
+  if (!portfolioAssignmentReady(target)) return {ok:false, reason:"assignment-invalid"};
+  tabTargets[tabId] = target;
+  try {
+    const result = await browser.tabs.sendMessage(tabId, {
+      type:"runner-config-update", projectId:target.project_id, target
+    });
+    if (result?.ok) return result;
+  } catch (_) {}
+  try {
+    await inject(tabId, target);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    const result = await browser.tabs.sendMessage(tabId, {
+      type:"runner-config-update", projectId:target.project_id, target
+    });
+    if (result?.ok) return result;
+  } catch (_) {}
+  return {ok:false, reason:"config-refresh-unavailable"};
+}
 async function refreshTargets() {
   try {
     const response = await fetch(API + "/runner-targets", {cache: "no-store"});
@@ -708,6 +788,20 @@ async function refreshTargets() {
     for (const target of Object.values(targets)) {
       if (pendingTabHandoffs.has(target.project_id)) continue;
       const assignedTabId = projectTabs[target.project_id];
+      if (target.active && !portfolioAssignmentReady(target)) {
+        postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
+          projectName:target.name,target:target.url,event:"assignment-invalid",
+          reason:"active-target-without-rendered-vps-assignment",at:new Date().toISOString()});
+        if (assignedTabId != null) {
+          try { await browser.tabs.sendMessage(assignedTabId, {type:"runner-stop", projectId:target.project_id, reason:"assignment-invalid"}); } catch (_) {}
+          await clearRecoveryTag(assignedTabId);
+          await closeRunnerTab(assignedTabId);
+          delete tabTargets[assignedTabId];
+          delete projectTabs[target.project_id];
+          delete pendingAdoptions[assignedTabId];
+        }
+        continue;
+      }
       if (!target.active) {
         if (assignedTabId != null) {
           try { await browser.tabs.sendMessage(assignedTabId, {type: "runner-stop", projectId: target.project_id, reason: "project-paused"}); } catch (_) {}
@@ -726,7 +820,23 @@ async function refreshTargets() {
       }
       if (assignedTabId != null) {
         try {
-          await browser.tabs.get(assignedTabId);
+          const tab = await browser.tabs.get(assignedTabId);
+          const previous = tabTargets[assignedTabId];
+          tabTargets[assignedTabId] = target;
+          if (tab.status === "complete" && runnerConfigChanged(previous, target)) {
+            const synced = await syncRunnerConfig(assignedTabId, target);
+            if (!synced?.ok) {
+              postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
+                projectName:target.name,target:target.url,event:"assignment-refresh-failed",
+                reason:synced?.reason || "unknown",at:new Date().toISOString(),tabId:assignedTabId});
+              await clearRecoveryTag(assignedTabId);
+              await closeRunnerTab(assignedTabId);
+              delete tabTargets[assignedTabId];
+              delete projectTabs[target.project_id];
+              delete pendingAdoptions[assignedTabId];
+              continue;
+            }
+          }
           claimedTabIds.add(assignedTabId);
           await setRecoveryTag(assignedTabId, target.project_id);
           continue;
@@ -808,6 +918,7 @@ async function newProjectChat(projectId, reason, commandId) {
   const target = targets[projectId];
   try {
     if (!target) throw new Error("Projectconfig ontbreekt");
+    if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     const handoff = await prepareReplacementHandoff(target, reason);
     const oldTab = projectTabs[projectId];
     if (oldTab != null) {
@@ -850,6 +961,7 @@ async function startProject(projectId, commandId) {
   const target = targets[projectId];
   try {
     if (!target) throw new Error("Projectconfig ontbreekt");
+    if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     target.active = true;
     const current = projectTabs[projectId];
     if (current != null) {
@@ -943,6 +1055,13 @@ async function pushProject(projectId, commandId) {
     await commandResult(commandId, "failed", "Projectconfig ontbreekt");
     return;
   }
+  if (!portfolioAssignmentReady(target)) {
+    await commandResult(commandId, "failed", "Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
+    postStatus({projectId:projectId,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
+      projectName:target.name,target:target.url,event:"assignment-invalid",
+      reason:"push-refused-without-current-vps-assignment",at:new Date().toISOString()});
+    return;
+  }
   let tabId = projectTabs[projectId];
   if (tabId == null) {
     await newProjectChat(projectId, "dashboard-push-recovery", commandId);
@@ -955,6 +1074,11 @@ async function pushProject(projectId, commandId) {
     return;
   }
   let result = null;
+  const configSync = await syncRunnerConfig(tabId, target);
+  if (!configSync?.ok) {
+    await commandResult(commandId, "failed", "Actuele VPS queue-assignment kon niet naar de worker-tab worden gesynchroniseerd");
+    return;
+  }
   try {
     result = await browser.tabs.sendMessage(tabId, {type: "runner-push", projectId: projectId, reason: "dashboard-push"});
   } catch (_) {
@@ -1022,8 +1146,11 @@ browser.runtime.onMessage.addListener((message, sender) => {
       .then(data => {
         const target = (data.projects || {})[message.projectId];
         const base = message.projectId.split("::w", 1)[0];
+        const assignmentReady = !!target && portfolioAssignmentReady(target);
         return {
-          auto_continue: !!target && target.active === true && target.auto_continue !== false,
+          auto_continue: assignmentReady && target.active === true && target.auto_continue !== false,
+          assignment_ready: assignmentReady,
+          queue_item: target?.queue_item?.queue_id || "",
           vps_dispatch_only: target ? target.vps_dispatch_only === true : true,
           continue_delay_seconds: target ? Number(target.auto_continue_delay_seconds ?? 0) : 0,
           autonomy: target?.autonomy || null
