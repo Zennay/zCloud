@@ -177,3 +177,14 @@
 .project-card-problem{padding-top:7px;border-top:1px solid #3f2d31}
 .project-card-problem small,.project-card-problem span{color:#f0a6b3}
 @media(max-width:760px){.project-card-ops{margin:0 14px 11px;padding:10px}.project-card-op{grid-template-columns:76px minmax(0,1fr)}.project-card-op strong,.project-card-op span{font-size:12px}}
+
+
+/* Resource usage: keep technical allocation immediately visible below the project rows. */
+.resource-tech-panel{border-top:1px solid var(--edge);padding:16px 23px 18px;background:rgba(16,20,27,.48)}
+.resource-tech-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.resource-tech-heading h3{margin:0;color:var(--text);font-size:13px;font-weight:650}
+.resource-tech-heading span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.resource-tech-panel .resource-tech-list{margin-top:0;gap:8px}
+.resource-tech-panel .resource-tech-row{font-size:11px}
+.resource-tech-panel>p{margin:12px 0 0;color:var(--muted);font-size:10px;line-height:1.5}
+@media(max-width:760px){.resource-tech-panel{padding-left:18px;padding-right:18px}.resource-tech-row{align-items:flex-start;flex-direction:column;gap:2px}.resource-tech-row span{text-align:left}}
