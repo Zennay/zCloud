@@ -239,10 +239,11 @@ function runProject(cfg) {
     const prompt = promptWithReplacementHandoff(basePrompt);
     if (!qualityRetryPending) return prompt;
     const escalation = qualityRetryCount >= 2
-      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. Dit is opnieuw geen geldige uitvoering. " +
+      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. " +
         "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
-        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. "
-      : "DOE HET NU ECHT. De vorige cyclus was ongeveer tien seconden, leeg, te snel of zonder betrouwbare queue-evidence. " +
+        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
+        "Sluit NIET opnieuw af met dezelfde recoverable BLOCKED/WAIT_VPS; blijf binnen de bestaande safety-gates en bewijs de uitgevoerde stap. "
+      : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. " +
         "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
     return prompt + "\n\n" +
       "ZCLOUD_QUALITY_RETRY: " + escalation +
@@ -532,10 +533,16 @@ function runProject(cfg) {
     const tooShort = (text || "").trim().length < WEAK_RESPONSE_CHARS;
     const tooFast = elapsedMs !== null && elapsedMs <= SHORT_CYCLE_MS;
     const missingQueueEvidence = hasQueueResult && !hasQueueEvidence;
-    const weak = !hasQueueResult && (nullLike || tooShort || tooFast) ||
-      missingQueueEvidence;
+    const blockedResult = /ZCLOUD_QUEUE_RESULT:\s*BLOCKED\b/i.test(text || "");
+    const waitVps = /ZCLOUD_AUTONOMY:\s*WAIT_VPS\b/i.test(text || "");
+    const waitHuman = /ZCLOUD_AUTONOMY:\s*WAIT_HUMAN\b/i.test(text || "");
+    // A live queue assignment must not get trapped in a formatted BLOCKED/WAIT_VPS loop.
+    // WAIT_HUMAN remains a real safety/dependency gate and is not auto-escalated.
+    const recoverableBlocker = !waitHuman && (blockedResult || waitVps);
+    const weak = (!hasQueueResult && (nullLike || tooShort || tooFast)) ||
+      missingQueueEvidence || recoverableBlocker;
     weakCycleStreak = weak ? weakCycleStreak + 1 : 0;
-    return {weak, hasQueueResult, hasQueueEvidence, missingQueueEvidence, nullLike, tooShort, tooFast, elapsedMs};
+    return {weak, hasQueueResult, hasQueueEvidence, missingQueueEvidence, blockedResult, waitVps, waitHuman, recoverableBlocker, nullLike, tooShort, tooFast, elapsedMs};
   }
   async function scheduleQualityRetry(reason, details = {}) {
     qualityRetryCount += 1;
@@ -792,7 +799,8 @@ function runProject(cfg) {
               tooFast: quality.tooFast,
               queueResultPresent: quality.hasQueueResult,
               queueEvidencePresent: quality.hasQueueEvidence,
-              missingQueueEvidence: quality.missingQueueEvidence
+              missingQueueEvidence: quality.missingQueueEvidence,
+              recoverableBlocker: quality.recoverableBlocker
             });
             return;
           }
@@ -804,7 +812,8 @@ function runProject(cfg) {
             tooFast: quality.tooFast,
             queueResultPresent: quality.hasQueueResult,
             queueEvidencePresent: quality.hasQueueEvidence,
-            missingQueueEvidence: quality.missingQueueEvidence
+            missingQueueEvidence: quality.missingQueueEvidence,
+              recoverableBlocker: quality.recoverableBlocker
           });
         }
       }
