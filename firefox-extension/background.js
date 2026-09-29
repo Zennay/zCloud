@@ -223,7 +223,7 @@ function runProject(cfg) {
   let BASE_PROMPT = cfg.prompt;
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
-  const QUALITY_RETRY_LIMIT = 1;
+  const QUALITY_RETRY_LIMIT = 3;
   function promptWithReplacementHandoff(basePrompt) {
     return replacementHandoffPending && REPLACEMENT_HANDOFF
       ? basePrompt + "\n\n" +
@@ -237,13 +237,16 @@ function runProject(cfg) {
   }
   function promptWithQualityRecovery(basePrompt) {
     const prompt = promptWithReplacementHandoff(basePrompt);
-    return qualityRetryPending
-      ? prompt + "\n\n" +
-        "ZCLOUD_QUALITY_RETRY: de vorige cyclus was kort, leeg, te snel of miste betrouwbare queue-evidence. " +
-        "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item; controleer eerst wat er in je vorige antwoord ontbrak of fout ging, " +
-        "voer de opdracht inhoudelijk uit en lever aantoonbare voortgang. Geef geen status-only antwoord. " +
-        "Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE."
-      : prompt;
+    if (!qualityRetryPending) return prompt;
+    const escalation = qualityRetryCount >= 2
+      ? "ESCALATIE: DIT IS OPNIEUW GEEN GELDIGE UITVOERING. STOP met alleen status, blockers herhalen of dezelfde mislukte route beschrijven. " +
+        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking als die instelling beschikbaar is. Analyseer waarom de vorige route faalde, kies een ANDERE veilige uitvoeringsroute en VOER DIE NU UIT. "
+      : "HERSTELPOGING: de vorige cyclus was kort, leeg, te snel of miste betrouwbare queue-evidence. Gebruik extra redeneertijd en voer de taak nu daadwerkelijk uit. ";
+    return prompt + "\n\n" +
+      "ZCLOUD_QUALITY_RETRY: " + escalation +
+      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Een status-only/read-only antwoord telt niet. " +
+      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. Probeer de self-hosted runner/queue-route opnieuw wanneer die veilig beschikbaar is. " +
+      "Sluit pas af nadat je een echte write, run/job, verifier of materiële state-change hebt uitgevoerd en geef concrete ZCLOUD_QUEUE_EVIDENCE.";
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
@@ -258,7 +261,7 @@ function runProject(cfg) {
   const COMPOSER_RECOVERY_MS = 45 * 1000;
   const SHORT_CYCLE_MS = 60 * 1000;
   const WEAK_RESPONSE_CHARS = 500;
-  const WEAK_CYCLE_LIMIT = 2;
+  const WEAK_CYCLE_LIMIT = 4;
   let weakCycleStreak = 0;
   let sawGeneration = false;
   let awaitingGeneration = false;
