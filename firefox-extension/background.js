@@ -672,12 +672,11 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        // High remains the required preference and is retried on every send,
-        // but a ChatGPT UI/model-picker mismatch must never stop execution.
-        status("thinking-effort-high-unavailable-proceeding", {
-          reason: "ui-control-not-verifiable",
+        status("send-blocked", {
+          reason: "high-thinking-required",
           required: REQUIRED_THINKING_EFFORT
         });
+        return false;
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
@@ -1138,9 +1137,8 @@ async function inject(tabId, target) {
     await setRecoveryTag(tabId, effectiveTarget.project_id);
 
     if (VIOLENTMONKEY_PRIMARY_RUNNER) {
-      // The WebExtension is now only the tab lifecycle + binding bridge.
-      // All ChatGPT DOM work (High thinking, composer, send, result parsing)
-      // is owned by public/zcloud-worker.user.js running in Violentmonkey.
+      // The WebExtension only owns tab lifecycle + worker/config binding.
+      // ChatGPT DOM execution is owned by the Violentmonkey userscript when present.
       const encodedConfig = JSON.stringify(effectiveTarget);
       const code =
         "document.documentElement.setAttribute('data-zcloud-worker-id'," + JSON.stringify(effectiveTarget.project_id) + ");" +
@@ -1148,7 +1146,38 @@ async function inject(tabId, target) {
         "document.documentElement.setAttribute('data-zcloud-force-initial-dispatch'," + JSON.stringify(effectiveTarget.force_initial_dispatch ? "true" : "false") + ");" +
         "window.dispatchEvent(new Event('zcloud-worker-config'));";
       await browser.tabs.executeScript(tabId, {code, runAt: "document_idle"});
-      if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const readiness = await browser.tabs.executeScript(tabId, {
+        code: "document.documentElement.getAttribute('data-zcloud-violentmonkey-ready') || ''",
+        runAt: "document_idle"
+      }).catch(() => [""]);
+      const vmReady = Array.isArray(readiness) && readiness.some(value => String(value || "").trim());
+      if (vmReady) {
+        // Stop any legacy injected runner that may still be alive from before
+        // Violentmonkey was installed/reloaded, preventing duplicate sends.
+        try {
+          await browser.tabs.sendMessage(tabId, {
+            type: "runner-stop",
+            projectId: effectiveTarget.project_id,
+            reason: "violentmonkey-primary-takeover"
+          });
+        } catch (_) {}
+        if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
+        postStatus({
+          projectId: target.project_id,
+          baseProjectId: target.base_project_id,
+          workerSlot: target.worker_slot,
+          globalWorkerSlot: target.global_worker_slot,
+          projectName: target.name,
+          target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+          targetConversation: target.conversation_id,
+          event: "violentmonkey-binding-ready",
+          reason: "webextension-tab-bridge-only",
+          at: new Date().toISOString(),
+          tabId
+        });
+        return;
+      }
       postStatus({
         projectId: target.project_id,
         baseProjectId: target.base_project_id,
@@ -1157,12 +1186,11 @@ async function inject(tabId, target) {
         projectName: target.name,
         target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
         targetConversation: target.conversation_id,
-        event: "violentmonkey-binding-ready",
-        reason: "webextension-tab-bridge-only",
+        event: "violentmonkey-missing-fallback",
+        reason: "legacy-extension-runner-temporarily-retained",
         at: new Date().toISOString(),
         tabId
       });
-      return;
     }
 
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
