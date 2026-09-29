@@ -201,7 +201,7 @@ function runProject(cfg) {
   let autoContinue = cfg.auto_continue !== false;
   let vpsDispatchOnly = cfg.vps_dispatch_only === true;
   let autoContinueDelayMs = Math.max(0, Number(cfg.auto_continue_delay_seconds ?? 0) * 1000);
-  const CHECK_MS = 2000;
+  const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
   const COMPOSER_RECOVERY_MS = 45 * 1000;
@@ -991,8 +991,8 @@ browser.tabs.onRemoved.addListener(tabId => {
   }
 });
 refreshTargets();
-setInterval(refreshTargets, 5000);
+setInterval(refreshTargets, 15000);
 pollCommands();
-setInterval(pollCommands, 5000);
+setInterval(pollCommands, 15000);
 watchRunnerHealth();
 setInterval(watchRunnerHealth, 60000);

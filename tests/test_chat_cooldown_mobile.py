@@ -6,18 +6,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_has_exactly_two_global_ai_slots_without_time_debounce(self):
+    def test_vps_scheduler_has_two_global_ai_slots_without_time_debounce(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
-        self.assertIn("AUTONOMY_TICK_SECONDS = 2", server)
+        self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
         self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
         self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
         self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 0", server)
         self.assertIn("def global_worker_allocation(", server)
         self.assertIn("ai_global_slots", server)
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
-        self.assertIn("setInterval(refreshTargets, 5000)", background)
+        self.assertIn("setInterval(refreshTargets, 15000)", background)
         self.assertIn("wait_until_generation_finished_then_continue", server)
         self.assertIn("if latest and (bool(latest[\'generating\']) or bool(latest[\'sending\'])):", server)
         self.assertIn("if prompt_id and ready_id < prompt_id:", server)

@@ -25,6 +25,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "public/style.css",
         ):
             self.assertIn(f"--path {path}", text)
+        self.assertIn("deploy/chatgpt-firefox.service", text)
+        self.assertIn("systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100 Nice=10", text)
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)
 
