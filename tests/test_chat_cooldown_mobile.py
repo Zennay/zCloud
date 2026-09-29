@@ -16,7 +16,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'", server)
         self.assertIn("def set_dynamic_worker_limit(", server)
         self.assertIn("'/api/dynamic-workers'", server)
-        self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 300", server)
+        self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 120", server)
         self.assertIn("def portfolio_queue_allocate(", server)
         self.assertIn("def _global_dispatch_interval_due(", server)
         self.assertIn("def _worker_prompt_interval_due(", server)
@@ -72,7 +72,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn('[aria-haspopup="menu"]', background)
         self.assertIn('direct-control-selected', background)
         self.assertIn('controlHints', background)
-        self.assertIn('/^(?:high|hoog)$/i', background)
+        self.assertIn('function isHighLabel(value)', background)
         self.assertIn("missingQueueEvidence", background)
         self.assertIn("backend-non-stopping-dynamic-worker-policy", server)
         self.assertIn("Continue project autonomously with the next concrete implementation step", server)
@@ -82,13 +82,13 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
 
         self.assertTrue(policy["default"]["auto_start"])
         self.assertEqual("vps", policy["default"]["dispatch_mode"])
-        self.assertEqual(300, policy["default"]["min_ai_interval_seconds"])
-        self.assertEqual(300, policy["default"]["continue_delay_seconds"])
+        self.assertEqual(120, policy["default"]["min_ai_interval_seconds"])
+        self.assertEqual(120, policy["default"]["continue_delay_seconds"])
 
         for project_id, project in policy["projects"].items():
             self.assertEqual("vps", project["dispatch_mode"], project_id)
-            self.assertEqual(300, project["min_ai_interval_seconds"], project_id)
-            self.assertEqual(300, project["continue_delay_seconds"], project_id)
+            self.assertEqual(120, project["min_ai_interval_seconds"], project_id)
+            self.assertEqual(120, project["continue_delay_seconds"], project_id)
             self.assertEqual(project_id != "ulab", project["auto_start"], project_id)
 
     def test_worker_prompt_uses_vps_sqlite_queue_and_evidence_done_gate(self):
@@ -96,12 +96,10 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("portfolio_queue", server)
         self.assertIn("queue_backend':'sqlite'", server)
         self.assertIn("zCloud SQLite is de queue/source-of-truth", server)
-        self.assertIn("Query Notion NIET om een queue-item te kiezen", server)
-        self.assertIn("Done alleen wanneer ALLE Completion Criteria bewezen zijn", server)
-        self.assertIn("status-only/read-only cyclus is ongeldig", server)
-        self.assertIn("DOORZET-MODE", server)
-        self.assertIn("GA DOOR MET DE REST VAN DE ASSIGNMENT", server)
-        self.assertIn("CONTINUE is VERBODEN", server)
+        self.assertIn("Werk alleen aan deze assignment. Geen audit/status-only antwoord", server)
+        self.assertIn("Bij een recoverable blocker: probeer in dezelfde cyclus een andere veilige route", server)
+        self.assertIn("DONE alleen als alle completion criteria aantoonbaar gehaald zijn", server)
+        self.assertIn("CONTINUE alleen na echte voortgang", server)
         self.assertIn("ZCLOUD_QUEUE_RESULT", server)
         self.assertIn("ZCLOUD_QUEUE_EVIDENCE", server)
 
