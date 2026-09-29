@@ -11,10 +11,9 @@ permissions:
 
 concurrency:
   group: zcloud-production-deploy
-  # Only the newest green main revision is worth deploying. Superseded deploys
-  # must never block production behind an obsolete queued commit.
-  # The live worker limit is enforced by server.py; historical slot rows remain auditable.
-  cancel-in-progress: true
+  # Never cancel a live production transaction halfway through. A queued
+  # workflow_run must prove that its tested SHA is still the current main head.
+  cancel-in-progress: false
 
 jobs:
   deploy:
