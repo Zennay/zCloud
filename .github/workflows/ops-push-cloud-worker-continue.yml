@@ -1,0 +1,105 @@
+name: Push cloud worker continuation
+
+on:
+  push:
+    branches: [ops/push-cloud-worker-continue-20260929-2145]
+    paths:
+      - .github/workflows/ops-push-cloud-worker-continue.yml
+
+permissions:
+  contents: read
+
+jobs:
+  push-and-verify:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Set one dynamic worker, push cloud, verify send
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          START=datetime.now(timezone.utc).isoformat()
+
+          def call(method,path,payload=None,actor=None):
+              data=None
+              headers={"User-Agent":"zcloud-ops-push-cloud-worker/1"}
+              if actor:
+                  headers["X-ZCloud-Actor"]=actor
+              if payload is not None:
+                  data=json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(BASE+path,data=data,headers=headers,method=method)
+              try:
+                  with urllib.request.urlopen(req,timeout=15) as response:
+                      return response.status,json.load(response)
+              except urllib.error.HTTPError as exc:
+                  detail=exc.read().decode("utf-8","replace")
+                  try: body=json.loads(detail)
+                  except Exception: body={"raw":detail[:1000]}
+                  return exc.code,body
+
+          status,limit=call("POST","/api/dynamic-workers",{"count":1},"ops-push-cloud-worker")
+          if status!=200 or not limit.get("ok"):
+              raise SystemExit(f"failed to set dynamic worker limit to 1: HTTP {status} {limit}")
+
+          status,targets=call("GET","/api/runner-targets")
+          if status!=200:
+              raise SystemExit(f"runner targets unavailable: HTTP {status}")
+          alloc=(targets.get("global_allocation") or {}).get("workers") or []
+          keys=[str(x.get("worker_key") or "") for x in alloc]
+          if targets.get("max_workers")!=1 or keys!=["cloud::w1"]:
+              raise SystemExit(f"expected exactly cloud::w1 after limit=1, got max={targets.get('max_workers')} workers={keys}")
+
+          status,push=call("POST","/api/runner-control",{"project_id":"cloud::w1","action":"push"},"ops-push-cloud-worker")
+          if status not in (200,429):
+              raise SystemExit(f"cloud push rejected: HTTP {status} {push}")
+
+          latest_events=[]
+          latest_commands=[]
+          for _ in range(72):
+              conn=sqlite3.connect(f"file:{DB}?mode=ro",uri=True,timeout=5)
+              conn.row_factory=sqlite3.Row
+              latest_events=[dict(x) for x in conn.execute(
+                  "SELECT id,ts,event,reason,error,generating,sending,assistant_chars "
+                  "FROM runner_events WHERE project_id='cloud' AND worker_slot=1 AND ts>=? "
+                  "ORDER BY id DESC LIMIT 100",(START,)
+              ).fetchall()]
+              latest_commands=[dict(x) for x in conn.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at,result "
+                  "FROM runner_commands WHERE project_id='cloud::w1' AND created_at>=? "
+                  "ORDER BY id DESC LIMIT 20",(START,)
+              ).fetchall()]
+              conn.close()
+
+              sent=next((e for e in latest_events if e.get("event")=="prompt-sent"),None)
+              generation=next((e for e in latest_events if e.get("event")=="generation-started"),None)
+              if sent:
+                  _,final_targets=call("GET","/api/runner-targets")
+                  final_alloc=(final_targets.get("global_allocation") or {}).get("workers") or []
+                  print("ZCLOUD_CLOUD_PUSH_VERIFIED="+json.dumps({
+                      "dynamic_worker_limit":final_targets.get("max_workers"),
+                      "allocated_workers":[x.get("worker_key") for x in final_alloc],
+                      "queue_id":next((x.get("queue_id") for x in final_alloc if x.get("worker_key")=="cloud::w1"),None),
+                      "push_http_status":status,
+                      "push_response":push,
+                      "prompt_sent":sent,
+                      "generation_started":generation,
+                      "commands":latest_commands[:5],
+                  },ensure_ascii=False,sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(5)
+
+          print("CLOUD_EVENTS="+json.dumps(latest_events,ensure_ascii=False,sort_keys=True))
+          print("CLOUD_COMMANDS="+json.dumps(latest_commands,ensure_ascii=False,sort_keys=True))
+          raise SystemExit("cloud::w1 did not emit prompt-sent inside bounded verification window")
+          PY
