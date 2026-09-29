@@ -7,6 +7,7 @@ const runningActions = new Set();
 const processedCommands = new Set();
 const intentionalTabClosures = new Set();
 const pendingTabHandoffs = new Set();
+const pendingInitialDispatches = new Set();
 const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1";
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
@@ -249,6 +250,7 @@ function runProject(cfg) {
   const SINGLE_RUN = BASE_PROJECT === "portfolio-review";
   let autoContinue = cfg.auto_continue !== false;
   let vpsDispatchOnly = cfg.vps_dispatch_only === true;
+  let forceInitialDispatch = cfg.force_initial_dispatch === true;
   let autoContinueDelayMs = Math.max(0, Number(cfg.auto_continue_delay_seconds ?? 0) * 1000);
   const CHECK_MS = 5000;
   const STALL_MS = 20 * 60 * 1000;
@@ -736,6 +738,7 @@ function runProject(cfg) {
       PROMPT = promptWithQualityRecovery(BASE_PROMPT);
       autoContinue = next.auto_continue !== false;
       vpsDispatchOnly = next.vps_dispatch_only === true;
+      forceInitialDispatch = forceInitialDispatch || next.force_initial_dispatch === true;
       autoContinueDelayMs = Math.max(0, Number(next.auto_continue_delay_seconds ?? 0) * 1000);
       status("runner-config-updated", {reason:"vps-assignment-refresh", queueItem:queueId});
       return {ok:true, queueItem:queueId};
@@ -779,7 +782,7 @@ function runProject(cfg) {
     if (draining) { status("runner-draining", {reason: "restart-drain"}); return; }
     if (SINGLE_RUN) { status("scheduled-ready", {reason: "awaiting-daily-push"}); return; }
     if (!(await canAutoContinue())) { status("auto-continue-blocked", {reason: "finished-maintain"}); return; }
-    if (vpsDispatchOnly) { status("vps-dispatch-ready", {reason: "awaiting-vps-command"}); return; }
+    if (vpsDispatchOnly && !forceInitialDispatch) { status("vps-dispatch-ready", {reason: "awaiting-vps-command"}); return; }
     if (stopButton()) { status("startup-blocked", {reason: "generation-active"}); return; }
     const draft = composerText();
     if (draft === null) { status("startup-waiting", {reason: "composer-missing"}); return; }
@@ -941,10 +944,14 @@ async function inject(tabId, target) {
       const persistedHandoff = await getReplacementHandoffTag(tabId);
       if (persistedHandoff) target.replacement_handoff = persistedHandoff;
     }
-    tabTargets[tabId] = target;
-    projectTabs[target.project_id] = tabId;
-    await setRecoveryTag(tabId, target.project_id);
-    await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(target) + ");", runAt: "document_idle"});
+    const effectiveTarget = pendingInitialDispatches.has(target.project_id)
+      ? {...target, force_initial_dispatch: true}
+      : target;
+    tabTargets[tabId] = effectiveTarget;
+    projectTabs[effectiveTarget.project_id] = tabId;
+    await setRecoveryTag(tabId, effectiveTarget.project_id);
+    await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
+    if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-success", at: new Date().toISOString(), tabId: tabId});
   } catch (error) {
@@ -978,6 +985,7 @@ async function newProjectChat(projectId, reason, commandId) {
     if (!target) throw new Error("Projectconfig ontbreekt");
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     const handoff = await prepareReplacementHandoff(target, reason);
+    pendingInitialDispatches.add(projectId);
     const oldTab = projectTabs[projectId];
     if (oldTab != null) {
       try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
