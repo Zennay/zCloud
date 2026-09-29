@@ -11,7 +11,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("branches: [main]", text)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
         self.assertIn("runs-on: self-hosted", text)
-        self.assertIn("cancel-in-progress: true", text)
+        self.assertIn("cancel-in-progress: false", text)
+        self.assertIn("Reject stale workflow-run revisions", text)
+        self.assertIn("git ls-remote origin refs/heads/main", text)
+        self.assertIn("STALE_DEPLOY_SKIPPED", text)
+        self.assertIn("steps.freshness.outputs.deploy == 'true'", text)
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
