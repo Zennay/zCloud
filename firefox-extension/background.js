@@ -240,8 +240,8 @@ function runProject(cfg) {
     const prompt = promptWithReplacementHandoff(basePrompt);
     if (!qualityRetryPending) return prompt;
     const escalation = qualityRetryCount >= 2
-      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Gebruik High thinking. Geen audit/status-only; kies een andere veilige route en bewijs echte uitvoering. "
-      : "DOE HET NU ECHT. Ga door met dezelfde assignment, gebruik High thinking en voer nu een concrete stap uit. ";
+      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Geen audit/status-only; kies een andere veilige route en bewijs echte uitvoering. "
+      : "DOE HET NU ECHT. Ga door met dezelfde assignment en voer nu een concrete stap uit. ";
     return prompt + "\n\nZCLOUD_QUALITY_RETRY: " + escalation +
       "Herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE.";
   }
