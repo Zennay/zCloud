@@ -65,4 +65,38 @@ else:
     }, ensure_ascii=False, sort_keys=True))
 PY
 printf 'ZCLOUD_RUNNER_STATUS_END\n'
+
+printf 'ZCLOUD_DISPATCH_DB_BEGIN\n'
+python3 - <<'PY'
+import json
+import sqlite3
+
+db_path = "/home/ubuntu/zennay-cloud/history.db"
+try:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+    conn.row_factory = sqlite3.Row
+    runtime = conn.execute(
+        "SELECT project_id,last_dispatch_at,last_reason,manual_pause "
+        "FROM autonomy_runtime WHERE project_id='raiseai'"
+    ).fetchone()
+    commands = conn.execute(
+        "SELECT id,project_id,action,status,created_at,updated_at,result "
+        "FROM runner_commands WHERE project_id IN ('raiseai','raiseai::w1') "
+        "ORDER BY id DESC LIMIT 12"
+    ).fetchall()
+    events = conn.execute(
+        "SELECT id,ts,event,reason,generating,sending,error "
+        "FROM runner_events WHERE project_id='raiseai' "
+        "ORDER BY id DESC LIMIT 20"
+    ).fetchall()
+    print(json.dumps({
+        "autonomy_runtime": dict(runtime) if runtime else None,
+        "recent_commands": [dict(row) for row in commands],
+        "recent_events": [dict(row) for row in events],
+    }, ensure_ascii=False, sort_keys=True))
+    conn.close()
+except Exception as exc:
+    print(json.dumps({"error": str(exc)[:300]}, ensure_ascii=False))
+PY
+printf 'ZCLOUD_DISPATCH_DB_END\n'
 printf 'ZCLOUD_VPS_PROBE=GREEN\n'
