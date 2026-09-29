@@ -26,6 +26,7 @@ PROJECT_UNITS = {
     "raiseai": [],
 }
 _RESOURCE_PREV = {}
+_RESOURCE_HOST_PREV = None
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
@@ -71,21 +72,63 @@ def load_resource_policy():
         default[pid] = {"priority": priority}
     return default
 
+def _cgroup_cpu_nsec(control_group):
+    """Read cumulative cgroup-v2 CPU time, including child processes."""
+    if not control_group or not control_group.startswith("/"):
+        return None
+    path = Path("/sys/fs/cgroup") / control_group.lstrip("/") / "cpu.stat"
+    try:
+        values = dict(
+            line.split(None, 1)
+            for line in path.read_text().splitlines()
+            if len(line.split(None, 1)) == 2
+        )
+        return int(values.get("usage_usec") or 0) * 1000
+    except Exception:
+        return None
+
 def _unit_numbers(unit):
     try:
         raw = subprocess.check_output(
-            ["systemctl", "show", unit, "--property=CPUUsageNSec,MemoryCurrent,ActiveState"],
+            ["systemctl", "show", unit, "--property=CPUUsageNSec,MemoryCurrent,ActiveState,ControlGroup"],
             text=True, stderr=subprocess.DEVNULL, timeout=2
         )
         d = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
-        return int(d.get("CPUUsageNSec") or 0), int(d.get("MemoryCurrent") or 0), d.get("ActiveState") or "unknown"
+        cpu = int(d.get("CPUUsageNSec") or 0)
+        cgroup_cpu = _cgroup_cpu_nsec(d.get("ControlGroup") or "")
+        if cgroup_cpu is not None:
+            cpu = cgroup_cpu
+        return cpu, int(d.get("MemoryCurrent") or 0), d.get("ActiveState") or "unknown"
     except Exception:
         return 0, 0, "unknown"
 
+def _host_cpu_counter():
+    """Return cumulative aggregate CPU ticks from /proc/stat for an aligned attribution window."""
+    try:
+        fields = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
+        total = sum(fields)
+        idle = fields[3] + fields[4]
+        return total, idle
+    except Exception:
+        return None
+
 def resource_snapshot():
+    global _RESOURCE_HOST_PREV
     policy = load_resource_policy()
     now_mono = time.monotonic()
+    cores = max(1, int(os.cpu_count() or 1))
+    host_now = _host_cpu_counter()
+    host_cpu_pct = None
+    if _RESOURCE_HOST_PREV and host_now and host_now[0] > _RESOURCE_HOST_PREV[0]:
+        delta_total = host_now[0] - _RESOURCE_HOST_PREV[0]
+        delta_idle = host_now[1] - _RESOURCE_HOST_PREV[1]
+        host_cpu_pct = round(100 * (1 - delta_idle / delta_total), 1)
+    if host_now:
+        _RESOURCE_HOST_PREV = host_now
+
     out = {}
+    attributed = 0.0
+    measured_projects = 0
     for pid, cfg in policy.items():
         units = PROJECT_UNITS.get(pid, [])
         total_cpu = total_mem = active = 0
@@ -97,7 +140,13 @@ def resource_snapshot():
         cpu_pct = None
         prev = _RESOURCE_PREV.get(pid)
         if prev and now_mono > prev[0] and total_cpu >= prev[1]:
-            cpu_pct = round(((total_cpu - prev[1]) / 1_000_000_000) / (now_mono - prev[0]) * 100, 1)
+            # systemd/cgroup CPU time is expressed in "one fully busy core = 100%".
+            # Normalize by the VPS core count so project CPU uses the same 0..100
+            # host-share scale as /proc/stat host CPU.
+            core_equiv_pct = ((total_cpu - prev[1]) / 1_000_000_000) / (now_mono - prev[0]) * 100
+            cpu_pct = round(max(0.0, core_equiv_pct / cores), 1)
+            attributed += cpu_pct
+            measured_projects += 1
         _RESOURCE_PREV[pid] = (now_mono, total_cpu)
         out[pid] = {
             "priority": cfg["priority"],
@@ -107,9 +156,21 @@ def resource_snapshot():
             "unit_count": len(units),
             "cpu_percent": cpu_pct,
             "memory_bytes": total_mem,
-            "mode": "relative",
-            "note": "Relatieve CPU/IO-prioriteit; vrije capaciteit blijft bruikbaar.",
+            "mode": "host_share",
+            "note": "CPU is aandeel van totale VPS-capaciteit; cgroup-metingen nemen child-processen mee.",
         }
+
+    unattributed = None
+    if host_cpu_pct is not None:
+        unattributed = round(max(0.0, host_cpu_pct - attributed), 1)
+    out["_summary"] = {
+        "host_cpu_percent": host_cpu_pct,
+        "attributed_cpu_percent": round(attributed, 1) if measured_projects else None,
+        "unattributed_cpu_percent": unattributed,
+        "cores": cores,
+        "measured_projects": measured_projects,
+        "scale": "host_share",
+    }
     return out
 
 def set_priority(project, priority):
