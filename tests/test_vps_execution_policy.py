@@ -18,6 +18,11 @@ class VpsExecutionPolicyTests(unittest.TestCase):
         )
         self.assertIn("github-actions-self-hosted-runner", policy["transport"])
         self.assertIn("vps-bb300bba", policy["runner"]["host"])
+        self.assertNotIn("fallback", policy["prompt_directive"].lower())
+        self.assertIn("WAIT_VPS", policy["prompt_directive"])
+
+    def test_server_has_no_implicit_vps_policy_fallback(self):
+        self.assertFalse(hasattr(server, "_VPS_EXECUTION_POLICY_FALLBACK"))
 
     def test_every_project_prompt_contains_the_shared_execution_directive(self):
         for project_id, project in server.PROJECT_INDEX.items():
