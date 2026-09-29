@@ -223,7 +223,7 @@ function runProject(cfg) {
   let BASE_PROMPT = cfg.prompt;
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
-  const QUALITY_RETRY_LIMIT = 1;
+  const QUALITY_RETRY_LIMIT = 3;
   function promptWithReplacementHandoff(basePrompt) {
     return replacementHandoffPending && REPLACEMENT_HANDOFF
       ? basePrompt + "\n\n" +
@@ -237,13 +237,16 @@ function runProject(cfg) {
   }
   function promptWithQualityRecovery(basePrompt) {
     const prompt = promptWithReplacementHandoff(basePrompt);
-    return qualityRetryPending
-      ? prompt + "\n\n" +
-        "ZCLOUD_QUALITY_RETRY: de vorige cyclus was kort, leeg, te snel of miste betrouwbare queue-evidence. " +
-        "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item; controleer eerst wat er in je vorige antwoord ontbrak of fout ging, " +
-        "voer de opdracht inhoudelijk uit en lever aantoonbare voortgang. Geef geen status-only antwoord. " +
-        "Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE."
-      : prompt;
+    if (!qualityRetryPending) return prompt;
+    const escalation = qualityRetryCount >= 2
+      ? "ESCALATIE: DIT IS OPNIEUW GEEN GELDIGE UITVOERING. STOP met alleen status, blockers herhalen of dezelfde mislukte route beschrijven. " +
+        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking als die instelling beschikbaar is. Analyseer waarom de vorige route faalde, kies een ANDERE veilige uitvoeringsroute en VOER DIE NU UIT. "
+      : "HERSTELPOGING: de vorige cyclus was kort, leeg, te snel of miste betrouwbare queue-evidence. Gebruik extra redeneertijd en voer de taak nu daadwerkelijk uit. ";
+    return prompt + "\n\n" +
+      "ZCLOUD_QUALITY_RETRY: " + escalation +
+      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Een status-only/read-only antwoord telt niet. " +
+      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. Probeer de self-hosted runner/queue-route opnieuw wanneer die veilig beschikbaar is. " +
+      "Sluit pas af nadat je een echte write, run/job, verifier of materiële state-change hebt uitgevoerd en geef concrete ZCLOUD_QUEUE_EVIDENCE.";
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
@@ -258,7 +261,7 @@ function runProject(cfg) {
   const COMPOSER_RECOVERY_MS = 45 * 1000;
   const SHORT_CYCLE_MS = 60 * 1000;
   const WEAK_RESPONSE_CHARS = 500;
-  const WEAK_CYCLE_LIMIT = 2;
+  const WEAK_CYCLE_LIMIT = 4;
   let weakCycleStreak = 0;
   let sawGeneration = false;
   let awaitingGeneration = false;
@@ -308,6 +311,53 @@ function runProject(cfg) {
   function assistantText() {
     const nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
     return nodes.length ? (nodes[nodes.length - 1].innerText || "").trim() : "";
+  }
+  function visibleElement(el) {
+    if (!el) return false;
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+  }
+  function controlLabel(el) {
+    return String(
+      el?.getAttribute?.("aria-label") ||
+      el?.getAttribute?.("title") ||
+      el?.innerText ||
+      el?.textContent ||
+      ""
+    ).trim();
+  }
+  async function requestHighThinking() {
+    const exactHigh = /^(?:high|hoog)$/i;
+    const highCandidate = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
+      .find(el => visibleElement(el) && exactHigh.test(controlLabel(el)));
+    if (highCandidate) {
+      highCandidate.click();
+      await sleep(400);
+      status("thinking-effort-high-selected", {reason: "quality-recovery-visible-option"});
+      return true;
+    }
+
+    const pickerPattern = /^(?:instant|thinking|denk(?:en| na)?|gpt-5\.6(?:\s+sol)?|model)$/i;
+    const picker = [...document.querySelectorAll("button")]
+      .find(el => visibleElement(el) && pickerPattern.test(controlLabel(el)));
+    if (!picker) {
+      status("thinking-effort-high-unavailable", {reason: "picker-not-found"});
+      return false;
+    }
+    picker.click();
+    await sleep(600);
+    const highAfterOpen = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
+      .find(el => visibleElement(el) && exactHigh.test(controlLabel(el)));
+    if (!highAfterOpen) {
+      document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+      status("thinking-effort-high-unavailable", {reason: "high-option-not-found"});
+      return false;
+    }
+    highAfterOpen.click();
+    await sleep(400);
+    status("thinking-effort-high-selected", {reason: "quality-recovery-picker"});
+    return true;
   }
   function statusPayload(event, extra = {}) {
     const text = assistantText();
@@ -506,6 +556,7 @@ function runProject(cfg) {
     if (draft && draft !== PROMPT && forceInitialDispatch) status("stale-draft-replaced", {reason: "forced-initial-dispatch"});
     sending = true;
     try {
+      if (qualityRetryPending) await requestHighThinking();
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
       await sleep(700);
