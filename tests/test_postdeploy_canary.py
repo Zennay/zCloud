@@ -26,9 +26,20 @@ class PostdeployCanaryTests(unittest.TestCase):
                 }
             },
             "incidents": {"items": [], "count": 0},
+            "dynamic_workers": {"count": 8},
         }
-        targets = {"projects": {"cloud::w1": {}}, "max_workers": 8}
-        mapping = {"available": True, "sha256": "abc", "targets": 1, "workers": 1}
+        targets = {
+            "projects": {"cloud::w1": {}},
+            "max_workers": 8,
+            "global_allocation": {"workers": []},
+        }
+        mapping = {
+            "available": True,
+            "sha256": "abc",
+            "targets": 1,
+            "workers": 1,
+            "dynamic_worker_limit": 8,
+        }
         return status, targets, mapping
 
     def evaluate(self, **kwargs):
@@ -70,6 +81,42 @@ class PostdeployCanaryTests(unittest.TestCase):
             source_runtime_match=True,
         )
         self.assertFalse(result["ok"])
+
+    def test_dynamic_worker_limit_mismatch_is_fail_closed(self):
+        status, targets, mapping = self.sample()
+        mapping["dynamic_worker_limit"] = 3
+        result = canary.evaluate(
+            status,
+            targets,
+            mapping,
+            services={"zcloud": True, "firefox": True},
+            static_assets_ok=True,
+            source_runtime_match=True,
+        )
+        checks = {x["name"]: x for x in result["checks"]}
+        self.assertFalse(result["ok"])
+        self.assertFalse(checks["dynamic_worker_limit_consistent"]["ok"])
+
+    def test_dynamic_worker_allocation_must_stay_within_limit(self):
+        status, targets, mapping = self.sample()
+        targets["max_workers"] = 1
+        status["dynamic_workers"]["count"] = 1
+        mapping["dynamic_worker_limit"] = 1
+        targets["global_allocation"]["workers"] = [
+            {"global_worker_slot": 1},
+            {"global_worker_slot": 2},
+        ]
+        result = canary.evaluate(
+            status,
+            targets,
+            mapping,
+            services={"zcloud": True, "firefox": True},
+            static_assets_ok=True,
+            source_runtime_match=True,
+        )
+        checks = {x["name"]: x for x in result["checks"]}
+        self.assertFalse(result["ok"])
+        self.assertFalse(checks["dynamic_worker_allocation_bounded"]["ok"])
 
     def test_mapping_expectation_is_fail_closed(self):
         result = self.evaluate(expected_mapping_sha="different")
