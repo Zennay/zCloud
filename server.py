@@ -757,14 +757,14 @@ def coordination_vps_health():
 
 def _preflight_external_evidence(payload,label):
     evidence=payload if isinstance(payload,dict) else {}
-    if not evidence.get('checked'):
-        raise ValueError(f'{label} moet als gecontroleerd zijn gemarkeerd')
     if label=='Notion':
+        if not evidence.get('checked'):
+            return {'checked':False,'optional':True}
         project_ref=str(evidence.get('project_ref') or '').strip()
         handoff_ref=str(evidence.get('handoff_ref') or '').strip()
-        if not project_ref or not handoff_ref:
-            raise ValueError('Notion project_ref en handoff_ref zijn verplicht')
-        return {'checked':True,'project_ref':project_ref[:500],'handoff_ref':handoff_ref[:500]}
+        return {'checked':True,'optional':True,'project_ref':project_ref[:500],'handoff_ref':handoff_ref[:500]}
+    if not evidence.get('checked'):
+        raise ValueError(f'{label} moet als gecontroleerd zijn gemarkeerd')
     repo=str(evidence.get('repo') or '').strip()
     main_sha=str(evidence.get('main_sha') or '').strip()
     open_prs=evidence.get('open_prs')
@@ -801,10 +801,11 @@ def _verify_preflight_sources(project_id,notion_evidence,github_evidence):
     project=PROJECT_INDEX.get(project_id,{})
     expected_project=str(project.get('notion_url') or '').strip()
     expected_handoff=str(project.get('handoff_url') or '').strip()
-    if expected_project and notion_evidence.get('project_ref')!=expected_project:
-        raise ValueError('Notion project_ref wijkt af van de canonieke projectbron')
-    if expected_handoff and notion_evidence.get('handoff_ref')!=expected_handoff:
-        raise ValueError('Notion handoff_ref wijkt af van de canonieke handoff')
+    if notion_evidence.get('checked'):
+        if expected_project and notion_evidence.get('project_ref') and notion_evidence.get('project_ref')!=expected_project:
+            raise ValueError('Notion project_ref wijkt af van de canonieke projectbron')
+        if expected_handoff and notion_evidence.get('handoff_ref') and notion_evidence.get('handoff_ref')!=expected_handoff:
+            raise ValueError('Notion handoff_ref wijkt af van de canonieke handoff')
     expected_repo=_canonical_github_repo(project_id)
     if expected_repo and str(github_evidence.get('repo') or '').lower().removesuffix('.git')!=expected_repo.lower():
         raise ValueError('GitHub repo wijkt af van de canonieke projectrepo')
