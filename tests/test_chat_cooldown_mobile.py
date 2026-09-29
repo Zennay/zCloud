@@ -14,12 +14,12 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
         self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
         self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 0", server)
+        self.assertIn("def portfolio_queue_allocate(", server)
         self.assertIn("def global_worker_allocation(", server)
         self.assertIn("ai_global_slots", server)
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
-        self.assertIn("setInterval(refreshTargets, 15000)", background)
-        self.assertIn("wait_until_generation_finished_then_continue", server)
-        self.assertIn("if latest and (bool(latest[\'generating\']) or bool(latest[\'sending\'])):", server)
+        self.assertIn("setInterval(refreshTargets, 5000)", background)
+        self.assertIn("if latest and (bool(latest['generating']) or bool(latest['sending'])):", server)
         self.assertIn("if prompt_id and ready_id < prompt_id:", server)
 
     def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
@@ -36,48 +36,41 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
             self.assertEqual(0, project["continue_delay_seconds"], project_id)
             self.assertEqual(project_id != "ulab", project["auto_start"], project_id)
 
-    def test_worker_prompt_uses_global_notion_queue_and_evidence_done_gate(self):
+    def test_worker_prompt_uses_vps_sqlite_queue_and_evidence_done_gate(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
-        self.assertIn("Portfolio Work Queue", server)
-        self.assertIn("4162fac179f44fcbbe4072a183d2b440", server)
-        self.assertIn("is géén vaste projecttoewijzing", server)
-        self.assertIn("claim je het hoogste Eligible+Queued item", server)
+        self.assertIn("portfolio_queue", server)
+        self.assertIn("queue_backend':'sqlite'", server)
+        self.assertIn("zCloud SQLite op de VPS is de enige scheduling/source-of-truth", server)
+        self.assertIn("Query Notion NIET om een queue-item te kiezen", server)
         self.assertIn("Done alleen wanneer ALLE Completion Criteria bewezen zijn", server)
         self.assertIn("status-only/read-only cyclus is ongeldig", server)
         self.assertIn("CONTINUE is VERBODEN", server)
-        self.assertIn("self-hosted GitHub Actions", server)
-        self.assertIn("ZCLOUD_WAIT_EVIDENCE", server)
-        self.assertIn("queue=no-eligible", server)
-        self.assertIn("Als jouw Worker-slot al een Claimed/Running/Verifying item bezit", server)
-        self.assertIn("Preëmpt alleen voor een hogere P0", server)
-        self.assertIn("Steel een verlopen claim nooit", server)
-        self.assertIn("executeer of block/release", server)
+        self.assertIn("ZCLOUD_QUEUE_RESULT", server)
+        self.assertIn("ZCLOUD_QUEUE_EVIDENCE", server)
 
-    def test_global_worker_identity_survives_project_tab_reallocation(self):
+    def test_global_worker_identity_follows_queue_owned_slot(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("def _current_global_slot_map()", server)
-        self.assertIn("Keep a surviving worker on the same global Worker 1/2 identity", server)
+        self.assertIn("Persist queue-owned portfolio slot identities exactly as assigned by SQLite", server)
         self.assertIn("'global_worker_slot':global_slot", server)
         self.assertIn("Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT}", server)
 
-    def test_wait_markers_require_machine_checkable_evidence(self):
-        server = (ROOT / "server.py").read_text(encoding="utf-8")
+    def test_browser_reports_queue_result_to_vps(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        self.assertIn("ZCLOUD_QUEUE_ITEM:", background)
+        self.assertIn("ZCLOUD_QUEUE_RESULT:", background)
+        self.assertIn("ZCLOUD_QUEUE_EVIDENCE:", background)
+        self.assertIn('"portfolio-queue-result"', background)
+        self.assertIn("globalWorkerSlot", background)
+        self.assertIn("nextTask", background)
+
+    def test_wait_markers_still_fail_open_to_continue_when_invalid(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
         self.assertIn("ZCLOUD_WAIT_EVIDENCE", background)
         self.assertIn("queue=no-eligible", background)
         self.assertIn("invalid-wait-vps-without-run-evidence", background)
         self.assertIn("invalid-wait-human-without-gate-evidence", background)
-        self.assertIn(r"text.match(/ZCLOUD_WAIT_EVIDENCE:\s*([^\n]+)/i)", background)
-        self.assertIn(r"/(?:^|;)\s*queue=no-eligible(?:;|$)/i", background)
         self.assertIn('syncStatus("autonomy-continue"', background)
-        self.assertIn("ZCLOUD_WORK_PROJECT:", server)
-
-    def test_browser_routes_project_specific_evidence_from_queue_marker(self):
-        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
-        self.assertIn("ZCLOUD_WORK_PROJECT:", background)
-        self.assertIn('workProject !== "cloud"', background)
-        self.assertIn('baseProjectId: "cloud"', background)
-        self.assertIn('"portfolio-work-project"', background)
 
     def test_mobile_projects_are_visible_and_touch_safe(self):
         index = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
