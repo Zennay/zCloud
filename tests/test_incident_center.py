@@ -167,10 +167,10 @@ class IncidentCenterTests(unittest.TestCase):
         panel=js[start:end]
         self.assertIn("DATA.incidents",panel)
         self.assertNotIn("DATA.alerts",panel)
-        self.assertIn("Oorzaak",panel)
+        self.assertIn("Cause",panel)
         self.assertIn("Impact",panel)
-        self.assertIn("Herstel",panel)
-        self.assertIn("Technische details",panel)
+        self.assertIn("Restore",panel)
+        self.assertIn("Technical details",panel)
 
     def test_failed_recovery_becomes_critical_incident(self):
         (self.recovery/"recovery.log").write_text(
