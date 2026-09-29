@@ -1,34 +1,36 @@
-name: zCloud one-worker testing activation
+name: zCloud two-worker one-shot activation
 
 on:
-  workflow_run:
-    workflows: ["zCloud VPS deploy"]
-    types: [completed]
+  workflow_dispatch:
+  push:
     branches: [main]
+    paths:
+      - .github/workflows/zcloud-one-worker-testing-activation.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: zcloud-one-worker-testing-activation
+  group: zcloud-two-worker-one-shot-activation
   cancel-in-progress: true
 
 # Keep a fresh main-branch run available after the one-slot migration deploy.
 
 jobs:
   activate:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Check out the deployed revision
+      - name: Check out the activation revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
           clean: true
           fetch-depth: 1
 
-      - name: Enable exactly one queue-owned worker
+      - name: Reload the installed Firefox runner add-on
+        run: node scripts/zcloud_reload_extension.mjs
+
+      - name: Enable exactly two queue-owned workers
         shell: bash
         run: |
           set -euo pipefail
@@ -42,7 +44,7 @@ jobs:
 
           def call(method, path, payload=None):
               body = None
-              headers = {"User-Agent": "zcloud-one-worker-testing-activation/1"}
+              headers = {"User-Agent": "zcloud-two-worker-one-shot-activation/1"}
               if payload is not None:
                   body = json.dumps(payload).encode("utf-8")
                   headers["Content-Type"] = "application/json"
@@ -55,52 +57,68 @@ jobs:
                   raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
 
           before = call("GET", "/api/runner-targets")
-          if int(before.get("max_workers") or 0) != 1:
-              raise SystemExit(f"expected max_workers=1, got {before.get('max_workers')!r}")
+          if int(before.get("max_workers") or 0) != 2:
+              raise SystemExit(f"expected max_workers=2, got {before.get('max_workers')!r}")
+          if int(before.get("global_worker_limit") or 0) != 2:
+              raise SystemExit(f"expected global_worker_limit=2, got {before.get('global_worker_limit')!r}")
 
           allocation = before.get("global_allocation") or {}
           workers = allocation.get("workers") or []
-          if len(workers) != 1:
-              raise SystemExit(f"expected exactly one eligible VPS queue worker, got {len(workers)}")
+          if len(workers) != 2:
+              raise SystemExit(f"expected exactly two eligible VPS queue workers, got {len(workers)}: {workers}")
 
-          project_id = str(workers[0].get("project_id") or "").strip()
-          if not project_id:
-              raise SystemExit("queue worker has no project_id")
+          projects = []
+          for worker in workers:
+              project_id = str(worker.get("project_id") or "").strip()
+              worker_key = str(worker.get("worker_key") or "").strip()
+              if not project_id or not worker_key:
+                  raise SystemExit(f"invalid queue allocation: {worker}")
+              if project_id not in projects:
+                  projects.append(project_id)
 
-          started = call("POST", "/api/runner-control", {
-              "project_id": project_id,
-              "action": "start",
-          })
-          if not started.get("ok"):
-              raise SystemExit(f"worker start was not accepted: {started}")
+          starts = []
+          for project_id in projects:
+              result = call("POST", "/api/runner-control", {
+                  "project_id": project_id,
+                  "action": "start",
+              })
+              if not result.get("ok"):
+                  raise SystemExit(f"project start was not accepted for {project_id}: {result}")
+              starts.append({"project_id": project_id, "result": result})
 
           final = None
+          expected_keys = {str(worker["worker_key"]) for worker in workers}
           for _ in range(12):
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
-              active = [
-                  key for key, value in (final.get("projects") or {}).items()
-                  if bool(value.get("active"))
-              ]
-              if len(active) <= 1:
+              live_workers = final.get("workers") or {}
+              ready = {
+                  key for key, value in live_workers.items()
+                  if key in expected_keys
+                  and bool(value.get("active"))
+                  and str(value.get("desired_state") or "") == "running"
+              }
+              if ready == expected_keys:
                   break
 
-          active = [
-              key for key, value in (final.get("projects") or {}).items()
-              if bool(value.get("active"))
-          ]
-          if int(final.get("max_workers") or 0) != 1:
-              raise SystemExit(f"max_workers changed unexpectedly: {final.get('max_workers')!r}")
-          if len(active) > 1:
-              raise SystemExit(f"more than one project remains active: {active}")
+          live_workers = (final or {}).get("workers") or {}
+          ready = {
+              key for key, value in live_workers.items()
+              if key in expected_keys
+              and bool(value.get("active"))
+              and str(value.get("desired_state") or "") == "running"
+          }
+          if ready != expected_keys:
+              raise SystemExit(f"two-worker activation not confirmed; expected={sorted(expected_keys)} ready={sorted(ready)}")
 
           print(json.dumps({
               "ok": True,
-              "mode": "testing",
+              "mode": "two-worker-guarded",
               "worker_limit": final.get("max_workers"),
-              "selected_project": project_id,
-              "active_projects": active,
+              "global_worker_limit": final.get("global_worker_limit"),
+              "worker_keys": sorted(expected_keys),
+              "active_worker_keys": sorted(ready),
               "dispatch_cooldown_seconds": (final.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
-              "start_command": started,
+              "starts": starts,
           }, ensure_ascii=False, sort_keys=True))
           PY
