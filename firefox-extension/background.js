@@ -328,11 +328,25 @@ function runProject(cfg) {
     ).trim();
   }
   const REQUIRED_THINKING_EFFORT = "high";
+  const MODEL_CONTROL_SELECTOR = [
+    "button",
+    '[role="button"]',
+    '[role="menuitem"]',
+    '[role="menuitemradio"]',
+    '[role="option"]',
+    '[role="radio"]',
+    '[aria-haspopup="menu"]',
+    '[aria-haspopup="listbox"]'
+  ].join(",");
   function isHighLabel(value) {
     const label = String(value || "").trim().toLowerCase();
     if (!label) return false;
     if (/extra\s+high|very\s+high|zeer\s+hoog|pro\b/.test(label)) return false;
     return /(?:^|\b)(?:high|hoog)(?:\b|$)/i.test(label);
+  }
+  function isModelControlLabel(value) {
+    const label = String(value || "").trim().toLowerCase();
+    return /instant|medium|gemiddeld|high|hoog|pro|gpt|model|reasoning|thinking|denk|redeneer|effort/.test(label);
   }
   function elementSignalsSelected(el) {
     if (!el) return false;
@@ -342,27 +356,60 @@ function runProject(cfg) {
       el.getAttribute?.("aria-pressed") === "true" ||
       state === "checked" || state === "on" || state === "active";
   }
+  function modelControls() {
+    return [...document.querySelectorAll(MODEL_CONTROL_SELECTOR)]
+      .filter(el => visibleElement(el))
+      .filter(el => {
+        const label = controlLabel(el);
+        const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
+        return isModelControlLabel(label) ||
+          testId.includes("model") ||
+          testId.includes("thinking") ||
+          testId.includes("reasoning");
+      });
+  }
+  function safeModelControlHints() {
+    return [...new Set(modelControls().map(controlLabel).filter(Boolean))].slice(0, 12);
+  }
+  function isPickerLike(el) {
+    if (!el) return false;
+    const role = String(el.getAttribute?.("role") || "").toLowerCase();
+    const hasPopup = !!el.getAttribute?.("aria-haspopup");
+    const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
+    return hasPopup ||
+      role === "button" ||
+      el.tagName === "BUTTON" ||
+      testId.includes("model") ||
+      testId.includes("thinking") ||
+      testId.includes("reasoning");
+  }
   function modelPickerButton() {
-    const buttons = [...document.querySelectorAll("button")].filter(visibleElement);
-    const explicit = buttons.find(el => {
-      const label = controlLabel(el).toLowerCase();
+    const controls = modelControls();
+    const explicit = controls.find(el => {
       const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
-      return testId.includes("model") ||
-        /model|reasoning|thinking|denk|redeneer/.test(label);
+      const label = controlLabel(el).toLowerCase();
+      const role = String(el.getAttribute?.("role") || "").toLowerCase();
+      return role !== "menuitem" && role !== "menuitemradio" && role !== "option" &&
+        (testId.includes("model") ||
+         testId.includes("thinking") ||
+         testId.includes("reasoning") ||
+         /model|reasoning|thinking|denk|redeneer/.test(label) ||
+         !!el.getAttribute?.("aria-haspopup"));
     });
     if (explicit) return explicit;
-    return buttons.find(el => {
-      const label = controlLabel(el);
-      return /^(?:instant|medium|gemiddeld|high|hoog|extra high|zeer hoog|pro standard|pro standaard|pro extended|pro uitgebreid)$/i.test(label);
+    return controls.find(el => {
+      const role = String(el.getAttribute?.("role") || "").toLowerCase();
+      return role !== "menuitem" && role !== "menuitemradio" && role !== "option" &&
+        /^(?:instant|medium|gemiddeld|high|hoog|extra high|zeer hoog|pro standard|pro standaard|pro extended|pro uitgebreid)$/i.test(controlLabel(el));
     }) || null;
   }
   function highSelectionVerified() {
+    const controls = modelControls();
+    if (controls.some(el => isHighLabel(controlLabel(el)) && elementSignalsSelected(el))) return true;
     const picker = modelPickerButton();
-    if (picker && isHighLabel(controlLabel(picker))) return true;
-    return [...document.querySelectorAll('[role="menuitem"],[role="option"],button')]
-      .some(el => visibleElement(el) && isHighLabel(controlLabel(el)) && elementSignalsSelected(el));
+    return !!(picker && isPickerLike(picker) && isHighLabel(controlLabel(picker)));
   }
-  async function waitForHighSelection(timeoutMs = 3000) {
+  async function waitForHighSelection(timeoutMs = 3500) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (highSelectionVerified()) return true;
@@ -376,27 +423,53 @@ function runProject(cfg) {
       return true;
     }
 
-    let picker = modelPickerButton();
+    const exactHigh = /^(?:high|hoog)$/i;
+    const directHigh = modelControls().find(el =>
+      exactHigh.test(controlLabel(el)) &&
+      !el.closest?.('[role="menu"],[role="listbox"]')
+    );
+    if (directHigh) {
+      directHigh.click();
+      if (await waitForHighSelection()) {
+        status("thinking-effort-high-verified", {reason: "direct-control-selected", required: REQUIRED_THINKING_EFFORT});
+        return true;
+      }
+    }
+
+    const picker = modelPickerButton();
     if (!picker) {
-      status("thinking-effort-high-required", {reason: "picker-not-found", required: REQUIRED_THINKING_EFFORT});
+      status("thinking-effort-high-required", {
+        reason: "picker-not-found",
+        required: REQUIRED_THINKING_EFFORT,
+        controlHints: safeModelControlHints()
+      });
       return false;
     }
 
     picker.click();
     await sleep(500);
-    const exactHigh = /^(?:high|hoog)$/i;
-    const options = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')].filter(visibleElement);
-    const highOption = options.find(el => exactHigh.test(controlLabel(el)));
+    const highOption = modelControls().find(el =>
+      exactHigh.test(controlLabel(el)) &&
+      el !== picker
+    );
     if (!highOption) {
       document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
-      status("thinking-effort-high-required", {reason: "high-option-not-found", required: REQUIRED_THINKING_EFFORT});
+      status("thinking-effort-high-required", {
+        reason: "high-option-not-found",
+        required: REQUIRED_THINKING_EFFORT,
+        controlHints: safeModelControlHints()
+      });
       return false;
     }
 
     highOption.click();
     const verified = await waitForHighSelection();
     if (!verified) {
-      status("thinking-effort-high-required", {reason: "selection-not-verifiable", required: REQUIRED_THINKING_EFFORT});
+      status("thinking-effort-high-required", {
+        reason: "selection-not-verifiable",
+        required: REQUIRED_THINKING_EFFORT,
+        controlHints: safeModelControlHints()
+      });
       return false;
     }
 
