@@ -86,6 +86,7 @@ CREATABLE_PATHS = {
     "firefox-extension/recovery.js",
     "autonomy-policy.json",
     "portfolio_queue.seed.json",
+    "vps-execution-policy.json",
 }
 
 AUDITED_CONFIG_PATHS = {
