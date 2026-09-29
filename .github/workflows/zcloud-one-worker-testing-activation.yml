@@ -17,7 +17,7 @@ jobs:
   activate:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Check out the deployed revision
         uses: actions/checkout@v4
@@ -34,6 +34,9 @@ jobs:
           export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
           systemctl --user restart chatgpt-firefox.service
           systemctl --user is-active --quiet chatgpt-firefox.service
+          systemctl --user --no-pager --full status chatgpt-firefox.service || true
+          journalctl --user -u chatgpt-firefox.service -n 30 --no-pager || true
+          pgrep -af 'firefox|web-ext' || true
 
       - name: Enable exactly one queue-owned worker
         shell: bash
@@ -101,6 +104,11 @@ jobs:
                   ),
                   None,
               )
+              print(json.dumps({
+                  "poll_active_projects": active,
+                  "poll_workers": workers,
+                  "live_worker": live_worker,
+              }, ensure_ascii=False, sort_keys=True), flush=True)
               if len(active) <= 1 and live_worker:
                   break
 
@@ -113,6 +121,8 @@ jobs:
           if len(active) > 1:
               raise SystemExit(f"more than one project remains active: {active}")
           if not live_worker:
+              print("FINAL_RUNNER_TARGETS=" + json.dumps(final, ensure_ascii=False, sort_keys=True), flush=True)
+              print("FINAL_STATUS=" + json.dumps(status, ensure_ascii=False, sort_keys=True), flush=True)
               raise SystemExit("worker start was accepted, but no live Firefox heartbeat was observed")
 
           print(json.dumps({
