@@ -1,4 +1,5 @@
 const API = "http://127.0.0.1:8765/api";
+const VIOLENTMONKEY_PRIMARY_RUNNER = true;
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
 const projectTabs = Object.create(null);
@@ -977,6 +978,14 @@ function postStatus(payload) {
 }
 async function syncRunnerConfig(tabId, target) {
   if (!portfolioAssignmentReady(target)) return {ok:false, reason:"assignment-invalid"};
+  if (VIOLENTMONKEY_PRIMARY_RUNNER) {
+    try {
+      await inject(tabId, target);
+      return {ok:true, reason:"violentmonkey-config-bridged"};
+    } catch (_) {
+      return {ok:false, reason:"violentmonkey-config-bridge-failed"};
+    }
+  }
   tabTargets[tabId] = target;
   try {
     const result = await browser.tabs.sendMessage(tabId, {
@@ -1127,6 +1136,35 @@ async function inject(tabId, target) {
     tabTargets[tabId] = effectiveTarget;
     projectTabs[effectiveTarget.project_id] = tabId;
     await setRecoveryTag(tabId, effectiveTarget.project_id);
+
+    if (VIOLENTMONKEY_PRIMARY_RUNNER) {
+      // The WebExtension is now only the tab lifecycle + binding bridge.
+      // All ChatGPT DOM work (High thinking, composer, send, result parsing)
+      // is owned by public/zcloud-worker.user.js running in Violentmonkey.
+      const encodedConfig = JSON.stringify(effectiveTarget);
+      const code =
+        "document.documentElement.setAttribute('data-zcloud-worker-id'," + JSON.stringify(effectiveTarget.project_id) + ");" +
+        "document.documentElement.setAttribute('data-zcloud-worker-config'," + JSON.stringify(encodedConfig) + ");" +
+        "document.documentElement.setAttribute('data-zcloud-force-initial-dispatch'," + JSON.stringify(effectiveTarget.force_initial_dispatch ? "true" : "false") + ");" +
+        "window.dispatchEvent(new Event('zcloud-worker-config'));";
+      await browser.tabs.executeScript(tabId, {code, runAt: "document_idle"});
+      if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
+      postStatus({
+        projectId: target.project_id,
+        baseProjectId: target.base_project_id,
+        workerSlot: target.worker_slot,
+        globalWorkerSlot: target.global_worker_slot,
+        projectName: target.name,
+        target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+        targetConversation: target.conversation_id,
+        event: "violentmonkey-binding-ready",
+        reason: "webextension-tab-bridge-only",
+        at: new Date().toISOString(),
+        tabId
+      });
+      return;
+    }
+
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
     if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
@@ -1370,6 +1408,11 @@ async function pollCommands() {
       const hasTarget = !!targets[command.project_id] || workerKeysFor(command.project_id).length > 0;
       if (!hasTarget || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
       processedCommands.add(command.id);
+      if (VIOLENTMONKEY_PRIMARY_RUNNER && (command.action === "push" || command.action === "drain")) {
+        // Leave database push/drain commands pending for the bound Violentmonkey worker.
+        // The userscript executes them and posts /runner-command-result itself.
+        continue;
+      }
       if (command.action === "push") await pushProject(command.project_id, command.id);
       else if (command.action === "start") await startProject(command.project_id, command.id);
       else if (command.action === "pause") await pauseProject(command.project_id, command.id);
