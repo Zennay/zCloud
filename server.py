@@ -2065,6 +2065,9 @@ def runner_record(payload):
     if event in ('autonomy-wait-vps','autonomy-wait-human','autonomy-complete'):
         event='autonomy-continue'
         reason='backend-non-stopping-dynamic-worker-policy'
+    if event=='runner-auto-paused':
+        event='quality-recovery-requested'
+        reason='backend-rejected-automatic-worker-pause'
     match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
     with connect() as c:
         if not project_id and target:
@@ -2077,14 +2080,10 @@ def runner_record(payload):
                       (project_id,worker_slot,match.group(1)))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
-        if event in ('runner-drained','runner-paused','runner-auto-paused') and project_id in runner_targets():
+        if event in ('runner-drained','runner-paused') and project_id in runner_targets():
             c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
-    if event=='runner-auto-paused' and project_id:
-        # Legacy clients may still emit this event. Never pause automatically:
-        # record it as a recovery signal so the next rate-limited cycle continues.
-        event='quality-recovery-requested'
     if event=='portfolio-queue-result':
         try:
             portfolio_queue_finish(
