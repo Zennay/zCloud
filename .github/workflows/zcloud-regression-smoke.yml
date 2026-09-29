@@ -31,6 +31,8 @@ jobs:
           node --check firefox-extension/background.js
           node tests/test_firefox_recovery.js
           node tests/test_firefox_recovery_contract.js
+      - name: Verify Violentmonkey dynamic worker syntax
+        run: node --check public/zcloud-worker.user.js
       - name: Verify fail-closed pre-change guard
         run: python3 -m unittest -v tests.test_prechange_guard
       - name: Verify post-deploy canary checks
