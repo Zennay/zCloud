@@ -49,7 +49,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("same-assignment-non-stopping-execution-recovery", background)
         self.assertIn("DOE HET NU ECHT", background)
         self.assertIn("Geen audit, checklist, QA-overzicht, statusrapport", background)
-        self.assertIn("hoogste beschikbare redeneerdiepte / High thinking", background)
+        self.assertNotIn("hoogste beschikbare redeneerdiepte / High thinking", background)
         self.assertIn("ANDERE veilige uitvoeringsroute", background)
         self.assertIn("GA DOOR MET DE REST VAN DE ASSIGNMENT", background)
         self.assertIn("recoverableBlocker", background)

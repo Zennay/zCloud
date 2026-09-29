@@ -84,6 +84,7 @@ BLOCKED_PREFIXES = (
 
 CREATABLE_PATHS = {
     "firefox-extension/recovery.js",
+    "public/zcloud-worker.user.js",
     "autonomy-policy.json",
     "portfolio_queue.seed.json",
     # This policy is part of the deploy allowlist and may be bootstrapped on

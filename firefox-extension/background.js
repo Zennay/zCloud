@@ -1,4 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
+const VIOLENTMONKEY_PRIMARY_RUNNER = true;
+const violentmonkeyReadyProjects = new Set();
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
 const projectTabs = Object.create(null);
@@ -241,7 +243,7 @@ function runProject(cfg) {
     const escalation = qualityRetryCount >= 2
       ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. " +
         "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
-        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
+        "Onderzoek de echte fout grondig, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
         "Sluit NIET opnieuw af met dezelfde recoverable BLOCKED/WAIT_VPS; blijf binnen de bestaande safety-gates en bewijs de uitgevoerde stap. "
       : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. " +
         "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
@@ -1035,6 +1037,23 @@ function postStatus(payload) {
 }
 async function syncRunnerConfig(tabId, target) {
   if (!portfolioAssignmentReady(target)) return {ok:false, reason:"assignment-invalid"};
+  if (VIOLENTMONKEY_PRIMARY_RUNNER) {
+    try {
+      const injected = await inject(tabId, target);
+      if (injected?.mode === "violentmonkey") {
+        return {ok:true, reason:"violentmonkey-config-bridged"};
+      }
+      // During the temporary migration fallback the legacy injected runner is
+      // still alive, so refresh its queue assignment through its message API.
+      const legacyResult = await browser.tabs.sendMessage(tabId, {
+        type:"runner-config-update", projectId:target.project_id, target
+      }).catch(() => null);
+      if (legacyResult?.ok) return legacyResult;
+      return {ok:false, reason:"legacy-fallback-config-refresh-failed"};
+    } catch (_) {
+      return {ok:false, reason:"violentmonkey-config-bridge-failed"};
+    }
+  }
   tabTargets[tabId] = target;
   try {
     const result = await browser.tabs.sendMessage(tabId, {
@@ -1119,7 +1138,10 @@ async function refreshTargets() {
           const tab = await browser.tabs.get(assignedTabId);
           const previous = tabTargets[assignedTabId];
           tabTargets[assignedTabId] = target;
-          if (tab.status === "complete" && runnerConfigChanged(previous, target)) {
+          if (tab.status === "complete" && (
+            runnerConfigChanged(previous, target) ||
+            (VIOLENTMONKEY_PRIMARY_RUNNER && !violentmonkeyReadyProjects.has(target.project_id))
+          )) {
             const synced = await syncRunnerConfig(assignedTabId, target);
             if (!synced?.ok) {
               postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
@@ -1185,10 +1207,71 @@ async function inject(tabId, target) {
     tabTargets[tabId] = effectiveTarget;
     projectTabs[effectiveTarget.project_id] = tabId;
     await setRecoveryTag(tabId, effectiveTarget.project_id);
+
+    if (VIOLENTMONKEY_PRIMARY_RUNNER) {
+      // The WebExtension only owns tab lifecycle + worker/config binding.
+      // ChatGPT DOM execution is owned by the Violentmonkey userscript when present.
+      const encodedConfig = JSON.stringify(effectiveTarget);
+      const code =
+        "document.documentElement.setAttribute('data-zcloud-worker-id'," + JSON.stringify(effectiveTarget.project_id) + ");" +
+        "document.documentElement.setAttribute('data-zcloud-worker-config'," + JSON.stringify(encodedConfig) + ");" +
+        "document.documentElement.setAttribute('data-zcloud-force-initial-dispatch'," + JSON.stringify(effectiveTarget.force_initial_dispatch ? "true" : "false") + ");" +
+        "window.dispatchEvent(new Event('zcloud-worker-config'));";
+      await browser.tabs.executeScript(tabId, {code, runAt: "document_idle"});
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const readiness = await browser.tabs.executeScript(tabId, {
+        code: "document.documentElement.getAttribute('data-zcloud-violentmonkey-ready') || ''",
+        runAt: "document_idle"
+      }).catch(() => [""]);
+      const vmReady = Array.isArray(readiness) && readiness.some(value => String(value || "").trim());
+      if (vmReady) {
+        violentmonkeyReadyProjects.add(effectiveTarget.project_id);
+        // Stop any legacy injected runner that may still be alive from before
+        // Violentmonkey was installed/reloaded, preventing duplicate sends.
+        try {
+          await browser.tabs.sendMessage(tabId, {
+            type: "runner-stop",
+            projectId: effectiveTarget.project_id,
+            reason: "violentmonkey-primary-takeover"
+          });
+        } catch (_) {}
+        if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
+        postStatus({
+          projectId: target.project_id,
+          baseProjectId: target.base_project_id,
+          workerSlot: target.worker_slot,
+          globalWorkerSlot: target.global_worker_slot,
+          projectName: target.name,
+          target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+          targetConversation: target.conversation_id,
+          event: "violentmonkey-binding-ready",
+          reason: "webextension-tab-bridge-only",
+          at: new Date().toISOString(),
+          tabId
+        });
+        return {mode: "violentmonkey"};
+      }
+      violentmonkeyReadyProjects.delete(effectiveTarget.project_id);
+      postStatus({
+        projectId: target.project_id,
+        baseProjectId: target.base_project_id,
+        workerSlot: target.worker_slot,
+        globalWorkerSlot: target.global_worker_slot,
+        projectName: target.name,
+        target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+        targetConversation: target.conversation_id,
+        event: "violentmonkey-missing-fallback",
+        reason: "legacy-extension-runner-temporarily-retained",
+        at: new Date().toISOString(),
+        tabId
+      });
+    }
+
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
     if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-success", at: new Date().toISOString(), tabId: tabId});
+    return {mode: "legacy"};
   } catch (error) {
     postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-failed", error: String(error?.message || error),
@@ -1428,6 +1511,17 @@ async function pollCommands() {
       const hasTarget = !!targets[command.project_id] || workerKeysFor(command.project_id).length > 0;
       if (!hasTarget || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
       processedCommands.add(command.id);
+      const commandWorkerKeys = targets[command.project_id]
+        ? [command.project_id]
+        : workerKeysFor(command.project_id, true);
+      const vmOwnsCommand = VIOLENTMONKEY_PRIMARY_RUNNER &&
+        commandWorkerKeys.length > 0 &&
+        commandWorkerKeys.every(key => violentmonkeyReadyProjects.has(key));
+      if (vmOwnsCommand && (command.action === "push" || command.action === "drain")) {
+        // Leave database push/drain commands pending only when the bound
+        // Violentmonkey worker has positively announced readiness.
+        continue;
+      }
       if (command.action === "push") await pushProject(command.project_id, command.id);
       else if (command.action === "start") await startProject(command.project_id, command.id);
       else if (command.action === "pause") await pauseProject(command.project_id, command.id);
@@ -1486,6 +1580,7 @@ browser.tabs.onRemoved.addListener(tabId => {
   const target = tabTargets[tabId];
   const intentional = intentionalTabClosures.delete(tabId);
   if (target && projectTabs[target.project_id] === tabId) delete projectTabs[target.project_id];
+  if (target?.project_id) violentmonkeyReadyProjects.delete(target.project_id);
   delete tabTargets[tabId];
   delete pendingAdoptions[tabId];
   if (target && !intentional) {

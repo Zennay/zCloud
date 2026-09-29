@@ -81,6 +81,15 @@ jobs:
             --actor "github-actions-vps-deploy" \
             --json
 
+      - name: Promote Violentmonkey worker
+        if: steps.freshness.outputs.deploy == 'true'
+        run: |
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path public/zcloud-worker.user.js \
+            --actor "github-actions-vps-deploy" \
+            --json
+
       - name: Promote translated project catalog
         if: steps.freshness.outputs.deploy == 'true'
         run: |

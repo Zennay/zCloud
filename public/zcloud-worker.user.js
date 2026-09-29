@@ -1,0 +1,712 @@
+// ==UserScript==
+// @name         zCloud Dynamic Worker
+// @namespace    https://zcloud.local/
+// @version      1.1.0
+// @description  Database-backed ChatGPT dynamic worker for zCloud.
+// @match        https://chatgpt.com/*
+// @grant        GM_xmlhttpRequest
+// @connect      127.0.0.1
+// @run-at       document-idle
+// @noframes
+// @updateURL    http://127.0.0.1:8765/zcloud-worker.user.js
+// @downloadURL  http://127.0.0.1:8765/zcloud-worker.user.js
+// ==/UserScript==
+
+(() => {
+  "use strict";
+
+  const API = "http://127.0.0.1:8765/api";
+  const SCRIPT_VERSION = "1.1.0";
+  const REQUIRED_THINKING_EFFORT = "high";
+  const MODEL_PICKER_SELECTOR = [
+    '[data-testid="model-switcher-dropdown-button"]',
+    'button[aria-label="Model selector"]',
+    '[aria-label="Model selector"][aria-haspopup="menu"]',
+    '[aria-haspopup="menu"][data-testid*="model"]'
+  ].join(",");
+  const THINKING_OPTION_SELECTOR = [
+    '[role="menuitemradio"]',
+    '[role="option"]',
+    '[role="menuitem"]',
+    '[role="radio"]',
+    '[data-testid*="thinking"]',
+    '[data-testid*="reasoning"]'
+  ].join(",");
+  const REFRESH_MS = 5000;
+  const TICK_MS = 1500;
+  const HEARTBEAT_MS = 30000;
+  const GENERATION_START_TIMEOUT_MS = 120000;
+
+  let target = null;
+  let bridgedProjectId = "";
+  let bridgedConfigRaw = "";
+  let sending = false;
+  let draining = false;
+  let lastGenerating = null;
+  let lastAssistantText = "";
+  let sawGeneration = false;
+  let finishedAt = 0;
+  let awaitingGeneration = false;
+  let generationDeadline = 0;
+  let lastProgressAt = Date.now();
+  let lastPromptSentAt = 0;
+  let lastHandledCommandId = 0;
+  let initialDispatchKey = "";
+  let qualityRetryPending = false;
+  let qualityRetryCount = 0;
+  let refreshTimer = null;
+  let tickTimer = null;
+  let heartbeatTimer = null;
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  function gmRequest(path, options = {}) {
+    const method = options.method || "GET";
+    const body = options.body == null ? null : JSON.stringify(options.body);
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method,
+        url: API + path,
+        headers: body ? {"Content-Type": "application/json"} : undefined,
+        data: body,
+        timeout: options.timeout || 8000,
+        onload: response => {
+          let data = null;
+          try { data = response.responseText ? JSON.parse(response.responseText) : {}; }
+          catch (_) { data = {}; }
+          if (response.status >= 200 && response.status < 300) resolve(data);
+          else reject(new Error(method + " " + path + " HTTP " + response.status));
+        },
+        onerror: () => reject(new Error(method + " " + path + " network error")),
+        ontimeout: () => reject(new Error(method + " " + path + " timeout"))
+      });
+    });
+  }
+
+  function conversationId() {
+    const match = location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i);
+    return match ? match[1] : "";
+  }
+
+  function baseProjectId() {
+    return String(target?.base_project_id || target?.project_id || "").split("::w", 1)[0];
+  }
+
+  function assignmentReady(candidate) {
+    if (!candidate || candidate.active !== true || candidate.assignment_ready !== true) return false;
+    const queueId = String(candidate.queue_item?.queue_id || "").trim();
+    const prompt = String(candidate.prompt || "");
+    const slot = Number(candidate.global_worker_slot || 0);
+    const total = Number(candidate.global_worker_count || 0);
+    return !!queueId &&
+      Number.isInteger(slot) && slot >= 1 &&
+      Number.isInteger(total) && total >= slot &&
+      prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
+      prompt.includes("Jij bent Worker " + slot + "/" + total + ".");
+  }
+
+  function readBridge() {
+    const root = document.documentElement;
+    if (!root) return;
+    const id = String(root.getAttribute("data-zcloud-worker-id") || "").trim();
+    const raw = String(root.getAttribute("data-zcloud-worker-config") || "").trim();
+    if (id) bridgedProjectId = id;
+    if (raw && raw !== bridgedConfigRaw) {
+      bridgedConfigRaw = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed?.project_id) {
+          target = parsed;
+          bridgedProjectId = parsed.project_id;
+          draining = parsed.desired_state === "draining";
+        }
+      } catch (_) {}
+    }
+  }
+
+  async function refreshTarget() {
+    readBridge();
+    let payload;
+    try { payload = await gmRequest("/runner-targets"); }
+    catch (error) {
+      if (target) await status("userscript-config-unavailable", {error: String(error.message || error)});
+      return;
+    }
+    const projects = payload.projects || {};
+    let next = null;
+    if (bridgedProjectId && projects[bridgedProjectId]) next = projects[bridgedProjectId];
+    if (!next) {
+      const cid = conversationId();
+      if (cid) next = Object.values(projects).find(item => item?.conversation_id === cid) || null;
+    }
+    if (!next && target?.project_id && projects[target.project_id]) next = projects[target.project_id];
+    if (!next) {
+      target = null;
+      return;
+    }
+
+    const previousConversation = target?.conversation_id || "";
+    target = {...target, ...next};
+    draining = target.desired_state === "draining";
+
+    const cid = conversationId();
+    if (cid && cid !== previousConversation && cid !== target.conversation_id) {
+      await status("conversation-adopted", {
+        reason: "violentmonkey-route-adoption",
+        target: location.href,
+        targetConversation: cid
+      });
+    }
+
+    const forced = !!target.force_initial_dispatch || document.documentElement?.getAttribute("data-zcloud-force-initial-dispatch") === "true";
+    const key = String(target.queue_item?.queue_id || "");
+    if (forced && key && initialDispatchKey !== key && assignmentReady(target)) {
+      initialDispatchKey = key;
+      await sendPrompt("violentmonkey-initial-dispatch");
+    }
+  }
+
+  function stopButton() {
+    return document.querySelector('button[data-testid="stop-button"]') ||
+      [...document.querySelectorAll("button")].find(button => {
+        const label = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
+        return label.includes("stop") || label.includes("stoppen");
+      }) || null;
+  }
+
+  function composer() {
+    return document.querySelector("#prompt-textarea") ||
+      document.querySelector('[contenteditable="true"][role="textbox"]') ||
+      document.querySelector("textarea");
+  }
+
+  function sendButton() {
+    return document.querySelector('button[data-testid="send-button"]') ||
+      [...document.querySelectorAll("button")].find(button => {
+        const label = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
+        return label.includes("send") || label.includes("verzenden");
+      }) || null;
+  }
+
+  function assistantText() {
+    const nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+    return nodes.length ? String(nodes[nodes.length - 1].innerText || "").trim() : "";
+  }
+
+  function visible(el) {
+    if (!el) return false;
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+  }
+
+  function label(el) {
+    return String(
+      el?.getAttribute?.("aria-valuetext") ||
+      el?.getAttribute?.("aria-label") ||
+      el?.getAttribute?.("title") ||
+      el?.innerText ||
+      el?.textContent ||
+      ""
+    ).trim();
+  }
+
+  function isHigh(value) {
+    const text = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (!text) return false;
+    if (/extra\s+high|very\s+high|zeer\s+hoog|pro\b/.test(text)) return false;
+    return /(?:^|\s)(?:high|hoog)(?:\b|\s|$)/i.test(text) ||
+      /(?:^|\b)(?:think|denk)\s+hard(?:er)?(?:\b|$)/i.test(text) ||
+      /^(?:hard|harder)(?:\b|\s)/i.test(text);
+  }
+
+  function selected(el) {
+    const state = String(el?.getAttribute?.("data-state") || "").toLowerCase();
+    return el?.getAttribute?.("aria-selected") === "true" ||
+      el?.getAttribute?.("aria-checked") === "true" ||
+      el?.getAttribute?.("aria-pressed") === "true" ||
+      el?.getAttribute?.("aria-current") === "true" ||
+      el?.getAttribute?.("data-selected") === "true" ||
+      el?.getAttribute?.("data-active") === "true" ||
+      state === "checked" || state === "on" || state === "active" ||
+      /(?:^|\s)(?:selected|active|checked)(?:\s|$)/i.test(String(el?.className || ""));
+  }
+
+  function thinkingOptions() {
+    return [...document.querySelectorAll(THINKING_OPTION_SELECTOR)].filter(visible);
+  }
+
+  function selectedHighOption() {
+    return thinkingOptions().find(el => isHigh(label(el)) && selected(el)) || null;
+  }
+
+  function pickerShowsHigh() {
+    return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
+      .filter(visible)
+      .some(el => isHigh(label(el)));
+  }
+
+  function thinkingSliders() {
+    return [...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visible);
+  }
+
+  function thinkingControls() {
+    return [...document.querySelectorAll(
+      'button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="option"],[role="radio"],[aria-haspopup="menu"],[aria-haspopup="listbox"]'
+    )].filter(visible).filter(el => {
+      const text = label(el).toLowerCase();
+      const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
+      return el.matches?.(MODEL_PICKER_SELECTOR) ||
+        /instant|medium|high|hoog|model|thinking|reasoning|effort|denk|redeneer|gpt|hard/.test(text) ||
+        testId.includes("model") || testId.includes("thinking") || testId.includes("reasoning");
+    });
+  }
+
+  function highVerified() {
+    if (pickerShowsHigh() || selectedHighOption()) return true;
+    if (thinkingSliders().some(el => isHigh(label(el)))) return true;
+    return thinkingControls().some(el => isHigh(label(el)) && selected(el));
+  }
+
+  function key(el, keyName) {
+    if (!el) return;
+    el.focus?.();
+    el.dispatchEvent(new KeyboardEvent("keydown", {key: keyName, bubbles: true, cancelable: true}));
+    el.dispatchEvent(new KeyboardEvent("keyup", {key: keyName, bubbles: true, cancelable: true}));
+  }
+
+  async function setSliderHigh(slider) {
+    if (!slider) return false;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const current = label(slider);
+      if (isHigh(current)) return true;
+      if (/extra\s+high|very\s+high|zeer\s+hoog/i.test(current)) key(slider, "ArrowLeft");
+      else key(slider, "ArrowRight");
+      await sleep(180);
+    }
+    if (isHigh(label(slider))) return true;
+
+    key(slider, "Home");
+    await sleep(160);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (isHigh(label(slider))) return true;
+      key(slider, "ArrowRight");
+      await sleep(180);
+    }
+    return isHigh(label(slider));
+  }
+
+  function pickerButton() {
+    const explicit = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible);
+    if (explicit) return explicit;
+    return thinkingControls().find(el => {
+      const role = String(el.getAttribute?.("role") || "").toLowerCase();
+      if (role === "menuitem" || role === "menuitemradio" || role === "option") return false;
+      const text = label(el).toLowerCase();
+      const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
+      return !!el.getAttribute?.("aria-haspopup") ||
+        testId.includes("model") || testId.includes("thinking") || testId.includes("reasoning") ||
+        /model|thinking|reasoning|denk|redeneer|instant|medium|high|hoog|hard/.test(text);
+    }) || null;
+  }
+
+  async function ensureHighThinking() {
+    if (highVerified()) return true;
+
+    const slider = thinkingSliders()[0] || null;
+    if (slider && await setSliderHigh(slider) && highVerified()) return true;
+
+    const picker = pickerButton();
+    if (!picker) return false;
+    picker.click();
+    await sleep(450);
+
+    const openedSlider = thinkingSliders()[0] || null;
+    if (openedSlider && await setSliderHigh(openedSlider) && highVerified()) return true;
+
+    const exactHigh = /^(?:high|hoog|think\s+hard|think\s+harder|denk\s+hard|denk\s+harder|hard|harder)(?:\b|\s)/i;
+    const highOption = [...new Set([...thinkingOptions(), ...thinkingControls()])].find(el =>
+      (exactHigh.test(label(el)) || isHigh(label(el))) && el !== picker
+    );
+    if (!highOption) {
+      document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+      return false;
+    }
+    highOption.click();
+
+    let deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (highVerified()) return true;
+      await sleep(120);
+    }
+
+    // ChatGPT currently closes the Radix menu after selection. Re-open once
+    // and verify the checked/selected High/Think Hard option before sending.
+    const verifyPicker = pickerButton();
+    if (verifyPicker && !selectedHighOption() && !pickerShowsHigh()) {
+      verifyPicker.click();
+      await sleep(350);
+      deadline = Date.now() + 1200;
+      while (Date.now() < deadline) {
+        if (highVerified()) return true;
+        await sleep(120);
+      }
+      document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+    }
+    return highVerified();
+  }
+
+  async function fill(text) {
+    const box = composer();
+    if (!box) return false;
+    box.focus();
+    if (box.tagName === "TEXTAREA" || box.tagName === "INPUT") {
+      const proto = box.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(box, text);
+      else box.value = text;
+      box.dispatchEvent(new Event("input", {bubbles: true}));
+    } else {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, text);
+      box.dispatchEvent(new InputEvent("input", {bubbles: true, inputType: "insertText", data: text}));
+    }
+    await sleep(350);
+    return true;
+  }
+
+  function statusPayload(event, extra = {}) {
+    const text = assistantText();
+    return {
+      projectId: target?.project_id || bridgedProjectId || "",
+      baseProjectId: baseProjectId(),
+      workerSlot: Number(target?.worker_slot || 1),
+      globalWorkerSlot: Number(target?.global_worker_slot || target?.worker_slot || 1),
+      queueItem: String(target?.queue_item?.queue_id || ""),
+      projectName: target?.name || "",
+      target: location.href,
+      targetConversation: conversationId(),
+      title: document.title,
+      event,
+      at: new Date().toISOString(),
+      generating: !!stopButton(),
+      sending,
+      progressAt: new Date(lastProgressAt).toISOString(),
+      assistantCharacters: text.length,
+      runner: "violentmonkey",
+      runnerVersion: SCRIPT_VERSION,
+      ...extra
+    };
+  }
+
+  async function status(event, extra = {}) {
+    if (!target && !bridgedProjectId) return;
+    try { await gmRequest("/runner-status", {method: "POST", body: statusPayload(event, extra)}); }
+    catch (_) {}
+  }
+
+  async function commandResult(commandId, resultStatus, result) {
+    if (!commandId) return;
+    try {
+      await gmRequest("/runner-command-result", {
+        method: "POST",
+        body: {command_id: commandId, status: resultStatus, result}
+      });
+    } catch (_) {}
+  }
+
+  function handoffKey() {
+    const claim = target?.replacement_handoff?.claim || null;
+    return String(claim?.claim_key || target?.replacement_handoff?.prepared_at || "").trim();
+  }
+
+  function handoffAlreadyConsumed() {
+    const key = handoffKey();
+    if (!key) return true;
+    try { return sessionStorage.getItem("zcloud-handoff-consumed:" + key) === "1"; }
+    catch (_) { return false; }
+  }
+
+  function promptWithHandoffAndRecovery(basePrompt) {
+    let prompt = String(basePrompt || "");
+    const handoff = target?.replacement_handoff || null;
+    if (handoff && !handoffAlreadyConsumed()) {
+      prompt += "\n\nBEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
+        "Neem GEEN nieuwe taakclaim zolang de bestaande claim nog geldig is. " +
+        "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen. " +
+        "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit, claim veilig opnieuw en ga in dezelfde cyclus verder. " +
+        "Handoff-context: " + JSON.stringify(handoff);
+    }
+    if (qualityRetryPending) {
+      const escalation = qualityRetryCount >= 2
+        ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Geen audit/status-only of dezelfde recoverable blocker opnieuw; kies een andere veilige route en bewijs echte uitvoering."
+        : "DOE HET NU ECHT. Ga door met dezelfde assignment en voer nu een concrete materiële stap uit.";
+      prompt += "\n\nZCLOUD_QUALITY_RETRY: " + escalation +
+        " Herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE.";
+    }
+    return prompt;
+  }
+
+  function markHandoffConsumed() {
+    const key = handoffKey();
+    if (!key) return;
+    try { sessionStorage.setItem("zcloud-handoff-consumed:" + key, "1"); } catch (_) {}
+  }
+
+  async function sendPrompt(reason) {
+    if (!target || !assignmentReady(target) || sending || draining || stopButton()) return false;
+    const prompt = promptWithHandoffAndRecovery(target.prompt);
+    if (!prompt) return false;
+
+    sending = true;
+    try {
+      const highReady = await ensureHighThinking();
+      if (!highReady) {
+        await status("send-blocked", {
+          reason: "high-thinking-required",
+          required: REQUIRED_THINKING_EFFORT
+        });
+        return false;
+      }
+
+      if (!(await fill(prompt))) {
+        await status("send-blocked", {reason: "composer-missing"});
+        return false;
+      }
+      const button = sendButton();
+      if (!button || button.disabled) {
+        await status("send-blocked", {reason: "send-button-unavailable"});
+        return false;
+      }
+
+      button.click();
+      markHandoffConsumed();
+      qualityRetryPending = false;
+      lastPromptSentAt = Date.now();
+      lastProgressAt = Date.now();
+      awaitingGeneration = true;
+      generationDeadline = Date.now() + GENERATION_START_TIMEOUT_MS;
+      sawGeneration = false;
+      finishedAt = 0;
+      await status("prompt-sent", {
+        reason,
+        thinkingEffort: REQUIRED_THINKING_EFFORT
+      });
+      return true;
+    } finally {
+      await sleep(600);
+      sending = false;
+    }
+  }
+
+  function nextTaskFromText(text) {
+    const match = text.match(/ZCLOUD_NEXT_TASK:\s*([^\n]+)/i);
+    if (!match) return null;
+    const parts = Object.fromEntries(match[1].split(";").map(part => {
+      const index = part.indexOf("=");
+      return index > 0 ? [part.slice(0, index).trim().toLowerCase(), part.slice(index + 1).trim()] : ["", ""];
+    }).filter(([key]) => key));
+    if (!parts.title) return null;
+    return {
+      project_id: String(parts.project || baseProjectId() || "").toLowerCase(),
+      priority: String(parts.priority || "P2").toUpperCase(),
+      title: parts.title,
+      completion_criteria: parts.criteria || ""
+    };
+  }
+
+  function cycleQuality(text, now) {
+    const elapsedMs = lastPromptSentAt ? Math.max(0, now - lastPromptSentAt) : null;
+    const queueResult = /ZCLOUD_QUEUE_RESULT:\s*(DONE|BLOCKED|CONTINUE)\b/i.exec(text || "");
+    const queueEvidence = /ZCLOUD_QUEUE_EVIDENCE:\s*([^\n]+)/i.exec(text || "");
+    const hasQueueResult = !!queueResult;
+    const hasQueueEvidence = !!queueEvidence && queueEvidence[1].trim().length > 0;
+    const waitHuman = /ZCLOUD_AUTONOMY:\s*WAIT_HUMAN\b/i.test(text || "");
+    const waitVps = /ZCLOUD_AUTONOMY:\s*WAIT_VPS\b/i.test(text || "");
+    const blocked = queueResult?.[1]?.toUpperCase() === "BLOCKED";
+    const tooShort = String(text || "").trim().length < 500;
+    const tooFast = elapsedMs !== null && elapsedMs <= 15000;
+    const missingEvidence = hasQueueResult && !hasQueueEvidence;
+    const recoverableBlocker = !waitHuman && (blocked || waitVps);
+    return {
+      weak: (!hasQueueResult && (tooShort || tooFast)) || missingEvidence || recoverableBlocker,
+      elapsedMs,
+      tooShort,
+      tooFast,
+      missingEvidence,
+      recoverableBlocker,
+      waitHuman
+    };
+  }
+
+  async function scheduleQualityRetry(reason, details = {}) {
+    qualityRetryCount += 1;
+    qualityRetryPending = true;
+    await status("quality-retry-scheduled", {
+      reason,
+      retryNumber: qualityRetryCount,
+      retryLimit: "unbounded",
+      adjustment: "same-assignment-non-stopping-execution-recovery",
+      ...details
+    });
+  }
+
+  async function reportFinishSignals(text) {
+    const queueResult = text.match(/ZCLOUD_QUEUE_RESULT:\s*(DONE|BLOCKED|CONTINUE)\b/i);
+    const queueEvidence = text.match(/ZCLOUD_QUEUE_EVIDENCE:\s*([^\n]+)/i);
+    const queueItem = text.match(/ZCLOUD_QUEUE_ITEM:\s*([^\s\n]+)/i);
+    if (queueResult) {
+      await status("portfolio-queue-result", {
+        queueItem: queueItem ? queueItem[1].trim() : String(target?.queue_item?.queue_id || ""),
+        queueResult: queueResult[1].toUpperCase(),
+        queueEvidence: queueEvidence ? queueEvidence[1].trim().slice(0, 4000) : "",
+        nextTask: nextTaskFromText(text)
+      });
+    }
+
+    const workProject = text.match(/ZCLOUD_WORK_PROJECT:\s*(HAXLAB|FTMO|CLOUD|SUPA|RAISEAI|ULAB|ZSSH|NONE)\b/i);
+    if (workProject?.[1]?.toLowerCase() === "cloud") {
+      if (text.includes("ZCLOUD_ITERATION_COMPLETE")) await status("improvement-iteration-complete");
+      if (text.includes("ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1")) await status("improvement-review-green");
+      if (text.includes("ZCLOUD_FINISH_REVIEW: OPEN_P0P1")) await status("improvement-review-open");
+      if (text.includes("ZCLOUD_FINAL_AUDIT: GREEN")) await status("improvement-audit-green");
+      if (text.includes("ZCLOUD_FINAL_AUDIT: FAIL")) await status("improvement-audit-failed");
+    }
+  }
+
+  async function handleCommands() {
+    if (!target?.project_id) return;
+    let payload;
+    try { payload = await gmRequest("/runner-commands"); }
+    catch (_) { return; }
+
+    const commands = (payload.commands || []).filter(command => {
+      if (!command || Number(command.id || 0) <= lastHandledCommandId) return false;
+      const sameWorker = command.project_id === target.project_id;
+      const basePush = command.project_id === target.base_project_id && Number(target.worker_slot || 1) === 1;
+      return sameWorker || basePush;
+    }).sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+
+    for (const command of commands) {
+      const id = Number(command.id || 0);
+      if (command.action === "push") {
+        const ok = await sendPrompt("database-push");
+        await commandResult(id, ok ? "completed" : "failed", ok ? "Prompt sent by Violentmonkey worker" : "Violentmonkey worker could not send safely");
+        lastHandledCommandId = Math.max(lastHandledCommandId, id);
+      } else if (command.action === "drain") {
+        draining = true;
+        await status("runner-draining", {reason: "database-drain"});
+        await commandResult(id, "completed", "Violentmonkey worker will stop after current generation");
+        lastHandledCommandId = Math.max(lastHandledCommandId, id);
+      }
+    }
+  }
+
+  async function tick() {
+    readBridge();
+    if (!target) return;
+
+    await handleCommands();
+
+    const generating = !!stopButton();
+    const text = assistantText();
+    const now = Date.now();
+
+    if (lastGenerating === null) lastGenerating = generating;
+    if (generating !== lastGenerating) {
+      lastGenerating = generating;
+      if (generating) {
+        sawGeneration = true;
+        awaitingGeneration = false;
+        finishedAt = 0;
+        lastProgressAt = now;
+        await status("generation-started");
+      } else {
+        finishedAt = now;
+        await status("generation-finished");
+      }
+    }
+
+    if (generating) {
+      if (text !== lastAssistantText) {
+        lastAssistantText = text;
+        lastProgressAt = now;
+        await status("generation-progress");
+      }
+      return;
+    }
+
+    if (awaitingGeneration) {
+      if (text && text !== lastAssistantText) {
+        awaitingGeneration = false;
+        sawGeneration = true;
+        finishedAt = now;
+        lastAssistantText = text;
+        await status("generation-started", {reason: "response-detected-between-polls"});
+        await status("generation-finished", {reason: "response-detected-between-polls"});
+      } else if (now >= generationDeadline) {
+        awaitingGeneration = false;
+        await status("generation-not-started", {reason: "no-generation-after-send"});
+      }
+      return;
+    }
+
+    if (sawGeneration && finishedAt && now - finishedAt >= 900) {
+      sawGeneration = false;
+      finishedAt = 0;
+      lastAssistantText = text;
+      const quality = cycleQuality(text, now);
+      await reportFinishSignals(text);
+      if (quality.weak) {
+        await scheduleQualityRetry("short-or-invalid-result", {
+          cycleSeconds: quality.elapsedMs === null ? null : Math.round(quality.elapsedMs / 1000),
+          assistantCharacters: String(text || "").length,
+          tooShort: quality.tooShort,
+          tooFast: quality.tooFast,
+          missingQueueEvidence: quality.missingEvidence,
+          recoverableBlocker: quality.recoverableBlocker
+        });
+      }
+      if (draining) {
+        await status("runner-drained", {reason: "current-task-finished"});
+        return;
+      }
+      await status("awaiting-vps-dispatch", {reason: "cycle-finished"});
+    }
+  }
+
+  async function heartbeat() {
+    readBridge();
+    if (!target) return;
+    await status("heartbeat", {reason: "violentmonkey-primary-runner"});
+  }
+
+  function installBridgeListeners() {
+    window.addEventListener("zcloud-worker-config", () => {
+      readBridge();
+      refreshTarget().catch(() => {});
+    });
+    const observer = new MutationObserver(() => readBridge());
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-zcloud-worker-id", "data-zcloud-worker-config", "data-zcloud-force-initial-dispatch"]
+    });
+  }
+
+  async function start() {
+    document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready", SCRIPT_VERSION);
+    window.dispatchEvent(new Event("zcloud-violentmonkey-ready"));
+    installBridgeListeners();
+    readBridge();
+    await refreshTarget();
+    await status("runner-started", {
+      reason: "violentmonkey-primary-runner",
+      scriptVersion: SCRIPT_VERSION
+    });
+    refreshTimer = setInterval(() => refreshTarget().catch(() => {}), REFRESH_MS);
+    tickTimer = setInterval(() => tick().catch(() => {}), TICK_MS);
+    heartbeatTimer = setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_MS);
+  }
+
+  start().catch(() => {});
+})();
