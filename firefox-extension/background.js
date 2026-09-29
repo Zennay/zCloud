@@ -527,6 +527,7 @@ function runProject(cfg) {
           claimKey: REPLACEMENT_HANDOFF?.claim?.claim_key || ""
         });
       }
+      forceInitialDispatch = false;
       lastPromptSentAt = Date.now();
       lastProgressAt = Date.now();
       sawGeneration = false;
@@ -693,7 +694,7 @@ function runProject(cfg) {
       return;
     }
     composerMissingSince = 0;
-    if (!vpsDispatchOnly && !SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
+    if ((forceInitialDispatch || !vpsDispatchOnly) && !SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
         (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
       if (draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
