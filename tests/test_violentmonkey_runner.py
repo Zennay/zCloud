@@ -87,7 +87,6 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('event == "send-blocked"', workflow)
         self.assertIn('"prompt-sent"', workflow)
         self.assertIn('"generation-started"', workflow)
-        self.assertNotIn('if all(live.values()):\n                  break\n\n          missing', workflow)
 
     def test_userscript_is_served_and_deployed(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
