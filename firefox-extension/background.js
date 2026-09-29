@@ -671,8 +671,12 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        status("send-blocked", {reason: "high-thinking-required", required: REQUIRED_THINKING_EFFORT});
-        return false;
+        // High remains the required preference and is retried on every send,
+        // but a ChatGPT UI/model-picker mismatch must never stop execution.
+        status("thinking-effort-high-unavailable-proceeding", {
+          reason: "ui-control-not-verifiable",
+          required: REQUIRED_THINKING_EFFORT
+        });
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
