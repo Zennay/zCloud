@@ -31,7 +31,7 @@ NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a18
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
 PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
 PORTFOLIO_QUEUE_LEASE_SECONDS = 1800
-PORTFOLIO_AI_COOLDOWN_SECONDS = 300
+PORTFOLIO_AI_COOLDOWN_SECONDS = 120
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -101,10 +101,11 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     project=PROJECT_INDEX.get(project_id) or {}
     return (
-        f'Je bent een dynamische zCloud portfolio-worker (maximaal {GLOBAL_CHATGPT_WORKER_LIMIT} tegelijk). '
-        f'Runnerlabel "{name}" / "{project_id}" is alleen transport; de VPS Portfolio Queue bepaalt het werk. '
-        'zCloud SQLite op de VPS is de enige scheduling/source-of-truth. Notion is uitsluitend documentatie/mirror en een Notion-planlimiet mag nooit de cyclus blokkeren. '
-        f'Canonieke project-HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. ' + VPS_EXECUTION_DIRECTIVE
+        f'zCloud worker voor "{name}" / "{project_id}". '
+        'Voer alleen de VPS_QUEUE_ASSIGNMENT uit; zCloud SQLite is de queue/source-of-truth. '
+        'Notion is alleen documentatie, nooit scheduler of blocker. '
+        f'HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
+        + VPS_EXECUTION_DIRECTIVE
     )
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
@@ -116,26 +117,22 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         'VPS_QUEUE_ASSIGNMENT none. '
     )
     queue_id=str(item.get('queue_id') or 'NONE')
+    project_guard=(
+        'FTMO: houd preregistration, walk-forward en final holdout strikt gescheiden. '
+        if project_id == 'ftmo' else ''
+    )
     return base_prompt + assignment + (
         f'Jij bent Worker {slot}/{total}. VOER UIT, NIET RAPPORTEREN. '
-        '1) Gebruik uitsluitend de reeds door zCloud/VPS geclaimde VPS_QUEUE_ASSIGNMENT voor scheduling. Query Notion NIET om een queue-item te kiezen. '
-        'Notion mag alleen als projectdocumentatie/HQ/handoff worden gelezen of bijgewerkt; plan-gates, AI-search of query_data_sources zijn nooit een WAIT/blocker. '
-        '2) Volg Project → HQ/Handoff/repo/runtime. Voor repo-writes: zCloud preflight/task-claim + open PR/branch check; geen dubbelwerk. '
-        '3) EXECUTION-FIRST: een status-only/read-only cyclus is ongeldig. Voor je antwoord moet er minimaal één echte write, run/job, geverifieerde evidence of materiële state-change zijn. '
-        'RECOVERY-FIRST/ANTI-LOOP: een oude blocker is geen waarheid; valideer hem opnieuw. Na een mislukte route MOET je in dezelfde cyclus een andere veilige uitvoeringsroute proberen; dezelfde BLOCKED/WAIT mag niet twee cycli achter elkaar terugkomen zonder nieuwe evidence. '
-        'DOORZET-MODE: als de vorige cyclus BLOCKED/WAIT, status-only, audit-only, extreem kort of zonder concrete uitvoering eindigde, behandel dat als mislukte uitvoering en push expliciet: DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Hergebruik dezelfde VPS_QUEUE_ASSIGNMENT, neem extra redeneertijd, probeer een ANDERE veilige route en voer binnen de bestaande safety-gates daadwerkelijk werk uit voordat je opnieuw afsluit. '
-        'Ontbrekende directe SSH/MCP is geen blocker zolang GitHub/self-hosted-runner of een repo-triggerroute bestaat. Ontbreekt workflow_dispatch, zoek/gebruik een bestaande veilige push/workflow_run/PR-trigger of herstel de orchestration. '
-        'BLOCKED/WAIT is pas geldig na minimaal twee verschillende aantoonbaar mislukte uitvoeringsroutes. WAIT_HUMAN alleen voor vereiste secrets, expliciete destructieve/brede goedkeuring of een echte externe dependency. Bewijs blocker én herstelpogingen; verzin geen WAIT. '
-        '4) AUTONOMY-FIRST voor herhaalbaar werk: bouw een restartable loop/job met persistente state, idempotente executor, verifier, volgende veilige stap en machineleesbaar receipt; timer alleen telt niet. '
-        '5) Done alleen wanneer ALLE Completion Criteria bewezen zijn met concrete Evidence (commit/PR, groene test, run-id, canary, artifact of meting). '
-        'CONTINUE is VERBODEN na alleen reads/checks. '
-        'FTMO SAFETY: preregistration, chronologische splits, walk-forward en final holdout strikt gescheiden; verborgen validation/holdout nooit voor ontwerp, rescue of retune. '
-        'zCloud FINISH: bij iteration_count=9 is dit de tiende/harde laatste iteratie + eind-audit. '
-        'ZCLOUD_ITERATION_COMPLETE alleen na echte implementatie; ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 of OPEN_P0P1; ZCLOUD_FINAL_AUDIT: GREEN of FAIL. '
-        f'OUTPUT exact ZCLOUD_QUEUE_ITEM: {queue_id} en ZCLOUD_QUEUE_RESULT: DONE|BLOCKED|CONTINUE plus ZCLOUD_QUEUE_EVIDENCE: <concreet bewijs>. '
-        'Optioneel mag je één opvolgtaak voorstellen als ZCLOUD_NEXT_TASK: project=<id>; priority=P0|P1|P2|P3; title=<titel>; criteria=<bewijsbare criteria>. '
-        'Daarnaast exact één ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE en één ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE. '
-        'WAIT_VPS/WAIT_HUMAN zijn alleen voor een echte externe dependency nadat de VPS queue aantoonbaar leeg is; de backend valideert dit.'
+        'Werk alleen aan deze assignment. Geen audit/status-only antwoord zolang er veilig uitvoerbaar werk is. '
+        'Bij een recoverable blocker: probeer in dezelfde cyclus een andere veilige route; herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. '
+        'WAIT_HUMAN alleen voor vereiste secrets, expliciete destructieve/brede goedkeuring of een echte externe dependency. '
+        'VPS/shell/deploy/test via de self-hosted runner-route. '
+        'DONE alleen als alle completion criteria aantoonbaar gehaald zijn; CONTINUE alleen na echte voortgang. '
+        + project_guard +
+        f'OUTPUT: ZCLOUD_QUEUE_ITEM: {queue_id}; ZCLOUD_QUEUE_RESULT: DONE|BLOCKED|CONTINUE; '
+        'ZCLOUD_QUEUE_EVIDENCE: <concreet bewijs>. '
+        'Daarna ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE en '
+        'ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE.'
     )
 
 RUNNER_DEFAULTS = {
