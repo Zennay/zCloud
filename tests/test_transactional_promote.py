@@ -77,13 +77,15 @@ class TransactionalPromotionTests(unittest.TestCase):
             "autonomy-policy.json",
             '{"schema_version":1,"default":{"auto_start":false}}\n',
         )
+        self._write(self.candidate, "portfolio_queue.seed.json", "[]\n")
         result = promote.validate_candidate(
             self.candidate,
             self.root,
-            ["firefox-extension/recovery.js", "autonomy-policy.json"],
+            ["firefox-extension/recovery.js", "autonomy-policy.json", "portfolio_queue.seed.json"],
         )
         self.assertIn("firefox-extension/recovery.js", result)
         self.assertIn("autonomy-policy.json", result)
+        self.assertIn("portfolio_queue.seed.json", result)
         self._write(self.candidate, "firefox-extension/other-new.js", "nope\n")
         with self.assertRaises(promote.PromotionError):
             promote.validate_candidate(
