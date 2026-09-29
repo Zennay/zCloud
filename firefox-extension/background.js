@@ -225,6 +225,7 @@ function runProject(cfg) {
   let BASE_PROMPT = cfg.prompt;
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
+  let lastThinkingDiagnostic = "";
   const QUALITY_RETRY_LIMIT = "unbounded";
   function promptWithReplacementHandoff(basePrompt) {
     return replacementHandoffPending && REPLACEMENT_HANDOFF
@@ -411,6 +412,30 @@ function runProject(cfg) {
   function safeModelControlHints() {
     return [...new Set(modelControls().map(controlLabel).filter(Boolean))].slice(0, 12);
   }
+  function compactThinkingDiagnostic(stage) {
+    const selector = [
+      MODEL_CONTROL_SELECTOR,
+      '[role="slider"]',
+      'input[type="range"]'
+    ].join(",");
+    const clean = value => String(value || "").replace(/[|;\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 38);
+    const controls = [...document.querySelectorAll(selector)]
+      .filter(el => visibleElement(el))
+      .map(el => {
+        const testId = clean(el.getAttribute?.("data-testid"));
+        const aria = clean(el.getAttribute?.("aria-label"));
+        const role = clean(el.getAttribute?.("role"));
+        const text = clean(controlLabel(el));
+        const relevant = testId || aria || role === "slider" ||
+          /model|gpt|instant|medium|high|hoog|hard|think|thinking|reason|effort|denk|redeneer/i.test(text);
+        if (!relevant) return "";
+        return "t=" + testId + ",a=" + aria + ",r=" + role + ",x=" + text;
+      })
+      .filter(Boolean)
+      .slice(0, 6);
+    lastThinkingDiagnostic = (String(stage || "unknown") + ":" + (controls.join("||") || "no-relevant-controls")).slice(0, 180);
+    return lastThinkingDiagnostic;
+  }
   function isPickerLike(el) {
     if (!el) return false;
     const role = String(el.getAttribute?.("role") || "").toLowerCase();
@@ -460,6 +485,7 @@ function runProject(cfg) {
   }
   async function ensureHighThinking() {
     if (highSelectionVerified()) {
+      lastThinkingDiagnostic = "";
       status("thinking-effort-high-verified", {reason: "already-selected", required: REQUIRED_THINKING_EFFORT});
       return true;
     }
@@ -479,8 +505,10 @@ function runProject(cfg) {
 
     const picker = modelPickerButton();
     if (!picker) {
+      const diagnostic = compactThinkingDiagnostic("picker-not-found");
       status("thinking-effort-high-required", {
-        reason: "picker-not-found",
+        reason: ("picker-not-found|" + diagnostic).slice(0, 240),
+        error: diagnostic,
         required: REQUIRED_THINKING_EFFORT,
         controlHints: safeModelControlHints()
       });
@@ -494,9 +522,11 @@ function runProject(cfg) {
       el !== picker
     );
     if (!highOption) {
+      const diagnostic = compactThinkingDiagnostic("high-option-not-found");
       document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
       status("thinking-effort-high-required", {
-        reason: "high-option-not-found",
+        reason: ("high-option-not-found|" + diagnostic).slice(0, 240),
+        error: diagnostic,
         required: REQUIRED_THINKING_EFFORT,
         controlHints: safeModelControlHints()
       });
@@ -520,14 +550,17 @@ function runProject(cfg) {
       }
     }
     if (!verified) {
+      const diagnostic = compactThinkingDiagnostic("selection-not-verifiable");
       status("thinking-effort-high-required", {
-        reason: "selection-not-verifiable",
+        reason: ("selection-not-verifiable|" + diagnostic).slice(0, 240),
+        error: diagnostic,
         required: REQUIRED_THINKING_EFFORT,
         controlHints: safeModelControlHints()
       });
       return false;
     }
 
+    lastThinkingDiagnostic = "";
     status("thinking-effort-high-verified", {reason: "selected-before-send", required: REQUIRED_THINKING_EFFORT});
     return true;
   }
@@ -732,8 +765,10 @@ function runProject(cfg) {
       if (!highReady) {
         // Think Hard is a hard UI gate. Prompt wording is not a substitute for
         // selecting and verifying the ChatGPT control.
+        const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
         status("send-blocked", {
-          reason: "high-thinking-required",
+          reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
+          error: diagnostic,
           required: REQUIRED_THINKING_EFFORT
         });
         return false;

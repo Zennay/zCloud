@@ -25,7 +25,10 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("THINKING_OPTION_SELECTOR", userscript)
         self.assertIn("think\\s+hard", userscript)
         self.assertIn("Re-open once", userscript)
-        self.assertIn('reason: "high-thinking-required"', userscript)
+        self.assertIn("compactThinkingDiagnostic", userscript)
+        self.assertIn('"high-thinking-required|" + diagnostic', userscript)
+        self.assertIn('getAttribute?.("data-testid")', userscript)
+        self.assertIn('getAttribute?.("aria-label")', userscript)
         self.assertIn('return false;', userscript)
         self.assertIn('"violentmonkey-primary-runner"', userscript)
         self.assertIn('"portfolio-queue-result"', userscript)
@@ -36,6 +39,20 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("data-zcloud-violentmonkey-ready", userscript)
         self.assertIn("DOE HET NU ECHT", userscript)
         self.assertNotIn("Gebruik High thinking", userscript)
+
+    def test_high_thinking_failure_persists_safe_dom_diagnostics(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+
+        for source in (userscript, background):
+            self.assertIn("lastThinkingDiagnostic", source)
+            self.assertIn("compactThinkingDiagnostic", source)
+            self.assertIn('"high-thinking-required|" + diagnostic', source)
+            self.assertIn('getAttribute?.("data-testid")', source)
+            self.assertIn('getAttribute?.("aria-label")', source)
+            self.assertIn("no-relevant-controls", source)
+        self.assertIn('error: diagnostic', userscript)
+        self.assertIn('error: diagnostic', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")

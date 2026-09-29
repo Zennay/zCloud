@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.0
+// @version      1.1.1
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.0";
+  const SCRIPT_VERSION = "1.1.1";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     '[data-testid="model-switcher-dropdown-button"]',
@@ -54,6 +54,7 @@
   let initialDispatchKey = "";
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
+  let lastThinkingDiagnostic = "";
   let refreshTimer = null;
   let tickTimer = null;
   let heartbeatTimer = null;
@@ -262,6 +263,38 @@
     });
   }
 
+  function compactThinkingDiagnostic(stage) {
+    const selector = [
+      "button",
+      '[role="button"]',
+      '[role="menuitem"]',
+      '[role="menuitemradio"]',
+      '[role="option"]',
+      '[role="radio"]',
+      '[role="slider"]',
+      'input[type="range"]',
+      '[aria-haspopup="menu"]',
+      '[aria-haspopup="listbox"]'
+    ].join(",");
+    const clean = value => String(value || "").replace(/[|;\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 38);
+    const controls = [...document.querySelectorAll(selector)]
+      .filter(visible)
+      .map(el => {
+        const testId = clean(el.getAttribute?.("data-testid"));
+        const aria = clean(el.getAttribute?.("aria-label"));
+        const role = clean(el.getAttribute?.("role"));
+        const text = clean(label(el));
+        const relevant = testId || aria || role === "slider" ||
+          /model|gpt|instant|medium|high|hoog|hard|think|thinking|reason|effort|denk|redeneer/i.test(text);
+        if (!relevant) return "";
+        return "t=" + testId + ",a=" + aria + ",r=" + role + ",x=" + text;
+      })
+      .filter(Boolean)
+      .slice(0, 6);
+    lastThinkingDiagnostic = (String(stage || "unknown") + ":" + (controls.join("||") || "no-relevant-controls")).slice(0, 180);
+    return lastThinkingDiagnostic;
+  }
+
   function highVerified() {
     if (pickerShowsHigh() || selectedHighOption()) return true;
     if (thinkingSliders().some(el => isHigh(label(el)))) return true;
@@ -311,13 +344,19 @@
   }
 
   async function ensureHighThinking() {
-    if (highVerified()) return true;
+    if (highVerified()) {
+      lastThinkingDiagnostic = "";
+      return true;
+    }
 
     const slider = thinkingSliders()[0] || null;
     if (slider && await setSliderHigh(slider) && highVerified()) return true;
 
     const picker = pickerButton();
-    if (!picker) return false;
+    if (!picker) {
+      compactThinkingDiagnostic("picker-not-found");
+      return false;
+    }
     picker.click();
     await sleep(450);
 
@@ -329,6 +368,7 @@
       (exactHigh.test(label(el)) || isHigh(label(el))) && el !== picker
     );
     if (!highOption) {
+      compactThinkingDiagnostic("high-option-not-found");
       document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
       return false;
     }
@@ -353,7 +393,13 @@
       }
       document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
     }
-    return highVerified();
+    const verified = highVerified();
+    if (verified) {
+      lastThinkingDiagnostic = "";
+      return true;
+    }
+    compactThinkingDiagnostic("selection-not-verifiable");
+    return false;
   }
 
   async function fill(text) {
@@ -462,8 +508,10 @@
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
+        const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
         await status("send-blocked", {
-          reason: "high-thinking-required",
+          reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
+          error: diagnostic,
           required: REQUIRED_THINKING_EFFORT
         });
         return false;
