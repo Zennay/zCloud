@@ -33,9 +33,9 @@ class SimpleLanguageTests(unittest.TestCase):
         css = (ROOT / "public" / "enhancements.css").read_text()
         for expected in (
             "function projectCardOps(p)",
-            "<small>Nu</small>",
-            "<small>Laatste actie</small>",
-            "<small>Probleem</small>",
+            "<small>Now</small>",
+            "<small>Last action</small>",
+            "<small>Problem</small>",
             "current_task",
             "last_generation_finished",
             "last_prompt_sent",
