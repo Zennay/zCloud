@@ -1,0 +1,331 @@
+name: RaiseAI OpenRouter live deploy via zCloud VPS lane
+
+on:
+  push:
+    branches:
+      - ops/raiseai-openrouter-live-deploy-20260929
+    paths:
+      - ".github/workflows/raiseai-openrouter-live-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-openrouter-live-deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      ZCLOUD_BASE: http://127.0.0.1:8765
+      PROJECT_ID: raiseai
+      WORKER_ID: raiseai::w1
+      CLAIM_KEY: raiseai-openrouter-provider-live
+      EXPECTED_MAIN_SHA: 57ac27d8cd9dc9fec41b417823b58a4721c81288
+      RECEIPT_DIR: /home/ubuntu/.local/state/raiseai/openrouter-live-deploy
+
+    steps:
+      - name: Fetch exact RaiseAI production revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=fetch-exact-raiseai-main"
+          rm -rf raiseai
+          git init -q raiseai
+          git -C raiseai remote add origin https://github.com/Zennay/RaiseAI.git
+          git -C raiseai fetch --depth 1 origin "$EXPECTED_MAIN_SHA"
+          git -C raiseai checkout -q --detach FETCH_HEAD
+          test "$(git -C raiseai rev-parse HEAD)" = "$EXPECTED_MAIN_SHA"
+          echo "RAISEAI_SHA=$(git -C raiseai rev-parse HEAD)"
+          echo "COMMAND_EXITCODE=0"
+
+      - name: Coordination preflight and acquire claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=coordination-preflight-and-claim"
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+
+          base = os.environ["ZCLOUD_BASE"]
+          project = os.environ["PROJECT_ID"]
+          worker = os.environ["WORKER_ID"]
+          claim_key = os.environ["CLAIM_KEY"]
+          expected_sha = os.environ["EXPECTED_MAIN_SHA"]
+          owner = f"github-actions:raiseai:{os.environ['GITHUB_RUN_ID']}"
+
+          def get_json(url):
+              req = urllib.request.Request(url, headers={"User-Agent":"raiseai-openrouter-deploy/2"})
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  return json.load(r)
+
+          def post(path, payload):
+              req = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode(),
+                  headers={"Content-Type":"application/json","User-Agent":"raiseai-openrouter-deploy/2"},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      return json.load(r)
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8","replace")[:2000]
+                  raise RuntimeError(f"{path} HTTP {exc.code}: {body}") from exc
+
+          repo = "Zennay/RaiseAI"
+          branch = get_json(f"https://api.github.com/repos/{repo}/branches/main")
+          actual_sha = branch["commit"]["sha"]
+          if actual_sha != expected_sha:
+              raise RuntimeError(f"main changed: expected {expected_sha}, got {actual_sha}")
+
+          prs = get_json(f"https://api.github.com/repos/{repo}/pulls?state=open&per_page=100")
+          branches = get_json(f"https://api.github.com/repos/{repo}/branches?per_page=100")
+
+          preflight = post("/api/worker-preflight", {
+              "project_id": project,
+              "worker_id": worker,
+              "owner_id": owner,
+              "notion": {
+                  "checked": True,
+                  "project_ref": "https://app.notion.com/p/3e09e19ac95581709502f992608b8abd",
+                  "handoff_ref": "https://app.notion.com/p/3e09e19ac95581d1a6aaed3c09443f5c",
+              },
+              "github": {
+                  "checked": True,
+                  "repo": repo,
+                  "main_sha": actual_sha,
+                  "open_prs": [str(x["number"]) for x in prs],
+                  "branches": [x["name"] for x in branches],
+              },
+          })
+          if not preflight.get("ok"):
+              raise RuntimeError(f"coordination preflight blocked: {preflight.get('blocked')}")
+
+          claim = post("/api/task-claims", {
+              "action": "acquire",
+              "project_id": project,
+              "worker_id": worker,
+              "owner_id": owner,
+              "claim_key": claim_key,
+              "lease_seconds": 1200,
+              "metadata": {
+                  "task": "Deploy OpenRouter provider live and prove a real gateway response",
+                  "branch": "main",
+                  "sha": actual_sha,
+                  "conflict_scope": {
+                      "capabilities": ["raiseai-gateway-deploy"],
+                      "files": ["gateway/"],
+                  },
+              },
+          })
+          if not claim.get("acquired"):
+              raise RuntimeError(f"claim blocked: {claim.get('blocked')}")
+          got = claim.get("claim") or {}
+          if got.get("claim_key") != claim_key or got.get("owner_id") != owner or got.get("worker_id") != worker:
+              raise RuntimeError(f"claim identity mismatch: {got}")
+
+          print(json.dumps({
+              "preflight_ok": True,
+              "claim_key": got.get("claim_key"),
+              "owner_id": got.get("owner_id"),
+              "worker_id": got.get("worker_id"),
+              "main_sha": actual_sha,
+              "open_pr_count": len(prs),
+              "branch_count": len(branches),
+          }, sort_keys=True))
+          PY
+          echo "COMMAND_EXITCODE=0"
+
+      - name: Verify claim and run gateway tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=verify-claim-and-run-gateway-tests"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          base=os.environ["ZCLOUD_BASE"]
+          owner=f"github-actions:raiseai:{os.environ['GITHUB_RUN_ID']}"
+          project=os.environ["PROJECT_ID"]; worker=os.environ["WORKER_ID"]; key=os.environ["CLAIM_KEY"]
+          with urllib.request.urlopen(base+f"/api/task-claims?project={project}",timeout=15) as r:
+              payload=json.load(r)
+          rows=payload.get("claims",payload if isinstance(payload,list) else [])
+          match=next((c for c in rows if c.get("claim_key")==key),None)
+          if not match or match.get("owner_id")!=owner or match.get("worker_id")!=worker:
+              raise RuntimeError(f"claim verification failed: {match}")
+          req=urllib.request.Request(base+"/api/task-claims",data=json.dumps({
+              "action":"heartbeat","project_id":project,"claim_key":key,"owner_id":owner,"lease_seconds":1200
+          }).encode(),headers={"Content-Type":"application/json"},method="POST")
+          with urllib.request.urlopen(req,timeout=15) as r:
+              hb=json.load(r)
+          if not hb.get("renewed"):
+              raise RuntimeError(f"claim heartbeat failed: {hb}")
+          print(json.dumps({"claim_verified":True,"owner_id":owner,"worker_id":worker,"claim_key":key},sort_keys=True))
+          PY
+          cd raiseai/gateway
+          node --version
+          npm test
+          echo "COMMAND_EXITCODE=0"
+
+      - name: Verify provider secret presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=verify-openrouter-secret-presence"
+          ENV_FILE="$HOME/.config/raiseai/gateway.env"
+          test -f "$ENV_FILE"
+          if ! grep -Eq '^OPENROUTER_API_KEY=.+$' "$ENV_FILE"; then
+            echo "OPENROUTER_KEY_PRESENT=false"
+            exit 42
+          fi
+          echo "OPENROUTER_KEY_PRESENT=true"
+          echo "COMMAND_EXITCODE=0"
+
+      - name: Verify claim and deploy gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=deploy-raise-gateway"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          base=os.environ["ZCLOUD_BASE"]
+          owner=f"github-actions:raiseai:{os.environ['GITHUB_RUN_ID']}"
+          project=os.environ["PROJECT_ID"]; worker=os.environ["WORKER_ID"]; key=os.environ["CLAIM_KEY"]
+          with urllib.request.urlopen(base+f"/api/task-claims?project={project}",timeout=15) as r:
+              payload=json.load(r)
+          rows=payload.get("claims",payload if isinstance(payload,list) else [])
+          match=next((c for c in rows if c.get("claim_key")==key),None)
+          if not match or match.get("owner_id")!=owner or match.get("worker_id")!=worker:
+              raise RuntimeError(f"claim verification failed before deploy: {match}")
+          req=urllib.request.Request(base+"/api/task-claims",data=json.dumps({
+              "action":"heartbeat","project_id":project,"claim_key":key,"owner_id":owner,"lease_seconds":1200
+          }).encode(),headers={"Content-Type":"application/json"},method="POST")
+          with urllib.request.urlopen(req,timeout=15) as r:
+              hb=json.load(r)
+          if not hb.get("renewed"):
+              raise RuntimeError(f"heartbeat failed before deploy: {hb}")
+          print(json.dumps({"claim_verified":True,"phase":"pre-deploy"},sort_keys=True))
+          PY
+          bash raiseai/gateway/deploy/install-user-gateway.sh
+          systemctl --user is-active --quiet raise-gateway.service
+          echo "SERVICE_STATE=$(systemctl --user is-active raise-gateway.service)"
+          echo "COMMAND_EXITCODE=0"
+
+      - name: Live gateway canary and persistent receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=openrouter-live-gateway-canary"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          base=os.environ["ZCLOUD_BASE"]
+          owner=f"github-actions:raiseai:{os.environ['GITHUB_RUN_ID']}"
+          project=os.environ["PROJECT_ID"]; worker=os.environ["WORKER_ID"]; key=os.environ["CLAIM_KEY"]
+          with urllib.request.urlopen(base+f"/api/task-claims?project={project}",timeout=15) as r:
+              payload=json.load(r)
+          rows=payload.get("claims",payload if isinstance(payload,list) else [])
+          match=next((c for c in rows if c.get("claim_key")==key),None)
+          if not match or match.get("owner_id")!=owner or match.get("worker_id")!=worker:
+              raise RuntimeError(f"claim verification failed before canary: {match}")
+          print(json.dumps({"claim_verified":True,"phase":"pre-canary"},sort_keys=True))
+          PY
+
+          ENV_FILE="$HOME/.config/raiseai/gateway.env"
+          env_value() {
+            awk -F= -v key="$1" '$1==key {sub(/^[^=]*=/,""); print; exit}' "$ENV_FILE"
+          }
+          TOKEN="$(env_value RAISE_GATEWAY_TOKEN)"
+          CERT="$(env_value RAISE_TLS_CERT)"
+          PORT="$(env_value RAISE_PORT)"
+          HOST="$(hostname -f)"
+          test -n "$TOKEN"
+          test -s "$CERT"
+          test -n "$PORT"
+
+          HEALTH_FILE="$(mktemp)"
+          CANARY_FILE="$(mktemp)"
+          trap 'rm -f "$HEALTH_FILE" "$CANARY_FILE"' EXIT
+
+          health_code="$(curl --silent --show-error --resolve "$HOST:$PORT:127.0.0.1" --cacert "$CERT"             --output "$HEALTH_FILE" --write-out '%{http_code}'             "https://$HOST:$PORT/health")"
+          test "$health_code" = "200"
+
+          canary_code="$(curl --silent --show-error --resolve "$HOST:$PORT:127.0.0.1" --cacert "$CERT"             --header "Authorization: Bearer $TOKEN"             --header "Content-Type: application/json"             --data '{"text":"Antwoord alleen met RAISE_OPENROUTER_CANARY_OK"}'             --output "$CANARY_FILE" --write-out '%{http_code}'             "https://$HOST:$PORT/v1/assistant")"
+          test "$canary_code" = "200"
+
+          python3 - "$HEALTH_FILE" "$CANARY_FILE" <<'PY'
+          import json, os, pathlib, sys
+          from datetime import datetime, timezone
+
+          health=json.load(open(sys.argv[1],encoding="utf-8"))
+          canary=json.load(open(sys.argv[2],encoding="utf-8"))
+          execution=canary.get("execution") or {}
+          if health.get("ok") is not True or health.get("service")!="raise-gateway":
+              raise SystemExit(f"invalid health response: {health}")
+          if canary.get("status")!="answered":
+              raise SystemExit(f"gateway did not answer: {canary}")
+          if execution.get("enabled") is not True or execution.get("provider")!="openrouter":
+              raise SystemExit(f"OpenRouter provider not live: {canary}")
+          if not execution.get("model") or not canary.get("answer"):
+              raise SystemExit(f"missing live provider evidence: {canary}")
+
+          receipt={
+              "schema":1,
+              "timestamp":datetime.now(timezone.utc).isoformat(),
+              "github_run_id":int(os.environ["GITHUB_RUN_ID"]),
+              "github_run_attempt":int(os.environ.get("GITHUB_RUN_ATTEMPT","1")),
+              "project_id":os.environ["PROJECT_ID"],
+              "worker_id":os.environ["WORKER_ID"],
+              "claim_key":os.environ["CLAIM_KEY"],
+              "owner_id":f"github-actions:raiseai:{os.environ['GITHUB_RUN_ID']}",
+              "main_sha":os.environ["EXPECTED_MAIN_SHA"],
+              "service":{"active":True,"health":health},
+              "gateway_response":{
+                  "http_status":200,
+                  "status":canary.get("status"),
+                  "route":canary.get("route"),
+                  "provider":execution.get("provider"),
+                  "model":execution.get("model"),
+                  "enabled":execution.get("enabled"),
+                  "answer":canary.get("answer"),
+                  "requestId":canary.get("requestId"),
+              },
+              "exitcode":0,
+          }
+          out=pathlib.Path(os.environ["RECEIPT_DIR"])
+          out.mkdir(parents=True,exist_ok=True)
+          path=out/f"{os.environ['GITHUB_RUN_ID']}.json"
+          path.write_text(json.dumps(receipt,ensure_ascii=False,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+          print("ZCLOUD_RECEIPT_PATH="+str(path))
+          print("ZCLOUD_CANARY_EVIDENCE="+json.dumps(receipt["gateway_response"],ensure_ascii=False,sort_keys=True))
+          PY
+          echo "COMMAND_EXITCODE=0"
+
+      - name: Release claim
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMMAND_GOAL=release-claim"
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          base=os.environ["ZCLOUD_BASE"]
+          owner=f"github-actions:raiseai:{os.environ['GITHUB_RUN_ID']}"
+          payload={
+              "action":"release",
+              "project_id":os.environ["PROJECT_ID"],
+              "claim_key":os.environ["CLAIM_KEY"],
+              "owner_id":owner,
+          }
+          req=urllib.request.Request(base+"/api/task-claims",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"},method="POST")
+          try:
+              with urllib.request.urlopen(req,timeout=15) as r:
+                  result=json.load(r)
+          except urllib.error.HTTPError as exc:
+              body=exc.read().decode("utf-8","replace")[:1000]
+              print(json.dumps({"released":False,"http":exc.code,"detail":body}))
+          else:
+              print(json.dumps({"released":bool(result.get("released")),"owner_id":owner,"claim_key":os.environ["CLAIM_KEY"]},sort_keys=True))
+          PY
+          echo "COMMAND_EXITCODE=0"
