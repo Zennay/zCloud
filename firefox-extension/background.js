@@ -1351,7 +1351,12 @@ async function startProject(projectId, commandId) {
     if (current != null) {
       try {
         await browser.tabs.get(current);
-        await commandResult(commandId, "completed", "Project draait al");
+        // A tab existing is not proof that a generation was dispatched. Start
+        // must force the current SQLite assignment through the browser runner.
+        pendingInitialDispatches.add(projectId);
+        const injected = await inject(current, target);
+        if (!injected?.mode) throw new Error("Worker-tab kon niet worden geïnjecteerd");
+        await commandResult(commandId, "completed", "Project draait; initial dispatch geforceerd");
         return;
       } catch (_) {
         delete projectTabs[projectId];

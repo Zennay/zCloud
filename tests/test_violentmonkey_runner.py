@@ -67,6 +67,17 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertLess(primary, bridge_return)
         self.assertLess(bridge_return, legacy_injection)
 
+    def test_start_command_for_existing_tab_forces_initial_dispatch(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        start = background.index("async function startProject(projectId, commandId)")
+        end = background.index("async function pauseProject(", start)
+        block = background[start:end]
+
+        self.assertIn("pendingInitialDispatches.add(projectId);", block)
+        self.assertIn("await inject(current, target)", block)
+        self.assertIn("initial dispatch geforceerd", block)
+        self.assertNotIn('"Project draait al"', block)
+
     def test_userscript_is_served_and_deployed(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         promote = (ROOT / "scripts" / "zcloud_transactional_promote.py").read_text(encoding="utf-8")
