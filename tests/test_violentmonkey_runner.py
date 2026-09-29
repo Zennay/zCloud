@@ -25,6 +25,11 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('"violentmonkey-primary-runner"', userscript)
         self.assertIn('"portfolio-queue-result"', userscript)
         self.assertIn('"awaiting-vps-dispatch"', userscript)
+        self.assertIn("BEWUSTE WORKER-HANDOFF", userscript)
+        self.assertIn("ZCLOUD_QUALITY_RETRY", userscript)
+        self.assertIn("same-assignment-non-stopping-execution-recovery", userscript)
+        self.assertIn("DOE HET NU ECHT", userscript)
+        self.assertNotIn("Gebruik High thinking", userscript)
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
