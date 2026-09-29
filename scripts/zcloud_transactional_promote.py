@@ -402,8 +402,12 @@ def run_config_validation(
     def effective(rel: str) -> Path:
         return candidate / rel if rel in selected else root / rel
 
-    args = [
-        str(validator),
+    validator_command = (
+        [sys.executable, str(validator)]
+        if validator.suffix == ".py"
+        else [str(validator)]
+    )
+    args = validator_command + [
         "--projects", str(effective("projects.json")),
         "--layout", str(effective("project-layout.json")),
         "--resource-policy", str(effective("resource-policy.json")),
