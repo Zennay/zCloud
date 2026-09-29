@@ -6,12 +6,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_uses_one_global_ai_slot_without_time_debounce(self):
+    def test_vps_scheduler_has_two_global_ai_slots_without_time_debounce(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
-        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 1", server)
+        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
         self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
         self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 0", server)
         self.assertIn("def global_worker_allocation(", server)
@@ -56,7 +56,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
     def test_global_worker_identity_survives_project_tab_reallocation(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("def _current_global_slot_map()", server)
-        self.assertIn("Keep a surviving worker on the same global Worker identity", server)
+        self.assertIn("Keep a surviving worker on the same global Worker 1/2 identity", server)
         self.assertIn("'global_worker_slot':global_slot", server)
         self.assertIn("Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT}", server)
 
