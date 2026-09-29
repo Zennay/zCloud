@@ -3,7 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 enhancements_stub = types.ModuleType("enhancements")
@@ -167,10 +167,10 @@ class AutonomyPolicyTests(unittest.TestCase):
             conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='supa'")
             conn.execute("DELETE FROM runner_commands WHERE project_id='supa'")
         first = server.autonomy_scheduler_tick()
-        self.assertIn("supa", first["pushed"])
+        self.assertIn("supa::w1", first["pushed"])
         with server.connect() as conn:
             pushes = conn.execute(
-                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa::w1' AND action='push' AND status='pending'"
             ).fetchone()[0]
             runtime = conn.execute(
                 "SELECT last_dispatch_at,last_reason FROM autonomy_runtime WHERE project_id='supa'"
@@ -182,12 +182,12 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertNotIn("supa", second["pushed"])
         with server.connect() as conn:
             pushes = conn.execute(
-                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa::w1' AND action='push' AND status='pending'"
             ).fetchone()[0]
         self.assertEqual(1, pushes)
 
-    def test_zero_interval_waits_for_generation_boundary_then_pushes_immediately(self):
-        ts = datetime.now(timezone.utc).isoformat()
+    def test_per_worker_interval_waits_for_generation_boundary_and_five_minute_floor(self):
+        ts = (datetime.now(timezone.utc) - timedelta(seconds=301)).isoformat()
         with server.connect() as conn:
             conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='supa'")
             conn.execute("DELETE FROM runner_commands WHERE project_id='supa'")
@@ -215,7 +215,7 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertTrue(server._autonomy_enqueue_push("supa", "generation-finished", 0))
         with server.connect() as conn:
             pushes = conn.execute(
-                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa' AND action='push' AND status='pending'"
+                "SELECT COUNT(*) FROM runner_commands WHERE project_id='supa::w1' AND action='push' AND status='pending'"
             ).fetchone()[0]
         self.assertEqual(1, pushes)
 
