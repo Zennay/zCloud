@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.0.1
+// @version      1.1.0
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,8 +16,22 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.0.1";
+  const SCRIPT_VERSION = "1.1.0";
   const REQUIRED_THINKING_EFFORT = "high";
+  const MODEL_PICKER_SELECTOR = [
+    '[data-testid="model-switcher-dropdown-button"]',
+    'button[aria-label="Model selector"]',
+    '[aria-label="Model selector"][aria-haspopup="menu"]',
+    '[aria-haspopup="menu"][data-testid*="model"]'
+  ].join(",");
+  const THINKING_OPTION_SELECTOR = [
+    '[role="menuitemradio"]',
+    '[role="option"]',
+    '[role="menuitem"]',
+    '[role="radio"]',
+    '[data-testid*="thinking"]',
+    '[data-testid*="reasoning"]'
+  ].join(",");
   const REFRESH_MS = 5000;
   const TICK_MS = 1500;
   const HEARTBEAT_MS = 30000;
@@ -198,10 +212,12 @@
   }
 
   function isHigh(value) {
-    const text = String(value || "").trim().toLowerCase();
+    const text = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
     if (!text) return false;
     if (/extra\s+high|very\s+high|zeer\s+hoog|pro\b/.test(text)) return false;
-    return /(?:^|\b)(?:high|hoog)(?:\b|$)/i.test(text);
+    return /(?:^|\s)(?:high|hoog)(?:\b|\s|$)/i.test(text) ||
+      /(?:^|\b)(?:think|denk)\s+hard(?:er)?(?:\b|$)/i.test(text) ||
+      /^(?:hard|harder)(?:\b|\s)/i.test(text);
   }
 
   function selected(el) {
@@ -209,7 +225,25 @@
     return el?.getAttribute?.("aria-selected") === "true" ||
       el?.getAttribute?.("aria-checked") === "true" ||
       el?.getAttribute?.("aria-pressed") === "true" ||
-      state === "checked" || state === "on" || state === "active";
+      el?.getAttribute?.("aria-current") === "true" ||
+      el?.getAttribute?.("data-selected") === "true" ||
+      el?.getAttribute?.("data-active") === "true" ||
+      state === "checked" || state === "on" || state === "active" ||
+      /(?:^|\s)(?:selected|active|checked)(?:\s|$)/i.test(String(el?.className || ""));
+  }
+
+  function thinkingOptions() {
+    return [...document.querySelectorAll(THINKING_OPTION_SELECTOR)].filter(visible);
+  }
+
+  function selectedHighOption() {
+    return thinkingOptions().find(el => isHigh(label(el)) && selected(el)) || null;
+  }
+
+  function pickerShowsHigh() {
+    return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
+      .filter(visible)
+      .some(el => isHigh(label(el)));
   }
 
   function thinkingSliders() {
@@ -222,20 +256,16 @@
     )].filter(visible).filter(el => {
       const text = label(el).toLowerCase();
       const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
-      return /instant|medium|high|hoog|model|thinking|reasoning|effort|denk|redeneer|gpt/.test(text) ||
+      return el.matches?.(MODEL_PICKER_SELECTOR) ||
+        /instant|medium|high|hoog|model|thinking|reasoning|effort|denk|redeneer|gpt|hard/.test(text) ||
         testId.includes("model") || testId.includes("thinking") || testId.includes("reasoning");
     });
   }
 
   function highVerified() {
+    if (pickerShowsHigh() || selectedHighOption()) return true;
     if (thinkingSliders().some(el => isHigh(label(el)))) return true;
-    if (thinkingControls().some(el => isHigh(label(el)) && selected(el))) return true;
-    return thinkingControls().some(el => {
-      const role = String(el.getAttribute?.("role") || "").toLowerCase();
-      const popup = !!el.getAttribute?.("aria-haspopup");
-      return role !== "menuitem" && role !== "menuitemradio" && role !== "option" &&
-        (popup || el.tagName === "BUTTON") && isHigh(label(el));
-    });
+    return thinkingControls().some(el => isHigh(label(el)) && selected(el));
   }
 
   function key(el, keyName) {
@@ -267,6 +297,8 @@
   }
 
   function pickerButton() {
+    const explicit = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible);
+    if (explicit) return explicit;
     return thinkingControls().find(el => {
       const role = String(el.getAttribute?.("role") || "").toLowerCase();
       if (role === "menuitem" || role === "menuitemradio" || role === "option") return false;
@@ -274,7 +306,7 @@
       const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
       return !!el.getAttribute?.("aria-haspopup") ||
         testId.includes("model") || testId.includes("thinking") || testId.includes("reasoning") ||
-        /model|thinking|reasoning|denk|redeneer|instant|medium|high|hoog/.test(text);
+        /model|thinking|reasoning|denk|redeneer|instant|medium|high|hoog|hard/.test(text);
     }) || null;
   }
 
@@ -292,8 +324,9 @@
     const openedSlider = thinkingSliders()[0] || null;
     if (openedSlider && await setSliderHigh(openedSlider) && highVerified()) return true;
 
-    const highOption = thinkingControls().find(el =>
-      /^(?:high|hoog)$/i.test(label(el)) && el !== picker
+    const exactHigh = /^(?:high|hoog|think\s+hard|think\s+harder|denk\s+hard|denk\s+harder|hard|harder)(?:\b|\s)/i;
+    const highOption = [...new Set([...thinkingOptions(), ...thinkingControls()])].find(el =>
+      (exactHigh.test(label(el)) || isHigh(label(el))) && el !== picker
     );
     if (!highOption) {
       document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
@@ -301,10 +334,24 @@
     }
     highOption.click();
 
-    const deadline = Date.now() + 3000;
+    let deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
       if (highVerified()) return true;
       await sleep(120);
+    }
+
+    // ChatGPT currently closes the Radix menu after selection. Re-open once
+    // and verify the checked/selected High/Think Hard option before sending.
+    const verifyPicker = pickerButton();
+    if (verifyPicker && !selectedHighOption() && !pickerShowsHigh()) {
+      verifyPicker.click();
+      await sleep(350);
+      deadline = Date.now() + 1200;
+      while (Date.now() < deadline) {
+        if (highVerified()) return true;
+        await sleep(120);
+      }
+      document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
     }
     return highVerified();
   }
