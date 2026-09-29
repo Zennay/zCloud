@@ -30,6 +30,10 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("SHORT_CYCLE_MS = 60 * 1000", background)
         self.assertIn("repeated-short-or-null-result", background)
         self.assertIn("repeated-no-generation", background)
+        self.assertIn("QUALITY_RETRY_LIMIT = 1", background)
+        self.assertIn("quality-retry-scheduled", background)
+        self.assertIn("same-assignment-quality-recovery", background)
+        self.assertIn("missingQueueEvidence", background)
         self.assertIn("worker_auto_paused", server)
 
     def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
