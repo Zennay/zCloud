@@ -465,6 +465,24 @@ class RunnerSmokeTests(unittest.TestCase):
             targets["projects"]["cloud::w2"]["url"],
         )
 
+    def test_worker_start_auto_activates_parent_project(self):
+        self.assertFalse(self.active("cloud"))
+        status, body = self.request(
+            "/api/runner-control", {"project_id": "cloud::w1", "action": "start"}
+        )
+        self.assertEqual(200, status, body)
+        self.assertTrue(body["ok"])
+        self.assertTrue(self.active("cloud"))
+        with server.connect() as conn:
+            desired = conn.execute(
+                "SELECT desired_state FROM runner_workers WHERE project_id='cloud' AND worker_slot=1"
+            ).fetchone()["desired_state"]
+            reason = conn.execute(
+                "SELECT last_reason FROM autonomy_runtime WHERE project_id='cloud'"
+            ).fetchone()["last_reason"]
+        self.assertEqual("running", desired)
+        self.assertEqual("worker_auto_resume", reason)
+
     def test_worker_pause_is_individual_and_persistent(self):
         self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
         self.request("/api/runner-workers", {"project_id": "cloud", "worker_count": 2})
