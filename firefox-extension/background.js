@@ -215,7 +215,7 @@ function workerKeysFor(projectId, activeOnly = false) {
 }
 
 function runProject(cfg) {
-  const marker = "__ZC_RUNNER_" + cfg.projectId.replace(/[^a-z0-9]/gi, "");
+  const marker = "__ZC_RUNNER_V2_" + cfg.projectId.replace(/[^a-z0-9]/gi, "");
   if (window[marker]) return;
   window[marker] = true;
   const REPLACEMENT_HANDOFF = cfg.replacement_handoff || null;
