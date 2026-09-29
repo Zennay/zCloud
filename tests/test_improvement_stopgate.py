@@ -111,7 +111,8 @@ class ImprovementStopGateTests(unittest.TestCase):
 
         targets = server.runner_worker_targets()
         self.assertFalse(targets["cloud::w1"]["auto_continue"])
-        self.assertTrue(targets["ftmo::w1"]["autonomy"]["allow_ai"])
+        self.assertFalse(targets["ftmo::w1"]["autonomy"]["allow_ai"])
+        self.assertEqual("ftmo_local_executor", targets["ftmo::w1"]["autonomy"]["reason"])
 
     def test_open_review_resets_clean_review_streak(self):
         server.improvement_loop_record(
