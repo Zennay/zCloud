@@ -103,6 +103,19 @@ def mapping_fingerprint(db_path: Path) -> dict:
             "SELECT project_id,worker_slot,conversation_id "
             "FROM runner_workers ORDER BY project_id,worker_slot"
         )]
+        try:
+            dynamic_row = conn.execute(
+                "SELECT value,updated_at,actor FROM runtime_settings "
+                "WHERE key='dynamic_worker_limit'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            dynamic_row = None
+        dynamic_worker_limit = None
+        if dynamic_row is not None:
+            try:
+                dynamic_worker_limit = int(dynamic_row["value"])
+            except (TypeError, ValueError):
+                dynamic_worker_limit = None
         conn.close()
         payload = json.dumps(
             {"targets": targets, "workers": workers},
@@ -114,6 +127,8 @@ def mapping_fingerprint(db_path: Path) -> dict:
             "sha256": hashlib.sha256(payload).hexdigest(),
             "targets": len(targets),
             "workers": len(workers),
+            "dynamic_worker_limit": dynamic_worker_limit,
+            "dynamic_worker_setting": dict(dynamic_row) if dynamic_row is not None else None,
         }
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
@@ -152,6 +167,59 @@ def evaluate(
         "max_workers": targets_payload.get("max_workers"),
     })
     add("mapping_available", mapping.get("available") is True, mapping)
+    try:
+        api_worker_limit = int(targets_payload.get("max_workers"))
+    except (TypeError, ValueError):
+        api_worker_limit = None
+    try:
+        status_worker_limit = int((status.get("dynamic_workers") or {}).get("count"))
+    except (TypeError, ValueError):
+        status_worker_limit = None
+    sqlite_worker_limit = mapping.get("dynamic_worker_limit")
+    allocation = targets_payload.get("global_allocation") or {}
+    allocated_workers = allocation.get("workers")
+    allocated_workers = allocated_workers if isinstance(allocated_workers, list) else None
+    limits_match = (
+        api_worker_limit is not None
+        and status_worker_limit == api_worker_limit
+        and sqlite_worker_limit == api_worker_limit
+    )
+    add(
+        "dynamic_worker_limit_consistent",
+        limits_match,
+        {
+            "sqlite": sqlite_worker_limit,
+            "status": status_worker_limit,
+            "runner_targets": api_worker_limit,
+            "allocated_workers": len(allocated_workers) if allocated_workers is not None else None,
+        },
+    )
+    allocation_bounded = allocated_workers is not None and api_worker_limit is not None
+    if allocation_bounded:
+        seen_slots = []
+        for worker in allocated_workers:
+            try:
+                seen_slots.append(int(worker.get("global_worker_slot")))
+            except (TypeError, ValueError, AttributeError):
+                allocation_bounded = False
+                break
+        allocation_bounded = (
+            allocation_bounded
+            and len(allocated_workers) <= api_worker_limit
+            and len(set(seen_slots)) == len(seen_slots)
+            and all(1 <= slot <= api_worker_limit for slot in seen_slots)
+        )
+    add(
+        "dynamic_worker_allocation_bounded",
+        allocation_bounded,
+        {
+            "limit": api_worker_limit,
+            "slots": [
+                worker.get("global_worker_slot")
+                for worker in allocated_workers
+            ] if allocated_workers is not None else None,
+        },
+    )
     if expected_mapping_sha:
         add(
             "mapping_unchanged",
