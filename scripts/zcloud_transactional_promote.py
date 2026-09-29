@@ -86,6 +86,9 @@ CREATABLE_PATHS = {
     "firefox-extension/recovery.js",
     "autonomy-policy.json",
     "portfolio_queue.seed.json",
+    # This policy is part of the deploy allowlist and may be bootstrapped on
+    # older VPS installs that predate the VPS execution lane.
+    "vps-execution-policy.json",
 }
 
 AUDITED_CONFIG_PATHS = {
