@@ -1,0 +1,83 @@
+name: Deploy zBrowse via VPS bridge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-zbrowse-bridge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-vps-bridge
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 20
+
+    steps:
+      - name: Deploy latest zGuard zBrowse
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo systemctl start docker
+          sudo systemctl is-active --quiet docker
+
+          if [ ! -d /opt/zbrowse-source/.git ]; then
+            sudo mkdir -p /opt/zbrowse-source
+            sudo chown -R "$USER":"$USER" /opt/zbrowse-source
+            git clone https://github.com/Zennay/zGuard.git /opt/zbrowse-source
+          else
+            sudo chown -R "$USER":"$USER" /opt/zbrowse-source
+            cd /opt/zbrowse-source
+            git remote set-url origin https://github.com/Zennay/zGuard.git
+            git fetch origin main
+            git reset --hard origin/main
+          fi
+
+          cd /opt/zbrowse-source/zbrowse
+
+          if [ ! -f .env ]; then
+            cp .env.example .env
+          fi
+
+          docker_gid="$(stat -c '%g' /var/run/docker.sock)"
+          if grep -q '^DOCKER_GID=' .env; then
+            sed -i "s/^DOCKER_GID=.*/DOCKER_GID=$docker_gid/" .env
+          else
+            printf '\nDOCKER_GID=%s\n' "$docker_gid" >> .env
+          fi
+
+          bash scripts/validate.sh
+
+          browser_image="$(sed -n 's/^BROWSER_IMAGE=//p' .env | tail -n 1)"
+          if [ -z "$browser_image" ]; then
+            browser_image="zbrowse-browser:1.0.0"
+          fi
+
+          sudo docker build -t "$browser_image" ./browser
+          sudo docker compose up -d --build gateway
+
+          if command -v ufw >/dev/null 2>&1; then
+            sudo ufw allow 8090/tcp || true
+          fi
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8090/api/health; then
+              echo
+              echo "zBrowse health check passed"
+              sudo docker compose ps
+              sudo ss -ltnp | grep ':8090' || true
+              exit 0
+            fi
+            sleep 2
+          done
+
+          sudo docker compose logs --tail=120 gateway
+          exit 1
