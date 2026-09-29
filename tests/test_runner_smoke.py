@@ -26,6 +26,11 @@ class RunnerSmokeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-smoke-")
         self.original_db = server.DB
+        # These tests intentionally simulate the legacy multi-worker pool; production remains one slot.
+        self.original_global_limit = server.GLOBAL_CHATGPT_WORKER_LIMIT
+        self.original_max_workers = server.MAX_CHATGPT_WORKERS
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        server.MAX_CHATGPT_WORKERS = 2
         self.original_cache = server.CACHE
         self.original_layout_file = server.LAYOUT_FILE
         server.DB = Path(self.tmp.name) / "history.db"
@@ -42,6 +47,8 @@ class RunnerSmokeTests(unittest.TestCase):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=2)
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = self.original_global_limit
+        server.MAX_CHATGPT_WORKERS = self.original_max_workers
         server.DB = self.original_db
         server.CACHE = self.original_cache
         server.LAYOUT_FILE = self.original_layout_file
