@@ -24,7 +24,8 @@ AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 GLOBAL_CHATGPT_WORKER_LIMIT = 1
-MAX_CHATGPT_WORKERS = 1
+MAX_CHATGPT_WORKERS = 8
+DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'
 AI_SLOT_DIVERSITY_PENALTY = 500
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
@@ -333,7 +334,39 @@ def set_feature_flag(name,enabled,actor,ttl_seconds=None):
         )
     return feature_flag_state(name)
 
+def dynamic_worker_settings():
+    return {
+        'count':int(GLOBAL_CHATGPT_WORKER_LIMIT),
+        'enabled':bool(GLOBAL_CHATGPT_WORKER_LIMIT > 0),
+        'max_workers':int(MAX_CHATGPT_WORKERS),
+        'cooldown_seconds':int(PORTFOLIO_AI_COOLDOWN_SECONDS),
+        'policy':'per_worker_rate_limit_only',
+    }
+
+def set_dynamic_worker_limit(value,actor='dashboard'):
+    global GLOBAL_CHATGPT_WORKER_LIMIT
+    try: count=int(value)
+    except Exception: raise ValueError('Aantal dynamische workers moet een geheel getal zijn')
+    if count < 0 or count > MAX_CHATGPT_WORKERS:
+        raise ValueError(f'Kies 0 t/m {MAX_CHATGPT_WORKERS} dynamische workers')
+    old=int(GLOBAL_CHATGPT_WORKER_LIMIT)
+    with connect() as c:
+        c.execute(
+            "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+            (DYNAMIC_WORKER_SETTING_KEY,str(count),now(),str(actor or 'dashboard')[:128]),
+        )
+        record_config_audit(
+            'runner.dynamic_worker_limit','portfolio',actor,old,count,
+            'no_change' if old==count else 'succeeded',connection=c,
+        )
+        if count == 0:
+            c.execute('DELETE FROM ai_global_slots')
+    GLOBAL_CHATGPT_WORKER_LIMIT=count
+    return dynamic_worker_settings()
+
 def init_db():
+    global GLOBAL_CHATGPT_WORKER_LIMIT
     with connect() as c:
         c.execute('PRAGMA journal_mode=WAL')
         c.execute('CREATE TABLE IF NOT EXISTS project_samples(ts TEXT, project TEXT, progress REAL, commits INTEGER, hash TEXT, message TEXT, PRIMARY KEY(ts, project))')
@@ -407,6 +440,12 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_ts ON config_audit(ts,id)")
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_key_target ON config_audit(config_key,target,id)")
         c.execute("CREATE TABLE IF NOT EXISTS feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, expires_at TEXT, updated_at TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'system')")
+        c.execute("CREATE TABLE IF NOT EXISTS runtime_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'system')")
+        c.execute("INSERT OR IGNORE INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
+                  (DYNAMIC_WORKER_SETTING_KEY,str(GLOBAL_CHATGPT_WORKER_LIMIT),now(),'system-default'))
+        dynamic_row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(DYNAMIC_WORKER_SETTING_KEY,)).fetchone()
+        try: GLOBAL_CHATGPT_WORKER_LIMIT=max(0,min(MAX_CHATGPT_WORKERS,int(dynamic_row['value'])))
+        except Exception: GLOBAL_CHATGPT_WORKER_LIMIT=1
         c.execute("CREATE TABLE IF NOT EXISTS autonomy_runtime(project_id TEXT PRIMARY KEY, initialized_at TEXT NOT NULL, manual_pause INTEGER NOT NULL DEFAULT 0, last_dispatch_at TEXT, last_reason TEXT NOT NULL DEFAULT '')")
         if PORTFOLIO_QUEUE_SEED_FILE.exists():
             try:
@@ -1339,9 +1378,9 @@ def project_autonomy_state(project_id):
     elif mode=='manual':
         allow=False;reason='manual_mode'
 
-    hold=_autonomy_signal_hold(project_id,cfg)
-    if allow and hold:
-        allow=False;reason=hold['event']
+    # Dynamic workers are non-stopping by policy. WAIT/COMPLETE markers are
+    # telemetry only; manual dashboard controls and anti-spam are the stop gates.
+    hold=None
     return {
         'project_id':project_id,'mode':mode,'allow_ai':bool(allow),'auto_start':cfg['auto_start'],
         'dispatch_mode':cfg['dispatch_mode'],'continue_delay_seconds':cfg['continue_delay_seconds'],
@@ -1474,8 +1513,8 @@ def _autonomy_enqueue_worker_push(project_id,worker_slot,reason,min_interval_sec
         ).fetchone()
         if desired and str(desired['desired_state'] or 'running')!='running':
             return False
-        if not _global_dispatch_interval_due(c,min_interval_seconds):
-            return False
+        # Anti-spam is per dynamic worker: each worker may dispatch at most once
+        # per configured interval, while separate workers can progress independently.
         if not _worker_prompt_interval_due(c,project_id,worker_slot,min_interval_seconds):
             return False
         pending=c.execute(
@@ -1731,6 +1770,17 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             next_task.get('completion_criteria') or '',
             parent_queue_id=queue_id
         )
+    elif result in ('DONE','BLOCKED'):
+        # Keep the project iterating even when the model forgot to nominate a
+        # follow-up. The next assignment must execute a concrete project step,
+        # never fill the cycle with a generic audit/status recap.
+        created=portfolio_queue_enqueue(
+            row['project_id'],
+            'Continue project autonomously with the next concrete implementation step',
+            row['priority'] or 'P2',
+            'Select the next safe unblocked implementation/deploy/test step from the project HQ/handoff, execute it, and prove a material state change. Audit-only, checklist-only and status-only output do not satisfy completion.',
+            parent_queue_id=queue_id
+        )
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created}
 
 def portfolio_queue_allocation():
@@ -1824,6 +1874,8 @@ def _persist_global_worker_allocation(allocation):
             )
 
 def _current_global_slot_map():
+    if GLOBAL_CHATGPT_WORKER_LIMIT <= 0:
+        return {}
     try:
         with connect() as c:
             rows=c.execute('SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
@@ -2010,9 +2062,9 @@ def runner_record(payload):
     except Exception: worker_slot=1
     try: global_worker_slot=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(payload.get('globalWorkerSlot') or worker_slot)))
     except Exception: global_worker_slot=worker_slot
-    if event in ('autonomy-wait-vps','autonomy-wait-human','autonomy-complete') and portfolio_queue_has_eligible_work(payload.get('queueItem') or None):
+    if event in ('autonomy-wait-vps','autonomy-wait-human','autonomy-complete'):
         event='autonomy-continue'
-        reason='backend-rejected-terminal-signal-queue-not-empty'
+        reason='backend-non-stopping-dynamic-worker-policy'
     match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
     with connect() as c:
         if not project_id and target:
@@ -2030,16 +2082,9 @@ def runner_record(payload):
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
     if event=='runner-auto-paused' and project_id:
-        enhancements.emit_incident(
-            DB,
-            project_id,
-            'worker_auto_paused',
-            'warning',
-            'Dynamische worker automatisch gestopt',
-            f'Worker {global_worker_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} is gestopt door de quality guard: {reason or "herhaalde korte/lege cycli"}. Controleer de chat voordat je deze worker hervat.',
-            f'worker-auto-paused:{project_id}:{worker_slot}:{reason or "unknown"}',
-            cooldown=900,
-        )
+        # Legacy clients may still emit this event. Never pause automatically:
+        # record it as a recovery signal so the next rate-limited cycle continues.
+        event='quality-recovery-requested'
     if event=='portfolio-queue-result':
         try:
             portfolio_queue_finish(
@@ -2491,6 +2536,14 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
                 return self.reply({'ok':True,'feature_flag':result,'time':now()})
+            if u.path=='/api/dynamic-workers':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                actor=request_actor(self)
+                try:
+                    settings=set_dynamic_worker_limit(payload.get('count'),actor)
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
+                return self.reply({'ok':True,'dynamic_workers':settings,'time':now()})
             if u.path=='/api/runner-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
@@ -2572,6 +2625,9 @@ class Handler(BaseHTTPRequestHandler):
             logging.exception('POST failed');self.reply({'error':'Opslaan mislukt'},500)
     def route(self):
         u=urlparse(self.path);q=parse_qs(u.query)
+        if u.path=='/api/dynamic-workers':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
@@ -2622,7 +2678,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path in ('/api/status','/api/v1/status'):
                 runners=runner_statuses()
                 incidents=enhancements.incident_center(DB,runners,data=data)
-                return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'incidents':incidents})
+                return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'dynamic_workers':dynamic_worker_settings(),'incidents':incidents})
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
             if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
