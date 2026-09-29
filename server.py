@@ -52,6 +52,36 @@ WORKER_LANES = (
     'onafhankelijke QA van open werk zonder bestaand werk te dupliceren',
 )
 PROJECT_INDEX = {p['id']: p for p in json.loads((ROOT/'projects.json').read_text())}
+
+VPS_EXECUTION_POLICY_FILE = ROOT / 'vps-execution-policy.json'
+_VPS_EXECUTION_POLICY_FALLBACK = {
+    'schema_version': 1,
+    'id': 'zcloud-vps-execution-lane',
+    'enabled': True,
+    'transport': 'github-actions-self-hosted-runner',
+    'prompt_directive': (
+        'CENTRALE VPS/SSH-ROUTE: Gebruik voor shell-, install-, build-, test-, deploy-, service- en '
+        'SSH-werk standaard de zCloud VPS execution lane via de self-hosted runner. '
+        'Stop niet met "SSH ontbreekt" voordat deze route aantoonbaar is geprobeerd. '
+        'Leg runner/workflow-id, exitcode en concreet bewijs vast.'
+    ),
+}
+
+def _load_vps_execution_policy():
+    try:
+        value = json.loads(VPS_EXECUTION_POLICY_FILE.read_text(encoding='utf-8'))
+        if not isinstance(value, dict) or not value.get('enabled'):
+            raise ValueError('vps-execution-policy.json must be an enabled object')
+        directive = str(value.get('prompt_directive') or '').strip()
+        if not directive:
+            raise ValueError('vps-execution-policy.json requires prompt_directive')
+        return value
+    except Exception:
+        logging.exception('Invalid or missing VPS execution policy; using fail-safe fallback')
+        return dict(_VPS_EXECUTION_POLICY_FALLBACK)
+
+VPS_EXECUTION_POLICY = _load_vps_execution_policy()
+VPS_EXECUTION_DIRECTIVE = str(VPS_EXECUTION_POLICY['prompt_directive']).strip() + ' '
 KNOWN_RUNNER_CONVERSATIONS = {
     'haxlab': '6ab6e0af-b1e8-83eb-b355-6398eb60dce4',
     'ftmo': '6ab611aa-d5c4-83eb-940c-498aa3dbe0e1',
@@ -84,7 +114,7 @@ def project_runner_prompt(project_id, name):
         f'Je bent een dynamische zCloud portfolio-worker (maximaal {GLOBAL_CHATGPT_WORKER_LIMIT} tegelijk). '
         f'Runnerlabel "{name}" / "{project_id}" is alleen transport; de VPS Portfolio Queue bepaalt het werk. '
         'zCloud SQLite op de VPS is de enige scheduling/source-of-truth. Notion is uitsluitend documentatie/mirror en een Notion-planlimiet mag nooit de cyclus blokkeren. '
-        f'Canonieke project-HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
+        f'Canonieke project-HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. ' + VPS_EXECUTION_DIRECTIVE
     )
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
