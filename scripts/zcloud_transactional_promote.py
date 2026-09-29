@@ -390,6 +390,19 @@ def run_prechange(prechange: Path, root: Path, state: Path) -> dict:
     return payload
 
 
+def resolve_config_validator(candidate: Path, configured: Path) -> Path:
+    """Use the validator from the exact green candidate revision by default.
+
+    The installed helper is retained only as an explicit override/fallback. This
+    prevents a stale VPS helper from rejecting a schema migration that the same
+    green commit already validated in CI.
+    """
+    candidate_validator = candidate / "scripts/zcloud_config_validate.py"
+    if configured == DEFAULT_CONFIG_VALIDATOR and candidate_validator.is_file():
+        return candidate_validator
+    return configured
+
+
 def run_config_validation(
     validator: Path,
     *,
@@ -402,8 +415,8 @@ def run_config_validation(
     def effective(rel: str) -> Path:
         return candidate / rel if rel in selected else root / rel
 
-    args = [
-        str(validator),
+    command = [sys.executable, str(validator)] if validator.suffix == ".py" else [str(validator)]
+    args = command + [
         "--projects", str(effective("projects.json")),
         "--layout", str(effective("project-layout.json")),
         "--resource-policy", str(effective("resource-policy.json")),
@@ -634,8 +647,9 @@ def promote(
     syntax_check(candidate, normalized)
     feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
     pending_config_changes = config_changes(candidate, root, normalized)
+    effective_validator = resolve_config_validator(candidate, config_validator)
     config_validation = run_config_validation(
-        config_validator,
+        effective_validator,
         candidate=candidate,
         root=root,
         paths=normalized,
