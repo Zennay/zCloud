@@ -108,14 +108,14 @@ class ConfigValidationTests(unittest.TestCase):
 
     def test_allows_inactive_legacy_worker_slot(self):
         with sqlite3.connect(self.db) as conn:
-            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'paused')")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',9,'paused')")
             conn.commit()
         result = self.validate()
         self.assertTrue(result["ok"], result)
 
     def test_blocks_active_legacy_worker_slot(self):
         with sqlite3.connect(self.db) as conn:
-            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running')")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',9,'running')")
             conn.commit()
         result = self.validate()
         self.assertFalse(result["ok"])
