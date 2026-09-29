@@ -223,7 +223,7 @@ function runProject(cfg) {
   let BASE_PROMPT = cfg.prompt;
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
-  const QUALITY_RETRY_LIMIT = 3;
+  const QUALITY_RETRY_LIMIT = "unbounded";
   function promptWithReplacementHandoff(basePrompt) {
     return replacementHandoffPending && REPLACEMENT_HANDOFF
       ? basePrompt + "\n\n" +
@@ -239,9 +239,11 @@ function runProject(cfg) {
     const prompt = promptWithReplacementHandoff(basePrompt);
     if (!qualityRetryPending) return prompt;
     const escalation = qualityRetryCount >= 2
-      ? "ESCALATIE: DIT IS OPNIEUW GEEN GELDIGE UITVOERING. STOP met alleen status, blockers herhalen of dezelfde mislukte route beschrijven. " +
-        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking als die instelling beschikbaar is. Analyseer waarom de vorige route faalde, kies een ANDERE veilige uitvoeringsroute en VOER DIE NU UIT. "
-      : "HERSTELPOGING: de vorige cyclus was kort, leeg, te snel of miste betrouwbare queue-evidence. Gebruik extra redeneertijd en voer de taak nu daadwerkelijk uit. ";
+      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. Dit is opnieuw geen geldige uitvoering. " +
+        "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
+        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. "
+      : "DOE HET NU ECHT. De vorige cyclus was ongeveer tien seconden, leeg, te snel of zonder betrouwbare queue-evidence. " +
+        "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
     return prompt + "\n\n" +
       "ZCLOUD_QUALITY_RETRY: " + escalation +
       "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Een status-only/read-only antwoord telt niet. " +
@@ -259,7 +261,7 @@ function runProject(cfg) {
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
   const COMPOSER_RECOVERY_MS = 45 * 1000;
-  const SHORT_CYCLE_MS = 60 * 1000;
+  const SHORT_CYCLE_MS = 15 * 1000;
   const WEAK_RESPONSE_CHARS = 500;
   const WEAK_CYCLE_LIMIT = 4;
   let weakCycleStreak = 0;
@@ -503,17 +505,22 @@ function runProject(cfg) {
     try { browser.runtime.sendMessage({type: "runner-status", payload: payload}).catch(() => {}); } catch (_) {}
   }
   async function autoPauseForHealth(reason, extra = {}) {
-    paused = true;
-    draining = false;
-    awaitingGeneration = false;
-    sawGeneration = false;
-    if (tickTimer) clearInterval(tickTimer);
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    await syncStatus("runner-auto-paused", {
-      reason,
-      error: "Worker automatisch gestopt na herhaalde korte, lege of niet-startende cycli.",
+    // Historical name kept for compatibility: this is no longer an auto-pause.
+    // Weak/null/too-fast cycles escalate the next prompt and return to the VPS
+    // dispatch gate. The only automatic safety net is the per-worker cooldown.
+    await scheduleQualityRetry(reason, {
+      nonStoppingRecovery: true,
       weakCycleStreak,
       ...extra
+    });
+    weakCycleStreak = 0;
+    awaitingGeneration = false;
+    sawGeneration = false;
+    finishedAt = 0;
+    finishSignalsReported = true;
+    status("awaiting-vps-dispatch", {
+      reason: "quality-recovery:" + reason,
+      nonStoppingRecovery: true
     });
   }
   function cycleQuality(text, now) {
@@ -531,7 +538,6 @@ function runProject(cfg) {
     return {weak, hasQueueResult, hasQueueEvidence, missingQueueEvidence, nullLike, tooShort, tooFast, elapsedMs};
   }
   async function scheduleQualityRetry(reason, details = {}) {
-    if (qualityRetryCount >= QUALITY_RETRY_LIMIT) return false;
     qualityRetryCount += 1;
     qualityRetryPending = true;
     PROMPT = promptWithQualityRecovery(BASE_PROMPT);
@@ -539,7 +545,7 @@ function runProject(cfg) {
       reason,
       retryNumber: qualityRetryCount,
       retryLimit: QUALITY_RETRY_LIMIT,
-      adjustment: "same-assignment-quality-recovery",
+      adjustment: "same-assignment-non-stopping-execution-recovery",
       ...details
     });
     return true;
@@ -605,29 +611,19 @@ function runProject(cfg) {
         nextTask
       });
     }
-    // Autonomy markers stay attached to the technical worker slot. They control
-    // whether that worker is allowed another global queue cycle.
-    const waitEvidenceMatch = text.match(/ZCLOUD_WAIT_EVIDENCE:\s*([^\n]+)/i);
-    const waitEvidence = waitEvidenceMatch ? waitEvidenceMatch[1].trim() : "";
-    const queueExhausted = /(?:^|;)\s*queue=no-eligible(?:;|$)/i.test(waitEvidence);
-    const vpsWaitEvidence = /(?:^|;)\s*(?:job|run|service|process)=[^;]+/i.test(waitEvidence);
-    const humanWaitEvidence = /(?:^|;)\s*human_gate=[^;]+/i.test(waitEvidence);
-    if (text.includes("ZCLOUD_AUTONOMY: WAIT_VPS")) {
-      if (queueExhausted && vpsWaitEvidence) {
-        await syncStatus("autonomy-wait-vps", {reason: "assistant-marker", waitEvidence: waitEvidence.slice(0, 500)});
-      } else {
-        await syncStatus("autonomy-continue", {reason: "invalid-wait-vps-without-run-evidence"});
-      }
-    } else if (text.includes("ZCLOUD_AUTONOMY: WAIT_HUMAN")) {
-      if (queueExhausted && humanWaitEvidence) {
-        await syncStatus("autonomy-wait-human", {reason: "assistant-marker", waitEvidence: waitEvidence.slice(0, 500)});
-      } else {
-        await syncStatus("autonomy-continue", {reason: "invalid-wait-human-without-gate-evidence"});
-      }
-    } else if (text.includes("ZCLOUD_AUTONOMY: COMPLETE")) {
-      await syncStatus("autonomy-complete", {reason: "assistant-marker"});
-    } else if (text.includes("ZCLOUD_AUTONOMY: CONTINUE")) {
-      await syncStatus("autonomy-continue", {reason: "assistant-marker"});
+    // Dynamic workers never stop themselves from assistant WAIT/COMPLETE markers.
+    // Those markers remain diagnostic only; manual dashboard controls and the
+    // per-worker anti-spam cooldown are the only automatic execution gates.
+    const requestedAutonomy =
+      text.includes("ZCLOUD_AUTONOMY: WAIT_VPS") ? "WAIT_VPS" :
+      text.includes("ZCLOUD_AUTONOMY: WAIT_HUMAN") ? "WAIT_HUMAN" :
+      text.includes("ZCLOUD_AUTONOMY: COMPLETE") ? "COMPLETE" :
+      text.includes("ZCLOUD_AUTONOMY: CONTINUE") ? "CONTINUE" : "";
+    if (requestedAutonomy) {
+      await syncStatus("autonomy-continue", {
+        reason: "non-stopping-policy:" + requestedAutonomy.toLowerCase(),
+        requestedAutonomy
+      });
     }
     // zCloud improvement markers must be attributed to the queue item's real
     // project, not to whichever project-labelled browser tab owns this slot.

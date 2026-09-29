@@ -6,17 +6,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_has_one_global_ai_slot_with_global_guarded_interval(self):
+    def test_vps_scheduler_has_runtime_worker_pool_with_per_worker_guarded_interval(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
         self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 1", server)
-        self.assertIn("MAX_CHATGPT_WORKERS = 1", server)
+        self.assertIn("MAX_CHATGPT_WORKERS = 8", server)
+        self.assertIn("DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'", server)
+        self.assertIn("def set_dynamic_worker_limit(", server)
+        self.assertIn("'/api/dynamic-workers'", server)
         self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 300", server)
         self.assertIn("def portfolio_queue_allocate(", server)
         self.assertIn("def _global_dispatch_interval_due(", server)
         self.assertIn("def _worker_prompt_interval_due(", server)
+        self.assertIn("Anti-spam is per dynamic worker", server)
         self.assertIn("def _autonomy_enqueue_worker_push(", server)
         self.assertIn("min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS", server)
         self.assertIn("def global_worker_allocation(", server)
@@ -35,15 +39,16 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("if prompt_id and ready_id < prompt_id:", server)
         self.assertIn("A prompt from an older browser session must not permanently block", server)
         self.assertIn("latest_id <= prompt_id or latest_generating or latest_sending", server)
-        self.assertIn('"runner-auto-paused"', background)
+        self.assertNotIn('syncStatus("runner-auto-paused"', background)
         self.assertIn("WEAK_CYCLE_LIMIT = 4", background)
-        self.assertIn("SHORT_CYCLE_MS = 60 * 1000", background)
+        self.assertIn("SHORT_CYCLE_MS = 15 * 1000", background)
         self.assertIn("repeated-short-or-null-result", background)
         self.assertIn("repeated-no-generation", background)
-        self.assertIn("QUALITY_RETRY_LIMIT = 3", background)
+        self.assertIn('QUALITY_RETRY_LIMIT = "unbounded"', background)
         self.assertIn("quality-retry-scheduled", background)
-        self.assertIn("same-assignment-quality-recovery", background)
-        self.assertIn("DIT IS OPNIEUW GEEN GELDIGE UITVOERING", background)
+        self.assertIn("same-assignment-non-stopping-execution-recovery", background)
+        self.assertIn("DOE HET NU ECHT", background)
+        self.assertIn("Geen audit, checklist, QA-overzicht, statusrapport", background)
         self.assertIn("hoogste beschikbare redeneerdiepte / High thinking", background)
         self.assertIn("ANDERE veilige uitvoeringsroute", background)
         self.assertIn("ensureHighThinking", background)
@@ -60,7 +65,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn('controlHints', background)
         self.assertIn('/^(?:high|hoog)$/i', background)
         self.assertIn("missingQueueEvidence", background)
-        self.assertIn("worker_auto_paused", server)
+        self.assertIn("backend-non-stopping-dynamic-worker-policy", server)
+        self.assertIn("Continue project autonomously with the next concrete implementation step", server)
 
     def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
         policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
@@ -104,13 +110,14 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("globalWorkerSlot", background)
         self.assertIn("nextTask", background)
 
-    def test_wait_markers_still_fail_open_to_continue_when_invalid(self):
+    def test_terminal_markers_are_telemetry_only_and_workers_continue(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
-        self.assertIn("ZCLOUD_WAIT_EVIDENCE", background)
-        self.assertIn("queue=no-eligible", background)
-        self.assertIn("invalid-wait-vps-without-run-evidence", background)
-        self.assertIn("invalid-wait-human-without-gate-evidence", background)
+        self.assertIn("Dynamic workers never stop themselves", background)
+        self.assertIn('"WAIT_VPS"', background)
+        self.assertIn('"WAIT_HUMAN"', background)
+        self.assertIn('"COMPLETE"', background)
         self.assertIn('syncStatus("autonomy-continue"', background)
+        self.assertIn("non-stopping-policy:", background)
 
     def test_mobile_projects_are_visible_and_touch_safe(self):
         index = (ROOT / "public" / "index.html").read_text(encoding="utf-8")

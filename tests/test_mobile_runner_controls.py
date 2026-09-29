@@ -14,6 +14,16 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("${mobileRunnerControls(p,'detail')}${workerDetailPanel(p)}", app)
 
 
+    def test_global_dynamic_worker_control_is_mobile_visible(self):
+        app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
+        css = (ROOT / "public" / "enhancements.css").read_text(encoding="utf-8")
+        self.assertIn("function dynamicWorkerControl", app)
+        self.assertIn('data-dynamic-workers', app)
+        self.assertIn("setDynamicWorkers", app)
+        self.assertIn("Continuous iteration", app)
+        self.assertIn(".dynamic-worker-control", css)
+        self.assertIn("@media(max-width:760px)", css)
+
     def test_project_card_tap_opens_detail_without_pointer_heuristic(self):
         app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
         self.assertIn("const projectCardTarget=e.target.closest('[data-project-id]')", app)

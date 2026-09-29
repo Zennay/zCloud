@@ -1,4 +1,4 @@
-name: zCloud one-worker testing activation
+name: zCloud dynamic worker pool activation
 
 on:
   workflow_run:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-one-worker-testing-activation
+  group: zcloud-dynamic-worker-pool-activation
   cancel-in-progress: true
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
           journalctl --user -u chatgpt-firefox.service -n 30 --no-pager || true
           pgrep -af 'firefox|web-ext' || true
 
-      - name: Enable exactly one queue-owned worker
+      - name: Honor dashboard-owned dynamic worker pool
         shell: bash
         run: |
           set -euo pipefail
@@ -52,7 +52,7 @@ jobs:
 
           def call(method, path, payload=None):
               body = None
-              headers = {"User-Agent": "zcloud-one-worker-testing-activation/1"}
+              headers = {"User-Agent": "zcloud-dynamic-worker-pool-activation/1"}
               if payload is not None:
                   body = json.dumps(payload).encode("utf-8")
                   headers["Content-Type"] = "application/json"
@@ -64,120 +64,118 @@ jobs:
                   detail = exc.read().decode("utf-8", "replace")
                   raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
 
+          def worker_key(item):
+              key = str(item.get("worker_key") or "").strip()
+              if key:
+                  return key
+              project = str(item.get("project_id") or "").strip()
+              slot = int(item.get("worker_slot") or 1)
+              return f"{project}::w{slot}" if project else ""
+
+          def live_worker(status, key):
+              base = key.split("::w", 1)[0]
+              workers = ((status.get("chatgpt_runners") or {}).get(base) or {}).get("workers") or []
+              return next((
+                  worker for worker in workers
+                  if worker.get("worker_id") == key
+                  and worker.get("state") == "live"
+                  and int(worker.get("age_seconds") or 999999) <= 90
+              ), None)
+
           before = call("GET", "/api/runner-targets")
-          if int(before.get("max_workers") or 0) != 1:
-              raise SystemExit(f"expected max_workers=1, got {before.get('max_workers')!r}")
-
+          limit = int(before.get("max_workers") or 0)
           allocation = before.get("global_allocation") or {}
-          workers = allocation.get("workers") or []
-          if len(workers) != 1:
-              raise SystemExit(f"expected exactly one eligible VPS queue worker, got {len(workers)}")
+          selected = allocation.get("workers") or []
 
-          project_id = str(workers[0].get("worker_key") or "").strip()
-          if not project_id:
-              base_project_id = str(workers[0].get("project_id") or "").strip()
-              worker_slot = int(workers[0].get("worker_slot") or 1)
-              project_id = f"{base_project_id}::w{worker_slot}"
-          if not project_id:
-              raise SystemExit("queue worker has no worker_key")
+          if limit < 0 or limit > 8:
+              raise SystemExit(f"invalid dashboard dynamic worker limit: {limit}")
+          if len(selected) > limit:
+              raise SystemExit(f"allocation exceeds dashboard limit: {len(selected)} > {limit}")
 
-          started = call("POST", "/api/runner-control", {
-              "project_id": project_id,
-              "action": "start",
-          })
-          if not started.get("ok"):
-              raise SystemExit(f"worker start was not accepted: {started}")
+          if limit == 0:
+              if selected:
+                  raise SystemExit(f"dynamic workers are off but queue workers remain allocated: {selected}")
+              print(json.dumps({
+                  "ok": True,
+                  "mode": "dashboard",
+                  "worker_limit": 0,
+                  "state": "disabled",
+              }, ensure_ascii=False, sort_keys=True))
+              raise SystemExit(0)
+
+          if not selected:
+              print(json.dumps({
+                  "ok": True,
+                  "mode": "dashboard",
+                  "worker_limit": limit,
+                  "state": "idle-no-eligible-queue-work",
+              }, ensure_ascii=False, sort_keys=True))
+              raise SystemExit(0)
+
+          keys = [worker_key(item) for item in selected]
+          if any(not key for key in keys):
+              raise SystemExit(f"queue allocation contains worker without identity: {selected}")
+
+          starts = {}
+          for key in keys:
+              result = call("POST", "/api/runner-control", {
+                  "project_id": key,
+                  "action": "start",
+              })
+              if not result.get("ok"):
+                  raise SystemExit(f"worker start was not accepted for {key}: {result}")
+              starts[key] = result
 
           final = None
-          live_worker = None
+          status = None
+          live = {}
           for _ in range(12):
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
               status = call("GET", "/api/status?project=zcloud")
-              active = [
-                  key for key, value in (final.get("projects") or {}).items()
-                  if bool(value.get("active"))
-              ]
-              workers = ((status.get("chatgpt_runners") or {}).get("raiseai") or {}).get("workers") or []
-              live_worker = next(
-                  (
-                      worker for worker in workers
-                      if worker.get("worker_id") == project_id
-                      and worker.get("state") == "live"
-                      and int(worker.get("age_seconds") or 999999) <= 90
-                  ),
-                  None,
-              )
-              print(json.dumps({
-                  "poll_active_projects": active,
-                  "poll_workers": workers,
-                  "live_worker": live_worker,
-              }, ensure_ascii=False, sort_keys=True), flush=True)
-              if len(active) <= 1 and live_worker:
+              live = {key: live_worker(status, key) for key in keys}
+              if all(live.values()):
                   break
 
-          def live_worker_for(worker_list):
-              return next(
-                  (
-                      worker for worker in worker_list
-                      if worker.get("worker_id") == project_id
-                      and worker.get("state") == "live"
-                      and int(worker.get("age_seconds") or 999999) <= 90
-                  ),
-                  None,
-              )
-
-          if not live_worker:
-              recovered = call("POST", "/api/runner-control", {
-                  "project_id": project_id,
-                  "action": "new_chat",
-              })
-              if not recovered.get("ok"):
-                  raise SystemExit(f"worker fresh-chat recovery was not accepted: {recovered}")
-              print(json.dumps({
-                  "recovery": "fresh-chat",
-                  "project_id": project_id,
-                  "command": recovered,
-              }, ensure_ascii=False, sort_keys=True), flush=True)
+          missing = [key for key, value in live.items() if not value]
+          if missing:
+              for key in missing:
+                  recovered = call("POST", "/api/runner-control", {
+                      "project_id": key,
+                      "action": "new_chat",
+                  })
+                  if not recovered.get("ok"):
+                      raise SystemExit(f"worker fresh-chat recovery was not accepted for {key}: {recovered}")
               for _ in range(12):
                   time.sleep(5)
                   final = call("GET", "/api/runner-targets")
                   status = call("GET", "/api/status?project=zcloud")
-                  active = [
-                      key for key, value in (final.get("projects") or {}).items()
-                      if bool(value.get("active"))
-                  ]
-                  workers = ((status.get("chatgpt_runners") or {}).get("raiseai") or {}).get("workers") or []
-                  live_worker = live_worker_for(workers)
-                  print(json.dumps({
-                      "recovery_poll_active_projects": active,
-                      "recovery_poll_workers": workers,
-                      "live_worker": live_worker,
-                  }, ensure_ascii=False, sort_keys=True), flush=True)
-                  if len(active) <= 1 and live_worker:
+                  live = {key: live_worker(status, key) for key in keys}
+                  if all(live.values()):
                       break
 
           active = [
               key for key, value in (final.get("projects") or {}).items()
               if bool(value.get("active"))
           ]
-          if int(final.get("max_workers") or 0) != 1:
-              raise SystemExit(f"max_workers changed unexpectedly: {final.get('max_workers')!r}")
-          if len(active) > 1:
-              raise SystemExit(f"more than one project remains active: {active}")
-          if not live_worker:
+          if int(final.get("max_workers") or -1) != limit:
+              raise SystemExit(f"dashboard worker limit changed unexpectedly: {final.get('max_workers')!r} != {limit}")
+          if len(active) > limit:
+              raise SystemExit(f"more active workers than dashboard limit: {active}")
+          missing = [key for key, value in live.items() if not value]
+          if missing:
               print("FINAL_RUNNER_TARGETS=" + json.dumps(final, ensure_ascii=False, sort_keys=True), flush=True)
               print("FINAL_STATUS=" + json.dumps(status, ensure_ascii=False, sort_keys=True), flush=True)
-              raise SystemExit("worker start was accepted, but no live Firefox heartbeat was observed")
+              raise SystemExit(f"no live Firefox heartbeat observed for: {missing}")
 
           print(json.dumps({
               "ok": True,
-              "mode": "testing",
-              "worker_limit": final.get("max_workers"),
-              "selected_project": project_id,
-              "active_projects": active,
-              "live_worker": live_worker,
+              "mode": "dashboard",
+              "worker_limit": limit,
+              "selected_workers": keys,
+              "active_workers": active,
+              "live_workers": live,
               "dispatch_cooldown_seconds": (final.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
-              "start_command": started,
+              "start_commands": starts,
           }, ensure_ascii=False, sort_keys=True))
           PY

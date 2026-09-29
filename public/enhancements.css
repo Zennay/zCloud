@@ -188,3 +188,22 @@
 .resource-tech-panel .resource-tech-row{font-size:11px}
 .resource-tech-panel>p{margin:12px 0 0;color:var(--muted);font-size:10px;line-height:1.5}
 @media(max-width:760px){.resource-tech-panel{padding-left:18px;padding-right:18px}.resource-tech-row{align-items:flex-start;flex-direction:column;gap:2px}.resource-tech-row span{text-align:left}}
+
+/* Global dynamic-worker pool control: visible on desktop and mobile. */
+.project-section-title{align-items:center;gap:16px}
+.dynamic-worker-control{display:flex;align-items:center;gap:14px;margin-left:auto;padding:10px 12px;border:1px solid #2d3541;border-radius:10px;background:#10151c;min-width:330px}
+.dynamic-worker-copy{display:grid;gap:2px;min-width:0}
+.dynamic-worker-copy small{color:#8f9aaa;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.dynamic-worker-copy strong{font-size:13px;color:#e8edf3}
+.dynamic-worker-copy span{font-size:10px;line-height:1.35;color:#7f8a9a}
+.dynamic-worker-control label{display:grid;gap:4px;justify-items:end;margin-left:auto}
+.dynamic-worker-control label span{font-size:10px;color:#8f9aaa}
+.dynamic-worker-control input{width:68px;min-height:38px;padding:7px 9px;border:1px solid #3a4452;border-radius:8px;background:#0d1218;color:#eef3f8;font-size:14px;font-weight:700;text-align:center}
+@media(max-width:760px){
+  .project-section-title{align-items:stretch;flex-direction:column}
+  .dynamic-worker-control{width:100%;min-width:0;margin-left:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px}
+  .dynamic-worker-copy strong{font-size:14px}
+  .dynamic-worker-copy span{font-size:11px}
+  .dynamic-worker-control input{width:72px;min-height:44px;font-size:16px}
+}
+
