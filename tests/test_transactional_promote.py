@@ -58,6 +58,23 @@ class TransactionalPromotionTests(unittest.TestCase):
                 with self.assertRaises(promote.PromotionError):
                     promote.validate_relpath(bad)
 
+    def test_default_validator_prefers_exact_candidate_revision(self):
+        candidate_validator = self.candidate / "scripts" / "zcloud_config_validate.py"
+        self._write(
+            self.candidate,
+            "scripts/zcloud_config_validate.py",
+            "#!/usr/bin/env python3\nprint('candidate-validator')\n",
+        )
+        selected = promote.resolve_config_validator(
+            self.candidate,
+            promote.DEFAULT_CONFIG_VALIDATOR,
+        )
+        self.assertEqual(candidate_validator, selected)
+
+        explicit = self.root / "custom-validator"
+        selected = promote.resolve_config_validator(self.candidate, explicit)
+        self.assertEqual(explicit, selected)
+
     def test_candidate_must_be_separate_and_complete(self):
         with self.assertRaises(promote.PromotionError):
             promote.validate_candidate(self.root, self.root, ["server.py"])
