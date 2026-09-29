@@ -19,6 +19,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         for path in (
             "server.py",
             "autonomy-policy.json",
+            "portfolio_queue.seed.json",
             "firefox-extension/background.js",
             "public/app.js",
             "public/index.html",

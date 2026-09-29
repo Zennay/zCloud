@@ -26,8 +26,11 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.original_db = server.DB
         self.original_policy = server.AUTONOMY_POLICY_FILE
+        self.original_queue_seed = server.PORTFOLIO_QUEUE_SEED_FILE
         server.DB = self.root / "history.db"
         server.AUTONOMY_POLICY_FILE = self.root / "autonomy-policy.json"
+        server.PORTFOLIO_QUEUE_SEED_FILE = self.root / "portfolio-queue.seed.json"
+        server.PORTFOLIO_QUEUE_SEED_FILE.write_text("[]", encoding="utf-8")
         self.hax_status = self.root / "haxlab-status.json"
         self.ftmo_status = self.root / "ftmo-status.json"
         self.write_policy()
@@ -44,6 +47,7 @@ class AutonomyPolicyTests(unittest.TestCase):
     def tearDown(self):
         server.DB = self.original_db
         server.AUTONOMY_POLICY_FILE = self.original_policy
+        server.PORTFOLIO_QUEUE_SEED_FILE = self.original_queue_seed
         self.tmp.cleanup()
 
     def write_policy(self):
@@ -136,6 +140,7 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertIsNotNone(after["hold"])
 
     def test_scheduler_bootstraps_once_and_manual_pause_wins(self):
+        server.portfolio_queue_enqueue("supa", "scheduler boot", "P1", "prove start")
         with server.connect() as conn:
             conn.execute("UPDATE runner_targets SET active=0 WHERE project_id='supa'")
         result = server.autonomy_scheduler_tick()
@@ -157,6 +162,7 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertEqual(0, target["active"])
 
     def test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it(self):
+        server.portfolio_queue_enqueue("supa", "scheduler push", "P1", "prove push")
         with server.connect() as conn:
             conn.execute("UPDATE runner_targets SET active=1 WHERE project_id='supa'")
             conn.execute("DELETE FROM runner_commands WHERE project_id='supa'")
