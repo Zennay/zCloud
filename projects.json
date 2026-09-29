@@ -3,13 +3,13 @@
     "id": "haxlab",
     "name": "HaxLab",
     "eyebrow": "GAME INTELLIGENCE",
-    "goal": "Van replay naar een competitieve HaxBall-bot.",
+    "goal": "From replay to a competitive HaxBall bot.",
     "icon": "game",
     "accent": "#a899ff",
     "repo": "/opt/actions-runner-haxlab/_work/Haxlab/Haxlab",
     "repo_ref": "origin/main",
     "milestone_revision": "v3-granular-quality",
-    "progress_basis": "Bouwvoortgang is het gemiddelde van milestone-percentages. Modelkwaliteit staat apart.",
+    "progress_basis": "Build progress is the average of milestone percentages. Model quality is tracked separately.",
     "milestones": [
       {
         "title": "Replay pipeline",
@@ -53,7 +53,7 @@
       }
     ],
     "phase": "Live champion validation · competitive behavior",
-    "next_step": "Verbeter kickgedrag en competitieve sandbox-resultaten; valideer daarna tegen echte spelers.",
+    "next_step": "Improve kicking behavior and competitive sandbox results; then validate against real players.",
     "status": "active",
     "priority": "low",
     "repo_url": "https://github.com/Zennay/Haxlab",
@@ -64,12 +64,12 @@
     "id": "ftmo",
     "name": "FTMO",
     "eyebrow": "AUTONOMOUS RESEARCH",
-    "goal": "Een onderzoekssysteem voor robuuste tradingstrategieën.",
+    "goal": "A research system for robust trading strategies.",
     "icon": "chart",
     "accent": "#5ddcbb",
     "repo": "/opt/ftmo-runner/_work/Ftmo/Ftmo",
     "milestone_revision": "v3-granular-quality",
-    "progress_basis": "Bouwvoortgang is het gemiddelde van milestone-percentages. Tradingkwaliteit staat apart.",
+    "progress_basis": "Build progress is the average of milestone percentages. Trading quality is tracked separately.",
     "milestones": [
       {
         "title": "Research framework",
@@ -113,7 +113,7 @@
       }
     ],
     "phase": "Generation 10 candidate · awaiting walk-forward",
-    "next_step": "Voer de frozen walk-forward uit voor de Generation-10 candidate; houd development en validatie strikt gescheiden.",
+    "next_step": "Run the frozen walk-forward for the Generation-10 candidate; keep development and validation strictly separated.",
     "status": "active",
     "priority": "high",
     "repo_url": "https://github.com/Zennay/Ftmo",
@@ -124,19 +124,19 @@
     "id": "cloud",
     "name": "zCloud",
     "eyebrow": "PROJECT COMMAND CENTER",
-    "goal": "Je projecten, progressie en VPS in één overzicht — met zCloud Wear als onderdeel op je Galaxy Watch 7.",
+    "goal": "Your projects, progress and VPS in one overview — with zCloud Wear as part of your Galaxy Watch 7.",
     "icon": "cloud",
     "accent": "#82b8ff",
     "milestone_revision": "v5-zcloud-wear",
-    "progress_basis": "zCloud is de control room; zCloud Wear is de native Watch-client als onderdeel van dit project.",
+    "progress_basis": "zCloud is the control room; zCloud Wear is the native Watch client for this project.",
     "milestones": [
       {
-        "title": "Live projectoverzicht",
+        "title": "Live project overview",
         "done": true,
         "progress": 100
       },
       {
-        "title": "Grafieken met datums",
+        "title": "Charts with dates",
         "done": true,
         "progress": 100
       },
@@ -146,7 +146,7 @@
         "progress": 100
       },
       {
-        "title": "VPS-monitoring",
+        "title": "VPS monitoring",
         "done": true,
         "progress": 100
       },
@@ -169,15 +169,15 @@
     "phase": "zCloud Wear · v0.3 gebouwd, Watch-validatie open",
     "status": "active",
     "priority": "system",
-    "next_step": "Installeer en valideer zCloud Wear op de Galaxy Watch 7.",
+    "next_step": "Install and validate zCloud Wear on the Galaxy Watch 7.",
     "components": [
       {
         "id": "zcloud-wear",
         "name": "zCloud Wear",
         "accent": "#5ddcbb",
         "progress": 80,
-        "summary": "Native Jetpack Compose-app voor de ronde Galaxy Watch 7. Toont zCloud-projecten via de read-only Watch API. De debug-APK is gebouwd; installatie en eindtest op het horloge staan nog open.",
-        "next_step": "Installeer de actuele APK op de Galaxy Watch 7 en controleer projectoverzicht, projectdetail en live status.",
+        "summary": "Native Jetpack Compose app for the round Galaxy Watch 7. Shows zCloud projects through the read-only Watch API. The debug APK is built; installation and final watch test are still open.",
+        "next_step": "Install the current APK on the Galaxy Watch 7 and check the project overview, project detail and live status.",
         "milestones": [
           {
             "title": "Native Jetpack Compose Wear OS-app",
@@ -185,22 +185,22 @@
             "progress": 100
           },
           {
-            "title": "Ronde home- en projectdetailweergave",
+            "title": "Round home and project detail view",
             "done": true,
             "progress": 100
           },
           {
-            "title": "Read-only koppeling met de zCloud Watch API",
+            "title": "Read-only connection to the zCloud Watch API",
             "done": true,
             "progress": 100
           },
           {
-            "title": "Debug-APK voor de huidige versie bouwen",
+            "title": "Build the debug APK for the current version",
             "done": true,
             "progress": 100
           },
           {
-            "title": "Installatie en eindtest op Galaxy Watch 7",
+            "title": "Installation and final test on Galaxy Watch 7",
             "done": false,
             "progress": 0
           }
@@ -215,7 +215,7 @@
     "id": "supa",
     "name": "Supa",
     "eyebrow": "SMART GROCERY PLANNER",
-    "goal": "Een mobile-first boodschappenplanner die studenten helpt goedkoper en slimmer te eten.",
+    "goal": "A mobile-first grocery planner that helps students eat more affordably and intelligently.",
     "icon": "layers",
     "accent": "#ff9b7a",
     "repo": "/home/ubuntu/zennay-cloud/repos/supa",
@@ -223,9 +223,9 @@
     "repo_url": "https://github.com/Zennay/Supa",
     "phase": "Production rebuild · mobile-first foundation",
     "status": "active",
-    "next_step": "Bouw de mobile-first production foundation en koppel de plannerflow aan echte app-state.",
+    "next_step": "Build the mobile-first production foundation and connect the planner flow to real app state.",
     "milestone_revision": "supa-v3-granular",
-    "progress_basis": "Bouwvoortgang is het gemiddelde van milestone-percentages.",
+    "progress_basis": "Build progress is the average of milestone percentages.",
     "milestones": [
       {
         "title": "User research & problem validation",
@@ -276,42 +276,42 @@
     "id": "raiseai",
     "name": "Raise AI",
     "eyebrow": "RAISE-TO-TALK · GALAXY WATCH 7",
-    "goal": "Je Galaxy Watch 7 opent een handsfree ChatGPT-sessie wanneer je je pols naar je mond brengt.",
+    "goal": "Your Galaxy Watch 7 opens a hands-free ChatGPT session when you raise your wrist to your mouth.",
     "icon": "pulse",
     "accent": "#c4a3ff",
-    "phase": "Voiceflow integreren · daarna fysieke Watch-validatie",
+    "phase": "Integrate the voice flow · then validate on the physical Watch",
     "status": "active",
-    "next_step": "Integreer de dictation-first state machine in de actuele RaiseAI-bron en test die op de Galaxy Watch 7.",
+    "next_step": "Integrate the dictation-first state machine into the current RaiseAI source and test it on the Galaxy Watch 7.",
     "milestone_revision": "raiseai-v1.1-dashboard",
-    "progress_basis": "Codevoortgang op basis van Raise AI v1.1; fysieke installatie en gedragstesten tellen pas mee na Watch-validatie.",
+    "progress_basis": "Code progress based on Raise AI v1.1; physical installation and behavior tests count only after Watch validation.",
     "milestones": [
       {
-        "title": "Raise-to-mouth detectie en sessiebewaking",
+        "title": "Raise-to-mouth detection and session monitoring",
         "done": true,
         "progress": 100
       },
       {
-        "title": "ChatGPT via GeckoView op de ronde Watch UI",
+        "title": "ChatGPT via GeckoView on the round Watch UI",
         "done": true,
         "progress": 100
       },
       {
-        "title": "Gemini en Google Home als aparte fallback",
+        "title": "Gemini and Google Home as separate fallbacks",
         "done": true,
         "progress": 100
       },
       {
-        "title": "Dictation-first flow met geanimeerde opname-UI",
+        "title": "Dictation-first flow with animated recording UI",
         "done": false,
         "progress": 0
       },
       {
-        "title": "v1.1 op Galaxy Watch 7 installeren en testen",
+        "title": "Install and test v1.1 on the Galaxy Watch 7",
         "done": false,
         "progress": 0
       },
       {
-        "title": "Batterij- en false-positive metingen",
+        "title": "Battery and false-positive measurements",
         "done": false,
         "progress": 0
       }
@@ -325,7 +325,7 @@
     "id": "ulab",
     "name": "uLab",
     "eyebrow": "UPGRADE PATH LAB",
-    "goal": "Een open-source self-service platform om echte software-upgradepaden reproduceerbaar te testen.",
+    "goal": "An open-source self-service platform for reproducible testing of real software upgrade paths.",
     "icon": "server",
     "accent": "#7fd6ff",
     "repo": "/home/ubuntu/zennay-cloud/repos/ulab",
@@ -336,9 +336,9 @@
     "scorecard_url": "https://app.notion.com/p/3df9e19ac95581e59ebccb7c438ce3eb",
     "phase": "V2 proof gate · Gitea integration implemented, runtime evidence open",
     "status": "active",
-    "next_step": "Run de Gitea reference proof op een Docker-capabele host en voer daarna één echte maintainer/release-engineer trial uit.",
+    "next_step": "Run the Gitea reference proof on a Docker-capable host and then perform one real maintainer/release-engineer trial.",
     "milestone_revision": "notion-v0-v3-scorecard-2026-09-18",
-    "progress_basis": "Canonieke gewogen V0–V3-score uit Notion; GitHub main is executable truth en Notion is product/decision truth.",
+    "progress_basis": "Canonical weighted V0–V3 score from Notion; GitHub main is executable truth and Notion is product/decision truth.",
     "progress_override": 38,
     "milestones": [
       {
@@ -368,14 +368,14 @@
     "id": "zssh",
     "name": "zSSH",
     "eyebrow": "SECURE REMOTE OPERATIONS",
-    "goal": "Veilige Linux/VPS-operaties vanuit normale ChatGPT-chats via een gepubliceerde remote MCP-plugin.",
+    "goal": "Secure Linux/VPS operations from normal ChatGPT chats through a published remote MCP plugin.",
     "icon": "server",
     "accent": "#f6c56f",
     "phase": "Standalone repository · canonical source migrated",
     "status": "active",
-    "next_step": "P0 enabling-infra gate: rond M1 live file-capability proof af en ga daarna door naar paired target identity/auth/revocation; geef zSSH voorrang zolang dit andere projectbouw direct deblokkeert.",
+    "next_step": "P0 enabling-infrastructure gate: complete the M1 live file-capability proof, then move to paired target identity/auth/revocation; prioritize zSSH while it directly unblocks other project work.",
     "milestone_revision": "zssh-standalone-v2",
-    "progress_basis": "Bouwvoortgang is het gemiddelde van bewijsgerichte milestones; productiegeschiktheid telt pas mee na auth/security/review-validatie.",
+    "progress_basis": "Build progress is the average of evidence-based milestones; production readiness counts only after auth/security/review validation.",
     "milestones": [
       {
         "title": "M0 · Genesis + zCloud registration",
