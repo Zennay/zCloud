@@ -23,14 +23,14 @@ ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-GLOBAL_CHATGPT_WORKER_LIMIT = 2
-MAX_CHATGPT_WORKERS = 2
+GLOBAL_CHATGPT_WORKER_LIMIT = 1
+MAX_CHATGPT_WORKERS = 1
 AI_SLOT_DIVERSITY_PENALTY = 500
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
 PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
 PORTFOLIO_QUEUE_LEASE_SECONDS = 1800
-PORTFOLIO_AI_COOLDOWN_SECONDS = 0
+PORTFOLIO_AI_COOLDOWN_SECONDS = 300
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -1405,6 +1405,27 @@ def _autonomy_dispatch_due(runtime,min_interval_seconds):
     except Exception:
         return True
 
+def _global_dispatch_due(min_interval_seconds):
+    """Apply the cooldown across the single global worker, even after project rotation."""
+    try:
+        min_interval_seconds=max(0,int(min_interval_seconds or 0))
+    except Exception:
+        min_interval_seconds=0
+    if min_interval_seconds<=0:
+        return True
+    try:
+        with connect() as c:
+            row=c.execute('SELECT MAX(last_dispatch_at) AS last_dispatch_at FROM autonomy_runtime').fetchone()
+        last_value=(row['last_dispatch_at'] if row else None) or ''
+        if not last_value:
+            return True
+        last=datetime.fromisoformat(last_value).astimezone(timezone.utc)
+        return (datetime.now(timezone.utc)-last).total_seconds() >= min_interval_seconds
+    except Exception:
+        logging.exception('Could not evaluate global AI dispatch cooldown')
+        return False
+
+
 def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
     ts=now()
     with connect() as c:
@@ -1413,6 +1434,8 @@ def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
         if runtime and bool(runtime['manual_pause']):
             return False
         if not _autonomy_dispatch_due(dict(runtime) if runtime else None,min_interval_seconds):
+            return False
+        if not _global_dispatch_due(min_interval_seconds):
             return False
         target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
         if not target or not bool(target['active']):
@@ -1852,9 +1875,9 @@ def runner_targets():
                               'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
                               'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
                               'auto_continue':queue_active or bool(autonomy['allow_ai']),
-                              'auto_continue_delay_seconds':0 if queue_active else autonomy['continue_delay_seconds'],
+                              'auto_continue_delay_seconds':autonomy['continue_delay_seconds'],
                               'vps_dispatch_only':autonomy.get('dispatch_mode')=='vps',
-                              'ai_dispatch_interval_seconds':autonomy.get('min_ai_interval_seconds',600),
+                              'ai_dispatch_interval_seconds':autonomy.get('min_ai_interval_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS),
                               'autonomy':autonomy,'improvement':improvement}
     return out
 
