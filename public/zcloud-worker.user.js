@@ -647,6 +647,8 @@
   }
 
   async function start() {
+    document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready", SCRIPT_VERSION);
+    window.dispatchEvent(new Event("zcloud-violentmonkey-ready"));
     installBridgeListeners();
     readBridge();
     await refreshTarget();
