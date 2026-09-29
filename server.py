@@ -26,8 +26,10 @@ AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait
 GLOBAL_CHATGPT_WORKER_LIMIT = 2
 MAX_CHATGPT_WORKERS = 2
 AI_SLOT_DIVERSITY_PENALTY = 500
-PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
-PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
+NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
+NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
+PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
+PORTFOLIO_QUEUE_LEASE_SECONDS = 1800
 PORTFOLIO_AI_COOLDOWN_SECONDS = 0
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
@@ -77,35 +79,40 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
+    project=PROJECT_INDEX.get(project_id) or {}
     return (
         f'Je bent een dynamische zCloud portfolio-worker (maximaal {GLOBAL_CHATGPT_WORKER_LIMIT} tegelijk). '
-        f'Runnerlabel "{name}" / "{project_id}" is géén vaste projecttoewijzing; het is alleen transport en bepaalt nooit welk project je kiest. '
-        f'Begin ELKE cyclus met een verse Notion Portfolio Work Queue-check: {PORTFOLIO_QUEUE_URL} '
-        f'(data source {PORTFOLIO_QUEUE_DATA_SOURCE}). Kies uitsluitend op actuele queue-prioriteit en volg daarna '
-        'de Project-relatie naar de canonieke HQ, Handoff, repo en runtime. '
+        f'Runnerlabel "{name}" / "{project_id}" is alleen transport; de VPS Portfolio Queue bepaalt het werk. '
+        'zCloud SQLite op de VPS is de enige scheduling/source-of-truth. Notion is uitsluitend documentatie/mirror en een Notion-planlimiet mag nooit de cyclus blokkeren. '
+        f'Canonieke project-HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
     )
 
-def project_worker_prompt(project_id, name, base_prompt, slot, total):
-    return base_prompt + (
+def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
+    item=queue_item or {}
+    assignment=(
+        f'VPS_QUEUE_ASSIGNMENT id={item.get("queue_id")}; project={item.get("project_id")}; priority={item.get("priority")}; '
+        f'task={item.get("title")}; completion={item.get("completion_criteria")}; source={item.get("source_url") or "n/a"}. '
+        if item else
+        'VPS_QUEUE_ASSIGNMENT none. '
+    )
+    queue_id=str(item.get('queue_id') or 'NONE')
+    return base_prompt + assignment + (
         f'Jij bent Worker {slot}/{total}. VOER UIT, NIET RAPPORTEREN. '
-        '1) Lees actuele queue-RIJEN via de Notion data-source query; schema/search/fetch alleen telt niet als queue-check. '
-        'Als jouw Worker-slot al een Claimed/Running/Verifying item bezit: valideer Worker + lease server-side, vernieuw de lease en hervat het. '
-        'Anders claim je het hoogste Eligible+Queued item (P0>P1>P2>P3), schrijf Worker/Claimed At/Claim Expires (~30 min) en re-fetch. '
-        'Steel een verlopen claim nooit zonder bewijs dat de vorige worker inactief is; Preëmpt alleen voor een hogere P0 met veilige handoff. '
-        'Een ontbrekende/falende eerste toolroute is NOOIT zelf WAIT/blocker: probeer direct een andere veilige route/query, inclusief self-hosted GitHub Actions waar passend. '
+        '1) Gebruik uitsluitend de reeds door zCloud/VPS geclaimde VPS_QUEUE_ASSIGNMENT voor scheduling. Query Notion NIET om een queue-item te kiezen. '
+        'Notion mag alleen als projectdocumentatie/HQ/handoff worden gelezen of bijgewerkt; plan-gates, AI-search of query_data_sources zijn nooit een WAIT/blocker. '
         '2) Volg Project → HQ/Handoff/repo/runtime. Voor repo-writes: zCloud preflight/task-claim + open PR/branch check; geen dubbelwerk. '
-        '3) EXECUTION-FIRST: een status-only/read-only cyclus is ongeldig. Voor antwoord: minimaal één echte write, run/job, geverifieerde evidence of materiële state-change. '
-        'Als de taak echt niet verder kan: Blocked + Eligible=false + concrete evidence, release claim en pak IN DEZELFDE CYCLUS het volgende eligible item. '
-        'Zelfde item opnieuw zonder nieuwe evidence/state-change: executeer of block/release; geen tweede statusbericht. '
-        '4) AUTONOMY-FIRST voor herhaalbaar werk: restartable loop/job met persistente state, idempotente executor, verifier, volgende veilige stap en machineleesbaar receipt; timer alleen telt niet. '
+        '3) EXECUTION-FIRST: een status-only/read-only cyclus is ongeldig. Voor je antwoord moet er minimaal één echte write, run/job, geverifieerde evidence of materiële state-change zijn. '
+        'Als de assignment echt niet verder kan, bewijs de concrete blocker; verzin geen WAIT. '
+        '4) AUTONOMY-FIRST voor herhaalbaar werk: bouw een restartable loop/job met persistente state, idempotente executor, verifier, volgende veilige stap en machineleesbaar receipt; timer alleen telt niet. '
         '5) Done alleen wanneer ALLE Completion Criteria bewezen zijn met concrete Evidence (commit/PR, groene test, run-id, canary, artifact of meting). '
-        'Gebruik Verifying tijdens bewijscontrole; na Done/Blocked verse globale queue-query. '
-        'CONTINUE is VERBODEN na alleen reads/checks. WAIT alleen wanneer een VERSE queue-query bevestigt dat geen ander eligible werk bestaat én een echte externe dependency resteert. '
+        'CONTINUE is VERBODEN na alleen reads/checks. '
         'FTMO SAFETY: preregistration, chronologische splits, walk-forward en final holdout strikt gescheiden; verborgen validation/holdout nooit voor ontwerp, rescue of retune. '
         'zCloud FINISH: bij iteration_count=9 is dit de tiende/harde laatste iteratie + eind-audit. '
         'ZCLOUD_ITERATION_COMPLETE alleen na echte implementatie; ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 of OPEN_P0P1; ZCLOUD_FINAL_AUDIT: GREEN of FAIL. '
-        'OUTPUT exact één ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE en één ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE. '
-        'WAIT_VPS vereist ZCLOUD_WAIT_EVIDENCE: job=<id>; queue=no-eligible. WAIT_HUMAN vereist ZCLOUD_WAIT_EVIDENCE: human_gate=<actie>; queue=no-eligible.'
+        f'OUTPUT exact ZCLOUD_QUEUE_ITEM: {queue_id} en ZCLOUD_QUEUE_RESULT: DONE|BLOCKED|CONTINUE plus ZCLOUD_QUEUE_EVIDENCE: <concreet bewijs>. '
+        'Optioneel mag je één opvolgtaak voorstellen als ZCLOUD_NEXT_TASK: project=<id>; priority=P0|P1|P2|P3; title=<titel>; criteria=<bewijsbare criteria>. '
+        'Daarnaast exact één ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE en één ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE. '
+        'WAIT_VPS/WAIT_HUMAN zijn alleen voor een echte externe dependency nadat de VPS queue aantoonbaar leeg is; de backend valideert dit.'
     )
 
 RUNNER_DEFAULTS = {
@@ -338,6 +345,28 @@ def init_db():
         c.execute('CREATE INDEX IF NOT EXISTS runner_commands_status ON runner_commands(status,id)')
         c.execute("CREATE TABLE IF NOT EXISTS task_claims(project_id TEXT NOT NULL, claim_key TEXT NOT NULL, owner_id TEXT NOT NULL, worker_id TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, lease_until TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,claim_key))")
         c.execute('CREATE INDEX IF NOT EXISTS task_claims_lease_until ON task_claims(lease_until)')
+        c.execute("""CREATE TABLE IF NOT EXISTS portfolio_queue(
+            queue_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'P2',
+            status TEXT NOT NULL DEFAULT 'queued',
+            eligible INTEGER NOT NULL DEFAULT 1,
+            completion_criteria TEXT NOT NULL DEFAULT '',
+            evidence TEXT NOT NULL DEFAULT '',
+            blocker TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            claimed_at TEXT,
+            claim_expires TEXT,
+            worker_slot INTEGER,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            parent_queue_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )""")
+        c.execute('CREATE INDEX IF NOT EXISTS portfolio_queue_sched ON portfolio_queue(eligible,status,priority,created_at)')
+        c.execute('CREATE INDEX IF NOT EXISTS portfolio_queue_worker ON portfolio_queue(worker_slot,status)')
         c.execute("""CREATE TABLE IF NOT EXISTS worker_preflights(
             project_id TEXT NOT NULL,
             worker_id TEXT NOT NULL,
@@ -358,6 +387,26 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS config_audit_key_target ON config_audit(config_key,target,id)")
         c.execute("CREATE TABLE IF NOT EXISTS feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, expires_at TEXT, updated_at TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'system')")
         c.execute("CREATE TABLE IF NOT EXISTS autonomy_runtime(project_id TEXT PRIMARY KEY, initialized_at TEXT NOT NULL, manual_pause INTEGER NOT NULL DEFAULT 0, last_dispatch_at TEXT, last_reason TEXT NOT NULL DEFAULT '')")
+        if PORTFOLIO_QUEUE_SEED_FILE.exists():
+            try:
+                seed=json.loads(PORTFOLIO_QUEUE_SEED_FILE.read_text(encoding='utf-8'))
+                for item in seed if isinstance(seed,list) else []:
+                    ts=now()
+                    c.execute("""INSERT OR IGNORE INTO portfolio_queue(
+                        queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?)""",(
+                        str(item.get('queue_id') or '').strip(),
+                        str(item.get('project_id') or '').strip(),
+                        str(item.get('title') or '').strip(),
+                        str(item.get('priority') or 'P2').upper(),
+                        str(item.get('status') or 'queued').lower(),
+                        1 if item.get('eligible',True) else 0,
+                        str(item.get('completion_criteria') or ''),
+                        str(item.get('source_url') or ''),
+                        ts,ts
+                    ))
+            except Exception:
+                logging.exception('Could not seed VPS portfolio queue')
         for flag_name,definition in FEATURE_FLAG_DEFINITIONS.items():
             c.execute("INSERT OR IGNORE INTO feature_flags(name,enabled,expires_at,updated_at,actor) VALUES(?,?,?,?,?)",
                       (flag_name,1 if definition['default'] else 0,None,now(),'system-default'))
@@ -1409,6 +1458,195 @@ def _worker_desired_states():
     except Exception:
         return {}
 
+
+def _portfolio_priority_rank(priority):
+    return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
+
+def _portfolio_queue_row(row):
+    if not row:
+        return None
+    item=dict(row)
+    item['eligible']=bool(item.get('eligible'))
+    return item
+
+def portfolio_queue_items(include_done=False):
+    with connect() as c:
+        if include_done:
+            rows=c.execute("""SELECT * FROM portfolio_queue
+                              ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                                       created_at, queue_id""").fetchall()
+        else:
+            rows=c.execute("""SELECT * FROM portfolio_queue
+                              WHERE status NOT IN ('done','dropped')
+                              ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                                       created_at, queue_id""").fetchall()
+    return [_portfolio_queue_row(row) for row in rows]
+
+def portfolio_queue_current_for_slot(global_slot):
+    try: slot=int(global_slot)
+    except Exception: return None
+    ts=now()
+    with connect() as c:
+        row=c.execute("""SELECT * FROM portfolio_queue
+                         WHERE worker_slot=? AND status IN ('claimed','running','verifying')
+                           AND (claim_expires IS NULL OR claim_expires>?)
+                         ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+    return _portfolio_queue_row(row)
+
+def portfolio_queue_has_project_assignment(project_id):
+    ts=now()
+    with connect() as c:
+        row=c.execute("""SELECT 1 FROM portfolio_queue
+                         WHERE project_id=? AND status IN ('claimed','running','verifying')
+                           AND (claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
+    return bool(row)
+
+def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='',source_url='',parent_queue_id=None,queue_id=None):
+    project_id=str(project_id or '').strip().lower()
+    title=str(title or '').strip()
+    priority=str(priority or 'P2').strip().upper()
+    if project_id not in PROJECT_INDEX:
+        raise ValueError('Onbekend project voor portfolio queue')
+    if not title:
+        raise ValueError('title is verplicht')
+    if priority not in ('P0','P1','P2','P3'):
+        raise ValueError('priority moet P0, P1, P2 of P3 zijn')
+    if not queue_id:
+        digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
+        queue_id=project_id+'-'+digest
+    queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
+    ts=now()
+    with connect() as c:
+        c.execute("""INSERT INTO portfolio_queue(
+            queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
+            created_at,updated_at,parent_queue_id
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(queue_id) DO UPDATE SET
+            project_id=excluded.project_id,title=excluded.title,priority=excluded.priority,
+            completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
+            updated_at=excluded.updated_at""",
+            (queue_id,project_id,title,priority,'queued',1,str(completion_criteria or ''),
+             str(source_url or ''),ts,ts,parent_queue_id))
+        row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
+    return _portfolio_queue_row(row)
+
+def portfolio_queue_allocate():
+    ts_dt=datetime.now(timezone.utc)
+    ts=ts_dt.isoformat()
+    lease_until=(ts_dt+timedelta(seconds=PORTFOLIO_QUEUE_LEASE_SECONDS)).isoformat()
+    selected=[]
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        c.execute("""UPDATE portfolio_queue
+                     SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                     WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                       AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
+        for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
+            row=c.execute("""SELECT * FROM portfolio_queue
+                             WHERE worker_slot=? AND status IN ('claimed','running','verifying')
+                               AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+                             ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+            if row:
+                c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
+                          (lease_until,ts,row['queue_id']))
+                row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
+                selected.append(_portfolio_queue_row(row))
+                continue
+            row=c.execute("""SELECT * FROM portfolio_queue
+                             WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                             ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                                      created_at, queue_id LIMIT 1""").fetchone()
+            if not row:
+                continue
+            c.execute("""UPDATE portfolio_queue
+                         SET status='claimed',worker_slot=?,claimed_at=?,claim_expires=?,updated_at=?,attempts=attempts+1
+                         WHERE queue_id=? AND status='queued' AND eligible=1""",
+                      (slot,ts,lease_until,ts,row['queue_id']))
+            row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
+            selected.append(_portfolio_queue_row(row))
+    return selected
+
+def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
+    result=str(result or '').strip().upper()
+    if result not in ('DONE','BLOCKED','CONTINUE'):
+        raise ValueError('queue result moet DONE, BLOCKED of CONTINUE zijn')
+    queue_id=str(queue_id or '').strip()
+    try: slot=int(global_slot)
+    except Exception: raise ValueError('geldige global worker slot vereist')
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute("""SELECT * FROM portfolio_queue
+                         WHERE queue_id=? AND worker_slot=? AND status IN ('claimed','running','verifying')""",
+                      (queue_id,slot)).fetchone()
+        if not row:
+            return {'updated':False,'reason':'assignment-mismatch'}
+        if result=='DONE':
+            c.execute("""UPDATE portfolio_queue SET status='done',eligible=0,evidence=?,blocker='',
+                         worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
+                      (str(evidence or '')[:4000],ts,queue_id))
+        elif result=='BLOCKED':
+            c.execute("""UPDATE portfolio_queue SET status='blocked',eligible=0,evidence=?,blocker=?,
+                         worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
+                      (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
+        else:
+            c.execute("""UPDATE portfolio_queue SET status='queued',eligible=1,evidence=?,
+                         worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
+                      (str(evidence or '')[:4000],ts,queue_id))
+    created=None
+    if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+        created=portfolio_queue_enqueue(
+            next_task.get('project_id') or row['project_id'],
+            next_task.get('title'),
+            next_task.get('priority') or 'P2',
+            next_task.get('completion_criteria') or '',
+            parent_queue_id=queue_id
+        )
+    return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created}
+
+def portfolio_queue_allocation():
+    active=[]
+    for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
+        item=portfolio_queue_current_for_slot(slot)
+        if item:
+            active.append(item)
+    used={}
+    workers=[]
+    for item in sorted(active,key=lambda x:int(x.get('worker_slot') or 99)):
+        project_id=item['project_id']
+        local_slot=used.get(project_id,0)+1
+        used[project_id]=local_slot
+        workers.append({
+            'worker_key':f'{project_id}::w{local_slot}',
+            'project_id':project_id,
+            'worker_slot':local_slot,
+            'global_worker_slot':int(item['worker_slot']),
+            'queue_id':item['queue_id'],
+            'priority':item['priority'],
+            'reason':'vps_queue:'+item['queue_id'],
+            'desired_state':'running',
+            'score':10000-_portfolio_priority_rank(item['priority'])*1000,
+        })
+    queued=portfolio_queue_items(False)
+    candidates=[{
+        'worker_key':None,'project_id':item['project_id'],'worker_slot':None,
+        'score':10000-_portfolio_priority_rank(item['priority'])*1000,
+        'reason':'vps_queue:'+item['queue_id'],'desired_state':'queued',
+        'queue_id':item['queue_id'],'priority':item['priority']
+    } for item in queued if item['status']=='queued' and item['eligible']]
+    return {
+        'limit':GLOBAL_CHATGPT_WORKER_LIMIT,
+        'workers':workers,
+        'keys':[item['worker_key'] for item in workers],
+        'projects':sorted({item['project_id'] for item in workers}),
+        'candidates':workers+candidates,
+        'queue_backend':'sqlite',
+        'queue_db':str(DB),
+        'notion_mirror_url':NOTION_PORTFOLIO_QUEUE_URL,
+        'dispatch_cooldown_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
+        'dispatch_rule':'vps_queue_claim_then_execute',
+    }
+
 def _project_ai_priority_score(project_id,state,target,resource_policy):
     resource_name=str((resource_policy.get(project_id) or {}).get('priority') or 'normal')
     score={'background':0,'normal':400,'high':800,'turbo':1200}.get(resource_name,400)
@@ -1440,50 +1678,7 @@ def _project_ai_priority_score(project_id,state,target,resource_policy):
     return int(score)
 
 def global_worker_allocation(states=None,targets=None):
-    states=states or autonomy_states()
-    targets=targets or runner_targets()
-    resource_policy=enhancements.load_resource_policy()
-    busy=_busy_ai_worker_keys()
-    desired=_worker_desired_states()
-    currently_allocated=_current_global_slot_keys()
-    candidates=[]
-    for project_id,target in targets.items():
-        state=states.get(project_id) or project_autonomy_state(project_id)
-        if not state.get('auto_start') or not state.get('allow_ai'):
-            continue
-        runtime=_autonomy_runtime(project_id)
-        if runtime and bool(runtime.get('manual_pause')):
-            continue
-        base_score=_project_ai_priority_score(project_id,state,target,resource_policy)
-        project_cap=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(target.get('worker_count') or 1)))
-        for slot in range(1,project_cap+1):
-            worker_key=f'{project_id}::w{slot}'
-            worker_state=desired.get(worker_key,'running')
-            if worker_state=='paused':
-                continue
-            if worker_state=='draining' and worker_key not in currently_allocated:
-                continue
-            score=base_score-(slot-1)*AI_SLOT_DIVERSITY_PENALTY
-            if worker_key in busy or worker_state=='draining':
-                score += 100000
-            candidates.append({
-                'worker_key':worker_key,'project_id':project_id,'worker_slot':slot,
-                'score':score,'reason':state.get('reason') or 'eligible',
-                'desired_state':worker_state,
-            })
-    candidates.sort(key=lambda item:(-item['score'],item['project_id'],item['worker_slot']))
-    selected=candidates[:GLOBAL_CHATGPT_WORKER_LIMIT]
-    return {
-        'limit':GLOBAL_CHATGPT_WORKER_LIMIT,
-        'workers':selected,
-        'keys':[item['worker_key'] for item in selected],
-        'projects':sorted({item['project_id'] for item in selected}),
-        'candidates':candidates,
-        'queue_url':PORTFOLIO_QUEUE_URL,
-        'queue_data_source':PORTFOLIO_QUEUE_DATA_SOURCE,
-        'dispatch_cooldown_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-        'dispatch_rule':'wait_until_generation_finished_then_continue',
-    }
+    return portfolio_queue_allocation()
 
 def _persist_global_worker_allocation(allocation):
     """Persist two stable portfolio slot identities across project-tab reallocation."""
@@ -1579,6 +1774,7 @@ def _autonomy_deactivate_project(project_id,reason):
     return True
 
 def autonomy_scheduler_tick():
+    portfolio_queue_allocate()
     states=autonomy_states()
     targets=runner_targets()
     for project_id,state in states.items():
@@ -1638,11 +1834,12 @@ def runner_targets():
     for r in rows:
         improvement=improvement_loop_state(r['project_id']) if r['project_id']==IMPROVEMENT_PROJECT_ID else None
         autonomy=project_autonomy_state(r['project_id'])
+        queue_active=portfolio_queue_has_project_assignment(r['project_id'])
         out[r['project_id']]={'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
                               'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
                               'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
-                              'auto_continue':bool(autonomy['allow_ai']),
-                              'auto_continue_delay_seconds':autonomy['continue_delay_seconds'],
+                              'auto_continue':queue_active or bool(autonomy['allow_ai']),
+                              'auto_continue_delay_seconds':0 if queue_active else autonomy['continue_delay_seconds'],
                               'vps_dispatch_only':autonomy.get('dispatch_mode')=='vps',
                               'ai_dispatch_interval_seconds':autonomy.get('min_ai_interval_seconds',600),
                               'autonomy':autonomy,'improvement':improvement}
@@ -1654,7 +1851,9 @@ def runner_worker_targets():
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
-            count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(cfg.get('worker_count') or 1)))
+            allocated_count=sum(1 for value in global_slots.values() if value and value <= GLOBAL_CHATGPT_WORKER_LIMIT and
+                                any(key.startswith(project_id+'::') and slot==value for key,slot in global_slots.items()))
+            count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,max(int(cfg.get('worker_count') or 1),allocated_count)))
             for slot in range(1,count+1):
                 c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
                           (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
@@ -1667,6 +1866,7 @@ def runner_worker_targets():
                 active=allocated and desired_state!='paused'
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
+                queue_item=portfolio_queue_current_for_slot(global_slot) if allocated else None
                 worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
                              if allocated else f"{cfg['name']} · worker {slot}/{count}")
                 out[worker_key]={
@@ -1674,7 +1874,8 @@ def runner_worker_targets():
                     'global_worker_slot':global_slot,'global_worker_count':GLOBAL_CHATGPT_WORKER_LIMIT,
                     'name':worker_name,'conversation_id':conversation_id,
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
-                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total),
+                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item),
+                    'queue_item':queue_item,
                     'desired_state':desired_state,'active':active,
                     'auto_continue':active and bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
@@ -1703,6 +1904,8 @@ def runner_record(payload):
     project_id=str(payload.get('baseProjectId') or raw_project_id.split('::w',1)[0])[:40]
     try: worker_slot=max(1,min(MAX_CHATGPT_WORKERS,int(payload.get('workerSlot') or (raw_project_id.split('::w',1)[1] if '::w' in raw_project_id else 1))))
     except Exception: worker_slot=1
+    try: global_worker_slot=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(payload.get('globalWorkerSlot') or worker_slot)))
+    except Exception: global_worker_slot=worker_slot
     match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
     with connect() as c:
         if not project_id and target:
@@ -1719,6 +1922,17 @@ def runner_record(payload):
             c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
+    if event=='portfolio-queue-result':
+        try:
+            portfolio_queue_finish(
+                global_worker_slot,
+                payload.get('queueItem'),
+                payload.get('queueResult'),
+                payload.get('queueEvidence') or '',
+                payload.get('nextTask') if isinstance(payload.get('nextTask'),dict) else None,
+            )
+        except Exception:
+            logging.exception('Portfolio queue result could not be applied')
     if project_id==IMPROVEMENT_PROJECT_ID:
         if event=='improvement-iteration-complete':
             improvement_loop_record(project_id,'iteration')
@@ -2129,6 +2343,26 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'error':'Ongeldige claimactie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
+            if u.path=='/api/portfolio-queue':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                action=str(payload.get('action') or 'enqueue').lower()
+                try:
+                    if action=='enqueue':
+                        item=portfolio_queue_enqueue(
+                            payload.get('project_id'),payload.get('title'),payload.get('priority') or 'P2',
+                            payload.get('completion_criteria') or '',payload.get('source_url') or '',
+                            payload.get('parent_queue_id'),payload.get('queue_id')
+                        )
+                        return self.reply({'ok':True,'item':item,'backend':'sqlite','time':now()})
+                    if action=='result':
+                        item=portfolio_queue_finish(
+                            payload.get('worker_slot'),payload.get('queue_id'),payload.get('result'),
+                            payload.get('evidence') or '',payload.get('next_task')
+                        )
+                        return self.reply({'ok':bool(item.get('updated')),'result':item,'time':now()},200 if item.get('updated') else 409)
+                    return self.reply({'error':'Ongeldige portfolio-queue actie'},400)
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
             if u.path=='/api/feature-flags':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
@@ -2224,6 +2458,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
             return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation})
+        if u.path=='/api/portfolio-queue':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
+            return self.reply({'backend':'sqlite','items':portfolio_queue_items(include_done),'allocation':global_worker_allocation(),'time':now()})
         if u.path=='/api/autonomy':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             states=autonomy_states()
