@@ -25,6 +25,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("setInterval(refreshTargets, 5000)", background)
         self.assertIn("if latest and (bool(latest['generating']) or bool(latest['sending'])):", server)
         self.assertIn("if prompt_id and ready_id < prompt_id:", server)
+        self.assertIn("A prompt from an older browser session must not permanently block", server)
+        self.assertIn("latest_id <= prompt_id or latest_generating or latest_sending", server)
         self.assertIn('"runner-auto-paused"', background)
         self.assertIn("WEAK_CYCLE_LIMIT = 2", background)
         self.assertIn("SHORT_CYCLE_MS = 60 * 1000", background)
