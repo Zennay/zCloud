@@ -28,6 +28,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("BEWUSTE WORKER-HANDOFF", userscript)
         self.assertIn("ZCLOUD_QUALITY_RETRY", userscript)
         self.assertIn("same-assignment-non-stopping-execution-recovery", userscript)
+        self.assertIn("data-zcloud-violentmonkey-ready", userscript)
         self.assertIn("DOE HET NU ECHT", userscript)
         self.assertNotIn("Gebruik High thinking", userscript)
 
@@ -41,6 +42,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("data-zcloud-force-initial-dispatch", background)
         self.assertIn("violentmonkey-binding-ready", background)
         self.assertIn("webextension-tab-bridge-only", background)
+        self.assertIn("violentmonkey-missing-fallback", background)
+        self.assertIn("legacy-extension-runner-temporarily-retained", background)
+        self.assertIn("violentmonkey-primary-takeover", background)
         self.assertIn(
             'VIOLENTMONKEY_PRIMARY_RUNNER && (command.action === "push" || command.action === "drain")',
             background,
