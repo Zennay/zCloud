@@ -36,7 +36,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn("public/zcloud-worker.user.js running in Violentmonkey", background)
+        self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
         self.assertIn("data-zcloud-force-initial-dispatch", background)
