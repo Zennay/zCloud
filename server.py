@@ -2392,7 +2392,14 @@ class Handler(BaseHTTPRequestHandler):
                         if not rate_limited:
                             if is_worker:
                                 if not configs[base_project_id].get('active') and action!='pause':
-                                    return self.reply({'error':'Start eerst het project voordat je deze worker bedient'},409)
+                                    if action not in ('start','new_chat'):
+                                        return self.reply({'error':'Start eerst het project voordat je deze worker bedient'},409)
+                                    # Worker activation is authoritative for a queue-owned slot. Resume the
+                                    # parent project in the same SQLite transaction instead of requiring a
+                                    # separate project-level start command that can race after Firefox restarts.
+                                    c.execute('INSERT OR IGNORE INTO autonomy_runtime(project_id,initialized_at,manual_pause,last_reason) VALUES(?,?,0,?)',(base_project_id,now(),'worker_auto_resume'))
+                                    c.execute("UPDATE autonomy_runtime SET manual_pause=0,last_reason='worker_auto_resume' WHERE project_id=?",(base_project_id,))
+                                    c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(base_project_id,))
                                 slot=int(worker_cfg.get('worker_slot') or 1)
                                 current=worker_cfg.get('desired_state') or 'running'
                                 if action=='push' and current!='running':
