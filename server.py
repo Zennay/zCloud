@@ -1510,8 +1510,16 @@ def _autonomy_enqueue_worker_push(project_id,worker_slot,reason,min_interval_sec
         ).fetchone()
         prompt_id=int((last_prompt or {'id':0})['id'] or 0)
         ready_id=int((last_ready or {'id':0})['id'] or 0)
+        # A prompt from an older browser session must not permanently block the
+        # first dispatch after a runner restart/recovery. If a newer, idle
+        # runner event exists, the old cycle has been superseded and the
+        # normal global 300-second cooldown remains the final guard.
+        latest_id=int((latest or {'id':0})['id'] or 0)
+        latest_generating=bool(latest['generating']) if latest else False
+        latest_sending=bool(latest['sending']) if latest else False
         if prompt_id and ready_id < prompt_id:
-            return False
+            if latest_id <= prompt_id or latest_generating or latest_sending:
+                return False
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (worker_key,'push','pending',ts,ts,None))
         c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',
