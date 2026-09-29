@@ -54,18 +54,6 @@ WORKER_LANES = (
 PROJECT_INDEX = {p['id']: p for p in json.loads((ROOT/'projects.json').read_text())}
 
 VPS_EXECUTION_POLICY_FILE = ROOT / 'vps-execution-policy.json'
-_VPS_EXECUTION_POLICY_FALLBACK = {
-    'schema_version': 1,
-    'id': 'zcloud-vps-execution-lane',
-    'enabled': True,
-    'transport': 'github-actions-self-hosted-runner',
-    'prompt_directive': (
-        'CENTRALE VPS/SSH-ROUTE: Gebruik voor shell-, install-, build-, test-, deploy-, service- en '
-        'SSH-werk standaard de zCloud VPS execution lane via de self-hosted runner. '
-        'Stop niet met "SSH ontbreekt" voordat deze route aantoonbaar is geprobeerd. '
-        'Leg runner/workflow-id, exitcode en concreet bewijs vast.'
-    ),
-}
 
 def _load_vps_execution_policy():
     try:
@@ -76,9 +64,10 @@ def _load_vps_execution_policy():
         if not directive:
             raise ValueError('vps-execution-policy.json requires prompt_directive')
         return value
-    except Exception:
-        logging.exception('Invalid or missing VPS execution policy; using fail-safe fallback')
-        return dict(_VPS_EXECUTION_POLICY_FALLBACK)
+    except Exception as exc:
+        raise RuntimeError(
+            'VPS execution policy is required; refusing to start with an implicit fallback'
+        ) from exc
 
 VPS_EXECUTION_POLICY = _load_vps_execution_policy()
 VPS_EXECUTION_DIRECTIVE = str(VPS_EXECUTION_POLICY['prompt_directive']).strip() + ' '
