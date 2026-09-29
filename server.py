@@ -2710,7 +2710,7 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
             return self.reply({'error':'Niet gevonden'},404)
-        files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/ftmo-readiness.css':'ftmo-readiness.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest'}
+        files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/ftmo-readiness.css':'ftmo-readiness.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest','/zcloud-worker.user.js':'zcloud-worker.user.js'}
         if u.path not in files:return self.reply({'error':'Niet gevonden'},404)
         path=ROOT/'public'/files[u.path]
         return self.reply(path.read_bytes(),kind=mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
