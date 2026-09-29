@@ -502,7 +502,8 @@ function runProject(cfg) {
     if (paused || draining || sending || stopButton()) return false;
     const draft = composerText();
     if (draft === null) { status("send-blocked", {reason: "composer-missing"}); return false; }
-    if (draft && draft !== PROMPT) { status("send-blocked", {reason: "draft-present"}); return false; }
+    if (draft && draft !== PROMPT && !forceInitialDispatch) { status("send-blocked", {reason: "draft-present"}); return false; }
+    if (draft && draft !== PROMPT && forceInitialDispatch) status("stale-draft-replaced", {reason: "forced-initial-dispatch"});
     sending = true;
     try {
       const ok = draft === PROMPT || await fill(PROMPT);
@@ -696,7 +697,7 @@ function runProject(cfg) {
     composerMissingSince = 0;
     if ((forceInitialDispatch || !vpsDispatchOnly) && !SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
         (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
-      if (draft === "" || draft === PROMPT) {
+      if (forceInitialDispatch || draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
         if (!(await canAutoContinue())) {
           status("auto-continue-blocked", {reason: "finished-maintain"});
@@ -787,7 +788,7 @@ function runProject(cfg) {
     if (stopButton()) { status("startup-blocked", {reason: "generation-active"}); return; }
     const draft = composerText();
     if (draft === null) { status("startup-waiting", {reason: "composer-missing"}); return; }
-    if (draft && draft !== PROMPT) { status("startup-blocked", {reason: "draft-present"}); return; }
+    if (draft && draft !== PROMPT && !forceInitialDispatch) { status("startup-blocked", {reason: "draft-present"}); return; }
     send(draft === PROMPT ? "startup-adopted-draft" : "startup-idle").catch(error =>
       status("runner-error", {error: String(error?.message || error)})
     );
