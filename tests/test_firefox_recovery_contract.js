@@ -52,13 +52,22 @@ for (const marker of [
   "Een ontbrekende claim is geen reden om na statuscontrole te stoppen",
   "runner-replacement-handoff-consumed",
   "worker-replacement-handoff-consumed",
-  "const BASE_PROMPT = cfg.prompt",
-  "let PROMPT = REPLACEMENT_HANDOFF",
+  "let BASE_PROMPT = cfg.prompt",
+  "let PROMPT = promptWithReplacementHandoff(BASE_PROMPT)",
   "PROMPT = BASE_PROMPT",
   "return clearReplacementHandoffTag(tabId).then",
   'target.desired_state === "paused"',
   'target.desired_state === "draining"',
   "if (pendingTabHandoffs.has(target.project_id)) continue;",
+  "function portfolioAssignmentReady(target)",
+  "runner-config-update",
+  "runner-config-updated",
+  "assignment-invalid",
+  "assignment-refresh-failed",
+  "async function syncRunnerConfig",
+  "runnerConfigChanged(previous, target)",
+  "VPS_QUEUE_ASSIGNMENT id=",
+  "Jij bent Worker ",
 ]) {
   assert.ok(background.includes(marker), "missing recovery contract marker: " + marker);
 }
@@ -117,4 +126,18 @@ assert.ok(
   runBlock.indexOf("button.click();") <
     runBlock.indexOf('type: "runner-replacement-handoff-consumed"'),
   "replacement handoff may only be cleared after the first prompt was actually sent"
+);
+
+const refreshTargetStart = background.indexOf("async function refreshTargets");
+const refreshTargetEnd = background.indexOf("async function inject");
+assert.ok(refreshTargetStart >= 0 && refreshTargetEnd > refreshTargetStart, "refreshTargets block missing");
+const refreshBlock = background.slice(refreshTargetStart, refreshTargetEnd);
+assert.ok(
+  refreshBlock.includes("await syncRunnerConfig(assignedTabId, target)"),
+  "an already-open worker tab must receive the freshly rendered VPS assignment"
+);
+assert.ok(
+  refreshBlock.indexOf("portfolioAssignmentReady(target)") <
+    refreshBlock.indexOf('browser.tabs.create({url: target.url'),
+  "invalid assignments must fail closed before opening a worker tab"
 );

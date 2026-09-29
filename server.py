@@ -132,7 +132,8 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         'Notion mag alleen als projectdocumentatie/HQ/handoff worden gelezen of bijgewerkt; plan-gates, AI-search of query_data_sources zijn nooit een WAIT/blocker. '
         '2) Volg Project → HQ/Handoff/repo/runtime. Voor repo-writes: zCloud preflight/task-claim + open PR/branch check; geen dubbelwerk. '
         '3) EXECUTION-FIRST: een status-only/read-only cyclus is ongeldig. Voor je antwoord moet er minimaal één echte write, run/job, geverifieerde evidence of materiële state-change zijn. '
-        'Als de assignment echt niet verder kan, bewijs de concrete blocker; verzin geen WAIT. '
+        'RECOVERY-FIRST: behandel een onverwachte blocker eerst als een defect: onderzoek de root cause, probeer bestaande repo/runner/VPS-routes, herstel orchestration indien veilig en retry voordat je BLOCKED/WAIT retourneert. '
+        'Als de assignment echt niet verder kan, bewijs de concrete blocker én de uitgevoerde herstelpogingen; verzin geen WAIT. '
         '4) AUTONOMY-FIRST voor herhaalbaar werk: bouw een restartable loop/job met persistente state, idempotente executor, verifier, volgende veilige stap en machineleesbaar receipt; timer alleen telt niet. '
         '5) Done alleen wanneer ALLE Completion Criteria bewezen zijn met concrete Evidence (commit/PR, groene test, run-id, canary, artifact of meting). '
         'CONTINUE is VERBODEN na alleen reads/checks. '
@@ -1943,10 +1944,14 @@ def runner_worker_targets():
                 worker_key=f'{project_id}::w{slot}'
                 global_slot=global_slots.get(worker_key)
                 allocated=global_slot is not None
-                active=allocated and desired_state!='paused'
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
                 queue_item=portfolio_queue_current_for_slot(global_slot) if allocated else None
+                assignment_ready=bool(
+                    allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
+                    and int(queue_item.get('worker_slot') or 0)==int(global_slot)
+                )
+                active=allocated and desired_state!='paused'
                 worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
                              if allocated else f"{cfg['name']} · worker {slot}/{count}")
                 out[worker_key]={
@@ -1956,6 +1961,7 @@ def runner_worker_targets():
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item),
                     'queue_item':queue_item,
+                    'assignment_ready':assignment_ready,
                     'desired_state':desired_state,'active':active,
                     'auto_continue':active and bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
