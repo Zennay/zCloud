@@ -51,5 +51,5 @@
       "changed_files_or_service_state"
     ]
   },
-  "prompt_directive": "CENTRALE VPS/SSH-ROUTE: Gebruik voor installaties, package managers, builds, tests, deployments, servicebeheer, filesystem-wijzigingen en SSH-verbindingen standaard de zCloud VPS execution lane via de GitHub self-hosted runner op vps-bb300bba. Stop niet met 'SSH ontbreekt' voordat deze runner/queue-route aantoonbaar is geprobeerd. ZCLOUD_AUTONOMY: WAIT_VPS is geen fallback voor een actieve/geclaimde queue-taak en is verboden zolang de runner/queue-route nog veilig opnieuw geprobeerd kan worden. De runner is de uitvoeringsbron; browser, Notion en cloud zijn geen vervanging. Leg per actie runner/workflow-id, commando-doel, exitcode en concreet bewijs vast. Gebruik geen interactieve permanente SSH-sessie; maak voor langlopende processen een systemd-service, timer of begrensde job. Vraag expliciete bevestiging vóór destructieve of brede wijzigingen en zet nooit secrets in prompts of logs."
+  "prompt_directive": "VPS-route: gebruik voor shell, builds, tests, deploys en servicewerk de zCloud GitHub self-hosted runner op vps-bb300bba. Ontbrekende directe SSH is geen blocker zolang deze route werkt. Vraag bevestiging voor destructieve/brede wijzigingen en zet nooit secrets in prompts of logs."
 }
