@@ -41,6 +41,47 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("sqlite", allocation["queue_backend"])
         self.assertEqual(["cloud", "raiseai"], [worker["project_id"] for worker in allocation["workers"]])
 
+    def test_dynamic_worker_limit_reconciles_three_slots_immediately(self):
+        server.MAX_CHATGPT_WORKERS = 3
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
+        server.portfolio_queue_enqueue("raiseai", "second", "P1", "prove second")
+        server.portfolio_queue_enqueue("haxlab", "third", "P2", "prove third")
+
+        settings = server.set_dynamic_worker_limit(3, "test-dashboard")
+
+        self.assertEqual(3, settings["count"])
+        self.assertTrue(settings["reconciled"])
+        self.assertEqual(3, settings["allocated_workers"])
+        self.assertEqual(3, len(server.global_worker_allocation()["workers"]))
+        with server.connect() as conn:
+            row = conn.execute(
+                "SELECT value,actor FROM runtime_settings WHERE key=?",
+                (server.DYNAMIC_WORKER_SETTING_KEY,),
+            ).fetchone()
+        self.assertEqual("3", row["value"])
+        self.assertEqual("test-dashboard", row["actor"])
+
+    def test_dynamic_worker_limit_downscale_releases_excess_slots(self):
+        server.MAX_CHATGPT_WORKERS = 3
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
+        server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
+        server.portfolio_queue_enqueue("raiseai", "second", "P1", "prove second")
+        server.portfolio_queue_enqueue("haxlab", "third", "P2", "prove third")
+        server.portfolio_queue_allocate()
+        server._persist_global_worker_allocation(server.global_worker_allocation())
+
+        settings = server.set_dynamic_worker_limit(1, "test-dashboard")
+
+        self.assertEqual(1, settings["allocated_workers"])
+        with server.connect() as conn:
+            excess = conn.execute(
+                "SELECT COUNT(*) AS n FROM portfolio_queue WHERE worker_slot>1"
+            ).fetchone()["n"]
+            slots = conn.execute("SELECT COUNT(*) AS n FROM ai_global_slots").fetchone()["n"]
+        self.assertEqual(0, excess)
+        self.assertEqual(1, slots)
+
     def test_done_releases_slot_and_next_item_is_claimed(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
         second = server.portfolio_queue_enqueue("haxlab", "second", "P1", "prove second")
