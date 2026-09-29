@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "scope": "zcloud-portfolio-autonomy-contract",
+  "rule": "A project may be called autonomous only when its VPS/local executor can persist state, execute the next allowed step, verify the result, select the next safe step, recover idempotently after restart, and emit a machine-readable receipt without a ChatGPT or zCloud worker.",
+  "required_for_new_projects": {
+    "execution_model": "deterministic_local_loop | bounded_job_orchestrator | ai_assisted | human_gate",
+    "state_and_receipt": true,
+    "idempotent_executor": true,
+    "next_step_transition": true,
+    "restart_recovery": true,
+    "resource_budget": true,
+    "failure_policy": "fail_closed_or_explicit_skip_only",
+    "completion_evidence": true
+  },
+  "projects": {
+    "ftmo": {
+      "execution_model": "deterministic_local_loop",
+      "owner": "VPS systemd timer",
+      "chatgpt_required_for_routine_progress": false,
+      "contract_status": "implemented_and_live_verified",
+      "next_step": "generation closure automatically activates the next append-only chronological generation"
+    },
+    "haxlab": {
+      "execution_model": "deterministic_local_loop",
+      "owner": "VPS autonomy timer",
+      "chatgpt_required_for_routine_progress": false,
+      "contract_status": "implemented; verify each release with a live generation-transition receipt",
+      "next_step": "evaluation/promotion or rejection automatically schedules the next generation"
+    },
+    "ulab": {
+      "execution_model": "bounded_job_orchestrator",
+      "owner": "VPS job runner",
+      "chatgpt_required_for_routine_progress": false,
+      "contract_status": "requires an explicit runnable workload; no artificial compute",
+      "next_step": "queued compatibility jobs run with bounded concurrency and release resources"
+    },
+    "zssh": {
+      "execution_model": "ai_assisted",
+      "chatgpt_required_for_routine_progress": true,
+      "contract_status": "must receive an autonomy design before recurring build/test work is labelled autonomous"
+    },
+    "supa": {
+      "execution_model": "ai_assisted",
+      "chatgpt_required_for_routine_progress": true,
+      "contract_status": "must receive an autonomy design before recurring build/test work is labelled autonomous"
+    },
+    "raiseai": {
+      "execution_model": "ai_assisted",
+      "chatgpt_required_for_routine_progress": true,
+      "contract_status": "must receive an autonomy design before recurring build/test work is labelled autonomous"
+    },
+    "cloud": {
+      "execution_model": "bounded_job_orchestrator",
+      "owner": "zCloud VPS scheduler",
+      "chatgpt_required_for_routine_progress": false,
+      "contract_status": "scheduler may route only genuine AI-required work; it must never replace local deterministic executors"
+    }
+  }
+}
