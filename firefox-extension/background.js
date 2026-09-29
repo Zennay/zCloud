@@ -202,6 +202,7 @@ function runProject(cfg) {
   let vpsDispatchOnly = cfg.vps_dispatch_only === true;
   let autoContinueDelayMs = Math.max(0, Number(cfg.auto_continue_delay_seconds ?? 0) * 1000);
   const CHECK_MS = 5000;
+  const RESPONSE_STABLE_MS = 8000;
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
   const COMPOSER_RECOVERY_MS = 45 * 1000;
@@ -222,15 +223,28 @@ function runProject(cfg) {
   let lastStartupStatusAt = 0;
   let lastStartupAttemptAt = 0;
   let composerMissingSince = 0;
+  let responseCandidateText = "";
+  let responseCandidateSince = 0;
   let tickTimer = null;
   let heartbeatTimer = null;
 
   function stopButton() {
-    return document.querySelector('button[data-testid="stop-button"]') ||
-      [...document.querySelectorAll("button")].find(b => {
-        const x = ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).toLowerCase();
-        return x.includes("stop") || x.includes("stoppen");
-      });
+    const direct = document.querySelector('button[data-testid="stop-button"]');
+    if (direct) return direct;
+    return [...document.querySelectorAll("button")].find(b => {
+      const aria = (b.getAttribute("aria-label") || "").trim().toLowerCase();
+      const text = (b.textContent || "").trim().toLowerCase();
+      return aria.includes("stop generating") ||
+        aria.includes("stop generation") ||
+        aria.includes("stop response") ||
+        aria.includes("stoppen met genereren") ||
+        text === "stop generating" ||
+        text === "stoppen met genereren";
+    }) || null;
+  }
+  function generationActive() {
+    const expected = awaitingGeneration || sawGeneration || sending;
+    return expected && !!stopButton();
   }
   function composer() {
     return document.querySelector("#prompt-textarea") ||
@@ -268,7 +282,7 @@ function runProject(cfg) {
       title: document.title,
       event: event,
       at: new Date().toISOString(),
-      generating: !!stopButton(),
+      generating: generationActive(),
       sending: sending,
       progressAt: new Date(lastProgressAt).toISOString(),
       assistantCharacters: text.length,
@@ -431,6 +445,8 @@ function runProject(cfg) {
       lastPromptSentAt = Date.now();
       lastProgressAt = Date.now();
       sawGeneration = false;
+      responseCandidateText = "";
+      responseCandidateSince = 0;
       awaitingGeneration = true;
       generationDeadline = Date.now() + 120000;
       finishedAt = 0;
@@ -443,7 +459,7 @@ function runProject(cfg) {
   }
   async function tick() {
     if (paused) return;
-    const generating = !!stopButton();
+    const generating = generationActive();
     const text = assistantText();
     const now = Date.now();
     if (lastGenerating === null) {
@@ -479,19 +495,31 @@ function runProject(cfg) {
     }
     if (awaitingGeneration) {
       if (text && text !== lastText) {
+        if (text !== responseCandidateText) {
+          responseCandidateText = text;
+          responseCandidateSince = now;
+          lastProgressAt = now;
+          status("generation-progress", {reason: "response-detected-without-stop-button"});
+          return;
+        }
+        if (now - responseCandidateSince < RESPONSE_STABLE_MS) return;
         awaitingGeneration = false;
         sawGeneration = true;
         finishedAt = now;
         finishSignalsReported = false;
         lastText = text;
         lastProgressAt = now;
-        status("generation-started", {reason: "response-detected-between-polls"});
-        status("generation-finished", {reason: "response-detected-between-polls"});
+        responseCandidateText = "";
+        responseCandidateSince = 0;
+        status("generation-started", {reason: "stable-response-detected-between-polls"});
+        status("generation-finished", {reason: "stable-response-detected-between-polls"});
         return;
       }
       if (now < generationDeadline) return;
       awaitingGeneration = false;
       lastPromptSentAt = 0;
+      responseCandidateText = "";
+      responseCandidateSince = 0;
       status("generation-not-started", {reason: "no-generation-after-send"});
       return;
     }
