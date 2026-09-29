@@ -22,6 +22,11 @@ class WorkerPreflightTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-preflight-")
         self.original_db = server.DB
+        # These tests intentionally simulate the legacy multi-worker pool; production remains one slot.
+        self.original_global_limit = server.GLOBAL_CHATGPT_WORKER_LIMIT
+        self.original_max_workers = server.MAX_CHATGPT_WORKERS
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        server.MAX_CHATGPT_WORKERS = 2
         self.original_cache = server.CACHE
         self.original_vps_health = server.coordination_vps_health
         server.DB = Path(self.tmp.name) / "history.db"
@@ -41,6 +46,8 @@ class WorkerPreflightTests(unittest.TestCase):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=2)
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = self.original_global_limit
+        server.MAX_CHATGPT_WORKERS = self.original_max_workers
         server.DB = self.original_db
         server.CACHE = self.original_cache
         server.coordination_vps_health = self.original_vps_health
