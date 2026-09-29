@@ -62,7 +62,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         end = background.index("async function commandResult(", start)
         inject_block = background[start:end]
         primary = inject_block.index("if (VIOLENTMONKEY_PRIMARY_RUNNER)")
-        bridge_return = inject_block.index("return;", primary)
+        bridge_return = inject_block.index('return {mode: "violentmonkey"};', primary)
         legacy_injection = inject_block.index("runProject.toString()", primary)
         self.assertLess(primary, bridge_return)
         self.assertLess(bridge_return, legacy_injection)
