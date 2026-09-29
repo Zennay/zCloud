@@ -1943,10 +1943,14 @@ def runner_worker_targets():
                 worker_key=f'{project_id}::w{slot}'
                 global_slot=global_slots.get(worker_key)
                 allocated=global_slot is not None
-                active=allocated and desired_state!='paused'
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
                 queue_item=portfolio_queue_current_for_slot(global_slot) if allocated else None
+                assignment_ready=bool(
+                    allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
+                    and int(queue_item.get('worker_slot') or 0)==int(global_slot)
+                )
+                active=assignment_ready and desired_state!='paused'
                 worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
                              if allocated else f"{cfg['name']} · worker {slot}/{count}")
                 out[worker_key]={
@@ -1956,6 +1960,7 @@ def runner_worker_targets():
                     'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item),
                     'queue_item':queue_item,
+                    'assignment_ready':assignment_ready,
                     'desired_state':desired_state,'active':active,
                     'auto_continue':active and bool(cfg.get('auto_continue',True)),
                     'auto_continue_delay_seconds':int(cfg.get('auto_continue_delay_seconds') or 0),
