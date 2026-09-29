@@ -4,7 +4,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 class SimpleLanguageTests(unittest.TestCase):
-    def test_main_ui_uses_plain_dutch_labels(self):
+    def test_main_ui_uses_plain_english_labels(self):
         app = (ROOT / "public" / "app.js").read_text()
         for old in (
             "Runner live",
@@ -18,13 +18,13 @@ class SimpleLanguageTests(unittest.TestCase):
         ):
             self.assertNotIn(old, app)
         for expected in (
-            "ChatGPT-automatisering",
-            "Laatst actief",
-            "eigen werkgebied",
-            "Code- en projectupdates",
-            "Projectstappen · Amsterdamse tijd",
-            "<h2>Projectstappen</h2>",
-            "Projectstappen afgerond",
+            "ChatGPT automation",
+            "Last active",
+            "own workspace",
+            "Code and project updates",
+            "Project steps · Amsterdam time",
+            "<h2>Project steps</h2>",
+            "Project steps completed",
         ):
             self.assertIn(expected, app)
 
@@ -40,7 +40,7 @@ class SimpleLanguageTests(unittest.TestCase):
             "last_generation_finished",
             "last_prompt_sent",
             "projectCardOps(p)",
-            "nog geen taak geclaimd",
+            "no task claimed yet",
         ):
             self.assertIn(expected, app)
         self.assertIn(".project-card-ops", css)
@@ -63,12 +63,12 @@ class SimpleLanguageTests(unittest.TestCase):
             "<h2>Milestone progress</h2>",
         ):
             self.assertNotIn(old, js)
-        self.assertIn("<h2>FTMO-teststatus</h2>", js)
-        self.assertIn("realistische FTMO-simulatietest", js)
-        self.assertIn("Risico per trade", js)
-        self.assertIn("Nog niet gemeten", js)
+        self.assertIn("<h2>FTMO test status</h2>", js)
+        self.assertIn("Realistic FTMO simulation test", js)
+        self.assertIn("Risk per trade", js)
+        self.assertIn("Not measured yet", js)
         self.assertIn('details class="section-details readiness-details"', js)
-        self.assertIn("Technische testdetails", js)
+        self.assertIn("Technical test details", js)
 
     def test_backend_user_facing_copy_avoids_raw_heartbeat_and_rpath_terms(self):
         py = (ROOT / "enhancements.py").read_text()
