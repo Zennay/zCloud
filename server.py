@@ -508,7 +508,7 @@ def collect():
         p['last_chatgpt_run']=watch_last_run(p['id'])
     with connect() as c:
         c.executemany('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)',events)
-    data={'version':3,'time':now(),'host':host_metrics(),'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam'}
+    data={'version':3,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam'}
     try: enhancements.evaluate_alerts(data,runner_status(),DB)
     except Exception: logging.exception('Alert evaluation failed')
     return data

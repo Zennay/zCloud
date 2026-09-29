@@ -76,7 +76,14 @@
       tech.push('<div class="resource-tech-row"><strong>'+esc(p.name)+'</strong><span>CPU '+cpu+' · RAM '+mem+' · weight '+esc(weights[r.priority]||400)+'</span></div>');
       return '<div class="resource-row"><div class="resource-copy"><strong>'+esc(p.name)+'</strong><small>'+state+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Priority for '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Background</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normal</option><option value="high" '+(r.priority==='high'?'selected':'')+'>High</option><option value="turbo" '+(r.priority==='turbo'?'selected':'')+'>Turbo</option></select></div>';
     }).join('');
-    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>Live allocation</span></div><div class="resource-tech-list">'+tech.join('')+'</div><p>Weights: Background 100 · Normal 400 · High 800 · Turbo 3000. This is the allocation used when multiple projects need CPU/I/O at the same time; it is not a hard CPU limit.</p></section>';
+    var summary=DATA.resource_summary||{};
+    var summaryRow='';
+    if(summary.host_cpu_percent!=null){
+      var attributed=summary.attributed_cpu_percent==null?'being measured':num(summary.attributed_cpu_percent)+'%';
+      var unattributed=summary.unattributed_cpu_percent==null?'being measured':num(summary.unattributed_cpu_percent)+'%';
+      summaryRow='<div class="resource-tech-row resource-tech-summary"><strong>VPS total</strong><span>CPU '+num(summary.host_cpu_percent)+'% · attributed '+attributed+' · system/unattributed '+unattributed+' · '+esc(summary.cores||'?')+' cores</span></div>';
+    }
+    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>Live allocation</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section>';
     return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Live CPU, memory and worker allocation by project</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
   }
   function incidentPanel(){
