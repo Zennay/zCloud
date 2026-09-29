@@ -54,3 +54,11 @@ jobs:
             --path public/style.css \
             --actor "github-actions-vps-deploy" \
             --json
+
+      - name: Apply low-priority Firefox scheduler profile
+        run: |
+          install -D -m 0644 "$GITHUB_WORKSPACE/deploy/chatgpt-firefox.service" "$HOME/.config/systemd/user/chatgpt-firefox.service"
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+          systemctl --user daemon-reload
+          systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100 Nice=10
