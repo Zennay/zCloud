@@ -133,10 +133,11 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         'VPS/shell/deploy/test via de self-hosted runner-route. '
         'DONE alleen als alle completion criteria aantoonbaar gehaald zijn; CONTINUE alleen na echte voortgang. '
         + project_guard +
-        f'OUTPUT: ZCLOUD_QUEUE_ITEM: {queue_id}; ZCLOUD_QUEUE_RESULT: DONE|BLOCKED|CONTINUE; '
-        'ZCLOUD_QUEUE_EVIDENCE: <concreet bewijs>. '
-        'Daarna ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE en '
-        'ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE.'
+        f'OUTPUT exact:\nZCLOUD_QUEUE_ITEM: {queue_id}\n'
+        'ZCLOUD_QUEUE_RESULT: DONE|BLOCKED|CONTINUE\n'
+        'ZCLOUD_QUEUE_EVIDENCE: <concreet bewijs>\n'
+        'ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE\n'
+        'ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE'
     )
 
 RUNNER_DEFAULTS = {
