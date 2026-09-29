@@ -29,7 +29,27 @@ jobs:
           clean: true
           fetch-depth: 1
 
+      - name: Reject stale workflow-run revisions
+        id: freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.workflow_run.head_sha }}"
+          current="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ -z "$current" ]]; then
+            echo "Could not resolve current main SHA" >&2
+            exit 2
+          fi
+          if [[ "$current" != "$expected" ]]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "STALE_DEPLOY_SKIPPED expected=$expected current=$current"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "CURRENT_MAIN_CONFIRMED sha=$current"
+          fi
+
       - name: Promote backend and autonomy policy
+        if: steps.freshness.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -41,6 +61,7 @@ jobs:
             --json
 
       - name: Promote Firefox runner without enabling chats
+        if: steps.freshness.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -49,6 +70,7 @@ jobs:
             --json
 
       - name: Promote mobile UI
+        if: steps.freshness.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -61,6 +83,7 @@ jobs:
             --json
 
       - name: Promote translated project catalog
+        if: steps.freshness.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -69,6 +92,7 @@ jobs:
             --json
 
       - name: Apply low-priority Firefox scheduler profile
+        if: steps.freshness.outputs.deploy == 'true'
         run: |
           install -D -m 0644 "$GITHUB_WORKSPACE/deploy/chatgpt-firefox.service" "$HOME/.config/systemd/user/chatgpt-firefox.service"
           export XDG_RUNTIME_DIR=/run/user/1000
