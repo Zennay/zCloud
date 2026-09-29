@@ -1777,7 +1777,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         created=portfolio_queue_enqueue(
             row['project_id'],
             'Continue project autonomously with the next concrete implementation step',
-            row['priority'] or 'P2',
+            'P3',
             'Select the next safe unblocked implementation/deploy/test step from the project HQ/handoff, execute it, and prove a material state change. Audit-only, checklist-only and status-only output do not satisfy completion.',
             parent_queue_id=queue_id
         )
