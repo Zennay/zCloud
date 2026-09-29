@@ -1,0 +1,82 @@
+name: Verify cloud worker actually sends
+
+on:
+  push:
+    branches: [ops/promote-high-nonblocking-20260929]
+    paths:
+      - .github/workflows/verify-cloud-worker-send.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 4
+    steps:
+      - name: Verify current cloud worker crosses High mismatch and sends
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          START="2026-09-29T21:23:53+00:00"
+
+          def get(path):
+              with urllib.request.urlopen(BASE+path,timeout=12) as r:
+                  return json.load(r)
+
+          def events():
+              conn=sqlite3.connect(f"file:{DB}?mode=ro",uri=True,timeout=5)
+              conn.row_factory=sqlite3.Row
+              rows=conn.execute(
+                  "SELECT id,ts,event,reason,error,generating,sending FROM runner_events "
+                  "WHERE project_id='cloud' AND ts>=? ORDER BY id DESC LIMIT 80",
+                  (START,)
+              ).fetchall()
+              commands=conn.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at,result "
+                  "FROM runner_commands WHERE project_id IN ('cloud','cloud::w1') "
+                  "ORDER BY id DESC LIMIT 12"
+              ).fetchall()
+              conn.close()
+              return [dict(x) for x in rows],[dict(x) for x in commands]
+
+          latest_events=[]
+          latest_commands=[]
+          for _ in range(20):
+              target=get("/api/runner-targets")
+              allocation=(target.get("global_allocation") or {}).get("workers") or []
+              current=next((w for w in allocation if w.get("worker_key")=="cloud::w1"),None)
+              if not current:
+                  raise SystemExit(f"cloud::w1 is no longer the queue-owned worker: {allocation}")
+              latest_events,latest_commands=events()
+              sent=next((e for e in latest_events if e.get("event")=="prompt-sent"),None)
+              blocked=next((e for e in latest_events if e.get("event")=="send-blocked" and e.get("reason")=="high-thinking-required"),None)
+              proceeding=next((e for e in latest_events if e.get("event")=="thinking-effort-high-unavailable-proceeding"),None)
+              generation=next((e for e in latest_events if e.get("event")=="generation-started"),None)
+              if blocked:
+                  raise SystemExit(f"High still blocked a send after hotfix: {blocked}")
+              if sent:
+                  print("CLOUD_SEND_VERIFIED="+json.dumps({
+                      "queue_id":current.get("queue_id"),
+                      "priority":current.get("priority"),
+                      "prompt_sent":sent,
+                      "high_unavailable_proceeding":proceeding,
+                      "generation_started":generation,
+                      "dispatch_cooldown_seconds":(target.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
+                  },ensure_ascii=False,sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(5)
+
+          print("CLOUD_EVENTS="+json.dumps(latest_events,ensure_ascii=False,sort_keys=True))
+          print("CLOUD_COMMANDS="+json.dumps(latest_commands,ensure_ascii=False,sort_keys=True))
+          raise SystemExit("cloud worker did not emit prompt-sent inside bounded verification window")
+          PY
