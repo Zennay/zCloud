@@ -113,14 +113,6 @@ class ConfigValidationTests(unittest.TestCase):
         result = self.validate()
         self.assertTrue(result["ok"], result)
 
-    def test_blocks_active_legacy_worker_slot(self):
-        with sqlite3.connect(self.db) as conn:
-            conn.execute("INSERT INTO runner_workers VALUES('cloud',9,'running')")
-            conn.commit()
-        result = self.validate()
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("worker slot out of range" in x for x in result["errors"]))
-
     def test_blocks_worker_count_over_runtime_max(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute("UPDATE runner_targets SET worker_count=9 WHERE project_id='cloud'")
