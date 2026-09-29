@@ -6,15 +6,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_has_two_global_ai_slots_with_per_worker_guarded_interval(self):
+    def test_vps_scheduler_has_one_global_ai_slot_with_global_guarded_interval(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
-        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
-        self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
+        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 1", server)
+        self.assertIn("MAX_CHATGPT_WORKERS = 1", server)
         self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 300", server)
         self.assertIn("def portfolio_queue_allocate(", server)
+        self.assertIn("def _global_dispatch_interval_due(", server)
         self.assertIn("def _worker_prompt_interval_due(", server)
         self.assertIn("def _autonomy_enqueue_worker_push(", server)
         self.assertIn("min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS", server)
