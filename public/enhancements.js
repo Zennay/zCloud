@@ -153,7 +153,7 @@
       }
       if(data.resource&&data.resource.applied===false){
         $('notice').hidden=false;
-        $('notice').textContent='Priority saved. The live VPS weight could not be applied yet; zCloud is keeping your choice.';
+        $('notice').textContent='Priority saved. The live VPS weight could not be applied yet; zCloud is keeping the current priority.';
       }
       await refresh(true);
     }catch(err){
