@@ -266,7 +266,7 @@ class AutonomyPolicyTests(unittest.TestCase):
     def test_firefox_runner_waits_for_vps_after_ai_cycle(self):
         background = (Path(__file__).resolve().parents[1] / "firefox-extension" / "background.js").read_text(encoding="utf-8")
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
-        self.assertIn("if (!vpsDispatchOnly && !SINGLE_RUN", background)
+        self.assertIn("if ((forceInitialDispatch || !vpsDispatchOnly) && !SINGLE_RUN", background)
         self.assertIn('status("vps-dispatch-ready", {reason: "awaiting-vps-command"})', background)
 
 
