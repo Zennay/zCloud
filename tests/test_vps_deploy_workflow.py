@@ -15,7 +15,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(3, text.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
             "autonomy-policy.json",
@@ -23,6 +23,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "public/app.js",
             "public/index.html",
             "public/style.css",
+            "public/enhancements.js",
+            "public/enhancements.css",
+            "projects.json",
         ):
             self.assertIn(f"--path {path}", text)
         self.assertIn("deploy/chatgpt-firefox.service", text)
