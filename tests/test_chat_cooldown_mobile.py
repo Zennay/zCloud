@@ -90,7 +90,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("portfolio_queue", server)
         self.assertIn("queue_backend':'sqlite'", server)
-        self.assertIn("zCloud SQLite op de VPS is de enige scheduling/source-of-truth", server)
+        self.assertIn("zCloud SQLite is de queue/source-of-truth", server)
         self.assertIn("Notion is alleen documentatie, nooit scheduler of blocker", server)
         self.assertIn("Geen audit/status-only antwoord", server)
         self.assertIn("Bij een recoverable blocker", server)
