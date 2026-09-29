@@ -327,36 +327,80 @@ function runProject(cfg) {
       ""
     ).trim();
   }
-  async function requestHighThinking() {
-    const exactHigh = /^(?:high|hoog)$/i;
-    const highCandidate = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
-      .find(el => visibleElement(el) && exactHigh.test(controlLabel(el)));
-    if (highCandidate) {
-      highCandidate.click();
-      await sleep(400);
-      status("thinking-effort-high-selected", {reason: "quality-recovery-visible-option"});
+  const REQUIRED_THINKING_EFFORT = "high";
+  function isHighLabel(value) {
+    const label = String(value || "").trim().toLowerCase();
+    if (!label) return false;
+    if (/extra\s+high|very\s+high|zeer\s+hoog|pro\b/.test(label)) return false;
+    return /(?:^|\b)(?:high|hoog)(?:\b|$)/i.test(label);
+  }
+  function elementSignalsSelected(el) {
+    if (!el) return false;
+    const state = String(el.getAttribute?.("data-state") || "").toLowerCase();
+    return el.getAttribute?.("aria-selected") === "true" ||
+      el.getAttribute?.("aria-checked") === "true" ||
+      el.getAttribute?.("aria-pressed") === "true" ||
+      state === "checked" || state === "on" || state === "active";
+  }
+  function modelPickerButton() {
+    const buttons = [...document.querySelectorAll("button")].filter(visibleElement);
+    const explicit = buttons.find(el => {
+      const label = controlLabel(el).toLowerCase();
+      const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
+      return testId.includes("model") ||
+        /model|reasoning|thinking|denk|redeneer/.test(label);
+    });
+    if (explicit) return explicit;
+    return buttons.find(el => {
+      const label = controlLabel(el);
+      return /^(?:instant|medium|gemiddeld|high|hoog|extra high|zeer hoog|pro standard|pro standaard|pro extended|pro uitgebreid)$/i.test(label);
+    }) || null;
+  }
+  function highSelectionVerified() {
+    const picker = modelPickerButton();
+    if (picker && isHighLabel(controlLabel(picker))) return true;
+    return [...document.querySelectorAll('[role="menuitem"],[role="option"],button')]
+      .some(el => visibleElement(el) && isHighLabel(controlLabel(el)) && elementSignalsSelected(el));
+  }
+  async function waitForHighSelection(timeoutMs = 3000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (highSelectionVerified()) return true;
+      await sleep(120);
+    }
+    return highSelectionVerified();
+  }
+  async function ensureHighThinking() {
+    if (highSelectionVerified()) {
+      status("thinking-effort-high-verified", {reason: "already-selected", required: REQUIRED_THINKING_EFFORT});
       return true;
     }
 
-    const pickerPattern = /^(?:instant|thinking|denk(?:en| na)?|gpt-5\.6(?:\s+sol)?|model)$/i;
-    const picker = [...document.querySelectorAll("button")]
-      .find(el => visibleElement(el) && pickerPattern.test(controlLabel(el)));
+    let picker = modelPickerButton();
     if (!picker) {
-      status("thinking-effort-high-unavailable", {reason: "picker-not-found"});
+      status("thinking-effort-high-required", {reason: "picker-not-found", required: REQUIRED_THINKING_EFFORT});
       return false;
     }
+
     picker.click();
-    await sleep(600);
-    const highAfterOpen = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
-      .find(el => visibleElement(el) && exactHigh.test(controlLabel(el)));
-    if (!highAfterOpen) {
+    await sleep(500);
+    const exactHigh = /^(?:high|hoog)$/i;
+    const options = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')].filter(visibleElement);
+    const highOption = options.find(el => exactHigh.test(controlLabel(el)));
+    if (!highOption) {
       document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
-      status("thinking-effort-high-unavailable", {reason: "high-option-not-found"});
+      status("thinking-effort-high-required", {reason: "high-option-not-found", required: REQUIRED_THINKING_EFFORT});
       return false;
     }
-    highAfterOpen.click();
-    await sleep(400);
-    status("thinking-effort-high-selected", {reason: "quality-recovery-picker"});
+
+    highOption.click();
+    const verified = await waitForHighSelection();
+    if (!verified) {
+      status("thinking-effort-high-required", {reason: "selection-not-verifiable", required: REQUIRED_THINKING_EFFORT});
+      return false;
+    }
+
+    status("thinking-effort-high-verified", {reason: "selected-before-send", required: REQUIRED_THINKING_EFFORT});
     return true;
   }
   function statusPayload(event, extra = {}) {
@@ -556,7 +600,11 @@ function runProject(cfg) {
     if (draft && draft !== PROMPT && forceInitialDispatch) status("stale-draft-replaced", {reason: "forced-initial-dispatch"});
     sending = true;
     try {
-      if (qualityRetryPending) await requestHighThinking();
+      const highReady = await ensureHighThinking();
+      if (!highReady) {
+        status("send-blocked", {reason: "high-thinking-required", required: REQUIRED_THINKING_EFFORT});
+        return false;
+      }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
       await sleep(700);
