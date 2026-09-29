@@ -205,6 +205,10 @@ function runProject(cfg) {
   const STALL_MS = 20 * 60 * 1000;
   const STARTUP_IDLE_MS = 8000;
   const COMPOSER_RECOVERY_MS = 45 * 1000;
+  const SHORT_CYCLE_MS = 60 * 1000;
+  const WEAK_RESPONSE_CHARS = 500;
+  const WEAK_CYCLE_LIMIT = 2;
+  let weakCycleStreak = 0;
   let sawGeneration = false;
   let awaitingGeneration = false;
   let generationDeadline = 0;
@@ -279,6 +283,30 @@ function runProject(cfg) {
     const payload = statusPayload(event, extra);
     window.__ZC_RUNNER_STATUS__ = payload;
     try { browser.runtime.sendMessage({type: "runner-status", payload: payload}).catch(() => {}); } catch (_) {}
+  }
+  async function autoPauseForHealth(reason, extra = {}) {
+    paused = true;
+    draining = false;
+    awaitingGeneration = false;
+    sawGeneration = false;
+    if (tickTimer) clearInterval(tickTimer);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    await syncStatus("runner-auto-paused", {
+      reason,
+      error: "Worker automatisch gestopt na herhaalde korte, lege of niet-startende cycli.",
+      weakCycleStreak,
+      ...extra
+    });
+  }
+  function cycleQuality(text, now) {
+    const elapsedMs = lastPromptSentAt ? Math.max(0, now - lastPromptSentAt) : null;
+    const hasQueueResult = /ZCLOUD_QUEUE_RESULT:\s*(DONE|BLOCKED|CONTINUE)\b/i.test(text || "");
+    const nullLike = /(?:^|\b)(?:null|undefined|no results?|geen resultaten?)(?:\b|$)/i.test(text || "");
+    const tooShort = (text || "").trim().length < WEAK_RESPONSE_CHARS;
+    const tooFast = elapsedMs !== null && elapsedMs <= SHORT_CYCLE_MS;
+    const weak = !hasQueueResult && (nullLike || tooShort || tooFast);
+    weakCycleStreak = weak ? weakCycleStreak + 1 : 0;
+    return {weak, hasQueueResult, nullLike, tooShort, tooFast, elapsedMs};
   }
   async function syncStatus(event, extra = {}) {
     const payload = statusPayload(event, extra);
@@ -491,8 +519,12 @@ function runProject(cfg) {
       }
       if (now < generationDeadline) return;
       awaitingGeneration = false;
-      lastPromptSentAt = 0;
-      status("generation-not-started", {reason: "no-generation-after-send"});
+      weakCycleStreak += 1;
+      if (weakCycleStreak >= WEAK_CYCLE_LIMIT) {
+        await autoPauseForHealth("repeated-no-generation", {generationDeadlineMs: 120000});
+        return;
+      }
+      status("generation-not-started", {reason: "no-generation-after-send", weakCycleStreak});
       return;
     }
     if (sawGeneration) {
@@ -500,7 +532,17 @@ function runProject(cfg) {
       if (!finishSignalsReported && now - finishedAt >= 1000) {
         finishSignalsReported = true;
         lastText = text;
+        const quality = cycleQuality(text, now);
         await reportFinishSignals(text);
+        if (quality.weak && weakCycleStreak >= WEAK_CYCLE_LIMIT) {
+          await autoPauseForHealth("repeated-short-or-null-result", {
+            cycleSeconds: quality.elapsedMs === null ? null : Math.round(quality.elapsedMs / 1000),
+            assistantCharacters: (text || "").length,
+            nullLike: quality.nullLike,
+            queueResultPresent: quality.hasQueueResult
+          });
+          return;
+        }
       }
       if (finishSignalsReported && vpsDispatchOnly) {
         sawGeneration = false;
