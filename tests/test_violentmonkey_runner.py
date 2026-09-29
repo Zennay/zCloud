@@ -78,6 +78,17 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("initial dispatch geforceerd", block)
         self.assertNotIn('"Project draait al"', block)
 
+    def test_activation_requires_real_dispatch_evidence(self):
+        workflow = (ROOT / ".github" / "workflows" / "zcloud-one-worker-testing-activation.yml").read_text(encoding="utf-8")
+
+        self.assertIn("DISPATCH_EVENTS", workflow)
+        self.assertIn("def dispatched_worker(status, key, command_id):", workflow)
+        self.assertIn('command_status != "completed"', workflow)
+        self.assertIn('event == "send-blocked"', workflow)
+        self.assertIn('"prompt-sent"', workflow)
+        self.assertIn('"generation-started"', workflow)
+        self.assertNotIn('if all(live.values()):\n                  break\n\n          missing', workflow)
+
     def test_userscript_is_served_and_deployed(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         promote = (ROOT / "scripts" / "zcloud_transactional_promote.py").read_text(encoding="utf-8")

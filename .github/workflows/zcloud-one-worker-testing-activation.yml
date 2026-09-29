@@ -82,6 +82,37 @@ jobs:
                   and int(worker.get("age_seconds") or 999999) <= 90
               ), None)
 
+          DISPATCH_EVENTS = {
+              "prompt-sent",
+              "generation-started",
+              "generation-progress",
+              "generation-finished",
+              "awaiting-vps-dispatch",
+              "portfolio-queue-result",
+          }
+
+          def dispatched_worker(status, key, command_id):
+              worker = live_worker(status, key)
+              if not worker:
+                  return None
+              command = worker.get("command") or {}
+              if int(command.get("id") or 0) != int(command_id):
+                  return None
+              command_status = str(command.get("status") or "")
+              if command_status == "failed":
+                  raise SystemExit(f"worker command failed for {key}: {command}")
+              if command_status != "completed":
+                  return None
+              event = str((worker.get("last_event") or {}).get("event") or "")
+              if event == "send-blocked":
+                  raise SystemExit(
+                      f"worker dispatch blocked for {key}: "
+                      f"{(worker.get('last_event') or {}).get('reason') or 'unknown'}"
+                  )
+              if not worker.get("generating") and event not in DISPATCH_EVENTS:
+                  return None
+              return worker
+
           before = call("GET", "/api/runner-targets")
           limit = int(before.get("max_workers") or 0)
           allocation = before.get("global_allocation") or {}
@@ -126,6 +157,13 @@ jobs:
                   raise SystemExit(f"worker start was not accepted for {key}: {result}")
               starts[key] = result
 
+          command_ids = {
+              key: int((starts[key] or {}).get("command_id") or 0)
+              for key in keys
+          }
+          if any(not command_id for command_id in command_ids.values()):
+              raise SystemExit(f"worker start did not return command ids: {starts}")
+
           final = None
           status = None
           live = {}
@@ -133,7 +171,7 @@ jobs:
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
               status = call("GET", "/api/status?project=zcloud")
-              live = {key: live_worker(status, key) for key in keys}
+              live = {key: dispatched_worker(status, key, command_ids[key]) for key in keys}
               if all(live.values()):
                   break
 
@@ -146,11 +184,14 @@ jobs:
                   })
                   if not recovered.get("ok"):
                       raise SystemExit(f"worker fresh-chat recovery was not accepted for {key}: {recovered}")
+                  command_ids[key] = int(recovered.get("command_id") or 0)
+                  if not command_ids[key]:
+                      raise SystemExit(f"worker fresh-chat recovery did not return command id for {key}: {recovered}")
               for _ in range(12):
                   time.sleep(5)
                   final = call("GET", "/api/runner-targets")
                   status = call("GET", "/api/status?project=zcloud")
-                  live = {key: live_worker(status, key) for key in keys}
+                  live = {key: dispatched_worker(status, key, command_ids[key]) for key in keys}
                   if all(live.values()):
                       break
 
