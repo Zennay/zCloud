@@ -1950,7 +1950,7 @@ def runner_worker_targets():
                     allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
                     and int(queue_item.get('worker_slot') or 0)==int(global_slot)
                 )
-                active=assignment_ready and desired_state!='paused'
+                active=allocated and desired_state!='paused'
                 worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
                              if allocated else f"{cfg['name']} · worker {slot}/{count}")
                 out[worker_key]={
