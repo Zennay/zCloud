@@ -58,6 +58,10 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         done = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}[first["queue_id"]]
         self.assertEqual("done", done["status"])
         self.assertFalse(done["eligible"])
+        continuation = result["next_task"]
+        self.assertIsNotNone(continuation)
+        self.assertEqual("P3", continuation["priority"])
+        self.assertEqual("cloud", continuation["project_id"])
 
     def test_backend_rejects_complete_while_other_queue_work_exists(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
@@ -79,7 +83,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
                 "SELECT event,reason FROM runner_events WHERE project_id='cloud' ORDER BY id DESC LIMIT 1"
             ).fetchone()
         self.assertEqual("autonomy-continue", row["event"])
-        self.assertEqual("backend-rejected-terminal-signal-queue-not-empty", row["reason"])
+        self.assertEqual("backend-non-stopping-dynamic-worker-policy", row["reason"])
 
     def test_continue_requeues_without_notion_dependency(self):
         item = server.portfolio_queue_enqueue("raiseai", "iterate", "P1", "prove next state")
