@@ -46,6 +46,10 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("DIT IS OPNIEUW GEEN GELDIGE UITVOERING", background)
         self.assertIn("hoogste beschikbare redeneerdiepte / High thinking", background)
         self.assertIn("ANDERE veilige uitvoeringsroute", background)
+        self.assertIn("requestHighThinking", background)
+        self.assertIn('thinking-effort-high-selected', background)
+        self.assertIn('thinking-effort-high-unavailable', background)
+        self.assertIn('/^(?:high|hoog)$/i', background)
         self.assertIn("missingQueueEvidence", background)
         self.assertIn("worker_auto_paused", server)
 
