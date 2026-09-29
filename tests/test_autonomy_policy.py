@@ -226,6 +226,32 @@ class AutonomyPolicyTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(0, pushes)
 
+    def test_local_executor_contract_never_dispatches_chatgpt_for_ftmo_or_haxlab(self):
+        policy = json.loads(server.AUTONOMY_POLICY_FILE.read_text(encoding="utf-8"))
+        policy["projects"]["ftmo"].update({
+            "local_executor_owns_stages": True,
+            "status_missing_fail_closed": True,
+            "ai_stages": [],
+        })
+        policy["projects"]["haxlab"].update({
+            "local_executor_owns_states": True,
+            "status_missing_fail_closed": True,
+            "ai_states": [],
+        })
+        server.AUTONOMY_POLICY_FILE.write_text(json.dumps(policy), encoding="utf-8")
+
+        self.ftmo_status.write_text(json.dumps({
+            "ok": True,
+            "research": {"next_stage": "development"},
+            "paper_forward_shadow": {"action": "idle"},
+        }), encoding="utf-8")
+        self.hax_status.write_text(json.dumps({"state": "NEEDS_AI"}), encoding="utf-8")
+
+        self.assertFalse(server.project_autonomy_state("ftmo")["allow_ai"])
+        self.assertEqual("ftmo_local_executor", server.project_autonomy_state("ftmo")["reason"])
+        self.assertFalse(server.project_autonomy_state("haxlab")["allow_ai"])
+        self.assertEqual("haxlab_local_executor", server.project_autonomy_state("haxlab")["reason"])
+
     def test_runner_targets_expose_vps_dispatch_contract(self):
         target = server.runner_targets()["supa"]
         self.assertTrue(target["vps_dispatch_only"])
