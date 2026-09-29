@@ -53,8 +53,8 @@ for (const marker of [
   "runner-replacement-handoff-consumed",
   "worker-replacement-handoff-consumed",
   "let BASE_PROMPT = cfg.prompt",
-  "let PROMPT = promptWithReplacementHandoff(BASE_PROMPT)",
-  "PROMPT = BASE_PROMPT",
+  "let PROMPT = promptWithQualityRecovery(BASE_PROMPT)",
+  "PROMPT = promptWithQualityRecovery(BASE_PROMPT)",
   "return clearReplacementHandoffTag(tabId).then",
   'target.desired_state === "paused"',
   'target.desired_state === "draining"',
@@ -117,9 +117,12 @@ const runStart = background.indexOf("function runProject");
 const refreshStart = background.indexOf("function postStatus");
 assert.ok(runStart >= 0 && refreshStart > runStart, "runProject block missing");
 const runBlock = background.slice(runStart, refreshStart);
+const handoffPromptReset = runBlock.indexOf(
+  "PROMPT = promptWithQualityRecovery(BASE_PROMPT)",
+  runBlock.indexOf("button.click();")
+);
 assert.ok(
-  runBlock.indexOf("PROMPT = BASE_PROMPT") >
-    runBlock.indexOf("button.click();"),
+  handoffPromptReset > runBlock.indexOf("button.click();"),
   "replacement prompt must become one-shot only after the first send succeeds"
 );
 assert.ok(
