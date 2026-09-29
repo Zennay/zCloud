@@ -52,11 +52,11 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("violentmonkey-primary-takeover", background)
         self.assertIn("legacy-fallback-config-refresh-failed", background)
         self.assertIn('type:"runner-config-update"', background)
-        self.assertIn(
-            'VIOLENTMONKEY_PRIMARY_RUNNER && (command.action === "push" || command.action === "drain")',
-            background,
-        )
-        self.assertIn("Leave database push/drain commands pending for the bound Violentmonkey worker", background)
+        self.assertIn("const violentmonkeyReadyProjects = new Set();", background)
+        self.assertIn("const vmOwnsCommand = VIOLENTMONKEY_PRIMARY_RUNNER", background)
+        self.assertIn("violentmonkeyReadyProjects.has(key)", background)
+        self.assertIn("positively announced readiness", background)
+        self.assertIn("!violentmonkeyReadyProjects.has(target.project_id)", background)
 
         start = background.index("async function inject(tabId, target)")
         end = background.index("async function commandResult(", start)
