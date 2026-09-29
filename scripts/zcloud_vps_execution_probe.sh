@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Read-only live worker verification is intentionally kept in this probe.
+# Post-activation verification run.
 
 # Non-destructive capability probe for the shared zCloud VPS execution lane.
 # This is intentionally a probe, not an arbitrary remote-command endpoint.
