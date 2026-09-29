@@ -239,17 +239,10 @@ function runProject(cfg) {
     const prompt = promptWithReplacementHandoff(basePrompt);
     if (!qualityRetryPending) return prompt;
     const escalation = qualityRetryCount >= 2
-      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. " +
-        "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
-        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
-        "Sluit NIET opnieuw af met dezelfde recoverable BLOCKED/WAIT_VPS; blijf binnen de bestaande safety-gates en bewijs de uitgevoerde stap. "
-      : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. " +
-        "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
-    return prompt + "\n\n" +
-      "ZCLOUD_QUALITY_RETRY: " + escalation +
-      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Een status-only/read-only antwoord telt niet. " +
-      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. Probeer de self-hosted runner/queue-route opnieuw wanneer die veilig beschikbaar is. " +
-      "Sluit pas af nadat je een echte write, run/job, verifier of materiële state-change hebt uitgevoerd en geef concrete ZCLOUD_QUEUE_EVIDENCE.";
+      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Gebruik High thinking. Geen audit/status-only; kies een andere veilige route en bewijs echte uitvoering. "
+      : "DOE HET NU ECHT. Ga door met dezelfde assignment, gebruik High thinking en voer nu een concrete stap uit. ";
+    return prompt + "\n\nZCLOUD_QUALITY_RETRY: " + escalation +
+      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE.";
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
@@ -877,7 +870,7 @@ function runProject(cfg) {
     }
     composerMissingSince = 0;
     if ((forceInitialDispatch || !vpsDispatchOnly) && !SINGLE_RUN && !sending && now - startedAt >= STARTUP_IDLE_MS &&
-        (!lastPromptSentAt || now - lastPromptSentAt >= 300000)) {
+        (!lastPromptSentAt || now - lastPromptSentAt >= 120000)) {
       if (forceInitialDispatch || draft === "" || draft === PROMPT) {
         if (now - lastStartupAttemptAt < 5000) return;
         if (!(await canAutoContinue())) {
