@@ -366,7 +366,12 @@ def set_dynamic_worker_limit(value,actor='dashboard'):
         if count == 0:
             c.execute('DELETE FROM ai_global_slots')
     GLOBAL_CHATGPT_WORKER_LIMIT=count
-    return dynamic_worker_settings()
+    allocation=reconcile_dynamic_worker_limit()
+    settings=dynamic_worker_settings()
+    settings['allocated_workers']=len(allocation.get('workers') or [])
+    settings['allocation_keys']=list(allocation.get('keys') or [])
+    settings['reconciled']=True
+    return settings
 
 def init_db():
     global GLOBAL_CHATGPT_WORKER_LIMIT
@@ -1828,6 +1833,29 @@ def portfolio_queue_allocation():
         'dispatch_cooldown_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
         'dispatch_rule':'vps_queue_claim_then_execute',
     }
+
+def reconcile_dynamic_worker_limit():
+    """Immediately converge SQLite queue claims and browser slot mapping to the dashboard limit."""
+    limit=max(0,min(MAX_CHATGPT_WORKERS,int(GLOBAL_CHATGPT_WORKER_LIMIT)))
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if limit <= 0:
+            c.execute("""UPDATE portfolio_queue
+                         SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                         WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                           AND worker_slot IS NOT NULL""",(ts,))
+            c.execute('DELETE FROM ai_global_slots')
+        else:
+            c.execute("""UPDATE portfolio_queue
+                         SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                         WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                           AND worker_slot>?""",(ts,limit))
+            c.execute('DELETE FROM ai_global_slots WHERE slot>?',(limit,))
+    portfolio_queue_allocate()
+    allocation=portfolio_queue_allocation()
+    _persist_global_worker_allocation(allocation)
+    return allocation
 
 def _project_ai_priority_score(project_id,state,target,resource_policy):
     resource_name=str((resource_policy.get(project_id) or {}).get('priority') or 'normal')
