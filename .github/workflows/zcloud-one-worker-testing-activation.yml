@@ -73,9 +73,13 @@ jobs:
           if len(workers) != 1:
               raise SystemExit(f"expected exactly one eligible VPS queue worker, got {len(workers)}")
 
-          project_id = str(workers[0].get("project_id") or "").strip()
+          project_id = str(workers[0].get("worker_key") or "").strip()
           if not project_id:
-              raise SystemExit("queue worker has no project_id")
+              base_project_id = str(workers[0].get("project_id") or "").strip()
+              worker_slot = int(workers[0].get("worker_slot") or 1)
+              project_id = f"{base_project_id}::w{worker_slot}"
+          if not project_id:
+              raise SystemExit("queue worker has no worker_key")
 
           started = call("POST", "/api/runner-control", {
               "project_id": project_id,
@@ -111,6 +115,47 @@ jobs:
               }, ensure_ascii=False, sort_keys=True), flush=True)
               if len(active) <= 1 and live_worker:
                   break
+
+          def live_worker_for(worker_list):
+              return next(
+                  (
+                      worker for worker in worker_list
+                      if worker.get("worker_id") == project_id
+                      and worker.get("state") == "live"
+                      and int(worker.get("age_seconds") or 999999) <= 90
+                  ),
+                  None,
+              )
+
+          if not live_worker:
+              recovered = call("POST", "/api/runner-control", {
+                  "project_id": project_id,
+                  "action": "new_chat",
+              })
+              if not recovered.get("ok"):
+                  raise SystemExit(f"worker fresh-chat recovery was not accepted: {recovered}")
+              print(json.dumps({
+                  "recovery": "fresh-chat",
+                  "project_id": project_id,
+                  "command": recovered,
+              }, ensure_ascii=False, sort_keys=True), flush=True)
+              for _ in range(12):
+                  time.sleep(5)
+                  final = call("GET", "/api/runner-targets")
+                  status = call("GET", "/api/status?project=zcloud")
+                  active = [
+                      key for key, value in (final.get("projects") or {}).items()
+                      if bool(value.get("active"))
+                  ]
+                  workers = ((status.get("chatgpt_runners") or {}).get("raiseai") or {}).get("workers") or []
+                  live_worker = live_worker_for(workers)
+                  print(json.dumps({
+                      "recovery_poll_active_projects": active,
+                      "recovery_poll_workers": workers,
+                      "live_worker": live_worker,
+                  }, ensure_ascii=False, sort_keys=True), flush=True)
+                  if len(active) <= 1 and live_worker:
+                      break
 
           active = [
               key for key, value in (final.get("projects") or {}).items()
