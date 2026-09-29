@@ -95,7 +95,12 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total):
         'evidence/task-claim heeft. Preëmpt alleen voor een hogere P0 en alleen met veilige handoff. '
         '2) Open HQ/Handoff/repo van het gekozen item. Doe vóór repo-writes de geldende zCloud preflight/task-claim en check '
         'open PR/branch om dubbelwerk te voorkomen. '
-        '3) VOER WERK UIT. Een status-only/read-only cyclus is ongeldig. ZCLOUD_AUTONOMY: CONTINUE is VERBODEN als deze cyclus '
+        '3) AUTONOMY-FIRST. Controleer vóór nieuw featurewerk of het project een autonomie-contract heeft: kies expliciet tussen '
+        'deterministische lokale loop, begrensde job-orchestratie, AI-werk of een echte human gate. Een timer/worker alleen is geen autonomie. '
+        'Een lokale loop moet persistente state, idempotente executor, verifier, automatische volgende veilige stap, restart/herstel en een '
+        'machineleesbaar receipt hebben. Ontbreekt dit voor herhaalbaar werk, maak/claim dan eerst die contract- of looptaak; markeer het '
+        'project nooit autonoom op basis van een statuscheck. VOER DAARNA WERK UIT. Een status-only/read-only cyclus is ongeldig. '
+        'ZCLOUD_AUTONOMY: CONTINUE is VERBODEN als deze cyclus '
         'alleen reads/checks opleverde; er moet minimaal een echte write, run/job, geverifieerde evidence of materiële state-change zijn. '
         'Als één route ontbreekt, probeer eerst self-hosted GitHub Actions/workflow/service/timer/queue of een andere veilige route. '
         'Kan het item echt niet verder: zet Blocked + Eligible=false, leg de concrete blocker vast, release de Worker/claim en pak '
@@ -1244,21 +1249,32 @@ def project_autonomy_state(project_id):
     elif mode=='haxlab_status':
         status=_autonomy_status_json(cfg.get('status_file'))
         state=str((status or {}).get('state') or 'MISSING')
-        allowed={str(x) for x in (cfg.get('ai_states') or ['NEEDS_AI'])}
-        allow=status is None or state in allowed
-        reason='haxlab_status_missing' if status is None else ('haxlab_needs_ai' if allow else 'haxlab_vps_'+state.lower())
-        detail={'vps_status':status,'state':state}
+        configured_states=cfg.get('ai_states')
+        allowed={str(x) for x in configured_states} if isinstance(configured_states,list) else {'NEEDS_AI'}
+        local_owner=bool(cfg.get('local_executor_owns_states'))
+        missing_fail_closed=bool(cfg.get('status_missing_fail_closed'))
+        allow=(not missing_fail_closed) if status is None else (not local_owner and state in allowed)
+        reason=('haxlab_status_missing' if status is None else
+                ('haxlab_local_executor' if local_owner else
+                 ('haxlab_needs_ai' if allow else 'haxlab_vps_'+state.lower())))
+        detail={'vps_status':status,'state':state,'local_executor_owns_states':local_owner}
     elif mode=='ftmo_status':
         status=_autonomy_status_json(cfg.get('status_file'))
         research=(status or {}).get('research') if isinstance((status or {}).get('research'),dict) else {}
         stage=str(research.get('next_stage') or 'missing')
         paper=(status or {}).get('paper_forward_shadow') if isinstance((status or {}).get('paper_forward_shadow'),dict) else {}
-        allowed={str(x) for x in (cfg.get('ai_stages') or [])}
+        configured_stages=cfg.get('ai_stages')
+        allowed={str(x) for x in configured_stages} if isinstance(configured_stages,list) else set()
+        local_owner=bool(cfg.get('local_executor_owns_stages'))
+        missing_fail_closed=bool(cfg.get('status_missing_fail_closed'))
         runtime_ok=bool((status or {}).get('ok'))
         paper_busy=paper.get('action')=='running'
-        allow=status is None or (runtime_ok and stage in allowed and not paper_busy)
-        reason='ftmo_status_missing' if status is None else (('ftmo_stage_'+stage) if allow else ('ftmo_paper_running' if paper_busy else 'ftmo_vps_'+('not_ok' if not runtime_ok else stage)))
-        detail={'vps_status':status,'next_stage':stage,'paper_action':paper.get('action')}
+        allow=(not missing_fail_closed) if status is None else (not local_owner and runtime_ok and stage in allowed and not paper_busy)
+        reason=('ftmo_status_missing' if status is None else
+                ('ftmo_local_executor' if local_owner else
+                 ('ftmo_stage_'+stage if allow else
+                  ('ftmo_paper_running' if paper_busy else 'ftmo_vps_'+('not_ok' if not runtime_ok else stage)))))
+        detail={'vps_status':status,'next_stage':stage,'paper_action':paper.get('action'),'local_executor_owns_stages':local_owner}
     elif mode=='external_gate':
         allow=False;reason='external_or_human_gate'
     elif mode=='manual':
