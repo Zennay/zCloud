@@ -254,7 +254,23 @@ jobs:
           test "$health_code" = "200"
 
           canary_code="$(curl --silent --show-error --resolve "$HOST:$PORT:127.0.0.1" --cacert "$CERT"             --header "Authorization: Bearer $TOKEN"             --header "Content-Type: application/json"             --data '{"text":"Antwoord alleen met RAISE_OPENROUTER_CANARY_OK"}'             --output "$CANARY_FILE" --write-out '%{http_code}'             "https://$HOST:$PORT/v1/assistant")"
-          test "$canary_code" = "200"
+          echo "CANARY_HTTP_STATUS=$canary_code"
+          if [ "$canary_code" != "200" ]; then
+            python3 - "$CANARY_FILE" <<'PY'
+          import json, sys
+          path=sys.argv[1]
+          try:
+              payload=json.load(open(path,encoding="utf-8"))
+          except Exception:
+              raw=open(path,encoding="utf-8",errors="replace").read(1000)
+              print("CANARY_DIAGNOSTIC_TEXT="+raw.replace("\n"," "))
+          else:
+              allowed=("status","route","execution","error","reason","message","code","requestId")
+              safe={key:payload.get(key) for key in allowed if key in payload}
+              print("CANARY_DIAGNOSTIC="+json.dumps(safe,ensure_ascii=False,sort_keys=True))
+          PY
+            exit 43
+          fi
 
           python3 - "$HEALTH_FILE" "$CANARY_FILE" <<'PY'
           import json, os, pathlib, sys
