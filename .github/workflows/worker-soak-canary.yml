@@ -26,7 +26,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, sqlite3, time, urllib.request
-          from datetime import datetime, timezone
+          from datetime import datetime, timezone, timedelta
 
           db=os.environ["LIVE_DB"]
           api=os.environ["ZCLOUD_API"]
@@ -51,15 +51,16 @@ jobs:
                   return json.loads(r.read().decode())
 
           def latest_busy_count():
+              cutoff=(datetime.now(timezone.utc)-timedelta(seconds=45)).isoformat()
               with sqlite3.connect(db,timeout=5) as c:
                   row=c.execute("""
                     WITH h AS (
                       SELECT project_id,worker_slot,generating,sending,
                              ROW_NUMBER() OVER (PARTITION BY project_id,worker_slot ORDER BY id DESC) rn
-                      FROM runner_events WHERE event='heartbeat'
+                      FROM runner_events WHERE event='heartbeat' AND ts>=?
                     )
                     SELECT COUNT(*) FROM h WHERE rn=1 AND (generating=1 OR sending=1)
-                  """).fetchone()
+                  """,(cutoff,)).fetchone()
                   return int(row[0] or 0)
 
           def event_stats():
