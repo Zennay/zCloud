@@ -1,0 +1,32 @@
+[
+  {
+    "queue_id": "raiseai-openrouter-provider-live",
+    "project_id": "raiseai",
+    "title": "OpenRouter-provider live deployen en gateway-response bewijzen",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Live provider deploy is aantoonbaar actief en een echte gateway-response is met reproduceerbare evidence bewezen.",
+    "source_url": "https://app.notion.com/3e99e19ac9558156ab58e00a9ebce5ae"
+  },
+  {
+    "queue_id": "cloud-permanent-vps-first-deploylane",
+    "project_id": "cloud",
+    "title": "Permanente VPS-first deploylane zonder tijdelijke HaxLab bridge",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "zCloud heeft een permanente, geteste VPS-first deploylane zonder tijdelijke HaxLab bridge en met groene deploy-evidence.",
+    "source_url": "https://app.notion.com/3e99e19ac95581f4acf5d35099276bed"
+  },
+  {
+    "queue_id": "haxlab-candidate-b-champion-evidence-gate",
+    "project_id": "haxlab",
+    "title": "Actuele Candidate-B/champion evidence-gate sluiten",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Candidate-B/champion gate is met actuele runtime/testevidence gesloten of aantoonbaar geblokkeerd met concrete blocker.",
+    "source_url": "https://app.notion.com/3e99e19ac9558150a811eb4479eb24b9"
+  }
+]
