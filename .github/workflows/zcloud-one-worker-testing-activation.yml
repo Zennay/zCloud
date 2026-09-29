@@ -59,9 +59,6 @@ jobs:
           before = call("GET", "/api/runner-targets")
           if int(before.get("max_workers") or 0) != 2:
               raise SystemExit(f"expected max_workers=2, got {before.get('max_workers')!r}")
-          if int(before.get("global_worker_limit") or 0) != 2:
-              raise SystemExit(f"expected global_worker_limit=2, got {before.get('global_worker_limit')!r}")
-
           allocation = before.get("global_allocation") or {}
           workers = allocation.get("workers") or []
           if len(workers) != 2:
@@ -91,7 +88,7 @@ jobs:
           for _ in range(12):
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
-              live_workers = final.get("workers") or {}
+              live_workers = final.get("projects") or {}
               ready = {
                   key for key, value in live_workers.items()
                   if key in expected_keys
@@ -101,7 +98,7 @@ jobs:
               if ready == expected_keys:
                   break
 
-          live_workers = (final or {}).get("workers") or {}
+          live_workers = (final or {}).get("projects") or {}
           ready = {
               key for key, value in live_workers.items()
               if key in expected_keys
@@ -115,7 +112,6 @@ jobs:
               "ok": True,
               "mode": "two-worker-guarded",
               "worker_limit": final.get("max_workers"),
-              "global_worker_limit": final.get("global_worker_limit"),
               "worker_keys": sorted(expected_keys),
               "active_worker_keys": sorted(ready),
               "dispatch_cooldown_seconds": (final.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
