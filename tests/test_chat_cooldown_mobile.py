@@ -6,23 +6,30 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_has_one_global_ai_slot_with_guarded_interval(self):
+    def test_vps_scheduler_has_two_global_ai_slots_with_per_worker_guarded_interval(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
-        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 1", server)
-        self.assertIn("MAX_CHATGPT_WORKERS = 1", server)
+        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
+        self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
         self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 300", server)
         self.assertIn("def portfolio_queue_allocate(", server)
-        self.assertIn("def _global_dispatch_due(", server)
-        self.assertIn("if not _global_dispatch_due(min_interval_seconds):", server)
+        self.assertIn("def _worker_prompt_interval_due(", server)
+        self.assertIn("def _autonomy_enqueue_worker_push(", server)
+        self.assertIn("min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS", server)
         self.assertIn("def global_worker_allocation(", server)
         self.assertIn("ai_global_slots", server)
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
         self.assertIn("setInterval(refreshTargets, 5000)", background)
         self.assertIn("if latest and (bool(latest['generating']) or bool(latest['sending'])):", server)
         self.assertIn("if prompt_id and ready_id < prompt_id:", server)
+        self.assertIn('"runner-auto-paused"', background)
+        self.assertIn("WEAK_CYCLE_LIMIT = 2", background)
+        self.assertIn("SHORT_CYCLE_MS = 60 * 1000", background)
+        self.assertIn("repeated-short-or-null-result", background)
+        self.assertIn("repeated-no-generation", background)
+        self.assertIn("worker_auto_paused", server)
 
     def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
         policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))

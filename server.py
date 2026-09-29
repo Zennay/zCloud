@@ -23,8 +23,8 @@ ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-GLOBAL_CHATGPT_WORKER_LIMIT = 1
-MAX_CHATGPT_WORKERS = 1
+GLOBAL_CHATGPT_WORKER_LIMIT = 2
+MAX_CHATGPT_WORKERS = 2
 AI_SLOT_DIVERSITY_PENALTY = 500
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
@@ -1426,37 +1426,81 @@ def _global_dispatch_due(min_interval_seconds):
         return False
 
 
-def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
+def _worker_prompt_interval_due(connection,project_id,worker_slot,min_interval_seconds):
+    try:
+        min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS,int(min_interval_seconds or 0))
+    except Exception:
+        min_interval_seconds=PORTFOLIO_AI_COOLDOWN_SECONDS
+    row=connection.execute(
+        "SELECT ts FROM runner_events WHERE project_id=? AND worker_slot=? AND event='prompt-sent' ORDER BY id DESC LIMIT 1",
+        (project_id,worker_slot),
+    ).fetchone()
+    if not row or not row['ts']:
+        return True
+    try:
+        last=datetime.fromisoformat(row['ts']).astimezone(timezone.utc)
+        return (datetime.now(timezone.utc)-last).total_seconds() >= min_interval_seconds
+    except Exception:
+        return False
+
+
+def _autonomy_enqueue_worker_push(project_id,worker_slot,reason,min_interval_seconds):
+    try:
+        worker_slot=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(worker_slot)))
+    except Exception:
+        return False
+    worker_key=f'{project_id}::w{worker_slot}'
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         runtime=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
         if runtime and bool(runtime['manual_pause']):
             return False
-        if not _autonomy_dispatch_due(dict(runtime) if runtime else None,min_interval_seconds):
-            return False
-        if not _global_dispatch_due(min_interval_seconds):
-            return False
         target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
         if not target or not bool(target['active']):
             return False
-        pending=c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action IN ('start','push','new_chat') AND status='pending' LIMIT 1",(project_id,)).fetchone()
+        desired=c.execute(
+            'SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',
+            (project_id,worker_slot),
+        ).fetchone()
+        if desired and str(desired['desired_state'] or 'running')!='running':
+            return False
+        if not _worker_prompt_interval_due(c,project_id,worker_slot,min_interval_seconds):
+            return False
+        pending=c.execute(
+            "SELECT id FROM runner_commands WHERE project_id=? AND action IN ('start','push','new_chat') AND status='pending' LIMIT 1",
+            (worker_key,),
+        ).fetchone()
         if pending:
             return False
-        latest=c.execute('SELECT id,generating,sending,event FROM runner_events WHERE project_id=? ORDER BY id DESC LIMIT 1',(project_id,)).fetchone()
+        latest=c.execute(
+            'SELECT id,generating,sending,event FROM runner_events WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1',
+            (project_id,worker_slot),
+        ).fetchone()
         if latest and (bool(latest['generating']) or bool(latest['sending'])):
             return False
-        last_prompt=c.execute("SELECT MAX(id) AS id FROM runner_events WHERE project_id=? AND event='prompt-sent'",(project_id,)).fetchone()
-        last_ready=c.execute("SELECT MAX(id) AS id FROM runner_events WHERE project_id=? AND event IN ('awaiting-vps-dispatch','generation-not-started')",(project_id,)).fetchone()
+        last_prompt=c.execute(
+            "SELECT MAX(id) AS id FROM runner_events WHERE project_id=? AND worker_slot=? AND event='prompt-sent'",
+            (project_id,worker_slot),
+        ).fetchone()
+        last_ready=c.execute(
+            "SELECT MAX(id) AS id FROM runner_events WHERE project_id=? AND worker_slot=? AND event IN ('awaiting-vps-dispatch','generation-not-started','runner-auto-paused')",
+            (project_id,worker_slot),
+        ).fetchone()
         prompt_id=int((last_prompt or {'id':0})['id'] or 0)
         ready_id=int((last_ready or {'id':0})['id'] or 0)
         if prompt_id and ready_id < prompt_id:
             return False
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
-                  (project_id,'push','pending',ts,ts,None))
+                  (worker_key,'push','pending',ts,ts,None))
         c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',
                   (ts,str(reason)[:250],project_id))
     return True
+
+
+def _autonomy_enqueue_push(project_id,reason,min_interval_seconds):
+    """Compatibility helper for tests/manual callers; production scheduler dispatches per worker."""
+    return _autonomy_enqueue_worker_push(project_id,1,reason,min_interval_seconds)
 
 
 def _latest_ai_priority_hint(project_id):
@@ -1820,10 +1864,6 @@ def autonomy_scheduler_tick():
     allocation=global_worker_allocation(states,targets)
     _persist_global_worker_allocation(allocation)
     selected_projects=set(allocation['projects'])
-    selected_running_projects={
-        item['project_id'] for item in allocation['workers']
-        if item.get('desired_state','running')=='running'
-    }
 
     started=[]
     paused=[]
@@ -1834,12 +1874,17 @@ def autonomy_scheduler_tick():
             if not target.get('active'):
                 if _autonomy_enqueue_start(project_id,'global-slot:'+str(state.get('reason') or 'eligible')):
                     started.append(project_id)
-            elif project_id in selected_running_projects and state.get('dispatch_mode')=='vps' and _autonomy_enqueue_push(
-                project_id,
-                'global-slot:'+str(state.get('reason') or 'eligible'),
-                state.get('min_ai_interval_seconds') or 0,
-            ):
-                pushed.append(project_id)
+            elif state.get('dispatch_mode')=='vps':
+                for worker in allocation['workers']:
+                    if worker.get('project_id')!=project_id or worker.get('desired_state','running')!='running':
+                        continue
+                    if _autonomy_enqueue_worker_push(
+                        project_id,
+                        int(worker.get('worker_slot') or 1),
+                        'global-slot:'+str(worker.get('global_worker_slot') or '')+':'+str(state.get('reason') or 'eligible'),
+                        state.get('min_ai_interval_seconds') or PORTFOLIO_AI_COOLDOWN_SECONDS,
+                    ):
+                        pushed.append(worker.get('worker_key') or project_id)
         elif target.get('active'):
             if _autonomy_deactivate_project(project_id,'global-slot-reallocated'):
                 paused.append(project_id)
@@ -1956,10 +2001,21 @@ def runner_record(payload):
                       (project_id,worker_slot,match.group(1)))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
-        if event in ('runner-drained','runner-paused') and project_id in runner_targets():
+        if event in ('runner-drained','runner-paused','runner-auto-paused') and project_id in runner_targets():
             c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
+    if event=='runner-auto-paused' and project_id:
+        enhancements.emit_incident(
+            DB,
+            project_id,
+            'worker_auto_paused',
+            'warning',
+            'Dynamische worker automatisch gestopt',
+            f'Worker {global_worker_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} is gestopt door de quality guard: {reason or "herhaalde korte/lege cycli"}. Controleer de chat voordat je deze worker hervat.',
+            f'worker-auto-paused:{project_id}:{worker_slot}:{reason or "unknown"}',
+            cooldown=900,
+        )
     if event=='portfolio-queue-result':
         try:
             portfolio_queue_finish(
