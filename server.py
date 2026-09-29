@@ -1584,10 +1584,21 @@ def portfolio_queue_allocate():
                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                      WHERE eligible=1 AND status IN ('claimed','running','verifying')
                        AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
+        # Manual pause is authoritative. A paused project may not pin a scarce
+        # global AI slot or open a browser carrier while it cannot receive push.
+        c.execute("""UPDATE portfolio_queue
+                     SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                     WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                       AND project_id IN (
+                           SELECT project_id FROM autonomy_runtime WHERE manual_pause=1
+                       )""",(ts,))
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                                AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+                               AND project_id NOT IN (
+                                   SELECT project_id FROM autonomy_runtime WHERE manual_pause=1
+                               )
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
@@ -1597,6 +1608,9 @@ def portfolio_queue_allocate():
                 continue
             row=c.execute("""SELECT * FROM portfolio_queue
                              WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                               AND project_id NOT IN (
+                                   SELECT project_id FROM autonomy_runtime WHERE manual_pause=1
+                               )
                              ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                                       created_at, queue_id LIMIT 1""").fetchone()
             if not row:
@@ -1847,11 +1861,14 @@ def runner_targets():
     for r in rows:
         improvement=improvement_loop_state(r['project_id']) if r['project_id']==IMPROVEMENT_PROJECT_ID else None
         autonomy=project_autonomy_state(r['project_id'])
+        runtime=_autonomy_runtime(r['project_id'])
+        manual_pause=bool(runtime and runtime.get('manual_pause'))
         queue_active=portfolio_queue_has_project_assignment(r['project_id'])
         out[r['project_id']]={'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
                               'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
                               'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
-                              'auto_continue':queue_active or bool(autonomy['allow_ai']),
+                              'manual_pause':manual_pause,
+                              'auto_continue':(queue_active or bool(autonomy['allow_ai'])) and not manual_pause,
                               'auto_continue_delay_seconds':0 if queue_active else autonomy['continue_delay_seconds'],
                               'vps_dispatch_only':autonomy.get('dispatch_mode')=='vps',
                               'ai_dispatch_interval_seconds':autonomy.get('min_ai_interval_seconds',600),
@@ -1875,7 +1892,7 @@ def runner_worker_targets():
                 worker_key=f'{project_id}::w{slot}'
                 global_slot=global_slots.get(worker_key)
                 allocated=global_slot is not None
-                active=allocated and desired_state!='paused'
+                active=allocated and desired_state!='paused' and not bool(cfg.get('manual_pause'))
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
                 queue_item=portfolio_queue_current_for_slot(global_slot) if allocated else None
