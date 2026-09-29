@@ -1,0 +1,30 @@
+name: zCloud VPS execution lane probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - vps-execution-policy.json
+      - scripts/zcloud_vps_execution_probe.sh
+      - .github/workflows/zcloud-vps-execution-probe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-vps-execution-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Check out the zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+      - name: Probe shared VPS execution capabilities
+        run: bash scripts/zcloud_vps_execution_probe.sh
