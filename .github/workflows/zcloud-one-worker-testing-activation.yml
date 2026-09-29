@@ -26,6 +26,15 @@ jobs:
           clean: true
           fetch-depth: 1
 
+      - name: Ensure the Firefox runner service is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+          systemctl --user restart chatgpt-firefox.service
+          systemctl --user is-active --quiet chatgpt-firefox.service
+
       - name: Enable exactly one queue-owned worker
         shell: bash
         run: |
@@ -73,14 +82,26 @@ jobs:
               raise SystemExit(f"worker start was not accepted: {started}")
 
           final = None
+          live_worker = None
           for _ in range(12):
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
+              status = call("GET", "/api/status?project=zcloud")
               active = [
                   key for key, value in (final.get("projects") or {}).items()
                   if bool(value.get("active"))
               ]
-              if len(active) <= 1:
+              workers = ((status.get("chatgpt_runners") or {}).get("raiseai") or {}).get("workers") or []
+              live_worker = next(
+                  (
+                      worker for worker in workers
+                      if worker.get("worker_id") == project_id
+                      and worker.get("state") == "live"
+                      and int(worker.get("age_seconds") or 999999) <= 90
+                  ),
+                  None,
+              )
+              if len(active) <= 1 and live_worker:
                   break
 
           active = [
@@ -91,6 +112,8 @@ jobs:
               raise SystemExit(f"max_workers changed unexpectedly: {final.get('max_workers')!r}")
           if len(active) > 1:
               raise SystemExit(f"more than one project remains active: {active}")
+          if not live_worker:
+              raise SystemExit("worker start was accepted, but no live Firefox heartbeat was observed")
 
           print(json.dumps({
               "ok": True,
@@ -98,6 +121,7 @@ jobs:
               "worker_limit": final.get("max_workers"),
               "selected_project": project_id,
               "active_projects": active,
+              "live_worker": live_worker,
               "dispatch_cooldown_seconds": (final.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
               "start_command": started,
           }, ensure_ascii=False, sort_keys=True))
