@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.0.0
+// @version      1.0.1
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.0.0";
+  const SCRIPT_VERSION = "1.0.1";
   const REQUIRED_THINKING_EFFORT = "high";
   const REFRESH_MS = 5000;
   const TICK_MS = 1500;
@@ -38,6 +38,8 @@
   let lastPromptSentAt = 0;
   let lastHandledCommandId = 0;
   let initialDispatchKey = "";
+  let qualityRetryPending = false;
+  let qualityRetryCount = 0;
   let refreshTimer = null;
   let tickTimer = null;
   let heartbeatTimer = null;
@@ -366,9 +368,47 @@
     } catch (_) {}
   }
 
+  function handoffKey() {
+    const claim = target?.replacement_handoff?.claim || null;
+    return String(claim?.claim_key || target?.replacement_handoff?.prepared_at || "").trim();
+  }
+
+  function handoffAlreadyConsumed() {
+    const key = handoffKey();
+    if (!key) return true;
+    try { return sessionStorage.getItem("zcloud-handoff-consumed:" + key) === "1"; }
+    catch (_) { return false; }
+  }
+
+  function promptWithHandoffAndRecovery(basePrompt) {
+    let prompt = String(basePrompt || "");
+    const handoff = target?.replacement_handoff || null;
+    if (handoff && !handoffAlreadyConsumed()) {
+      prompt += "\n\nBEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
+        "Neem GEEN nieuwe taakclaim zolang de bestaande claim nog geldig is. " +
+        "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen. " +
+        "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit, claim veilig opnieuw en ga in dezelfde cyclus verder. " +
+        "Handoff-context: " + JSON.stringify(handoff);
+    }
+    if (qualityRetryPending) {
+      const escalation = qualityRetryCount >= 2
+        ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Geen audit/status-only of dezelfde recoverable blocker opnieuw; kies een andere veilige route en bewijs echte uitvoering."
+        : "DOE HET NU ECHT. Ga door met dezelfde assignment en voer nu een concrete materiële stap uit.";
+      prompt += "\n\nZCLOUD_QUALITY_RETRY: " + escalation +
+        " Herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE.";
+    }
+    return prompt;
+  }
+
+  function markHandoffConsumed() {
+    const key = handoffKey();
+    if (!key) return;
+    try { sessionStorage.setItem("zcloud-handoff-consumed:" + key, "1"); } catch (_) {}
+  }
+
   async function sendPrompt(reason) {
     if (!target || !assignmentReady(target) || sending || draining || stopButton()) return false;
-    const prompt = String(target.prompt || "");
+    const prompt = promptWithHandoffAndRecovery(target.prompt);
     if (!prompt) return false;
 
     sending = true;
@@ -393,6 +433,8 @@
       }
 
       button.click();
+      markHandoffConsumed();
+      qualityRetryPending = false;
       lastPromptSentAt = Date.now();
       lastProgressAt = Date.now();
       awaitingGeneration = true;
@@ -424,6 +466,42 @@
       title: parts.title,
       completion_criteria: parts.criteria || ""
     };
+  }
+
+  function cycleQuality(text, now) {
+    const elapsedMs = lastPromptSentAt ? Math.max(0, now - lastPromptSentAt) : null;
+    const queueResult = /ZCLOUD_QUEUE_RESULT:\s*(DONE|BLOCKED|CONTINUE)\b/i.exec(text || "");
+    const queueEvidence = /ZCLOUD_QUEUE_EVIDENCE:\s*([^\n]+)/i.exec(text || "");
+    const hasQueueResult = !!queueResult;
+    const hasQueueEvidence = !!queueEvidence && queueEvidence[1].trim().length > 0;
+    const waitHuman = /ZCLOUD_AUTONOMY:\s*WAIT_HUMAN\b/i.test(text || "");
+    const waitVps = /ZCLOUD_AUTONOMY:\s*WAIT_VPS\b/i.test(text || "");
+    const blocked = queueResult?.[1]?.toUpperCase() === "BLOCKED";
+    const tooShort = String(text || "").trim().length < 500;
+    const tooFast = elapsedMs !== null && elapsedMs <= 15000;
+    const missingEvidence = hasQueueResult && !hasQueueEvidence;
+    const recoverableBlocker = !waitHuman && (blocked || waitVps);
+    return {
+      weak: (!hasQueueResult && (tooShort || tooFast)) || missingEvidence || recoverableBlocker,
+      elapsedMs,
+      tooShort,
+      tooFast,
+      missingEvidence,
+      recoverableBlocker,
+      waitHuman
+    };
+  }
+
+  async function scheduleQualityRetry(reason, details = {}) {
+    qualityRetryCount += 1;
+    qualityRetryPending = true;
+    await status("quality-retry-scheduled", {
+      reason,
+      retryNumber: qualityRetryCount,
+      retryLimit: "unbounded",
+      adjustment: "same-assignment-non-stopping-execution-recovery",
+      ...details
+    });
   }
 
   async function reportFinishSignals(text) {
@@ -530,7 +608,18 @@
       sawGeneration = false;
       finishedAt = 0;
       lastAssistantText = text;
+      const quality = cycleQuality(text, now);
       await reportFinishSignals(text);
+      if (quality.weak) {
+        await scheduleQualityRetry("short-or-invalid-result", {
+          cycleSeconds: quality.elapsedMs === null ? null : Math.round(quality.elapsedMs / 1000),
+          assistantCharacters: String(text || "").length,
+          tooShort: quality.tooShort,
+          tooFast: quality.tooFast,
+          missingQueueEvidence: quality.missingEvidence,
+          recoverableBlocker: quality.recoverableBlocker
+        });
+      }
       if (draining) {
         await status("runner-drained", {reason: "current-task-finished"});
         return;
