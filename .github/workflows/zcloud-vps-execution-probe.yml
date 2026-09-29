@@ -7,13 +7,20 @@ on:
     paths:
       - vps-execution-policy.json
       - scripts/zcloud_vps_execution_probe.sh
+      - scripts/zcloud_vps_deploylane_coordination.py
+      - .github/workflows/zcloud-vps-execution-probe.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_vps_execution_probe.sh
+      - scripts/zcloud_vps_deploylane_coordination.py
       - .github/workflows/zcloud-vps-execution-probe.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: zcloud-vps-execution-probe
+  group: zcloud-vps-execution-probe-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,5 +33,44 @@ jobs:
         with:
           persist-credentials: false
           clean: true
+
+      - name: Acquire cloud deploylane coordination claim
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_deploylane_coordination.py acquire \
+            | tee "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
+
       - name: Probe shared VPS execution capabilities
-        run: bash scripts/zcloud_vps_execution_probe.sh
+        run: |
+          set -euo pipefail
+          bash scripts/zcloud_vps_execution_probe.sh \
+            | tee "$RUNNER_TEMP/zcloud-vps-execution-probe.log"
+
+      - name: Verify cloud deploylane claim is still exact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_deploylane_coordination.py verify \
+            | tee -a "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
+
+      - name: Release cloud deploylane coordination claim
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/zcloud_vps_deploylane_coordination.py release \
+            | tee -a "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
+
+      - name: Upload sanitized deploylane evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-vps-deploylane-evidence-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/zcloud-deploylane-claim.jsonl
+            ${{ runner.temp }}/zcloud-vps-execution-probe.log

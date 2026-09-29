@@ -39,5 +39,24 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
 
 
+    def test_execution_probe_claims_cloud_task_on_self_hosted_runner(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("runs-on: self-hosted", text)
+        self.assertIn("scripts/zcloud_vps_deploylane_coordination.py acquire", text)
+        self.assertIn("scripts/zcloud_vps_deploylane_coordination.py verify", text)
+        self.assertIn("scripts/zcloud_vps_deploylane_coordination.py release", text)
+        self.assertIn("if: always()", text)
+        self.assertIn("actions/upload-artifact@v4", text)
+
+        coordination = (ROOT / "scripts/zcloud_vps_deploylane_coordination.py").read_text(encoding="utf-8")
+        self.assertIn('PROJECT = "cloud"', coordination)
+        self.assertIn('WORKER = "cloud::w1"', coordination)
+        self.assertIn('CLAIM = "cloud-permanent-vps-first-deploylane"', coordination)
+        self.assertIn('"action": "heartbeat"', coordination)
+        self.assertIn('"action": "release"', coordination)
+        self.assertIn("claim verification failed", coordination)
+
+
 if __name__ == "__main__":
     unittest.main()
