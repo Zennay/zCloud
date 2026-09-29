@@ -6,15 +6,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
-    def test_vps_scheduler_has_two_global_ai_slots_without_time_debounce(self):
+    def test_vps_scheduler_has_one_global_ai_slot_with_guarded_interval(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("AUTONOMY_TICK_SECONDS = 5", server)
-        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 2", server)
-        self.assertIn("MAX_CHATGPT_WORKERS = 2", server)
-        self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 0", server)
+        self.assertIn("GLOBAL_CHATGPT_WORKER_LIMIT = 1", server)
+        self.assertIn("MAX_CHATGPT_WORKERS = 1", server)
+        self.assertIn("PORTFOLIO_AI_COOLDOWN_SECONDS = 300", server)
         self.assertIn("def portfolio_queue_allocate(", server)
+        self.assertIn("def _global_dispatch_due(", server)
+        self.assertIn("if not _global_dispatch_due(min_interval_seconds):", server)
         self.assertIn("def global_worker_allocation(", server)
         self.assertIn("ai_global_slots", server)
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
@@ -27,13 +29,13 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
 
         self.assertTrue(policy["default"]["auto_start"])
         self.assertEqual("vps", policy["default"]["dispatch_mode"])
-        self.assertEqual(0, policy["default"]["min_ai_interval_seconds"])
-        self.assertEqual(0, policy["default"]["continue_delay_seconds"])
+        self.assertEqual(300, policy["default"]["min_ai_interval_seconds"])
+        self.assertEqual(300, policy["default"]["continue_delay_seconds"])
 
         for project_id, project in policy["projects"].items():
             self.assertEqual("vps", project["dispatch_mode"], project_id)
-            self.assertEqual(0, project["min_ai_interval_seconds"], project_id)
-            self.assertEqual(0, project["continue_delay_seconds"], project_id)
+            self.assertEqual(300, project["min_ai_interval_seconds"], project_id)
+            self.assertEqual(300, project["continue_delay_seconds"], project_id)
             self.assertEqual(project_id != "ulab", project["auto_start"], project_id)
 
     def test_worker_prompt_uses_vps_sqlite_queue_and_evidence_done_gate(self):
