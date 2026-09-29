@@ -260,6 +260,8 @@ function runProject(cfg) {
       projectId: cfg.projectId,
       baseProjectId: BASE_PROJECT,
       workerSlot: cfg.worker_slot || 1,
+      globalWorkerSlot: cfg.global_worker_slot || cfg.worker_slot || 1,
+      queueItem: cfg.queue_item?.queue_id || "",
       projectName: cfg.name,
       target: location.href,
       targetConversation: cfg.conversation_id,
@@ -308,6 +310,36 @@ function runProject(cfg) {
     const priority = text.match(/ZCLOUD_PRIORITY:\s*(HIGH|NORMAL|LOW|BACKGROUND)/i);
     if (priority) {
       await syncStatus("autonomy-priority", {reason: priority[1].toLowerCase()});
+    }
+    const queueItemMatch = text.match(/ZCLOUD_QUEUE_ITEM:\s*([^\s\n]+)/i);
+    const queueResultMatch = text.match(/ZCLOUD_QUEUE_RESULT:\s*(DONE|BLOCKED|CONTINUE)\b/i);
+    const queueEvidenceMatch = text.match(/ZCLOUD_QUEUE_EVIDENCE:\s*([^\n]+)/i);
+    const queueItem = queueItemMatch ? queueItemMatch[1].trim() : (cfg.queue_item?.queue_id || "");
+    const queueResult = queueResultMatch ? queueResultMatch[1].toUpperCase() : "";
+    const queueEvidence = queueEvidenceMatch ? queueEvidenceMatch[1].trim().slice(0, 4000) : "";
+    let nextTask = null;
+    const nextTaskMatch = text.match(/ZCLOUD_NEXT_TASK:\s*([^\n]+)/i);
+    if (nextTaskMatch) {
+      const parts = Object.fromEntries(nextTaskMatch[1].split(";").map(part => {
+        const index = part.indexOf("=");
+        return index > 0 ? [part.slice(0, index).trim().toLowerCase(), part.slice(index + 1).trim()] : ["", ""];
+      }).filter(([key]) => key));
+      if (parts.title) {
+        nextTask = {
+          project_id: (parts.project || workProject || BASE_PROJECT || "").toLowerCase(),
+          priority: (parts.priority || "P2").toUpperCase(),
+          title: parts.title,
+          completion_criteria: parts.criteria || ""
+        };
+      }
+    }
+    if (queueItem && queueResult) {
+      await syncStatus("portfolio-queue-result", {
+        queueItem,
+        queueResult,
+        queueEvidence,
+        nextTask
+      });
     }
     // Autonomy markers stay attached to the technical worker slot. They control
     // whether that worker is allowed another global queue cycle.
@@ -991,7 +1023,7 @@ browser.tabs.onRemoved.addListener(tabId => {
   }
 });
 refreshTargets();
-setInterval(refreshTargets, 15000);
+setInterval(refreshTargets, 5000);
 pollCommands();
 setInterval(pollCommands, 15000);
 watchRunnerHealth();
