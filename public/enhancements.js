@@ -1,5 +1,6 @@
 'use strict';
 (function(){
+  const trText=value=>String(value??'').replace(/Needs attention/g,'Needs attention').replace(/Onbekend/g,'Unknown').replace(/Geen vaste VPS-worker/g,'No dedicated VPS worker').replace(/Geen herstelpunt/g,'No recovery point').replace(/Herstel getest/g,'Recovery tested').replace(/Herstelcontrole nodig/g,'Recovery check needed').replace(/Herstel loopt/g,'Recovery in progress').replace(/Herstelpunt klaar/g,'Recovery point ready').replace(/Controleer dit incident\./g,'Check this incident.');
   function qInline(p){
     var h=p&&p.quality&&p.quality.headline;
     if(!h)return '';
@@ -21,14 +22,14 @@
     var q=p&&p.quality||{},cmp=q.comparison||{};
     var slots=['latest','current','best'].map(function(k){return evidencePoint(k,cmp[k])}).join('');
     var delta=progressDelta(p);
-    var deltaText=delta==null?'Nog geen vergelijkingspunt':(delta>0?'+':'')+num(delta)+' procentpunt';
-    var bottleneck=p.next_step||p.next||p.phase||'Geen actuele bottleneck vastgelegd';
+    var deltaText=delta==null?'No comparison point yet':(delta>0?'+':'')+num(delta)+' percentage points';
+    var bottleneck=p.next_step||p.next||p.phase||'No current bottleneck recorded';
     var sourceBits=[];
     if(p.milestone_revision)sourceBits.push('Checkpoint '+String(p.milestone_revision));
     if(p.progress_basis)sourceBits.push(String(p.progress_basis));
     ['latest','current','best'].forEach(function(k){var x=cmp[k];if(x&&x.source)sourceBits.push((k==='latest'?'Nieuwste':k==='current'?'Huidig':'Beste')+': '+String(x.source))});
-    var comparison=slots?'<div class="evidence-comparison">'+slots+'</div>':'<div class="evidence-empty">Nog geen betrouwbare latest/current/best-evidence voor dit project.</div>';
-    return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Voortgang met bewijs</h2><div class="panel-subtitle">Checkpoint-voortgang, verandering en actuele bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Verandering ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Actuele bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Bronnen en technische details</summary><p>'+esc(sourceBits.join(' · ')||'Geen bronmetadata beschikbaar')+'</p></details></div>';
+    var comparison=slots?'<div class="evidence-comparison">'+slots+'</div>':'<div class="evidence-empty">No reliable latest/current/best evidence for this project yet.</div>';
+    return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Evidence-backed progress</h2><div class="panel-subtitle">Checkpoint progress, change and current bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Change ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Current bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Sources and technical details</summary><p>'+esc(sourceBits.join(' · ')||'No source metadata available')+'</p></details></div>';
   }
 
   function qPanel(p){
@@ -45,21 +46,21 @@
     if(!r||!r.available)return '';
     function pct(v){return v==null?'—':num(v)+'%'}
     var capability='<div class="readiness-summary">'
-      +'<div><span>2-Step regels</span><strong>'+(r.two_step_configured?'Geconfigureerd':'Ontbreekt')+'</strong></div>'
-      +'<div><span>1-Step regels</span><strong>'+(r.one_step_configured?'Geconfigureerd':'Nog niet')+'</strong></div>'
-      +'<div><span>Simulator</span><strong>'+(r.simulator_ready?'Klaar':'Ontbreekt')+'</strong></div>'
-      +'<div><span>Simulatietest</span><strong>'+(r.measured?'Gemeten':'Nog niet gedraaid')+'</strong></div>'
+      +'<div><span>2-Step regels</span><strong>'+(r.two_step_configured?'Configured':'Missing')+'</strong></div>'
+      +'<div><span>1-Step rules</span><strong>'+(r.one_step_configured?'Configured':'Not yet')+'</strong></div>'
+      +'<div><span>Simulator</span><strong>'+(r.simulator_ready?'Ready':'Missing')+'</strong></div>'
+      +'<div><span>Simulation test</span><strong>'+(r.measured?'Measured':'Not run yet')+'</strong></div>'
       +'</div>';
     var runs=r.runs||[];
     var table='';
     if(runs.length){
-      table='<div class="readiness-table"><div class="readiness-row head"><span>Risico per trade</span><span>Geslaagd</span><span>Daglimiet geraakt</span><span>Totale limiet geraakt</span><span>Zware terugval</span><span>Typisch doelmoment</span></div>'
+      table='<div class="readiness-table"><div class="readiness-row head"><span>Risk per trade</span><span>Passed</span><span>Daily limit hit</span><span>Total limit hit</span><span>Severe drawdown</span><span>Typical time to target</span></div>'
         +runs.map(function(x){return '<div class="readiness-row"><strong>'+esc(x.risk_pct==null?'—':x.risk_pct+'%')+'</strong><span>'+pct(x.pass_rate)+'</span><span>'+pct(x.daily_loss_breach_rate)+'</span><span>'+pct(x.total_loss_breach_rate)+'</span><span>'+pct(x.max_drawdown_p95)+'</span><span>'+esc(x.median_days_to_target==null?'—':x.median_days_to_target+' d')+'</span></div>'}).join('')
         +'</div>';
     }else{
-      table='<div class="readiness-risk-grid">'+(r.planned_risk_pct||[]).map(function(x){return '<div><span>'+esc(x)+'% risico per trade</span><strong>—</strong><small>wacht op realistische FTMO-simulatietest</small></div>'}).join('')+'</div>';
+      table='<div class="readiness-risk-grid">'+(r.planned_risk_pct||[]).map(function(x){return '<div><span>'+esc(x)+'% risk per trade</span><strong>—</strong><small>waiting for a realistic FTMO simulation test</small></div>'}).join('')+'</div>';
     }
-    return '<div class="panel readiness-panel"><div class="panel-header"><div><h2>FTMO-teststatus</h2><div class="panel-subtitle">Realistische FTMO-simulatietest · los van alleen winst of winstpercentage</div></div><span class="readiness-state '+(r.measured?'ready':'pending')+'">'+(r.measured?'Gemeten':'Nog niet gemeten')+'</span></div>'+capability+'<details class="section-details readiness-details"><summary>Technische testdetails</summary>'+table+'</details><div class="detail-note">'+esc(r.note||'')+'</div></div>';
+    return '<div class="panel readiness-panel"><div class="panel-header"><div><h2>FTMO test status</h2><div class="panel-subtitle">Realistic FTMO simulation test · separate from profit or win rate</div></div><span class="readiness-state '+(r.measured?'ready':'pending')+'">'+(r.measured?'Measured':'Not measured yet')+'</span></div>'+capability+'<details class="section-details readiness-details"><summary>Technical test details</summary>'+table+'</details><div class="detail-note">'+esc(r.note||'')+'</div></div>';
   }
 
   function resourcePanel(){
@@ -69,29 +70,29 @@
     var tech=[];
     var rows=list.map(function(p){
       var r=p.resource||{};
-      var cpu=r.cpu_percent==null?'wordt gemeten':num(r.cpu_percent)+'%';
+      var cpu=r.cpu_percent==null?'being measured':num(r.cpu_percent)+'%';
       var mem=r.memory_bytes?num(r.memory_bytes/1048576)+' MB':'—';
-      var state=r.managed?'Draait op de VPS':'Geen vaste VPS-worker';
+      var state=r.managed?'Running on the VPS':'No dedicated VPS worker';
       tech.push('<div class="resource-tech-row"><strong>'+esc(p.name)+'</strong><span>CPU '+cpu+' · RAM '+mem+' · weight '+esc(weights[r.priority]||400)+'</span></div>');
-      return '<div class="resource-row"><div class="resource-copy"><strong>'+esc(p.name)+'</strong><small>'+state+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Voorrang voor '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Achtergrond</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normaal</option><option value="high" '+(r.priority==='high'?'selected':'')+'>Hoog</option><option value="turbo" '+(r.priority==='turbo'?'selected':'')+'>Turbo</option></select></div>';
+      return '<div class="resource-row"><div class="resource-copy"><strong>'+esc(p.name)+'</strong><small>'+state+'</small></div><select data-resource-priority="'+esc(p.id)+'" data-previous-value="'+esc(r.priority||'normal')+'" aria-label="Priority for '+esc(p.name)+'"><option value="background" '+(r.priority==='background'?'selected':'')+'>Background</option><option value="normal" '+(r.priority==='normal'?'selected':'')+'>Normal</option><option value="high" '+(r.priority==='high'?'selected':'')+'>High</option><option value="turbo" '+(r.priority==='turbo'?'selected':'')+'>Turbo</option></select></div>';
     }).join('');
-    var details='<details class="section-details resource-details"><summary>Technische details</summary><div class="resource-tech-list">'+tech.join('')+'</div><p>Weights: Achtergrond 100 · Normaal 400 · Hoog 800 · Turbo 3000. Dit is alleen de verdeling wanneer meerdere projecten tegelijk CPU/IO nodig hebben; het is geen harde CPU-limiet.</p></details>';
-    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Voorrang per project</h2><div class="panel-subtitle">Kies wie voorrang krijgt als de VPS druk is</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
+    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>Live allocation</span></div><div class="resource-tech-list">'+tech.join('')+'</div><p>Weights: Background 100 · Normal 400 · High 800 · Turbo 3000. This is the allocation used when multiple projects need CPU/I/O at the same time; it is not a hard CPU limit.</p></section>';
+    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Live CPU, memory and worker allocation by project</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
   }
   function incidentPanel(){
     var center=DATA.incidents||{items:[],recovery:null},items=center.items||[];
     if(!items.length){
       var recovery=center.recovery||{};
-      var recoveryText=recovery.available?'Herstelpunt beschikbaar':'Nog geen herstelpunt';
-      return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Aandacht nodig</h2><div class="panel-subtitle">Geen actie nodig · '+esc(recoveryText)+'</div></div>'+icon('check')+'</div><div class="alert-empty">Alles wat nu draait heeft geen concrete interventie nodig.</div></div>';
+      var recoveryText=recovery.available?'Recovery point available':'No recovery point yet';
+      return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Needs attention</h2><div class="panel-subtitle">No action needed · '+esc(recoveryText)+'</div></div>'+icon('check')+'</div><div class="alert-empty">Everything currently running needs no intervention.</div></div>';
     }
     var names={};(DATA.projects||[]).forEach(function(p){names[p.id]=p.name});
     var rows=items.map(function(x){
       var rollback=x.rollback||{},project=names[x.project]||x.project||'zCloud';
-      var recovery=!rollback.available?'Geen herstelpunt':rollback.status==='tested'?'Herstel getest':rollback.status==='problem'?'Herstelcontrole nodig':rollback.status==='in_progress'?'Herstel loopt':'Herstelpunt klaar';
-      return '<article class="incident-card '+esc(x.severity||'warning')+'"><div class="incident-card-head"><div><span>'+esc(project)+'</span><strong>'+esc(x.title)+'</strong></div><b>'+esc(x.health||'Aandacht')+'</b></div><dl><div><dt>Oorzaak</dt><dd>'+esc(x.cause||'Onbekend')+'</dd></div><div><dt>Impact</dt><dd>'+esc(x.impact||'Onbekend')+'</dd></div><div><dt>Herstel</dt><dd>'+esc(recovery)+'</dd></div></dl><p class="incident-action"><b>Wat nu:</b> '+esc(x.action||'Controleer dit incident.')+'</p><details class="section-details incident-details"><summary>Technische details</summary><p>'+esc(x.technical_detail||'Geen extra technische details')+(x.detected_at?' · '+esc(date(x.detected_at,true)):'')+'</p></details></article>';
+      var recovery=!rollback.available?'No recovery point':rollback.status==='tested'?'Recovery tested':rollback.status==='problem'?'Recovery check needed':rollback.status==='in_progress'?'Recovery in progress':'Recovery point ready';
+      return '<article class="incident-card '+esc(x.severity||'warning')+'"><div class="incident-card-head"><div><span>'+esc(project)+'</span><strong>'+esc(trText(x.title))+'</strong></div><b>'+esc(x.health||'Needs attention')+'</b></div><dl><div><dt>Cause</dt><dd>'+esc(trText(x.cause||'Unknown'))+'</dd></div><div><dt>Impact</dt><dd>'+esc(trText(x.impact||'Unknown'))+'</dd></div><div><dt>Restore</dt><dd>'+esc(recovery)+'</dd></div></dl><p class="incident-action"><b>Next step:</b> '+esc(trText(x.action||'Check this incident.'))+'</p><details class="section-details incident-details"><summary>Technical details</summary><p>'+esc(trText(x.technical_detail||'No additional technical details'))+(x.detected_at?' · '+esc(date(x.detected_at,true)):'')+'</p></details></article>';
     }).join('');
-    return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Aandacht nodig</h2><div class="panel-subtitle">'+items.length+' concrete '+(items.length===1?'actie':'acties')+' · geen logspam</div></div><a class="events-link" href="#activity">Historie</a></div><div class="incident-list">'+rows+'</div></div>';
+    return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Needs attention</h2><div class="panel-subtitle">'+items.length+' concrete '+(items.length===1?'action':'actions')+' · no log spam</div></div><a class="events-link" href="#activity">History</a></div><div class="incident-list">'+rows+'</div></div>';
   }
 
   function milestonePanel(p){
@@ -99,7 +100,7 @@
       var pct=Math.round(Number(m.progress==null?(m.done?100:0):m.progress)*10)/10;
       return '<div class="milestone '+(pct>=100?'done':(m.title===p.next?'next':''))+'"><span class="milestone-check">'+(pct>=100?'✓':String(i+1).padStart(2,'0'))+'</span><div class="milestone-main"><span>'+esc(m.title)+'</span><div class="milestone-mini"><i style="width:'+pct+'%"></i></div></div><em>'+num(pct)+'%</em></div>';
     }).join('');
-    return '<div class="panel milestone-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Voortgang per projectstap</h2><div class="panel-subtitle">Meer detail dan alleen het totale projectpercentage</div></div><span class="count">'+p.completed+' / '+p.milestones.length+'</span></div><div class="milestones">'+rows+'</div></div>';
+    return '<div class="panel milestone-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Progress by project step</h2><div class="panel-subtitle">More detail than the overall project percentage</div></div><span class="count">'+p.completed+' / '+p.milestones.length+'</span></div><div class="milestones">'+rows+'</div></div>';
   }
 
   var baseProjectCard=projectCard;
@@ -139,7 +140,7 @@
     try{
       var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
       var data=await response.json().catch(function(){return {}});
-      if(!response.ok){throw new Error(data.error||'Opslaan mislukt')}
+      if(!response.ok){throw new Error(data.error||'Save failed')}
       var saved=(data.resource&&data.resource.priority)||el.value;
       el.value=saved;
       el.dataset.previousValue=saved;
@@ -152,13 +153,13 @@
       }
       if(data.resource&&data.resource.applied===false){
         $('notice').hidden=false;
-        $('notice').textContent='Voorrang is opgeslagen. De live VPS-weight kon nog niet worden toegepast; zCloud houdt je keuze wel vast.';
+        $('notice').textContent='Priority saved. The live VPS weight could not be applied yet; zCloud is keeping your choice.';
       }
       await refresh(true);
     }catch(err){
       el.value=previous;
       $('notice').hidden=false;
-      $('notice').textContent='Projectvoorrang kon niet worden opgeslagen: '+(err.message||err);
+      $('notice').textContent='Project priority could not be saved: '+(err.message||err);
     }finally{
       el.disabled=false;
     }
