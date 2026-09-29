@@ -126,7 +126,7 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertFalse(state["allow_ai"])
         self.assertEqual("external_or_human_gate", state["reason"])
 
-    def test_wait_vps_marker_temporarily_closes_generic_ai_gate(self):
+    def test_wait_vps_marker_is_telemetry_and_does_not_close_dynamic_ai_gate(self):
         before = server.project_autonomy_state("supa")
         self.assertTrue(before["allow_ai"])
         with server.connect() as conn:
@@ -135,9 +135,9 @@ class AutonomyPolicyTests(unittest.TestCase):
                 (datetime.now(timezone.utc).isoformat(), "autonomy-wait-vps", "supa", 1, 0, 0),
             )
         after = server.project_autonomy_state("supa")
-        self.assertFalse(after["allow_ai"])
-        self.assertEqual("autonomy-wait-vps", after["reason"])
-        self.assertIsNotNone(after["hold"])
+        self.assertTrue(after["allow_ai"])
+        self.assertEqual("bounded_ai_worker", after["reason"])
+        self.assertIsNone(after["hold"])
 
     def test_scheduler_bootstraps_once_and_manual_pause_wins(self):
         server.portfolio_queue_enqueue("supa", "scheduler boot", "P1", "prove start")
