@@ -1,0 +1,106 @@
+name: Close proven RaiseAI OpenRouter queue item
+
+on:
+  push:
+    branches: [ops/close-raiseai-openrouter-queue-20260929]
+    paths:
+      - .github/workflows/close-raiseai-openrouter-queue.yml
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Verify live receipt and close stale queue claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import time
+          import urllib.request
+
+          BASE="http://127.0.0.1:8765"
+          QUEUE_ID="raiseai-openrouter-provider-live"
+          RECEIPT=pathlib.Path("/home/ubuntu/.local/state/raiseai/openrouter-live-deploy/36610642296.json")
+
+          if not RECEIPT.is_file():
+              raise SystemExit("verified OpenRouter receipt is missing")
+          receipt=json.loads(RECEIPT.read_text(encoding="utf-8"))
+          response=receipt.get("gateway_response") or {}
+          expected={
+              "http_status":200,
+              "status":"answered",
+              "provider":"openrouter",
+              "answer":"RAISE_OPENROUTER_CANARY_OK",
+          }
+          for key,value in expected.items():
+              if response.get(key)!=value:
+                  raise SystemExit(f"receipt mismatch for {key}: {response.get(key)!r}")
+          if not response.get("model") or int(receipt.get("exitcode",-1)) != 0:
+              raise SystemExit("receipt lacks successful provider/model evidence")
+
+          def get(path):
+              with urllib.request.urlopen(BASE+path,timeout=15) as r:
+                  return json.load(r)
+          def post(path,payload):
+              req=urllib.request.Request(
+                  BASE+path,
+                  data=json.dumps(payload).encode(),
+                  headers={"Content-Type":"application/json","User-Agent":"zcloud-openrouter-queue-close/1"},
+                  method="POST",
+              )
+              with urllib.request.urlopen(req,timeout=15) as r:
+                  return json.load(r)
+
+          before=get("/api/portfolio-queue?all=1")
+          item=next((x for x in before.get("items",[]) if x.get("queue_id")==QUEUE_ID),None)
+          if not item:
+              raise SystemExit("queue item missing")
+          print("QUEUE_BEFORE="+json.dumps({
+              "queue_id":item.get("queue_id"),
+              "status":item.get("status"),
+              "eligible":item.get("eligible"),
+              "worker_slot":item.get("worker_slot"),
+              "attempts":item.get("attempts"),
+          },sort_keys=True))
+
+          if item.get("status") != "done":
+              slot=int(item.get("worker_slot") or 0)
+              if slot < 1:
+                  raise SystemExit(f"queue item is not currently assigned: {item}")
+              evidence=(
+                  "github_run=36610642296; exitcode=0; gateway_http=200; "
+                  f"provider={response.get('provider')}; model={response.get('model')}; "
+                  f"status={response.get('status')}; answer={response.get('answer')}; "
+                  f"requestId={response.get('requestId')}; receipt={RECEIPT}"
+              )
+              result=post("/api/portfolio-queue",{
+                  "action":"result",
+                  "worker_slot":slot,
+                  "queue_id":QUEUE_ID,
+                  "result":"DONE",
+                  "evidence":evidence,
+              })
+              if not result.get("ok"):
+                  raise SystemExit(f"queue close rejected: {result}")
+              print("QUEUE_RESULT="+json.dumps(result,sort_keys=True))
+
+          time.sleep(1)
+          after=get("/api/portfolio-queue?all=1")
+          target=get("/api/runner-targets")
+          closed=next((x for x in after.get("items",[]) if x.get("queue_id")==QUEUE_ID),None)
+          if not closed or closed.get("status")!="done" or closed.get("eligible"):
+              raise SystemExit(f"queue item did not close: {closed}")
+          allocation=(target.get("global_allocation") or {})
+          print("QUEUE_AFTER="+json.dumps({
+              "closed":{"status":closed.get("status"),"eligible":closed.get("eligible")},
+              "max_workers":target.get("max_workers"),
+              "workers":allocation.get("workers"),
+              "dispatch_cooldown_seconds":allocation.get("dispatch_cooldown_seconds"),
+          },ensure_ascii=False,sort_keys=True))
+          PY
