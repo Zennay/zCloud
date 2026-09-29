@@ -241,10 +241,43 @@ jobs:
           TOKEN="$(env_value RAISE_GATEWAY_TOKEN)"
           CERT="$(env_value RAISE_TLS_CERT)"
           PORT="$(env_value RAISE_PORT)"
+          OPENROUTER_KEY="$(env_value OPENROUTER_API_KEY)"
           HOST="$(hostname -f)"
           test -n "$TOKEN"
           test -s "$CERT"
           test -n "$PORT"
+          test -n "$OPENROUTER_KEY"
+
+          OPENROUTER_FILE="$(mktemp)"
+          direct_code="$(curl --silent --show-error \
+            --header "Authorization: Bearer $OPENROUTER_KEY" \
+            --header "Content-Type: application/json" \
+            --data '{"models":["z-ai/glm-5.3-flash","google/gemini-3.8-flash"],"messages":[{"role":"user","content":"Reply only with RAISE_OPENROUTER_DIRECT_OK"}],"max_tokens":32}' \
+            --output "$OPENROUTER_FILE" --write-out '%{http_code}' \
+            "https://openrouter.ai/api/v1/chat/completions")"
+          echo "OPENROUTER_DIRECT_HTTP_STATUS=$direct_code"
+          python3 - "$OPENROUTER_FILE" <<'PY'
+          import json, sys
+          path=sys.argv[1]
+          try:
+              payload=json.load(open(path,encoding="utf-8"))
+          except Exception:
+              raw=open(path,encoding="utf-8",errors="replace").read(1000)
+              print("OPENROUTER_DIRECT_DIAGNOSTIC_TEXT="+raw.replace("\n"," "))
+          else:
+              error=payload.get("error")
+              safe={"model":payload.get("model")}
+              if isinstance(error,dict):
+                  safe["error"]={k:error.get(k) for k in ("code","message","type") if k in error}
+              elif error is not None:
+                  safe["error"]=str(error)[:500]
+              print("OPENROUTER_DIRECT_DIAGNOSTIC="+json.dumps(safe,ensure_ascii=False,sort_keys=True))
+          PY
+          if [ "$direct_code" != "200" ]; then
+            rm -f "$OPENROUTER_FILE"
+            exit 44
+          fi
+          rm -f "$OPENROUTER_FILE"
 
           HEALTH_FILE="$(mktemp)"
           CANARY_FILE="$(mktemp)"
