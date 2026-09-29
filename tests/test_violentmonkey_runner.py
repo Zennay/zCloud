@@ -50,6 +50,8 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("violentmonkey-missing-fallback", background)
         self.assertIn("legacy-extension-runner-temporarily-retained", background)
         self.assertIn("violentmonkey-primary-takeover", background)
+        self.assertIn("legacy-fallback-config-refresh-failed", background)
+        self.assertIn('type:"runner-config-update"', background)
         self.assertIn(
             'VIOLENTMONKEY_PRIMARY_RUNNER && (command.action === "push" || command.action === "drain")',
             background,
