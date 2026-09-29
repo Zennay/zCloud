@@ -312,6 +312,53 @@ function runProject(cfg) {
     const nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
     return nodes.length ? (nodes[nodes.length - 1].innerText || "").trim() : "";
   }
+  function visibleElement(el) {
+    if (!el) return false;
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+  }
+  function controlLabel(el) {
+    return String(
+      el?.getAttribute?.("aria-label") ||
+      el?.getAttribute?.("title") ||
+      el?.innerText ||
+      el?.textContent ||
+      ""
+    ).trim();
+  }
+  async function requestHighThinking() {
+    const exactHigh = /^(?:high|hoog)$/i;
+    const highCandidate = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
+      .find(el => visibleElement(el) && exactHigh.test(controlLabel(el)));
+    if (highCandidate) {
+      highCandidate.click();
+      await sleep(400);
+      status("thinking-effort-high-selected", {reason: "quality-recovery-visible-option"});
+      return true;
+    }
+
+    const pickerPattern = /^(?:instant|thinking|denk(?:en| na)?|gpt-5\.6(?:\s+sol)?|model)$/i;
+    const picker = [...document.querySelectorAll("button")]
+      .find(el => visibleElement(el) && pickerPattern.test(controlLabel(el)));
+    if (!picker) {
+      status("thinking-effort-high-unavailable", {reason: "picker-not-found"});
+      return false;
+    }
+    picker.click();
+    await sleep(600);
+    const highAfterOpen = [...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
+      .find(el => visibleElement(el) && exactHigh.test(controlLabel(el)));
+    if (!highAfterOpen) {
+      document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+      status("thinking-effort-high-unavailable", {reason: "high-option-not-found"});
+      return false;
+    }
+    highAfterOpen.click();
+    await sleep(400);
+    status("thinking-effort-high-selected", {reason: "quality-recovery-picker"});
+    return true;
+  }
   function statusPayload(event, extra = {}) {
     const text = assistantText();
     return {
@@ -509,6 +556,7 @@ function runProject(cfg) {
     if (draft && draft !== PROMPT && forceInitialDispatch) status("stale-draft-replaced", {reason: "forced-initial-dispatch"});
     sending = true;
     try {
+      if (qualityRetryPending) await requestHighThinking();
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
       await sleep(700);
