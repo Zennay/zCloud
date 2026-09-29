@@ -1681,47 +1681,17 @@ def global_worker_allocation(states=None,targets=None):
     return portfolio_queue_allocation()
 
 def _persist_global_worker_allocation(allocation):
-    """Persist two stable portfolio slot identities across project-tab reallocation."""
+    """Persist queue-owned portfolio slot identities exactly as assigned by SQLite."""
     selected=list(allocation.get('workers') or [])[:GLOBAL_CHATGPT_WORKER_LIMIT]
     ts=now()
-    selected_by_key={
-        f"{item['project_id']}::w{max(1,int(item['worker_slot'] or 1))}":item
-        for item in selected
-    }
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        existing=c.execute(
-            'SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot'
-        ).fetchall()
-        existing_by_key={
-            f"{row['project_id']}::w{max(1,int(row['worker_slot'] or 1))}":dict(row)
-            for row in existing
-        }
-        assignments={}
-        used_slots=set()
-        # Keep a surviving worker on the same global Worker 1/2 identity.
-        for worker_key in selected_by_key:
-            previous=existing_by_key.get(worker_key)
-            if not previous:
-                continue
-            slot=int(previous['slot'])
-            if 1 <= slot <= GLOBAL_CHATGPT_WORKER_LIMIT and slot not in used_slots:
-                assignments[worker_key]=(slot,previous.get('assigned_at') or ts)
-                used_slots.add(slot)
-        free_slots=[slot for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1) if slot not in used_slots]
-        for worker_key in selected_by_key:
-            if worker_key in assignments:
-                continue
-            if not free_slots:
-                break
-            assignments[worker_key]=(free_slots.pop(0),ts)
-
         c.execute('DELETE FROM ai_global_slots')
-        for worker_key,(global_slot,assigned_at) in sorted(assignments.items(),key=lambda item:item[1][0]):
-            item=selected_by_key[worker_key]
+        for fallback_slot,item in enumerate(selected,1):
+            global_slot=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(item.get('global_worker_slot') or fallback_slot)))
             c.execute(
                 'INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at) VALUES(?,?,?,?)',
-                (global_slot,str(item['project_id']),int(item['worker_slot']),assigned_at),
+                (global_slot,str(item['project_id']),int(item['worker_slot']),ts),
             )
 
 def _current_global_slot_map():
@@ -1851,8 +1821,7 @@ def runner_worker_targets():
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
-            allocated_count=sum(1 for value in global_slots.values() if value and value <= GLOBAL_CHATGPT_WORKER_LIMIT and
-                                any(key.startswith(project_id+'::') and slot==value for key,slot in global_slots.items()))
+            allocated_count=sum(1 for key in global_slots if key.startswith(project_id+'::'))
             count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,max(int(cfg.get('worker_count') or 1),allocated_count)))
             for slot in range(1,count+1):
                 c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
