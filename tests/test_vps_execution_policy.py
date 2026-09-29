@@ -18,8 +18,8 @@ class VpsExecutionPolicyTests(unittest.TestCase):
         )
         self.assertIn("github-actions-self-hosted-runner", policy["transport"])
         self.assertIn("vps-bb300bba", policy["runner"]["host"])
-        self.assertNotIn("fallback", policy["prompt_directive"].lower())
         self.assertIn("WAIT_VPS", policy["prompt_directive"])
+        self.assertIn("verboden", policy["prompt_directive"])
 
     def test_server_has_no_implicit_vps_policy_fallback(self):
         self.assertFalse(hasattr(server, "_VPS_EXECUTION_POLICY_FALLBACK"))
