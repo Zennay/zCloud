@@ -1,0 +1,141 @@
+name: Promote High nonblocking worker hotfix
+
+on:
+  push:
+    branches: [ops/promote-high-nonblocking-20260929]
+    paths:
+      - .github/workflows/promote-high-nonblocking.yml
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Check out exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: 07f189ef8a397724eff9b6d660c9efd272b4b7f1
+          clean: true
+          fetch-depth: 1
+
+      - name: Validate exact hotfix source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "07f189ef8a397724eff9b6d660c9efd272b4b7f1"
+          node --check firefox-extension/background.js
+          grep -q 'thinking-effort-high-unavailable-proceeding' firefox-extension/background.js
+          ! grep -q 'status("send-blocked", {reason: "high-thinking-required"' firefox-extension/background.js
+          python3 -m unittest -v tests.test_chat_cooldown_mobile
+
+      - name: Transactionally promote Firefox worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path firefox-extension/background.js \
+            --actor "github-actions-high-nonblocking-hotfix" \
+            --json
+          runtime="$HOME/snap/firefox/common/chatgpt-project-extension/background.js"
+          test -f "$runtime"
+          grep -q 'thinking-effort-high-unavailable-proceeding' "$runtime"
+          ! grep -q 'status("send-blocked", {reason: "high-thinking-required"' "$runtime"
+          echo "RUNTIME_HIGH_NONBLOCKING=verified"
+
+      - name: Start and verify current queue-owned worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE="http://127.0.0.1:8765"
+
+          def call(method,path,payload=None):
+              body=None
+              headers={"User-Agent":"zcloud-high-nonblocking-hotfix/1"}
+              if payload is not None:
+                  body=json.dumps(payload).encode()
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
+              try:
+                  with urllib.request.urlopen(req,timeout=15) as r:
+                      return json.load(r)
+              except urllib.error.HTTPError as exc:
+                  detail=exc.read().decode("utf-8","replace")
+                  raise RuntimeError(f"{method} {path} HTTP {exc.code}: {detail[:1000]}") from exc
+
+          def allocated():
+              target=call("GET","/api/runner-targets")
+              workers=(target.get("global_allocation") or {}).get("workers") or []
+              return target,workers
+
+          target,workers=allocated()
+          limit=int(target.get("max_workers") or 0)
+          if limit < 1:
+              raise SystemExit("dashboard dynamic workers are disabled")
+          if not workers:
+              raise SystemExit("no queue-owned worker allocated")
+          worker=workers[0]
+          key=str(worker.get("worker_key") or "")
+          if not key:
+              raise SystemExit(f"allocated worker has no identity: {worker}")
+          print("ALLOCATION_BEFORE="+json.dumps({
+              "max_workers":limit,
+              "worker":worker,
+              "dispatch_cooldown_seconds":(target.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
+          },ensure_ascii=False,sort_keys=True))
+
+          start=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
+          print("START_RESULT="+json.dumps(start,ensure_ascii=False,sort_keys=True))
+
+          live=None
+          status=None
+          base=key.split("::w",1)[0]
+          for _ in range(12):
+              time.sleep(5)
+              status=call("GET","/api/status?project=zcloud")
+              project=(status.get("chatgpt_runners") or {}).get(base) or {}
+              candidates=project.get("workers") or []
+              live=next((w for w in candidates if w.get("worker_id")==key and w.get("state")=="live" and int(w.get("age_seconds") or 999999)<=90),None)
+              if live:
+                  break
+
+          if not live:
+              recovery=call("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
+              print("RECOVERY_RESULT="+json.dumps(recovery,ensure_ascii=False,sort_keys=True))
+              for _ in range(12):
+                  time.sleep(5)
+                  status=call("GET","/api/status?project=zcloud")
+                  project=(status.get("chatgpt_runners") or {}).get(base) or {}
+                  candidates=project.get("workers") or []
+                  live=next((w for w in candidates if w.get("worker_id")==key and w.get("state")=="live" and int(w.get("age_seconds") or 999999)<=90),None)
+                  if live:
+                      break
+
+          if not live:
+              raise SystemExit(f"allocated worker never became live: {key}")
+
+          target,workers=allocated()
+          current=next((w for w in workers if w.get("worker_key")==key),None)
+          if not current:
+              raise SystemExit(f"worker allocation moved unexpectedly from {key}")
+          print("LIVE_WORKER="+json.dumps({
+              "worker_key":key,
+              "queue_id":current.get("queue_id"),
+              "project_id":current.get("project_id"),
+              "priority":current.get("priority"),
+              "state":live.get("state"),
+              "age_seconds":live.get("age_seconds"),
+              "last_event":live.get("last_event"),
+              "command":live.get("command"),
+              "dispatch_cooldown_seconds":(target.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
+          },ensure_ascii=False,sort_keys=True))
+          PY
