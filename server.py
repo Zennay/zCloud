@@ -119,7 +119,11 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     queue_id=str(item.get('queue_id') or 'NONE')
     project_guard=(
         'FTMO: houd preregistration, walk-forward en final holdout strikt gescheiden. '
-        if project_id == 'ftmo' else ''
+        if project_id == 'ftmo' else
+        'zCloud FINISH: bij iteration_count=9 is dit de tiende/harde laatste iteratie. '
+        'ZCLOUD_ITERATION_COMPLETE alleen na echte implementatie; gebruik '
+        'ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 of OPEN_P0P1 en ZCLOUD_FINAL_AUDIT: GREEN of FAIL wanneer van toepassing. '
+        if project_id == 'cloud' else ''
     )
     return base_prompt + assignment + (
         f'Jij bent Worker {slot}/{total}. VOER UIT, NIET RAPPORTEREN. '
