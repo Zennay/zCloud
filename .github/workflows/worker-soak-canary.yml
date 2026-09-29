@@ -1,0 +1,212 @@
+name: Isolated portfolio worker soak canary
+
+on:
+  push:
+    branches: ['canary/worker-soak-20260929']
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  soak:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      LIVE_DB: /home/ubuntu/zennay-cloud/history.db
+      ZCLOUD_API: http://127.0.0.1:8765
+      CANARY_ISSUE: "81"
+      CANARY_QUEUE_ID: canary-worker-soak-20260929
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run isolated 11-minute worker soak
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sqlite3, time, urllib.request
+          from datetime import datetime, timezone
+
+          db=os.environ["LIVE_DB"]
+          api=os.environ["ZCLOUD_API"]
+          issue=int(os.environ["CANARY_ISSUE"])
+          qid=os.environ["CANARY_QUEUE_ID"]
+          token=os.environ["GH_TOKEN"]
+          start=datetime.now(timezone.utc)
+          start_iso=start.isoformat()
+
+          def post(path, payload):
+              raw=json.dumps(payload).encode()
+              req=urllib.request.Request(api+path,data=raw,headers={"Content-Type":"application/json"},method="POST")
+              with urllib.request.urlopen(req,timeout=10) as r:
+                  return json.loads(r.read().decode())
+
+          def gh_comments():
+              req=urllib.request.Request(
+                  f"https://api.github.com/repos/Zennay/zCloud/issues/{issue}/comments?per_page=100",
+                  headers={"Authorization":f"Bearer {token}","Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}
+              )
+              with urllib.request.urlopen(req,timeout=15) as r:
+                  return json.loads(r.read().decode())
+
+          def latest_busy_count():
+              with sqlite3.connect(db,timeout=5) as c:
+                  row=c.execute("""
+                    WITH h AS (
+                      SELECT project_id,worker_slot,generating,sending,
+                             ROW_NUMBER() OVER (PARTITION BY project_id,worker_slot ORDER BY id DESC) rn
+                      FROM runner_events WHERE event='heartbeat'
+                    )
+                    SELECT COUNT(*) FROM h WHERE rn=1 AND (generating=1 OR sending=1)
+                  """).fetchone()
+                  return int(row[0] or 0)
+
+          def event_stats():
+              with sqlite3.connect(db,timeout=5) as c:
+                  c.row_factory=sqlite3.Row
+                  rows=c.execute("""
+                    SELECT event,reason,assistant_chars,ts FROM runner_events
+                    WHERE project_id='haxlab' AND ts>=?
+                    ORDER BY id
+                  """,(start_iso,)).fetchall()
+              data=[dict(r) for r in rows]
+              return {
+                  "prompt_sent":sum(r["event"]=="prompt-sent" for r in data),
+                  "generation_finished":sum(r["event"]=="generation-finished" for r in data),
+                  "queue_results":sum(r["event"]=="portfolio-queue-result" for r in data),
+                  "bad_terminal":[r for r in data if (
+                      r["event"] in ("autonomy-wait-vps","autonomy-wait-human","autonomy-complete")
+                      or "invalid-wait" in str(r["reason"] or "")
+                      or "backend-rejected-terminal-signal" in str(r["reason"] or "")
+                  )],
+                  "assistant_chars":[r["assistant_chars"] for r in data if r["event"]=="generation-finished" and r["assistant_chars"] is not None],
+              }
+
+          # Freeze normal workers. Do not interrupt an already generating response;
+          # wait for the current generation boundary before admitting the canary.
+          with sqlite3.connect(db,timeout=5) as c:
+              c.execute("UPDATE runner_workers SET desired_state='paused'")
+              c.execute("UPDATE runner_targets SET active=0")
+              c.execute("""UPDATE portfolio_queue
+                           SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                           WHERE status IN ('claimed','running','verifying')""",(start_iso,))
+              c.execute("""UPDATE runner_commands SET status='failed',updated_at=?,result='isolated soak preflight pause'
+                           WHERE status='pending'""",(start_iso,))
+              c.commit()
+
+          deadline=time.time()+120
+          while latest_busy_count() and time.time()<deadline:
+              time.sleep(5)
+          if latest_busy_count():
+              raise SystemExit("CANARY_FAIL: pre-existing ChatGPT generation did not reach idle boundary")
+
+          criteria=(
+              f"ISOLATED SOAK TEST using GitHub issue #{issue}. Every AI cycle MUST: "
+              f"(a) fetch issue #{issue}; (b) determine the next integer N from prior comments beginning exactly "
+              f"'ZCLOUD_SOAK_ITERATION '; (c) fetch current Zennay/zCloud main SHA and latest main regression workflow state; "
+              f"(d) add exactly one new issue comment with four lines: 'ZCLOUD_SOAK_ITERATION N', "
+              f"'main_sha=<sha>', 'workflow=<run-id>:<status/conclusion>', 'action=github-comment-written'; "
+              f"(e) make no code, Notion, queue, or production changes; (f) return ZCLOUD_QUEUE_RESULT: CONTINUE. "
+              f"Never return DONE, BLOCKED, WAIT_VPS, WAIT_HUMAN or COMPLETE. The external canary controller stops this task. "
+              f"A cycle without a newly written GitHub comment is invalid/status-only."
+          )
+          post("/api/portfolio-queue",{
+              "action":"enqueue","queue_id":qid,"project_id":"haxlab",
+              "title":f"Isolated worker soak canary on zCloud issue #{issue}",
+              "priority":"P0","completion_criteria":criteria,
+              "source_url":f"https://github.com/Zennay/zCloud/issues/{issue}"
+          })
+
+          # Allow exactly one carrier worker. Every other dynamic worker remains paused.
+          with sqlite3.connect(db,timeout=5) as c:
+              c.execute("INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES('haxlab',1,'')")
+              c.execute("UPDATE runner_workers SET desired_state='running' WHERE project_id='haxlab' AND worker_slot=1")
+              c.commit()
+
+          print("CANARY_STARTED",start_iso,flush=True)
+          duration=660  # 11 minutes
+          end=time.time()+duration
+          samples=[]
+          while time.time()<end:
+              comments=[x for x in gh_comments() if str(x.get("body") or "").startswith("ZCLOUD_SOAK_ITERATION ")]
+              stats=event_stats()
+              elapsed=int((datetime.now(timezone.utc)-start).total_seconds())
+              samples.append((elapsed,len(comments),stats["prompt_sent"],stats["generation_finished"],stats["queue_results"]))
+              print("CANARY_SAMPLE",json.dumps({
+                  "elapsed_s":elapsed,"action_comments":len(comments),
+                  "prompt_sent":stats["prompt_sent"],"generation_finished":stats["generation_finished"],
+                  "queue_results":stats["queue_results"],"bad_terminal":len(stats["bad_terminal"])
+              }),flush=True)
+              time.sleep(15)
+
+          # Drain the canary carrier, then force every dynamic worker back to paused.
+          with sqlite3.connect(db,timeout=5) as c:
+              c.execute("UPDATE runner_workers SET desired_state='draining' WHERE project_id='haxlab' AND worker_slot=1")
+              c.commit()
+          drain_deadline=time.time()+120
+          while latest_busy_count() and time.time()<drain_deadline:
+              time.sleep(5)
+
+          stop_iso=datetime.now(timezone.utc).isoformat()
+          with sqlite3.connect(db,timeout=5) as c:
+              c.execute("UPDATE runner_workers SET desired_state='paused'")
+              c.execute("UPDATE runner_targets SET active=0")
+              c.execute("""UPDATE portfolio_queue SET status='blocked',eligible=0,
+                           blocker='isolated soak canary ended by controller',
+                           evidence='controller-ended after 11-minute soak',
+                           worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                           WHERE queue_id=?""",(stop_iso,qid))
+              c.execute("""UPDATE portfolio_queue
+                           SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                           WHERE queue_id<>? AND status IN ('claimed','running','verifying')""",(stop_iso,qid))
+              c.execute("""UPDATE runner_commands SET status='failed',updated_at=?,result='isolated soak cleanup; workers left paused'
+                           WHERE status='pending'""",(stop_iso,))
+              c.commit()
+
+          comments=[x for x in gh_comments() if str(x.get("body") or "").startswith("ZCLOUD_SOAK_ITERATION ")]
+          stats=event_stats()
+          comment_times=[]
+          malformed=[]
+          for x in comments:
+              body=str(x.get("body") or "")
+              if not all(k in body for k in ("main_sha=","workflow=","action=github-comment-written")):
+                  malformed.append(body[:200])
+              try:
+                  comment_times.append(datetime.fromisoformat(str(x["created_at"]).replace("Z","+00:00")))
+              except Exception:
+                  pass
+          span=(max(comment_times)-min(comment_times)).total_seconds() if len(comment_times)>=2 else 0
+          chars=stats["assistant_chars"]
+          median_chars=sorted(chars)[len(chars)//2] if chars else 0
+
+          report={
+              "duration_seconds":int((datetime.now(timezone.utc)-start).total_seconds()),
+              "action_comments":len(comments),
+              "comment_span_seconds":int(span),
+              "prompt_sent":stats["prompt_sent"],
+              "generation_finished":stats["generation_finished"],
+              "queue_results":stats["queue_results"],
+              "bad_terminal_count":len(stats["bad_terminal"]),
+              "malformed_action_comments":len(malformed),
+              "median_finished_assistant_chars":median_chars,
+              "workers_left_paused":True,
+          }
+          print("CANARY_REPORT",json.dumps(report,sort_keys=True),flush=True)
+
+          # Passing means actual action continued late into the soak window, not merely
+          # several short status replies at the start.
+          ok=(
+              report["duration_seconds"]>=600
+              and report["action_comments"]>=4
+              and report["comment_span_seconds"]>=480
+              and report["queue_results"]>=4
+              and report["generation_finished"]>=4
+              and report["bad_terminal_count"]==0
+              and report["malformed_action_comments"]==0
+              and report["queue_results"] <= report["action_comments"]+1
+          )
+          if not ok:
+              raise SystemExit("CANARY_FAIL: "+json.dumps(report,sort_keys=True))
+          print("ZCLOUD_WORKER_SOAK_GREEN",flush=True)
+          PY
