@@ -99,4 +99,38 @@ except Exception as exc:
     print(json.dumps({"error": str(exc)[:300]}, ensure_ascii=False))
 PY
 printf 'ZCLOUD_DISPATCH_DB_END\n'
+
+printf 'ZCLOUD_AUTONOMY_API_BEGIN\n'
+python3 - <<'PY'
+import json
+import urllib.request
+
+for path in ("/api/autonomy", "/api/runner-targets"):
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8765" + path, timeout=8) as response:
+            payload = json.load(response)
+        if path == "/api/autonomy":
+            payload = {
+                "raiseai": (payload.get("projects") or {}).get("raiseai"),
+            }
+        else:
+            allocation = payload.get("global_allocation") or {}
+            payload = {
+                "max_workers": payload.get("max_workers"),
+                "allocation": {
+                    "workers": allocation.get("workers"),
+                    "projects": allocation.get("projects"),
+                    "dispatch_cooldown_seconds": allocation.get("dispatch_cooldown_seconds"),
+                },
+                "raiseai_target": (payload.get("projects") or {}).get("raiseai::w1"),
+            }
+        print(json.dumps({"path": path, "payload": payload}, ensure_ascii=False, sort_keys=True))
+    except Exception as exc:
+        print(json.dumps({"path": path, "error": str(exc)[:300]}, ensure_ascii=False))
+PY
+printf 'ZCLOUD_AUTONOMY_API_END\n'
+
+printf 'ZCLOUD_SCHEDULER_LOG_BEGIN\n'
+journalctl -u zennay-cloud.service -n 120 --no-pager 2>/dev/null | grep -E 'Autonomy|scheduler|push|worker|ERROR|Exception' | tail -n 80 || true
+printf 'ZCLOUD_SCHEDULER_LOG_END\n'
 printf 'ZCLOUD_VPS_PROBE=GREEN\n'
