@@ -18,6 +18,7 @@ class ResourcePriorityPersistenceTests(unittest.TestCase):
         self.original_resource_file = enhancements.RESOURCE_FILE
         self.original_units = enhancements.PROJECT_UNITS
         self.original_check_output = enhancements.subprocess.check_output
+        self.original_unit_numbers = enhancements._unit_numbers
         self.original_cpu_count = enhancements.os.cpu_count
         self.original_host_counter = enhancements._host_cpu_counter
         self.original_cgroup_cpu = enhancements._cgroup_cpu_nsec
@@ -34,6 +35,7 @@ class ResourcePriorityPersistenceTests(unittest.TestCase):
         enhancements.RESOURCE_FILE = self.original_resource_file
         enhancements.PROJECT_UNITS = self.original_units
         enhancements.subprocess.check_output = self.original_check_output
+        enhancements._unit_numbers = self.original_unit_numbers
         enhancements.os.cpu_count = self.original_cpu_count
         enhancements._host_cpu_counter = self.original_host_counter
         enhancements._cgroup_cpu_nsec = self.original_cgroup_cpu
