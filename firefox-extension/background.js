@@ -808,6 +808,7 @@ async function syncRunnerConfig(tabId, target) {
     });
     if (result?.ok) return result;
   } catch (_) {}
+  try { await browser.tabs.sendMessage(tabId, {type:"runner-stop", projectId:target.project_id, reason:"runner-config-upgrade"}); } catch (_) {}
   try {
     await inject(tabId, target);
     await new Promise(resolve => setTimeout(resolve, 800));
