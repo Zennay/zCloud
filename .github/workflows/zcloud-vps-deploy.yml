@@ -59,10 +59,10 @@ jobs:
 
       - name: Promote translated project catalog
         run: |
-          python3 scripts/zcloud_transactional_promote.py \\
-            --candidate "$GITHUB_WORKSPACE" \\
-            --path projects.json \\
-            --actor "github-actions-vps-deploy" \\
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path projects.json \
+            --actor "github-actions-vps-deploy" \
             --json
 
       - name: Apply low-priority Firefox scheduler profile
