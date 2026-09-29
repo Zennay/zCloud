@@ -190,6 +190,7 @@ def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int
             add(errors, pid in project_ids or pid == "portfolio-review", f"history.db: unknown worker project {pid!r}")
             # runner_workers keeps legacy rows for audit/history. The current
             # target and allocator limits are the enforcement point for live slots.
+            # This permits the one-slot migration without deleting audit history.
             legacy_record = slot > max_workers
             add(
                 errors,
