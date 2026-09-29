@@ -1502,6 +1502,18 @@ def portfolio_queue_has_project_assignment(project_id):
                            AND (claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
     return bool(row)
 
+def portfolio_queue_has_eligible_work(exclude_queue_id=None):
+    with connect() as c:
+        if exclude_queue_id:
+            row=c.execute("""SELECT 1 FROM portfolio_queue
+                             WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')
+                               AND queue_id<>? LIMIT 1""",(str(exclude_queue_id),)).fetchone()
+        else:
+            row=c.execute("""SELECT 1 FROM portfolio_queue
+                             WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')
+                             LIMIT 1""").fetchone()
+    return bool(row)
+
 def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='',source_url='',parent_queue_id=None,queue_id=None):
     project_id=str(project_id or '').strip().lower()
     title=str(title or '').strip()
@@ -1876,6 +1888,9 @@ def runner_record(payload):
     except Exception: worker_slot=1
     try: global_worker_slot=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(payload.get('globalWorkerSlot') or worker_slot)))
     except Exception: global_worker_slot=worker_slot
+    if event in ('autonomy-wait-vps','autonomy-wait-human','autonomy-complete') and portfolio_queue_has_eligible_work(payload.get('queueItem') or None):
+        event='autonomy-continue'
+        reason='backend-rejected-terminal-signal-queue-not-empty'
     match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
     with connect() as c:
         if not project_id and target:
