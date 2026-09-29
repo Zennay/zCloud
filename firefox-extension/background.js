@@ -241,7 +241,7 @@ function runProject(cfg) {
     const escalation = qualityRetryCount >= 2
       ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. " +
         "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
-        "Gebruik de hoogste beschikbare redeneerdiepte / High thinking, onderzoek de echte fout, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
+        "Onderzoek de echte fout grondig, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
         "Sluit NIET opnieuw af met dezelfde recoverable BLOCKED/WAIT_VPS; blijf binnen de bestaande safety-gates en bewijs de uitgevoerde stap. "
       : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. " +
         "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
@@ -338,6 +338,8 @@ function runProject(cfg) {
     '[role="menuitemradio"]',
     '[role="option"]',
     '[role="radio"]',
+    '[role="slider"]',
+    'input[type="range"]',
     '[aria-haspopup="menu"]',
     '[aria-haspopup="listbox"]'
   ].join(",");
@@ -406,11 +408,45 @@ function runProject(cfg) {
         /^(?:instant|medium|gemiddeld|high|hoog|extra high|zeer hoog|pro standard|pro standaard|pro extended|pro uitgebreid)$/i.test(controlLabel(el));
     }) || null;
   }
+  function thinkingLevelLabel(el) {
+    if (!el) return "";
+    return String(
+      el.getAttribute?.("aria-valuetext") ||
+      el.getAttribute?.("data-value") ||
+      el.getAttribute?.("data-state-value") ||
+      controlLabel(el) ||
+      ""
+    ).trim();
+  }
+  function thinkingSliders() {
+    return [...document.querySelectorAll('[role="slider"],input[type="range"]')]
+      .filter(el => visibleElement(el));
+  }
   function highSelectionVerified() {
     const controls = modelControls();
     if (controls.some(el => isHighLabel(controlLabel(el)) && elementSignalsSelected(el))) return true;
+    if (thinkingSliders().some(el => isHighLabel(thinkingLevelLabel(el)))) return true;
     const picker = modelPickerButton();
     return !!(picker && isPickerLike(picker) && isHighLabel(controlLabel(picker)));
+  }
+  function dispatchControlKey(el, key) {
+    if (!el) return;
+    el.focus?.();
+    el.dispatchEvent(new KeyboardEvent("keydown", {key, bubbles: true, cancelable: true}));
+    el.dispatchEvent(new KeyboardEvent("keyup", {key, bubbles: true, cancelable: true}));
+  }
+  async function setThinkingSliderHigh(slider) {
+    if (!slider) return false;
+    if (isHighLabel(thinkingLevelLabel(slider))) return true;
+    // GPT-5.6 slider order is Instant -> Medium -> High -> Extra High (when available).
+    // Reset to the minimum, then advance exactly two steps so we never accidentally
+    // select Extra High while enforcing the requested High level.
+    dispatchControlKey(slider, "Home");
+    await sleep(120);
+    dispatchControlKey(slider, "ArrowRight");
+    await sleep(120);
+    dispatchControlKey(slider, "ArrowRight");
+    return await waitForHighSelection(1800);
   }
   async function waitForHighSelection(timeoutMs = 3500) {
     const deadline = Date.now() + timeoutMs;
@@ -423,6 +459,12 @@ function runProject(cfg) {
   async function ensureHighThinking() {
     if (highSelectionVerified()) {
       status("thinking-effort-high-verified", {reason: "already-selected", required: REQUIRED_THINKING_EFFORT});
+      return true;
+    }
+
+    const visibleSlider = thinkingSliders()[0] || null;
+    if (visibleSlider && await setThinkingSliderHigh(visibleSlider)) {
+      status("thinking-effort-high-verified", {reason: "slider-selected", required: REQUIRED_THINKING_EFFORT});
       return true;
     }
 
@@ -451,6 +493,13 @@ function runProject(cfg) {
 
     picker.click();
     await sleep(500);
+
+    const openedSlider = thinkingSliders()[0] || null;
+    if (openedSlider && await setThinkingSliderHigh(openedSlider)) {
+      status("thinking-effort-high-verified", {reason: "picker-slider-selected", required: REQUIRED_THINKING_EFFORT});
+      return true;
+    }
+
     const highOption = modelControls().find(el =>
       exactHigh.test(controlLabel(el)) &&
       el !== picker
@@ -678,12 +727,14 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        // High remains the required preference and is retried on every send,
-        // but a ChatGPT UI/model-picker mismatch must never stop execution.
-        status("thinking-effort-high-unavailable-proceeding", {
-          reason: "ui-control-not-verifiable",
-          required: REQUIRED_THINKING_EFFORT
+        // Strict extension-level invariant: dynamic workers never submit a prompt
+        // unless the ChatGPT UI confirms GPT-5.6 High thinking.
+        status("send-blocked", {
+          reason: "high-thinking-required",
+          required: REQUIRED_THINKING_EFFORT,
+          controlHints: safeModelControlHints()
         });
+        return false;
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
