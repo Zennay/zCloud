@@ -725,7 +725,7 @@ function runProject(cfg) {
       if (!valid) {
         paused = true;
         status("assignment-invalid", {reason:"config-refresh-missing-or-mismatched-assignment"});
-        return {ok:false, reason:"assignment-invalid"};
+        return Promise.resolve({ok:false, reason:"assignment-invalid"});
       }
       const previousQueueId = String(cfg.queue_item?.queue_id || "").trim();
       Object.assign(cfg, next);
@@ -741,7 +741,7 @@ function runProject(cfg) {
       forceInitialDispatch = forceInitialDispatch || next.force_initial_dispatch === true;
       autoContinueDelayMs = Math.max(0, Number(next.auto_continue_delay_seconds ?? 0) * 1000);
       status("runner-config-updated", {reason:"vps-assignment-refresh", queueItem:queueId});
-      return {ok:true, queueItem:queueId};
+      return Promise.resolve({ok:true, queueItem:queueId});
     }
     if (message.type === "runner-push") {
       return (async () => {
