@@ -23,8 +23,8 @@ ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-GLOBAL_CHATGPT_WORKER_LIMIT = 2
-MAX_CHATGPT_WORKERS = 2
+GLOBAL_CHATGPT_WORKER_LIMIT = 1
+MAX_CHATGPT_WORKERS = 1
 AI_SLOT_DIVERSITY_PENALTY = 500
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
@@ -1445,6 +1445,24 @@ def _worker_prompt_interval_due(connection,project_id,worker_slot,min_interval_s
         return False
 
 
+def _global_dispatch_interval_due(connection,min_interval_seconds):
+    """Guard the single global worker across project rotation."""
+    try:
+        min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS,int(min_interval_seconds or 0))
+    except Exception:
+        min_interval_seconds=PORTFOLIO_AI_COOLDOWN_SECONDS
+    row=connection.execute(
+        "SELECT MAX(last_dispatch_at) AS ts FROM autonomy_runtime"
+    ).fetchone()
+    if not row or not row["ts"]:
+        return True
+    try:
+        last=datetime.fromisoformat(row["ts"]).astimezone(timezone.utc)
+        return (datetime.now(timezone.utc)-last).total_seconds() >= min_interval_seconds
+    except Exception:
+        return False
+
+
 def _autonomy_enqueue_worker_push(project_id,worker_slot,reason,min_interval_seconds):
     try:
         worker_slot=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,int(worker_slot)))
@@ -1465,6 +1483,8 @@ def _autonomy_enqueue_worker_push(project_id,worker_slot,reason,min_interval_sec
             (project_id,worker_slot),
         ).fetchone()
         if desired and str(desired['desired_state'] or 'running')!='running':
+            return False
+        if not _global_dispatch_interval_due(c,min_interval_seconds):
             return False
         if not _worker_prompt_interval_due(c,project_id,worker_slot,min_interval_seconds):
             return False
