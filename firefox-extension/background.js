@@ -1,5 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.1";
 const violentmonkeyReadyProjects = new Set();
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
@@ -1258,7 +1259,26 @@ async function inject(tabId, target) {
         code: "document.documentElement.getAttribute('data-zcloud-violentmonkey-ready') || ''",
         runAt: "document_idle"
       }).catch(() => [""]);
-      const vmReady = Array.isArray(readiness) && readiness.some(value => String(value || "").trim());
+      const vmVersions = Array.isArray(readiness)
+        ? readiness.map(value => String(value || "").trim()).filter(Boolean)
+        : [];
+      const vmReady = vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION);
+      if (vmVersions.length && !vmReady) {
+        violentmonkeyReadyProjects.delete(effectiveTarget.project_id);
+        postStatus({
+          projectId: target.project_id,
+          baseProjectId: target.base_project_id,
+          workerSlot: target.worker_slot,
+          globalWorkerSlot: target.global_worker_slot,
+          projectName: target.name,
+          target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+          targetConversation: target.conversation_id,
+          event: "violentmonkey-version-mismatch",
+          reason: ("required=" + VIOLENTMONKEY_REQUIRED_VERSION + ";found=" + vmVersions.join(",")).slice(0, 240),
+          at: new Date().toISOString(),
+          tabId
+        });
+      }
       if (vmReady) {
         violentmonkeyReadyProjects.add(effectiveTarget.project_id);
         // Stop any legacy injected runner that may still be alive from before

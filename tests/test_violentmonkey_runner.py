@@ -58,6 +58,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.1";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -67,6 +68,8 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("violentmonkey-missing-fallback", background)
         self.assertIn("legacy-extension-runner-temporarily-retained", background)
         self.assertIn("violentmonkey-primary-takeover", background)
+        self.assertIn("violentmonkey-version-mismatch", background)
+        self.assertIn("vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION)", background)
         self.assertIn("legacy-fallback-config-refresh-failed", background)
         self.assertIn('type:"runner-config-update"', background)
         self.assertIn("const violentmonkeyReadyProjects = new Set();", background)
