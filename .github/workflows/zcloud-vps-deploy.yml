@@ -34,6 +34,7 @@ jobs:
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
             --path autonomy-policy.json \
+            --path vps-execution-policy.json \
             --path portfolio_queue.seed.json \
             --actor "github-actions-vps-deploy" \
             --json
