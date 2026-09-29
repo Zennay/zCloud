@@ -188,10 +188,12 @@ def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int
             slot = int(worker["worker_slot"])
             by_project.setdefault(pid, set()).add(slot)
             add(errors, pid in project_ids or pid == "portfolio-review", f"history.db: unknown worker project {pid!r}")
-            legacy_inactive = slot > max_workers and worker["desired_state"] in {"paused", "draining"}
+            # runner_workers keeps legacy rows for audit/history. The current
+            # target and allocator limits are the enforcement point for live slots.
+            legacy_record = slot > max_workers
             add(
                 errors,
-                1 <= slot <= max_workers or legacy_inactive,
+                1 <= slot <= max_workers or legacy_record,
                 f"history.db: worker slot out of range {pid}::{slot}",
             )
             add(errors, worker["desired_state"] in desired, f"history.db: invalid desired_state for {pid}::{slot}")
