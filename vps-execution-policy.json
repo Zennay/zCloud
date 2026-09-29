@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "zcloud-vps-execution-lane",
+  "enabled": true,
+  "transport": "github-actions-self-hosted-runner",
+  "runner": {
+    "labels": ["self-hosted"],
+    "host": "vps-bb300bba",
+    "user": "ubuntu",
+    "workspace": "/home/ubuntu"
+  },
+  "projects": ["haxlab", "ftmo", "cloud", "supa", "raiseai", "ulab", "zssh"],
+  "capabilities": [
+    "local-shell",
+    "ssh-client",
+    "git",
+    "package-install",
+    "systemd-user",
+    "docker-when-installed",
+    "filesystem",
+    "process-inspection"
+  ],
+  "execution_rules": {
+    "preferred_for": [
+      "installations",
+      "package-management",
+      "builds",
+      "tests",
+      "deployments",
+      "service-restarts",
+      "filesystem-changes",
+      "SSH-to-configured-targets"
+    ],
+    "interactive_ssh": "unsupported_as_a_persistent_session; use_a_bounded_job_or_service",
+    "destructive_operations": "require_explicit_confirmation_and_machine-readable_evidence",
+    "secrets": "use_runner_environment_or_GitHub_secrets; never_put_secrets_in_prompts_or_logs",
+    "completion_evidence": [
+      "workflow_run_id",
+      "exit_code",
+      "sanitized_stdout_stderr",
+      "changed_files_or_service_state"
+    ]
+  },
+  "prompt_directive": "CENTRALE VPS/SSH-ROUTE: Gebruik voor installaties, package managers, builds, tests, deployments, servicebeheer, filesystem-wijzigingen en SSH-verbindingen standaard de zCloud VPS execution lane via de GitHub self-hosted runner op vps-bb300bba. Stop niet met 'SSH ontbreekt' voordat deze runner/queue-route aantoonbaar is geprobeerd. De runner is de uitvoeringsbron; browser, Notion en cloud zijn geen vervanging. Leg per actie runner/workflow-id, commando-doel, exitcode en concreet bewijs vast. Gebruik geen interactieve permanente SSH-sessie; maak voor langlopende processen een systemd-service, timer of begrensde job. Vraag expliciete bevestiging vóór destructieve of brede wijzigingen en zet nooit secrets in prompts of logs."
+}
