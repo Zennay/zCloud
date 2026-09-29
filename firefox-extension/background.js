@@ -423,9 +423,8 @@ function runProject(cfg) {
       return true;
     }
 
-    const exactHigh = /^(?:high|hoog)$/i;
     const directHigh = modelControls().find(el =>
-      exactHigh.test(controlLabel(el)) &&
+      isHighLabel(controlLabel(el)) &&
       !el.closest?.('[role="menu"],[role="listbox"]')
     );
     if (directHigh) {
@@ -441,7 +440,8 @@ function runProject(cfg) {
       status("thinking-effort-high-required", {
         reason: "picker-not-found",
         required: REQUIRED_THINKING_EFFORT,
-        controlHints: safeModelControlHints()
+        controlHints: safeModelControlHints(),
+        error: safeModelControlHints().join(" | ").slice(0, 300)
       });
       return false;
     }
@@ -449,7 +449,7 @@ function runProject(cfg) {
     picker.click();
     await sleep(500);
     const highOption = modelControls().find(el =>
-      exactHigh.test(controlLabel(el)) &&
+      isHighLabel(controlLabel(el)) &&
       el !== picker
     );
     if (!highOption) {
@@ -457,7 +457,8 @@ function runProject(cfg) {
       status("thinking-effort-high-required", {
         reason: "high-option-not-found",
         required: REQUIRED_THINKING_EFFORT,
-        controlHints: safeModelControlHints()
+        controlHints: safeModelControlHints(),
+        error: safeModelControlHints().join(" | ").slice(0, 300)
       });
       return false;
     }
@@ -468,7 +469,8 @@ function runProject(cfg) {
       status("thinking-effort-high-required", {
         reason: "selection-not-verifiable",
         required: REQUIRED_THINKING_EFFORT,
-        controlHints: safeModelControlHints()
+        controlHints: safeModelControlHints(),
+        error: safeModelControlHints().join(" | ").slice(0, 300)
       });
       return false;
     }
