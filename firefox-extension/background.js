@@ -1280,7 +1280,7 @@ async function probeLiveThinkingPicker(tabId, target) {
   try {
     const clickResult = await browser.tabs.executeScript(tabId, {
       runAt: "document_idle",
-      code: \`(() => {
+      code: `(() => {
         const visible = el => {
           if (!el) return false;
           const r = el.getBoundingClientRect();
@@ -1322,12 +1322,12 @@ async function probeLiveThinkingPicker(tabId, target) {
         const best=scored.find(x=>x.score>0) || null;
         if(best?.el) best.el.click();
         return {best:best?best.d:null,score:best?.score||0,candidates:scored.slice(0,6).map(x=>({score:x.score,...x.d}))};
-      })()\`
+      })()`
     });
     await new Promise(resolve => setTimeout(resolve, 700));
     const menuResult = await browser.tabs.executeScript(tabId, {
       runAt: "document_idle",
-      code: \`(() => {
+      code: `(() => {
         const visible = el => {
           if (!el) return false;
           const r = el.getBoundingClientRect();
@@ -1352,7 +1352,7 @@ async function probeLiveThinkingPicker(tabId, target) {
         const menus=[...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"],[data-radix-menu-content],[data-radix-popper-content-wrapper]')]
           .filter(visible).map(el=>({role:clean(el.getAttribute("role")),text:clean(el.innerText||el.textContent).slice(0,300)})).slice(0,4);
         return {options,menus};
-      })()\`
+      })()`
     });
     const probe = {
       click: Array.isArray(clickResult) ? clickResult[0] : clickResult,
