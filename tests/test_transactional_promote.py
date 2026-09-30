@@ -456,6 +456,33 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_REPLACEABLE_DRIFT),
         )
 
+    def test_exact_candidate_service_drift_is_reconcilable_only_when_bytes_match(self):
+        self._write(self.root, "server.py", "same-candidate\n")
+        self._write(self.candidate, "server.py", "same-candidate\n")
+        recovery = "scripts/zcloud_recovery.py"
+        self._write(self.root, recovery, "same-recovery\n")
+        self._write(self.candidate, recovery, "same-recovery\n")
+
+        self.assertEqual(
+            ["server.py", recovery],
+            promote.exact_candidate_reconcilable_drift(
+                self.candidate,
+                self.root,
+                ["server.py", recovery],
+            ),
+        )
+        self._write(self.root, "server.py", "unexpected-live-drift\n")
+        self.assertEqual(
+            [recovery],
+            promote.exact_candidate_reconcilable_drift(
+                self.candidate,
+                self.root,
+                ["server.py", recovery],
+            ),
+        )
+        self.assertNotIn("server.py", promote.PRECHANGE_REPLACEABLE_DRIFT)
+        self.assertIn("server.py", promote.EXACT_CANDIDATE_RECONCILABLE_DRIFT)
+
     def test_service_health_timeout_matches_systemd_start_budget(self):
         self.assertEqual(90.0, promote.SERVICE_HEALTH_TIMEOUT_SECONDS)
         self.assertEqual(
