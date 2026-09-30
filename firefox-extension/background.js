@@ -1275,6 +1275,119 @@ async function refreshTargets() {
     postStatus({event:"config-load-failed",error:String(error?.message||error),at:new Date().toISOString()});
   }
 }
+
+async function probeLiveThinkingPicker(tabId, target) {
+  try {
+    const clickResult = await browser.tabs.executeScript(tabId, {
+      runAt: "document_idle",
+      code: \`(() => {
+        const visible = el => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          const s = getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && s.display !== "none" && s.visibility !== "hidden";
+        };
+        const label = el => String(el?.getAttribute?.("aria-label") || el?.getAttribute?.("title") || el?.innerText || el?.textContent || "").trim().replace(/\\s+/g," ").slice(0,120);
+        const describe = el => {
+          if (!el) return null;
+          const testid = el.getAttribute("data-testid") || "";
+          const aria = el.getAttribute("aria-label") || "";
+          const id = el.id || "";
+          let selector = "";
+          if (testid) selector = '[data-testid="' + testid.replace(/"/g,'\\\\\\"') + '"]';
+          else if (aria) selector = el.tagName.toLowerCase() + '[aria-label="' + aria.replace(/"/g,'\\\\\\"') + '"]';
+          else if (id) selector = "#" + CSS.escape(id);
+          return {selector,tag:el.tagName.toLowerCase(),testid,aria,role:el.getAttribute("role")||"",popup:el.getAttribute("aria-haspopup")||"",expanded:el.getAttribute("aria-expanded")||"",text:label(el)};
+        };
+        const explicit = [
+          '[data-testid="model-switcher-dropdown-button"]',
+          '[data-testid*="model"][aria-haspopup]',
+          'button[aria-label*="model" i]',
+          '[aria-label*="current mode" i]',
+          'button[aria-label^="Switch mode" i]'
+        ].flatMap(sel => [...document.querySelectorAll(sel)]).filter(visible);
+        const pool = [...document.querySelectorAll('button,[role="button"],[aria-haspopup="menu"],[aria-haspopup="listbox"]')].filter(visible);
+        const scored = pool.map(el => {
+          const d=describe(el);
+          const h=(d.testid+" "+d.aria+" "+d.text).toLowerCase();
+          let score=0;
+          if(explicit.includes(el)) score+=500;
+          if(/model-switcher|model-selector|model/.test(d.testid.toLowerCase())) score+=250;
+          if(/model|current mode|switch mode/.test(d.aria.toLowerCase())) score+=220;
+          if(/gpt[-\\s]?5|gpt|thinking|reasoning|instant|auto|medium|high/.test(h)) score+=120;
+          if(d.popup) score+=30;
+          if(/search|sidebar|project|attach|voice|dictat|account|profile/.test(h)) score-=150;
+          return {el,d,score};
+        }).sort((a,b)=>b.score-a.score);
+        const best=scored.find(x=>x.score>0) || null;
+        if(best?.el) best.el.click();
+        return {best:best?best.d:null,score:best?.score||0,candidates:scored.slice(0,6).map(x=>({score:x.score,...x.d}))};
+      })()\`
+    });
+    await new Promise(resolve => setTimeout(resolve, 700));
+    const menuResult = await browser.tabs.executeScript(tabId, {
+      runAt: "document_idle",
+      code: \`(() => {
+        const visible = el => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          const s = getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && s.display !== "none" && s.visibility !== "hidden";
+        };
+        const clean = v => String(v||"").trim().replace(/\\s+/g," ").slice(0,140);
+        const desc = el => ({
+          tag:el.tagName.toLowerCase(),
+          testid:clean(el.getAttribute("data-testid")),
+          aria:clean(el.getAttribute("aria-label")),
+          role:clean(el.getAttribute("role")),
+          checked:clean(el.getAttribute("aria-checked")),
+          selected:clean(el.getAttribute("aria-selected")),
+          state:clean(el.getAttribute("data-state")),
+          text:clean(el.innerText||el.textContent)
+        });
+        const options=[...document.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="option"],[role="radio"],button,[role="button"]')]
+          .filter(visible).map(desc)
+          .filter(d=>/high|medium|instant|thinking|reasoning|auto|standard|gpt|denk|hoog|gemiddeld|redeneer/i.test([d.testid,d.aria,d.text].join(" ")))
+          .slice(0,16);
+        const menus=[...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"],[data-radix-menu-content],[data-radix-popper-content-wrapper]')]
+          .filter(visible).map(el=>({role:clean(el.getAttribute("role")),text:clean(el.innerText||el.textContent).slice(0,300)})).slice(0,4);
+        return {options,menus};
+      })()\`
+    });
+    const probe = {
+      click: Array.isArray(clickResult) ? clickResult[0] : clickResult,
+      menu: Array.isArray(menuResult) ? menuResult[0] : menuResult
+    };
+    const encoded = JSON.stringify(probe);
+    console.log("[ZCloud Thinking Picker Probe]", encoded);
+    postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      globalWorkerSlot: target.global_worker_slot,
+      projectName: target.name,
+      target: target.url || "https://chatgpt.com/",
+      event: "thinking-picker-live-probe",
+      reason: String(probe?.click?.best?.selector || probe?.click?.best?.aria || "no-picker").slice(0,240),
+      error: encoded.slice(0,500),
+      at: new Date().toISOString(),
+      tabId
+    });
+  } catch (error) {
+    postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      projectName: target.name,
+      target: target.url || "https://chatgpt.com/",
+      event: "thinking-picker-live-probe-failed",
+      error: String(error?.message || error).slice(0,500),
+      at: new Date().toISOString(),
+      tabId
+    });
+  }
+}
+
 async function inject(tabId, target) {
   try {
     if (!target.replacement_handoff) {
@@ -1325,6 +1438,7 @@ async function inject(tabId, target) {
       }
       if (vmReady) {
         violentmonkeyReadyProjects.add(effectiveTarget.project_id);
+        await probeLiveThinkingPicker(tabId, effectiveTarget);
         // Stop any legacy injected runner that may still be alive from before
         // Violentmonkey was installed/reloaded, preventing duplicate sends.
         try {
