@@ -141,7 +141,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("'/zcloud-worker.user.js':'zcloud-worker.user.js'", server)
         self.assertIn('"public/zcloud-worker.user.js"', promote)
         self.assertIn("--path public/zcloud-worker.user.js", workflow)
-        self.assertIn("Promote Violentmonkey worker", workflow)
+        self.assertIn("Promote zCloud managed runtime atomically", workflow)
 
 
 if __name__ == "__main__":
