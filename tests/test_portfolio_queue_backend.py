@@ -12,8 +12,12 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         # These tests intentionally simulate the legacy multi-worker pool; production remains one slot.
         self.original_global_limit = server.GLOBAL_CHATGPT_WORKER_LIMIT
         self.original_max_workers = server.MAX_CHATGPT_WORKERS
+        self.original_chatgpt_workers = server.DYNAMIC_CHATGPT_WORKERS
+        self.original_claude_workers = server.DYNAMIC_CLAUDE_WORKERS
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
         server.MAX_CHATGPT_WORKERS = 2
+        server.DYNAMIC_CHATGPT_WORKERS = 2
+        server.DYNAMIC_CLAUDE_WORKERS = 0
         self.original_seed = server.PORTFOLIO_QUEUE_SEED_FILE
         root = Path(self.tmp.name)
         server.DB = root / "queue-test.db"
@@ -24,6 +28,8 @@ class VpsPortfolioQueueTests(unittest.TestCase):
     def tearDown(self):
         server.GLOBAL_CHATGPT_WORKER_LIMIT = self.original_global_limit
         server.MAX_CHATGPT_WORKERS = self.original_max_workers
+        server.DYNAMIC_CHATGPT_WORKERS = self.original_chatgpt_workers
+        server.DYNAMIC_CLAUDE_WORKERS = self.original_claude_workers
         server.DB = self.original_db
         server.PORTFOLIO_QUEUE_SEED_FILE = self.original_seed
         self.tmp.cleanup()
