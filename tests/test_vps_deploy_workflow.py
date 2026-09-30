@@ -57,6 +57,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('CLAIM = "cloud-permanent-vps-first-deploylane"', coordination)
         self.assertIn('"action": "heartbeat"', coordination)
         self.assertIn('"action": "release"', coordination)
+        self.assertIn('"vps_profile": "control_plane"', coordination)
         self.assertIn("claim verification failed", coordination)
 
 
