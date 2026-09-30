@@ -50,8 +50,6 @@
   let timing = {...DEFAULT_TIMING};
 
   let target = null;
-  let bridgedProjectId = "";
-  let bridgedConfigRaw = "";
   let sending = false;
   let draining = false;
   let lastGenerating = null;
@@ -315,27 +313,7 @@
       prompt.includes("Jij bent Worker " + slot + "/" + total + ".");
   }
 
-  function readBridge() {
-    const root = document.documentElement;
-    if (!root) return;
-    const id = String(root.getAttribute("data-zcloud-worker-id") || "").trim();
-    const raw = String(root.getAttribute("data-zcloud-worker-config") || "").trim();
-    if (id) bridgedProjectId = id;
-    if (raw && raw !== bridgedConfigRaw) {
-      bridgedConfigRaw = raw;
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed?.project_id) {
-          target = parsed;
-          bridgedProjectId = parsed.project_id;
-          draining = parsed.desired_state === "draining";
-        }
-      } catch (_) {}
-    }
-  }
-
   async function refreshTarget() {
-    readBridge();
     let payload;
     try { payload = await gmRequest("/runner-targets"); }
     catch (error) {
@@ -350,7 +328,6 @@
     let next = null;
 
     if (pending && projects[pending] && claimCandidate(projects[pending])) next = projects[pending];
-    if (!next && bridgedProjectId && projects[bridgedProjectId] && claimCandidate(projects[bridgedProjectId])) next = projects[bridgedProjectId];
 
     const currentProvider = provider();
     if (!next && isWorkerProvider(currentProvider)) {
@@ -412,7 +389,7 @@
       });
     }
 
-    const forced = !!target.force_initial_dispatch || document.documentElement?.getAttribute("data-zcloud-force-initial-dispatch") === "true";
+    const forced = !!target.force_initial_dispatch;
     const key = String(target.queue_item?.queue_id || "");
     if (forced && key && initialDispatchKey !== key && assignmentReady(target)) {
       initialDispatchKey = key;
@@ -820,7 +797,7 @@
   function statusPayload(event, extra = {}) {
     const text = assistantText();
     return {
-      projectId: target?.project_id || bridgedProjectId || "",
+      projectId: target?.project_id || "",
       baseProjectId: baseProjectId(),
       workerSlot: Number(target?.worker_slot || 1),
       globalWorkerSlot: Number(target?.global_worker_slot || target?.worker_slot || 1),
@@ -843,7 +820,7 @@
   }
 
   async function status(event, extra = {}) {
-    if (!target && !bridgedProjectId) return;
+    if (!target) return;
     try { await gmRequest("/runner-status", {method: "POST", body: statusPayload(event, extra)}); }
     catch (_) {}
   }
@@ -1051,7 +1028,6 @@
   }
 
   async function tick() {
-    readBridge();
     if (!target) return;
 
     await handleCommands();
@@ -1124,22 +1100,9 @@
   }
 
   async function heartbeat() {
-    readBridge();
     if (!target) return;
     renewClaim(target);
     await status("heartbeat", {reason: "violentmonkey-primary-runner", provider: provider()});
-  }
-
-  function installBridgeListeners() {
-    window.addEventListener("zcloud-worker-config", () => {
-      readBridge();
-      refreshTarget().catch(() => {});
-    });
-    const observer = new MutationObserver(() => readBridge());
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-zcloud-worker-id", "data-zcloud-worker-config", "data-zcloud-force-initial-dispatch"]
-    });
   }
 
   function scheduleTimers() {
@@ -1155,8 +1118,6 @@
     document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready", SCRIPT_VERSION);
     document.documentElement?.setAttribute("data-zcloud-provider", provider());
     window.dispatchEvent(new Event("zcloud-violentmonkey-ready"));
-    installBridgeListeners();
-    readBridge();
     await refreshTarget();
     await status("runner-started", {
       reason: "violentmonkey-primary-runner",
