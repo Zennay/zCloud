@@ -418,34 +418,6 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertEqual("test", result["snapshot_id"])
         self.assertEqual(str(helper), calls[0][1])
 
-    def test_mapping_status_can_use_candidate_recovery_helper(self):
-        calls = []
-        original_run = promote.run
-
-        class Result:
-            returncode = 0
-            stdout = '{"current":{"mapping":{"sha256":"candidate-mapping"}}}'
-
-        def fake_run(args, check=True):
-            calls.append(args)
-            return Result()
-
-        helper = self.candidate / "scripts" / "zcloud_recovery.py"
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_text("# helper\n")
-        promote.run = fake_run
-        try:
-            result = promote.mapping_from_recovery_status(
-                self.root,
-                Path(self.tmp.name) / "state",
-                helper,
-            )
-        finally:
-            promote.run = original_run
-
-        self.assertEqual("candidate-mapping", result)
-        self.assertEqual(str(helper), calls[0][1])
-
     def test_prechange_only_allows_selected_replaceable_seed_drift(self):
         calls = []
         original_run = promote.run
@@ -563,6 +535,126 @@ class TransactionalPromotionTests(unittest.TestCase):
             promote.run = original_run
 
         self.assertEqual(1, len(calls))
+
+    def _create_mapping_db(self, conversation="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"):
+        db = self.root / "history.db"
+        with sqlite3.connect(db) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE runner_targets(
+                    project_id TEXT PRIMARY KEY,
+                    active INTEGER,
+                    worker_count INTEGER,
+                    conversation_id TEXT
+                );
+                CREATE TABLE runner_workers(
+                    project_id TEXT,
+                    worker_slot INTEGER,
+                    conversation_id TEXT,
+                    PRIMARY KEY(project_id,worker_slot)
+                );
+                CREATE TABLE runner_events(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT,
+                    event TEXT,
+                    target TEXT,
+                    project_id TEXT,
+                    worker_slot INTEGER
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO runner_targets VALUES('cloud',1,1,?)",
+                (conversation,),
+            )
+            conn.execute(
+                "INSERT INTO runner_workers VALUES('cloud',1,?)",
+                (conversation,),
+            )
+        return db
+
+    def test_mapping_advance_accepts_exact_conversation_adoption_evidence(self):
+        db = self._create_mapping_db()
+        before = promote.mapping_snapshot(db)
+        new_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,target,project_id,worker_slot) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    "conversation-adopted",
+                    f"https://chatgpt.com/c/{new_id}",
+                    "cloud",
+                    1,
+                ),
+            )
+            conn.execute(
+                "UPDATE runner_workers SET conversation_id=? "
+                "WHERE project_id='cloud' AND worker_slot=1",
+                (new_id,),
+            )
+            conn.execute(
+                "UPDATE runner_targets SET conversation_id=? WHERE project_id='cloud'",
+                (new_id,),
+            )
+        after = promote.mapping_snapshot(db)
+        evidence = promote.explain_mapping_advance(before, after, db)
+        self.assertTrue(evidence["ok"], evidence)
+        self.assertEqual("conversation_adopted", evidence["reason"])
+        self.assertEqual("cloud", evidence["changes"][0]["project_id"])
+        self.assertEqual(1, evidence["changes"][0]["worker_slot"])
+        self.assertGreater(evidence["event_cursor_to"], evidence["event_cursor_from"])
+
+    def test_mapping_advance_rejects_unexplained_conversation_change(self):
+        db = self._create_mapping_db()
+        before = promote.mapping_snapshot(db)
+        new_id = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE runner_workers SET conversation_id=? "
+                "WHERE project_id='cloud' AND worker_slot=1",
+                (new_id,),
+            )
+            conn.execute(
+                "UPDATE runner_targets SET conversation_id=? WHERE project_id='cloud'",
+                (new_id,),
+            )
+        after = promote.mapping_snapshot(db)
+        evidence = promote.explain_mapping_advance(before, after, db)
+        self.assertFalse(evidence["ok"])
+        self.assertIn("without_adoption", evidence["reason"])
+
+    def test_mapping_advance_rejects_non_conversation_mutation_even_with_adoption(self):
+        db = self._create_mapping_db()
+        before = promote.mapping_snapshot(db)
+        new_id = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,target,project_id,worker_slot) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    "conversation-adopted",
+                    f"https://chatgpt.com/c/{new_id}",
+                    "cloud",
+                    1,
+                ),
+            )
+            conn.execute(
+                "UPDATE runner_workers SET conversation_id=? "
+                "WHERE project_id='cloud' AND worker_slot=1",
+                (new_id,),
+            )
+            conn.execute(
+                "UPDATE runner_targets SET conversation_id=?,active=0 "
+                "WHERE project_id='cloud'",
+                (new_id,),
+            )
+        after = promote.mapping_snapshot(db)
+        evidence = promote.explain_mapping_advance(before, after, db)
+        self.assertFalse(evidence["ok"])
+        self.assertEqual("target_active_changed", evidence["reason"])
 
     def test_postdeploy_command_contract_requires_requested_features(self):
         calls = []
