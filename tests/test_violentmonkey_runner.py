@@ -50,7 +50,11 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             self.assertIn('"high-thinking-required|" + diagnostic', source)
             self.assertIn('getAttribute?.("data-testid")', source)
             self.assertIn('getAttribute?.("aria-label")', source)
-            self.assertIn("aria-expanded", source)\n            self.assertIn("menuRoots", source)\n            self.assertIn("outerHTML", source)\n            self.assertIn("slice(0, 3500)", source)\n        self.assertIn('error: diagnostic', userscript)
+            self.assertIn("aria-expanded", source)
+            self.assertIn("menuRoots", source)
+            self.assertIn("outerHTML", source)
+            self.assertIn("slice(0, 3500)", source)
+        self.assertIn('error: diagnostic', userscript)
         self.assertIn('error: diagnostic', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
