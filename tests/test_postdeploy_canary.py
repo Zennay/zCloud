@@ -220,8 +220,6 @@ class PostdeployCanaryTests(unittest.TestCase):
             payload = json.dumps({
                 "targets": [{
                     "project_id": "cloud",
-                    "active": 1,
-                    "worker_count": 2,
                     "conversation_id": "conversation-a",
                 }],
                 "workers": [
@@ -230,6 +228,16 @@ class PostdeployCanaryTests(unittest.TestCase):
                 ],
             }, sort_keys=True, separators=(",", ":")).encode()
             self.assertEqual(hashlib.sha256(payload).hexdigest(), result["sha256"])
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "UPDATE runner_targets SET active=0, worker_count=7 WHERE project_id='cloud'"
+                )
+            self.assertEqual(result["sha256"], canary.mapping_fingerprint(db)["sha256"])
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "UPDATE runner_targets SET conversation_id='conversation-c' WHERE project_id='cloud'"
+                )
+            self.assertNotEqual(result["sha256"], canary.mapping_fingerprint(db)["sha256"])
 
 
 if __name__ == "__main__":
