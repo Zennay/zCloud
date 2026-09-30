@@ -49,6 +49,15 @@ jobs:
 
             if [ "$PHASE" = "inspect_prepare" ]; then
               echo "=== ACTIONS ==="
+              python3 - <<'PY'
+import json, urllib.request
+body=json.dumps({"project_id":"haxlab","action":"pause"}).encode("utf-8")
+req=urllib.request.Request("http://127.0.0.1:8765/api/runner-control", data=body, headers={"Content-Type":"application/json"}, method="POST")
+with urllib.request.urlopen(req, timeout=10) as r:
+    print("zcloud_haxlab_pause="+r.read().decode("utf-8","replace"))
+PY
+              sudo -n pkill -TERM -f '[h]axlab-train-bc' 2>/dev/null || true
+              sudo -n systemctl stop haxlab-autonomy.service 2>/dev/null || true
               sudo -n systemctl stop haxlab-analyzer.service 2>/dev/null || true
               sudo -n systemctl stop haxlab-worker.service 2>/dev/null || true
               sudo -n systemctl stop haxlab-autonomy.timer 2>/dev/null || true
