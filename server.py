@@ -23,9 +23,31 @@ ACTION_ALLOW_FILE = ROOT / '.action-allowed-ips'
 AUTONOMY_POLICY_FILE = ROOT / 'autonomy-policy.json'
 AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
-GLOBAL_CHATGPT_WORKER_LIMIT = 1
+# Compatibility: this remains the TOTAL number of dynamic browser workers.
+# Provider-specific counts live in DYNAMIC_CHATGPT_WORKERS / DYNAMIC_CLAUDE_WORKERS.
+GLOBAL_CHATGPT_WORKER_LIMIT = 3
 MAX_CHATGPT_WORKERS = 8
+MAX_DYNAMIC_WORKERS_PER_PROVIDER = 8
+DYNAMIC_CHATGPT_WORKERS = 2
+DYNAMIC_CLAUDE_WORKERS = 1
+DYNAMIC_CHATGPT_COOLDOWN_SECONDS = 120
+DYNAMIC_CLAUDE_COOLDOWN_SECONDS = 120
+DYNAMIC_WORKER_CHECK_INTERVAL_MS = 5000
+DYNAMIC_WORKER_TICK_INTERVAL_MS = 1500
+DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS = 30000
+DYNAMIC_WORKER_GENERATION_TIMEOUT_MS = 120000
 DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'
+DYNAMIC_WORKER_SETTING_KEYS = {
+    'chatgpt_count':'dynamic_worker_chatgpt_count',
+    'claude_count':'dynamic_worker_claude_count',
+    'chatgpt_cooldown_seconds':'dynamic_worker_chatgpt_cooldown_seconds',
+    'claude_cooldown_seconds':'dynamic_worker_claude_cooldown_seconds',
+    'check_interval_ms':'dynamic_worker_check_interval_ms',
+    'tick_interval_ms':'dynamic_worker_tick_interval_ms',
+    'heartbeat_interval_ms':'dynamic_worker_heartbeat_interval_ms',
+    'generation_start_timeout_ms':'dynamic_worker_generation_start_timeout_ms',
+    'scheduler_interval_seconds':'dynamic_worker_scheduler_interval_seconds',
+}
 AI_SLOT_DIVERSITY_PENALTY = 500
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
@@ -337,35 +359,128 @@ def set_feature_flag(name,enabled,actor,ttl_seconds=None):
         )
     return feature_flag_state(name)
 
+def _dynamic_int(value,name,minimum,maximum):
+    try: parsed=int(value)
+    except Exception: raise ValueError(f'{name} moet een geheel getal zijn')
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f'{name} moet tussen {minimum} en {maximum} liggen')
+    return parsed
+
+def _dynamic_provider_counts():
+    # Provider counts are independent sources of truth. The legacy global
+    # value is derived from these counts, never used to repartition them.
+    chat=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(DYNAMIC_CHATGPT_WORKERS)))
+    claude=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(DYNAMIC_CLAUDE_WORKERS)))
+    return {'chatgpt':chat,'claude':claude}
+
+def dynamic_provider_for_global_slot(slot):
+    try: slot=max(1,int(slot))
+    except Exception: return 'chatgpt'
+    counts=_dynamic_provider_counts()
+    return 'chatgpt' if slot <= counts['chatgpt'] else 'claude'
+
+def dynamic_provider_count(provider):
+    return int(_dynamic_provider_counts().get(str(provider or '').lower(),0))
+
+def dynamic_provider_cooldown(provider):
+    return int(DYNAMIC_CLAUDE_COOLDOWN_SECONDS if str(provider or '').lower()=='claude' else DYNAMIC_CHATGPT_COOLDOWN_SECONDS)
+
+def dynamic_provider_url(provider,conversation_id=''):
+    provider='claude' if str(provider or '').lower()=='claude' else 'chatgpt'
+    cid=str(conversation_id or '').strip()
+    if provider=='claude':
+        return ('https://claude.ai/chat/'+cid) if cid else 'https://claude.ai/new'
+    return ('https://chatgpt.com/c/'+cid) if cid else 'https://chatgpt.com/'
+
 def dynamic_worker_settings():
+    counts=_dynamic_provider_counts()
+    total=counts['chatgpt']+counts['claude']
     return {
-        'count':int(GLOBAL_CHATGPT_WORKER_LIMIT),
-        'enabled':bool(GLOBAL_CHATGPT_WORKER_LIMIT > 0),
-        'max_workers':int(MAX_CHATGPT_WORKERS),
-        'cooldown_seconds':int(PORTFOLIO_AI_COOLDOWN_SECONDS),
+        'count':int(total),
+        'enabled':bool(total > 0),
+        'max_workers':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER*2),
+        'max_workers_per_provider':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER),
+        'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
+        'chatgpt_count':counts['chatgpt'],
+        'claude_count':counts['claude'],
+        'chatgpt_cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
+        'claude_cooldown_seconds':int(DYNAMIC_CLAUDE_COOLDOWN_SECONDS),
+        'providers':{
+            'chatgpt':{'count':counts['chatgpt'],'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS)},
+            'claude':{'count':counts['claude'],'cooldown_seconds':int(DYNAMIC_CLAUDE_COOLDOWN_SECONDS)},
+        },
+        'check_interval_ms':int(DYNAMIC_WORKER_CHECK_INTERVAL_MS),
+        'tick_interval_ms':int(DYNAMIC_WORKER_TICK_INTERVAL_MS),
+        'heartbeat_interval_ms':int(DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS),
+        'generation_start_timeout_ms':int(DYNAMIC_WORKER_GENERATION_TIMEOUT_MS),
+        'scheduler_interval_seconds':int(AUTONOMY_TICK_SECONDS),
         'policy':'per_worker_rate_limit_only',
     }
 
-def set_dynamic_worker_limit(value,actor='dashboard'):
-    global GLOBAL_CHATGPT_WORKER_LIMIT
-    try: count=int(value)
-    except Exception: raise ValueError('Aantal dynamische workers moet een geheel getal zijn')
-    if count < 0 or count > MAX_CHATGPT_WORKERS:
-        raise ValueError(f'Kies 0 t/m {MAX_CHATGPT_WORKERS} dynamische workers')
-    old=int(GLOBAL_CHATGPT_WORKER_LIMIT)
+def set_dynamic_worker_settings(payload,actor='dashboard'):
+    global GLOBAL_CHATGPT_WORKER_LIMIT,DYNAMIC_CHATGPT_WORKERS,DYNAMIC_CLAUDE_WORKERS
+    global DYNAMIC_CHATGPT_COOLDOWN_SECONDS,DYNAMIC_CLAUDE_COOLDOWN_SECONDS
+    global DYNAMIC_WORKER_CHECK_INTERVAL_MS,DYNAMIC_WORKER_TICK_INTERVAL_MS
+    global DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS,DYNAMIC_WORKER_GENERATION_TIMEOUT_MS,AUTONOMY_TICK_SECONDS
+    payload=payload if isinstance(payload,dict) else {}
+    legacy_only='count' in payload and not any(key in payload for key in DYNAMIC_WORKER_SETTING_KEYS)
+    chatgpt_count=_dynamic_int(
+        payload.get('count') if legacy_only else payload.get('chatgpt_count',DYNAMIC_CHATGPT_WORKERS),
+        'ChatGPT workers',0,MAX_DYNAMIC_WORKERS_PER_PROVIDER
+    )
+    claude_count=_dynamic_int(
+        0 if legacy_only else payload.get('claude_count',DYNAMIC_CLAUDE_WORKERS),
+        'Claude workers',0,MAX_DYNAMIC_WORKERS_PER_PROVIDER
+    )
+    chatgpt_cooldown=_dynamic_int(payload.get('chatgpt_cooldown_seconds',DYNAMIC_CHATGPT_COOLDOWN_SECONDS),'ChatGPT cooldown',5,86400)
+    claude_cooldown=_dynamic_int(payload.get('claude_cooldown_seconds',DYNAMIC_CLAUDE_COOLDOWN_SECONDS),'Claude cooldown',5,86400)
+    check_ms=_dynamic_int(payload.get('check_interval_ms',DYNAMIC_WORKER_CHECK_INTERVAL_MS),'Check interval',1000,60000)
+    tick_ms=_dynamic_int(payload.get('tick_interval_ms',DYNAMIC_WORKER_TICK_INTERVAL_MS),'DOM tick interval',250,10000)
+    heartbeat_ms=_dynamic_int(payload.get('heartbeat_interval_ms',DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS),'Heartbeat interval',5000,300000)
+    generation_ms=_dynamic_int(payload.get('generation_start_timeout_ms',DYNAMIC_WORKER_GENERATION_TIMEOUT_MS),'Generation timeout',10000,600000)
+    scheduler_seconds=_dynamic_int(payload.get('scheduler_interval_seconds',AUTONOMY_TICK_SECONDS),'Scheduler interval',1,300)
+    old=dynamic_worker_settings()
+    values={
+        DYNAMIC_WORKER_SETTING_KEY:str(chatgpt_count+claude_count),
+        DYNAMIC_WORKER_SETTING_KEYS['chatgpt_count']:str(chatgpt_count),
+        DYNAMIC_WORKER_SETTING_KEYS['claude_count']:str(claude_count),
+        DYNAMIC_WORKER_SETTING_KEYS['chatgpt_cooldown_seconds']:str(chatgpt_cooldown),
+        DYNAMIC_WORKER_SETTING_KEYS['claude_cooldown_seconds']:str(claude_cooldown),
+        DYNAMIC_WORKER_SETTING_KEYS['check_interval_ms']:str(check_ms),
+        DYNAMIC_WORKER_SETTING_KEYS['tick_interval_ms']:str(tick_ms),
+        DYNAMIC_WORKER_SETTING_KEYS['heartbeat_interval_ms']:str(heartbeat_ms),
+        DYNAMIC_WORKER_SETTING_KEYS['generation_start_timeout_ms']:str(generation_ms),
+        DYNAMIC_WORKER_SETTING_KEYS['scheduler_interval_seconds']:str(scheduler_seconds),
+    }
     with connect() as c:
-        c.execute(
-            "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
-            (DYNAMIC_WORKER_SETTING_KEY,str(count),now(),str(actor or 'dashboard')[:128]),
-        )
+        for key,value in values.items():
+            c.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                (key,value,now(),str(actor or 'dashboard')[:128]),
+            )
         record_config_audit(
-            'runner.dynamic_worker_limit','portfolio',actor,old,count,
-            'no_change' if old==count else 'succeeded',connection=c,
+            'runner.dynamic_worker_settings','portfolio',actor,old,
+            {
+                'chatgpt_count':chatgpt_count,'claude_count':claude_count,
+                'chatgpt_cooldown_seconds':chatgpt_cooldown,'claude_cooldown_seconds':claude_cooldown,
+                'check_interval_ms':check_ms,'tick_interval_ms':tick_ms,'heartbeat_interval_ms':heartbeat_ms,
+                'generation_start_timeout_ms':generation_ms,'scheduler_interval_seconds':scheduler_seconds,
+            },
+            'succeeded',connection=c,
         )
-        if count == 0:
+        if chatgpt_count + claude_count == 0:
             c.execute('DELETE FROM ai_global_slots')
-    GLOBAL_CHATGPT_WORKER_LIMIT=count
+    DYNAMIC_CHATGPT_WORKERS=chatgpt_count
+    DYNAMIC_CLAUDE_WORKERS=claude_count
+    GLOBAL_CHATGPT_WORKER_LIMIT=chatgpt_count+claude_count
+    DYNAMIC_CHATGPT_COOLDOWN_SECONDS=chatgpt_cooldown
+    DYNAMIC_CLAUDE_COOLDOWN_SECONDS=claude_cooldown
+    DYNAMIC_WORKER_CHECK_INTERVAL_MS=check_ms
+    DYNAMIC_WORKER_TICK_INTERVAL_MS=tick_ms
+    DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS=heartbeat_ms
+    DYNAMIC_WORKER_GENERATION_TIMEOUT_MS=generation_ms
+    AUTONOMY_TICK_SECONDS=scheduler_seconds
     allocation=reconcile_dynamic_worker_limit()
     settings=dynamic_worker_settings()
     settings['allocated_workers']=len(allocation.get('workers') or [])
@@ -373,8 +488,14 @@ def set_dynamic_worker_limit(value,actor='dashboard'):
     settings['reconciled']=True
     return settings
 
+def set_dynamic_worker_limit(value,actor='dashboard'):
+    return set_dynamic_worker_settings({'count':value},actor)
+
 def init_db():
-    global GLOBAL_CHATGPT_WORKER_LIMIT
+    global GLOBAL_CHATGPT_WORKER_LIMIT,DYNAMIC_CHATGPT_WORKERS,DYNAMIC_CLAUDE_WORKERS
+    global DYNAMIC_CHATGPT_COOLDOWN_SECONDS,DYNAMIC_CLAUDE_COOLDOWN_SECONDS
+    global DYNAMIC_WORKER_CHECK_INTERVAL_MS,DYNAMIC_WORKER_TICK_INTERVAL_MS
+    global DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS,DYNAMIC_WORKER_GENERATION_TIMEOUT_MS,AUTONOMY_TICK_SECONDS
     with connect() as c:
         c.execute('PRAGMA journal_mode=WAL')
         c.execute('CREATE TABLE IF NOT EXISTS project_samples(ts TEXT, project TEXT, progress REAL, commits INTEGER, hash TEXT, message TEXT, PRIMARY KEY(ts, project))')
@@ -401,6 +522,8 @@ def init_db():
         worker_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_workers)').fetchall()}
         if 'desired_state' not in worker_columns:
             c.execute("ALTER TABLE runner_workers ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'running'")
+        if 'provider' not in worker_columns:
+            c.execute("ALTER TABLE runner_workers ADD COLUMN provider TEXT NOT NULL DEFAULT 'chatgpt'")
         c.execute("CREATE TABLE IF NOT EXISTS ai_global_slots(slot INTEGER PRIMARY KEY, project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, assigned_at TEXT NOT NULL)")
         c.execute('CREATE UNIQUE INDEX IF NOT EXISTS ai_global_slots_worker ON ai_global_slots(project_id,worker_slot)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_commands(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT)')
@@ -451,9 +574,40 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS runtime_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'system')")
         c.execute("INSERT OR IGNORE INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
                   (DYNAMIC_WORKER_SETTING_KEY,str(GLOBAL_CHATGPT_WORKER_LIMIT),now(),'system-default'))
-        dynamic_row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(DYNAMIC_WORKER_SETTING_KEY,)).fetchone()
-        try: GLOBAL_CHATGPT_WORKER_LIMIT=max(0,min(MAX_CHATGPT_WORKERS,int(dynamic_row['value'])))
-        except Exception: GLOBAL_CHATGPT_WORKER_LIMIT=1
+        legacy_row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(DYNAMIC_WORKER_SETTING_KEY,)).fetchone()
+        try: legacy_count=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(legacy_row['value'])))
+        except Exception: legacy_count=1
+        defaults={
+            DYNAMIC_WORKER_SETTING_KEYS['chatgpt_count']:DYNAMIC_CHATGPT_WORKERS,
+            DYNAMIC_WORKER_SETTING_KEYS['claude_count']:DYNAMIC_CLAUDE_WORKERS,
+            DYNAMIC_WORKER_SETTING_KEYS['chatgpt_cooldown_seconds']:PORTFOLIO_AI_COOLDOWN_SECONDS,
+            DYNAMIC_WORKER_SETTING_KEYS['claude_cooldown_seconds']:PORTFOLIO_AI_COOLDOWN_SECONDS,
+            DYNAMIC_WORKER_SETTING_KEYS['check_interval_ms']:5000,
+            DYNAMIC_WORKER_SETTING_KEYS['tick_interval_ms']:1500,
+            DYNAMIC_WORKER_SETTING_KEYS['heartbeat_interval_ms']:30000,
+            DYNAMIC_WORKER_SETTING_KEYS['generation_start_timeout_ms']:120000,
+            DYNAMIC_WORKER_SETTING_KEYS['scheduler_interval_seconds']:AUTONOMY_TICK_SECONDS,
+        }
+        for key,value in defaults.items():
+            c.execute("INSERT OR IGNORE INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
+                      (key,str(value),now(),'system-default'))
+        rows={r['key']:r['value'] for r in c.execute(
+            "SELECT key,value FROM runtime_settings WHERE key IN ("+','.join('?' for _ in DYNAMIC_WORKER_SETTING_KEYS.values())+")",
+            tuple(DYNAMIC_WORKER_SETTING_KEYS.values())
+        ).fetchall()}
+        def setting_int(name,default,minimum,maximum):
+            try: return max(minimum,min(maximum,int(rows.get(DYNAMIC_WORKER_SETTING_KEYS[name],default))))
+            except Exception: return default
+        DYNAMIC_CHATGPT_WORKERS=setting_int('chatgpt_count',DYNAMIC_CHATGPT_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CLAUDE_WORKERS=setting_int('claude_count',DYNAMIC_CLAUDE_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CHATGPT_COOLDOWN_SECONDS=setting_int('chatgpt_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
+        DYNAMIC_CLAUDE_COOLDOWN_SECONDS=setting_int('claude_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
+        DYNAMIC_WORKER_CHECK_INTERVAL_MS=setting_int('check_interval_ms',5000,1000,60000)
+        DYNAMIC_WORKER_TICK_INTERVAL_MS=setting_int('tick_interval_ms',1500,250,10000)
+        DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS=setting_int('heartbeat_interval_ms',30000,5000,300000)
+        DYNAMIC_WORKER_GENERATION_TIMEOUT_MS=setting_int('generation_start_timeout_ms',120000,10000,600000)
+        AUTONOMY_TICK_SECONDS=setting_int('scheduler_interval_seconds',AUTONOMY_TICK_SECONDS,1,300)
+        GLOBAL_CHATGPT_WORKER_LIMIT=DYNAMIC_CHATGPT_WORKERS+DYNAMIC_CLAUDE_WORKERS
         c.execute("CREATE TABLE IF NOT EXISTS autonomy_runtime(project_id TEXT PRIMARY KEY, initialized_at TEXT NOT NULL, manual_pause INTEGER NOT NULL DEFAULT 0, last_dispatch_at TEXT, last_reason TEXT NOT NULL DEFAULT '')")
         if PORTFOLIO_QUEUE_SEED_FILE.exists():
             try:
@@ -1484,7 +1638,7 @@ def _global_dispatch_due(min_interval_seconds):
 
 def _worker_prompt_interval_due(connection,project_id,worker_slot,min_interval_seconds):
     try:
-        min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS,int(min_interval_seconds or 0))
+        min_interval_seconds=max(5,int(min_interval_seconds or PORTFOLIO_AI_COOLDOWN_SECONDS))
     except Exception:
         min_interval_seconds=PORTFOLIO_AI_COOLDOWN_SECONDS
     row=connection.execute(
@@ -1503,7 +1657,7 @@ def _worker_prompt_interval_due(connection,project_id,worker_slot,min_interval_s
 def _global_dispatch_interval_due(connection,min_interval_seconds):
     """Guard the single global worker across project rotation."""
     try:
-        min_interval_seconds=max(PORTFOLIO_AI_COOLDOWN_SECONDS,int(min_interval_seconds or 0))
+        min_interval_seconds=max(5,int(min_interval_seconds or PORTFOLIO_AI_COOLDOWN_SECONDS))
     except Exception:
         min_interval_seconds=PORTFOLIO_AI_COOLDOWN_SECONDS
     row=connection.execute(
@@ -1826,6 +1980,7 @@ def portfolio_queue_allocation():
             'project_id':project_id,
             'worker_slot':local_slot,
             'global_worker_slot':int(item['worker_slot']),
+            'provider':dynamic_provider_for_global_slot(item['worker_slot']),
             'queue_id':item['queue_id'],
             'priority':item['priority'],
             'reason':'vps_queue:'+item['queue_id'],
@@ -1848,7 +2003,12 @@ def portfolio_queue_allocation():
         'queue_backend':'sqlite',
         'queue_db':str(DB),
         'notion_mirror_url':NOTION_PORTFOLIO_QUEUE_URL,
-        'dispatch_cooldown_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
+        'dispatch_cooldown_seconds':min(DYNAMIC_CHATGPT_COOLDOWN_SECONDS,DYNAMIC_CLAUDE_COOLDOWN_SECONDS),
+        'provider_cooldowns':{
+            'chatgpt':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
+            'claude':int(DYNAMIC_CLAUDE_COOLDOWN_SECONDS),
+        },
+        'provider_counts':_dynamic_provider_counts(),
         'dispatch_rule':'vps_queue_claim_then_execute',
     }
 
@@ -2002,7 +2162,7 @@ def autonomy_scheduler_tick():
                         project_id,
                         int(worker.get('worker_slot') or 1),
                         'global-slot:'+str(worker.get('global_worker_slot') or '')+':'+str(state.get('reason') or 'eligible'),
-                        state.get('min_ai_interval_seconds') or PORTFOLIO_AI_COOLDOWN_SECONDS,
+                        dynamic_provider_cooldown(worker.get('provider')),
                     ):
                         pushed.append(worker.get('worker_key') or project_id)
         elif target.get('active'):
@@ -2057,12 +2217,18 @@ def runner_worker_targets():
             for slot in range(1,count+1):
                 c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
                           (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
-                row=c.execute('SELECT conversation_id,desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
-                conversation_id=(row['conversation_id'] if row else '') or ''
+                row=c.execute('SELECT conversation_id,desired_state,provider FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
                 desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
                 global_slot=global_slots.get(worker_key)
                 allocated=global_slot is not None
+                provider_name=dynamic_provider_for_global_slot(global_slot) if allocated else str((row['provider'] if row else 'chatgpt') or 'chatgpt')
+                provider_name='claude' if provider_name=='claude' else 'chatgpt'
+                conversation_id=(row['conversation_id'] if row else '') or ''
+                if row and str(row['provider'] or 'chatgpt') != provider_name:
+                    conversation_id=''
+                    c.execute('UPDATE runner_workers SET provider=?,conversation_id=? WHERE project_id=? AND worker_slot=?',
+                              (provider_name,'',project_id,slot))
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
                 queue_item=portfolio_queue_current_for_slot(global_slot) if allocated else None
@@ -2076,8 +2242,11 @@ def runner_worker_targets():
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'global_worker_slot':global_slot,'global_worker_count':GLOBAL_CHATGPT_WORKER_LIMIT,
+                    'provider':provider_name,
+                    'provider_worker_slot':(int(global_slot) if provider_name=='chatgpt' else int(global_slot)-dynamic_provider_count('chatgpt')) if allocated else slot,
+                    'provider_worker_count':dynamic_provider_count(provider_name) if allocated else count,
                     'name':worker_name,'conversation_id':conversation_id,
-                    'url':('https://chatgpt.com/c/'+conversation_id) if conversation_id else 'https://chatgpt.com/',
+                    'url':dynamic_provider_url(provider_name,conversation_id),
                     'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item),
                     'queue_item':queue_item,
                     'assignment_ready':assignment_ready,
@@ -2117,7 +2286,11 @@ def runner_record(payload):
     if event=='runner-auto-paused':
         event='quality-recovery-requested'
         reason='backend-rejected-automatic-worker-pause'
-    match=re.search(r'/c/([0-9a-f-]{20,})',target,re.I)
+    event_provider=str(payload.get('provider') or '').strip().lower()
+    if event_provider not in ('chatgpt','claude'):
+        event_provider='claude' if re.search(r'https?://(?:www\\.)?(?:claude\\.ai|claude\\.com)/',target,re.I) else 'chatgpt'
+    match=(re.search(r'/chat/([0-9a-f-]{20,})',target,re.I) if event_provider=='claude'
+           else re.search(r'/c/([0-9a-f-]{20,})',target,re.I))
     with connect() as c:
         if not project_id and target:
             for pid,t in runner_targets().items():
@@ -2125,8 +2298,8 @@ def runner_record(payload):
         c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error,project_id,progress_at,assistant_chars,worker_slot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                   (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error,project_id or None,progress_at,assistant_chars,worker_slot))
         if event == 'conversation-adopted' and project_id in runner_targets() and match:
-            c.execute('INSERT INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?) ON CONFLICT(project_id,worker_slot) DO UPDATE SET conversation_id=excluded.conversation_id',
-                      (project_id,worker_slot,match.group(1)))
+            c.execute('INSERT INTO runner_workers(project_id,worker_slot,conversation_id,provider) VALUES(?,?,?,?) ON CONFLICT(project_id,worker_slot) DO UPDATE SET conversation_id=excluded.conversation_id,provider=excluded.provider',
+                      (project_id,worker_slot,match.group(1),event_provider))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
         if event in ('runner-drained','runner-paused') and project_id in runner_targets():
@@ -2595,7 +2768,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
                 try:
-                    settings=set_dynamic_worker_limit(payload.get('count'),actor)
+                    settings=set_dynamic_worker_settings(payload,actor)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
                 return self.reply({'ok':True,'dynamic_workers':settings,'time':now()})
@@ -2686,7 +2859,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
-            return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation})
+            return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
