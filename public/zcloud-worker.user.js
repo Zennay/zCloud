@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.5
+// @version      1.1.6
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,9 +16,11 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.5";
+  const SCRIPT_VERSION = "1.1.6";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
+    'button[aria-label="Select ChatGPT model"]',
+    'button[title="Select ChatGPT model"]',
     '[data-testid="model-switcher-dropdown-button"]',
     'button[aria-label="Model selector"]',
     '[aria-label="Model selector"][aria-haspopup="menu"]',
