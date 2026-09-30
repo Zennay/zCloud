@@ -418,6 +418,34 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertEqual("test", result["snapshot_id"])
         self.assertEqual(str(helper), calls[0][1])
 
+    def test_mapping_status_can_use_candidate_recovery_helper(self):
+        calls = []
+        original_run = promote.run
+
+        class Result:
+            returncode = 0
+            stdout = '{"current":{"mapping":{"sha256":"candidate-mapping"}}}'
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        helper = self.candidate / "scripts" / "zcloud_recovery.py"
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text("# helper\n")
+        promote.run = fake_run
+        try:
+            result = promote.mapping_from_recovery_status(
+                self.root,
+                Path(self.tmp.name) / "state",
+                helper,
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertEqual("candidate-mapping", result)
+        self.assertEqual(str(helper), calls[0][1])
+
     def test_prechange_only_allows_selected_replaceable_seed_drift(self):
         calls = []
         original_run = promote.run
