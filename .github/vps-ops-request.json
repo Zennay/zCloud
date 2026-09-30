@@ -1,7 +1,0 @@
-{
-  "schema_version": 1,
-  "phase": "inspect_prepare",
-  "burst_ticks": 0,
-  "requested_at": "2026-09-30T13:23:00Z",
-  "purpose": "Persistently pause HaxLab compute through zCloud and verify FTMO autonomous timer state"
-}
