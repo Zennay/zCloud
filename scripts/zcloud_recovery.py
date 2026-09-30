@@ -181,7 +181,7 @@ def browser_service_meta() -> dict:
     return {"service": BROWSER_SERVICE, "active_state": raw.get("ActiveState"), "sub_state": raw.get("SubState"), "main_pid": int(raw.get("MainPID") or 0), "fragment_path": raw.get("FragmentPath") or None}
 
 
-def http_healthy(url: str = HEALTH_URL, timeout=3) -> bool:
+def http_healthy(url: str = HEALTH_URL, timeout=8) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status == 200

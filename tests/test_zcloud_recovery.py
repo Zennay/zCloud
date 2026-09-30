@@ -9,6 +9,13 @@ from scripts import zcloud_recovery as recovery
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_health_probe_allows_slow_status_endpoint(self):
+        self.assertEqual(
+            8,
+            recovery.http_healthy.__defaults__[1],
+        )
+
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-recovery-test-")
         self.base = Path(self.tmp.name)
