@@ -164,24 +164,31 @@ function dynamicWorkerControl(){
   const chatgpt=Math.max(0,Number(cfg.chatgpt_count??cfg.providers?.chatgpt?.count??2));
   const claude=Math.max(0,Number(cfg.claude_count??cfg.providers?.claude?.count??1));
   const total=chatgpt+claude;
-  const state=total>0?'On · '+total+' workers':'Off';
+  const state=total>0?'On · '+total+' active slot'+(total===1?'':'s'):'Off';
   const field=(key,label,value,min,max,step=1,suffix='')=>`<label><span>${esc(label)}</span><div class="dynamic-worker-input"><input type="number" inputmode="numeric" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-dynamic-setting="${esc(key)}" aria-label="${esc(label)}">${suffix?`<em>${esc(suffix)}</em>`:''}</div></label>`;
   return `<div class="dynamic-worker-control dynamic-worker-control-advanced" data-dynamic-worker-control>
-    <div class="dynamic-worker-copy"><small>Dynamic workers</small><strong>${esc(state)}</strong><span>ChatGPT and Claude have separate pools and cooldowns.</span></div>
-    <div class="dynamic-worker-provider-grid">
-      ${field('chatgpt_count','ChatGPT workers',chatgpt,0,max)}
-      ${field('claude_count','Claude workers',claude,0,max)}
-      ${field('chatgpt_cooldown_seconds','ChatGPT cooldown',Number(cfg.chatgpt_cooldown_seconds??cfg.providers?.chatgpt?.cooldown_seconds??120),5,86400,1,'sec')}
-      ${field('claude_cooldown_seconds','Claude cooldown',Number(cfg.claude_cooldown_seconds??cfg.providers?.claude?.cooldown_seconds??120),5,86400,1,'sec')}
+    <div class="dynamic-worker-copy">
+      <small>Dynamic workers</small>
+      <strong>${esc(state)}</strong>
+      <span>${chatgpt} ChatGPT · ${claude} Claude</span>
     </div>
-    <details class="dynamic-worker-advanced"><summary>Polling & timing</summary><div class="dynamic-worker-provider-grid">
-      ${field('check_interval_ms','Assignment check',Number(cfg.check_interval_ms??5000),1000,60000,250,'ms')}
-      ${field('tick_interval_ms','DOM check',Number(cfg.tick_interval_ms??1500),250,10000,250,'ms')}
-      ${field('heartbeat_interval_ms','Heartbeat',Number(cfg.heartbeat_interval_ms??30000),5000,300000,1000,'ms')}
-      ${field('generation_start_timeout_ms','Generation timeout',Number(cfg.generation_start_timeout_ms??120000),10000,600000,1000,'ms')}
-      ${field('scheduler_interval_seconds','Backend scheduler',Number(cfg.scheduler_interval_seconds??5),1,300,1,'sec')}
-    </div></details>
-    <button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save worker settings</button>
+    <div class="dynamic-worker-counts">
+      ${field('chatgpt_count','ChatGPT',chatgpt,0,max)}
+      ${field('claude_count','Claude',claude,0,max)}
+    </div>
+    <details class="dynamic-worker-advanced">
+      <summary>Cooldowns & timing</summary>
+      <div class="dynamic-worker-provider-grid">
+        ${field('chatgpt_cooldown_seconds','ChatGPT cooldown',Number(cfg.chatgpt_cooldown_seconds??cfg.providers?.chatgpt?.cooldown_seconds??120),5,86400,1,'sec')}
+        ${field('claude_cooldown_seconds','Claude cooldown',Number(cfg.claude_cooldown_seconds??cfg.providers?.claude?.cooldown_seconds??120),5,86400,1,'sec')}
+        ${field('check_interval_ms','Assignment check',Number(cfg.check_interval_ms??5000),1000,60000,250,'ms')}
+        ${field('tick_interval_ms','DOM check',Number(cfg.tick_interval_ms??1500),250,10000,250,'ms')}
+        ${field('heartbeat_interval_ms','Heartbeat',Number(cfg.heartbeat_interval_ms??30000),5000,300000,1000,'ms')}
+        ${field('generation_start_timeout_ms','Generation timeout',Number(cfg.generation_start_timeout_ms??120000),10000,600000,1000,'ms')}
+        ${field('scheduler_interval_seconds','Backend scheduler',Number(cfg.scheduler_interval_seconds??5),1,300,1,'sec')}
+      </div>
+    </details>
+    <button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save</button>
   </div>`;
 }
 async function saveDynamicWorkerSettings(button){
