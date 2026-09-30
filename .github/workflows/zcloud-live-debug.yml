@@ -1,4 +1,5 @@
 name: zCloud live dynamic worker debug
+# retrigger: inspect deployed picker diagnostics
 
 on:
   push:
