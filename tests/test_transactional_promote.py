@@ -227,6 +227,10 @@ class TransactionalPromotionTests(unittest.TestCase):
             "firefox-extension/manifest.json",
             "firefox-extension/recovery.js",
         ]))
+        self.assertFalse(promote.needs_service_restart([
+            "public/zcloud-worker.user.js",
+            "public/app.js",
+        ]))
         self.assertTrue(promote.needs_service_restart([
             "firefox-extension/background.js",
             "server.py",
