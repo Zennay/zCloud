@@ -26,7 +26,7 @@ DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
 ))
 DEFAULT_HEALTH_URL = os.environ.get(
-    "ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/status"
+    "ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/health"
 )
 MANAGED_PATHS = (
     "server.py",
