@@ -22,6 +22,23 @@ class RecoveryTests(unittest.TestCase):
             recovery.http_healthy.__defaults__[1],
         )
 
+    def test_lkg_capture_health_retries_transient_http_gap(self):
+        self.assertEqual(30.0, recovery.LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS)
+        self.assertEqual(
+            recovery.LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS,
+            recovery.wait_http_healthy.__defaults__[0],
+        )
+        with patch.object(
+            recovery,
+            "http_healthy",
+            side_effect=[False, False, True],
+        ) as probe, patch.object(recovery.time, "sleep") as sleep:
+            self.assertTrue(
+                recovery.wait_http_healthy(timeout=30.0, interval=0.5)
+            )
+        self.assertEqual(3, probe.call_count)
+        self.assertEqual(2, sleep.call_count)
+
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-recovery-test-")
