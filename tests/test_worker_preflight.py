@@ -31,7 +31,7 @@ class WorkerPreflightTests(unittest.TestCase):
         self.original_vps_health = server.coordination_vps_health
         server.DB = Path(self.tmp.name) / "history.db"
         server.CACHE = None
-        server.coordination_vps_health = lambda: {
+        server.coordination_vps_health = lambda profile="default": {
             "ok": True,
             "checks": {"zcloud_service": True, "firefox_automation": True, "state_store": True},
         }
@@ -537,8 +537,43 @@ class WorkerPreflightTests(unittest.TestCase):
         self.assertEqual(428, status, blocked)
         self.assertEqual("preflight_expired", blocked["blocked"])
 
+    def test_control_plane_profile_ignores_unrelated_firefox_outage(self):
+        def profile_health(profile="default"):
+            checks = {
+                "zcloud_service": True,
+                "firefox_automation": False,
+                "state_store": True,
+            }
+            required = {
+                "default": ("zcloud_service", "firefox_automation", "state_store"),
+                "control_plane": ("zcloud_service", "state_store"),
+            }[profile]
+            return {
+                "ok": all(checks[name] for name in required),
+                "profile": profile,
+                "required_checks": list(required),
+                "checks": checks,
+            }
+
+        server.coordination_vps_health = profile_health
+
+        status, blocked = self.request("/api/worker-preflight", self.payload())
+        self.assertEqual(409, status, blocked)
+        self.assertEqual("vps_unhealthy", blocked["blocked"])
+
+        payload = self.payload()
+        payload["vps_profile"] = "control_plane"
+        status, allowed = self.request("/api/worker-preflight", payload)
+        self.assertEqual(200, status, allowed)
+        self.assertTrue(allowed["ok"])
+
+        payload["vps_profile"] = "unknown"
+        status, invalid = self.request("/api/worker-preflight", payload)
+        self.assertEqual(400, status, invalid)
+        self.assertIn("VPS-healthprofiel", invalid["error"])
+
     def test_unhealthy_vps_and_incomplete_external_evidence_do_not_create_receipt(self):
-        server.coordination_vps_health = lambda: {
+        server.coordination_vps_health = lambda profile="default": {
             "ok": False,
             "checks": {"zcloud_service": True, "firefox_automation": False, "state_store": True},
         }
