@@ -104,7 +104,7 @@ jobs:
               if not p.exists():
                   return None
               data=p.read_bytes()
-              return hashlib.sha1(f"blob {len(data)}\\0".encode()+data).hexdigest()
+              return hashlib.sha1(f"blob {len(data)}\0".encode()+data).hexdigest()
           paths={
               "live_background":"/home/ubuntu/zennay-cloud/firefox-extension/background.js",
               "runtime_background":"/home/ubuntu/snap/firefox/common/chatgpt-project-extension/background.js",
