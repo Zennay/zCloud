@@ -159,26 +159,50 @@ async function setRunnerWorkers(projectId,count,input){
   finally{input.disabled=false}
 }
 function dynamicWorkerControl(){
-  const cfg=DATA?.dynamic_workers||{count:1,max_workers:8,cooldown_seconds:120};
-  const count=Math.max(0,Number(cfg.count??1)),max=Math.max(1,Number(cfg.max_workers||8)),cooldown=Math.max(60,Number(cfg.cooldown_seconds||300));
-  const state=count>0?'On · '+count+' active slot'+(count===1?'':'s'):'Off';
-  return `<div class="dynamic-worker-control"><div class="dynamic-worker-copy"><small>Dynamic workers</small><strong>${esc(state)}</strong><span>Continuous iteration · max 1 prompt per ${Math.round(cooldown/60)} min per worker</span></div><label><span>Workers</span><input type="number" inputmode="numeric" min="0" max="${max}" step="1" value="${count}" data-dynamic-workers aria-label="Number of dynamic zCloud workers"></label></div>`;
+  const cfg=DATA?.dynamic_workers||{};
+  const max=Math.max(1,Number(cfg.max_workers_per_provider||8));
+  const chatgpt=Math.max(0,Number(cfg.chatgpt_count??cfg.providers?.chatgpt?.count??cfg.count??1));
+  const claude=Math.max(0,Number(cfg.claude_count??cfg.providers?.claude?.count??0));
+  const total=chatgpt+claude;
+  const state=total>0?'On · '+total+' workers':'Off';
+  const field=(key,label,value,min,max,step=1,suffix='')=>`<label><span>${esc(label)}</span><div class="dynamic-worker-input"><input type="number" inputmode="numeric" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-dynamic-setting="${esc(key)}" aria-label="${esc(label)}">${suffix?`<em>${esc(suffix)}</em>`:''}</div></label>`;
+  return `<div class="dynamic-worker-control dynamic-worker-control-advanced" data-dynamic-worker-control>
+    <div class="dynamic-worker-copy"><small>Dynamic workers</small><strong>${esc(state)}</strong><span>ChatGPT and Claude have separate pools and cooldowns.</span></div>
+    <div class="dynamic-worker-provider-grid">
+      ${field('chatgpt_count','ChatGPT workers',chatgpt,0,max)}
+      ${field('claude_count','Claude workers',claude,0,max)}
+      ${field('chatgpt_cooldown_seconds','ChatGPT cooldown',Number(cfg.chatgpt_cooldown_seconds??cfg.providers?.chatgpt?.cooldown_seconds??120),5,86400,1,'sec')}
+      ${field('claude_cooldown_seconds','Claude cooldown',Number(cfg.claude_cooldown_seconds??cfg.providers?.claude?.cooldown_seconds??120),5,86400,1,'sec')}
+    </div>
+    <details class="dynamic-worker-advanced"><summary>Polling & timing</summary><div class="dynamic-worker-provider-grid">
+      ${field('check_interval_ms','Assignment check',Number(cfg.check_interval_ms??5000),1000,60000,250,'ms')}
+      ${field('tick_interval_ms','DOM check',Number(cfg.tick_interval_ms??1500),250,10000,250,'ms')}
+      ${field('heartbeat_interval_ms','Heartbeat',Number(cfg.heartbeat_interval_ms??30000),5000,300000,1000,'ms')}
+      ${field('generation_start_timeout_ms','Generation timeout',Number(cfg.generation_start_timeout_ms??120000),10000,600000,1000,'ms')}
+      ${field('scheduler_interval_seconds','Backend scheduler',Number(cfg.scheduler_interval_seconds??5),1,300,1,'sec')}
+    </div></details>
+    <button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save worker settings</button>
+  </div>`;
 }
-async function setDynamicWorkers(count,input){
-  const previous=input.value,requested=Number(count);
-  if(!Number.isInteger(requested))return;
-  input.disabled=true;
+async function saveDynamicWorkerSettings(button){
+  const root=button.closest('[data-dynamic-worker-control]');if(!root)return;
+  const inputs=[...root.querySelectorAll('[data-dynamic-setting]')];
+  const payload={};
+  for(const input of inputs){
+    if(!input.validity.valid){input.reportValidity();return}
+    payload[input.dataset.dynamicSetting]=Number(input.value);
+  }
+  button.disabled=true;const before=button.textContent;button.textContent='Saving…';
   try{
-    const response=await fetch('/api/dynamic-workers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:requested}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/dynamic-workers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(10000)});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(data.error||'Saving dynamic worker count failed');
-    const saved=Number(data.dynamic_workers?.count);
-    if(saved!==requested||data.dynamic_workers?.reconciled!==true)throw new Error('Worker limit was not applied to the runtime');
-    input.value=String(saved);
+    if(!response.ok)throw new Error(data.error||'Saving dynamic worker settings failed');
+    if(data.dynamic_workers?.reconciled!==true)throw new Error('Worker settings were saved but the runtime did not reconcile');
     if(DATA)DATA.dynamic_workers=data.dynamic_workers;
+    button.textContent='Saved';
     setTimeout(()=>refresh(true),250);
-  }catch(error){input.value=previous;window.alert(error.message||String(error))}
-  finally{input.disabled=false}
+  }catch(error){button.textContent=before;window.alert(error.message||String(error))}
+  finally{button.disabled=false}
 }
 async function restartFirefoxInitiator(button){
   if(!window.confirm('Restart the Firefox ChatGPT initiator on the VPS? The project tabs will reopen and the runners will continue automatically.'))return;
@@ -247,9 +271,8 @@ document.addEventListener('dragover',e=>{const card=e.target.closest('[data-proj
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
 document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('input',e=>{const dynamicInput=e.target.closest?.('[data-dynamic-workers]');if(!dynamicInput)return;clearTimeout(dynamicWorkerSaveTimer);const value=String(dynamicInput.value||'').trim();if(value===''||!dynamicInput.validity.valid)return;dynamicWorkerSaveTimer=setTimeout(()=>{if(document.body.contains(dynamicInput))setDynamicWorkers(value,dynamicInput)},350)});
-document.addEventListener('change',async e=>{const dynamicInput=e.target.closest?.('[data-dynamic-workers]');if(dynamicInput){clearTimeout(dynamicWorkerSaveTimer);await setDynamicWorkers(dynamicInput.value,dynamicInput);return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('change',async e=>{const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
