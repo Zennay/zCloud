@@ -92,6 +92,38 @@ jobs:
               },
           }, ensure_ascii=False, indent=2))
           PY
+          echo "=== MAPPING RACE EVIDENCE (HASHED) ==="
+          python3 - <<'PY'
+          import hashlib, sqlite3, json
+          db="/home/ubuntu/zennay-cloud/history.db"
+          def h(value):
+              value=str(value or "")
+              return hashlib.sha256(value.encode()).hexdigest()[:12] if value else ""
+          with sqlite3.connect(db) as conn:
+              conn.row_factory=sqlite3.Row
+              targets=[dict(r) for r in conn.execute(
+                  "SELECT project_id,active,worker_count,conversation_id FROM runner_targets ORDER BY project_id"
+              )]
+              workers=[dict(r) for r in conn.execute(
+                  "SELECT project_id,worker_slot,desired_state,conversation_id FROM runner_workers ORDER BY project_id,worker_slot"
+              )]
+              events=[dict(r) for r in conn.execute(
+                  "SELECT ts,project_id,worker_slot,event,target FROM runner_events "
+                  "WHERE event='conversation-adopted' AND ts >= datetime('now','-20 minutes') "
+                  "ORDER BY ts DESC LIMIT 40"
+              )]
+          for r in targets:
+              print("TARGET", r["project_id"], "active="+str(r["active"]),
+                    "workers="+str(r["worker_count"]), "conv="+h(r["conversation_id"]))
+          for r in workers:
+              print("WORKER", r["project_id"], "slot="+str(r["worker_slot"]),
+                    "desired="+str(r["desired_state"]), "conv="+h(r["conversation_id"]))
+          for r in events:
+              target=str(r.get("target") or "")
+              conv=target.rsplit("/",1)[-1] if "/c/" in target else ""
+              print("ADOPT", r.get("ts"), r.get("project_id"),
+                    "slot="+str(r.get("worker_slot")), "conv="+h(conv))
+          PY
           echo "=== VERSION / HASH PARITY ==="
           python3 - <<'PY'
           from pathlib import Path
