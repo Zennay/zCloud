@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.3
+// @version      1.1.4
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.3";
+  const SCRIPT_VERSION = "1.1.4";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     '[data-testid="model-switcher-dropdown-button"]',
@@ -253,6 +253,25 @@
     return [...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visible);
   }
 
+  function thinkingEffortPicker() {
+    return [...document.querySelectorAll(
+      'button,[role="button"],[aria-haspopup="menu"],[aria-haspopup="listbox"],[aria-label]'
+    )].filter(visible).find(el => {
+      const aria = String(el.getAttribute?.("aria-label") || "").trim();
+      const testId = String(el.getAttribute?.("data-testid") || "").toLowerCase();
+      if (/model selector/i.test(aria) || /select chatgpt model/i.test(aria)) return false;
+      return /^(?:high|medium|low|standard|extended|hoog|gemiddeld|laag)\s+selector\b/i.test(aria) ||
+        /thinking.*(?:selector|effort)|reasoning.*(?:selector|effort)|effort.*selector/i.test(aria) ||
+        ((testId.includes("thinking") || testId.includes("reasoning") || testId.includes("effort")) &&
+          !!el.getAttribute?.("aria-haspopup"));
+    }) || null;
+  }
+
+  function effortPickerShowsHigh() {
+    const picker = thinkingEffortPicker();
+    return !!picker && isHigh(label(picker));
+  }
+
   function thinkingControls() {
     return [...document.querySelectorAll(
       'button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="option"],[role="radio"],[aria-haspopup="menu"],[aria-haspopup="listbox"]'
@@ -280,7 +299,7 @@
       '[data-testid]'
     ].join(",");
     const clean = (value, max = 120) => String(value || "")
-      .replace(/[|;\\n\\r]+/g, " ").replace(/\\s+/g, " ").trim().slice(0, max);
+      .replace(/[|;\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
     const snap = el => {
       if (!el || !el.getAttribute) return null;
       return {
@@ -332,7 +351,10 @@
   }
 
   function highVerified() {
-    if (pickerShowsHigh() || selectedHighOption()) return true;
+    // Live ChatGPT DOM (2026-09-30) exposes thinking effort separately from
+    // the model switcher, e.g. aria-label="High selector". Treat that
+    // dedicated effort control as the authoritative current-effort signal.
+    if (effortPickerShowsHigh() || pickerShowsHigh() || selectedHighOption()) return true;
     if (thinkingSliders().some(el => isHigh(label(el)))) return true;
     return thinkingControls().some(el => isHigh(label(el)) && selected(el));
   }
@@ -388,7 +410,9 @@
     const slider = thinkingSliders()[0] || null;
     if (slider && await setSliderHigh(slider) && highVerified()) return true;
 
-    const picker = pickerButton();
+    // Prefer ChatGPT's dedicated thinking-effort selector over the model
+    // switcher. The live UI exposes controls such as "High selector".
+    const picker = thinkingEffortPicker() || pickerButton();
     if (!picker) {
       compactThinkingDiagnostic("picker-not-found");
       return false;

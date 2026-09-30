@@ -23,6 +23,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('data-testid="model-switcher-dropdown-button"', userscript)
         self.assertIn('aria-label="Model selector"', userscript)
         self.assertIn("THINKING_OPTION_SELECTOR", userscript)
+        self.assertIn("thinkingEffortPicker", userscript)
+        self.assertIn("High selector", userscript)
+        self.assertIn("effortPickerShowsHigh", userscript)
         self.assertIn("think\\s+hard", userscript)
         self.assertIn("Re-open once", userscript)
         self.assertIn("compactThinkingDiagnostic", userscript)
@@ -66,7 +69,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.3";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.4";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
