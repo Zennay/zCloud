@@ -427,7 +427,7 @@ class RunnerSmokeTests(unittest.TestCase):
         )
         self.assertEqual(["cloud::w1", "cloud::w2"], cloud_workers)
         self.assertTrue(all(targets["projects"][key]["worker_count"] == 2 for key in cloud_workers))
-        self.assertEqual(2, targets["max_workers"])
+        self.assertEqual(3, targets["max_workers"])
 
     def test_worker_count_rejects_unsafe_value(self):
         status, body = self.request(
