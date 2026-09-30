@@ -99,7 +99,13 @@ AUDITED_CONFIG_PATHS = {
 }
 
 HIGH_BLAST_FLAG = "high_blast_radius_promotion"
-PRECHANGE_REPLACEABLE_DRIFT = frozenset({"portfolio_queue.seed.json"})
+# The userscript can be updated manually by the browser tooling before the
+# guarded promotion catches up. Allow that exact managed path to be
+# transactionally reconciled; all other source drift remains fail-closed.
+PRECHANGE_REPLACEABLE_DRIFT = frozenset({
+    "portfolio_queue.seed.json",
+    "public/zcloud-worker.user.js",
+})
 
 
 class PromotionError(RuntimeError):
