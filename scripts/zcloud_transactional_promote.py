@@ -393,8 +393,12 @@ def service_restart() -> None:
     wait_http()
 
 
-def mapping_from_recovery_status(root: Path, state: Path) -> str:
-    recovery = root / "scripts/zcloud_recovery.py"
+def mapping_from_recovery_status(
+    root: Path,
+    state: Path,
+    recovery_script: Path | None = None,
+) -> str:
+    recovery = recovery_script or (root / "scripts/zcloud_recovery.py")
     proc = run([
         sys.executable, str(recovery),
         "--root", str(root),
@@ -764,7 +768,7 @@ def promote(
             state,
             allowed_changes=allowed_prechange_drift,
         )
-        mapping_sha = mapping_from_recovery_status(root, state)
+        mapping_sha = mapping_from_recovery_status(root, state, effective_recovery)
         if dry_run:
             return {
                 "ok": True,
