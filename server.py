@@ -151,7 +151,7 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         f'Worker {slot}/{total}. '
         'DOEN: voer vóór je antwoord minimaal één echte actie uit: write/commit/PR, workflow/run, test/deploy, queue/state-write of concrete worker-taak. '
         'Alleen lezen, auditen of status geven telt niet. Faalt een route, probeer direct een andere veilige route. '
-        'CONTINUE alleen na zo'n actie; DONE alleen met geteste completion-evidence. '
+        "CONTINUE alleen na zo'n actie; DONE alleen met geteste completion-evidence. "
         'WAIT_HUMAN alleen voor een secret, destructieve/brede toestemming of echte externe dependency. Geen secrets in prompts/logs. '
         + project_guard +
         f'OUTPUT exact:\nZCLOUD_QUEUE_ITEM: {queue_id}\n'
