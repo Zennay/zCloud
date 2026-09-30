@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.4";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.0";
 const violentmonkeyReadyProjects = new Set();
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
