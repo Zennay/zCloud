@@ -28,7 +28,8 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("dynamic-worker-counts", app)
         self.assertIn("'ChatGPT',chatgpt", app)
         self.assertIn("'Claude',claude", app)
-        self.assertNotIn("<span>Workers</span><input type=\"number\"", app)
+        dynamic = app.split("function dynamicWorkerControl(){", 1)[1].split("async function saveDynamicWorkerSettings", 1)[0]
+        self.assertNotIn("<span>Workers</span>", dynamic)
         self.assertIn(".dynamic-worker-control", css)
         self.assertIn(".dynamic-worker-provider-grid", css)
         self.assertIn("@media(max-width:760px)", css)
