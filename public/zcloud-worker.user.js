@@ -858,11 +858,7 @@
         "Handoff-context: " + JSON.stringify(handoff);
     }
     if (qualityRetryPending) {
-      const escalation = qualityRetryCount >= 2
-        ? "DOE HET NU ECHT. GA GEWOON EN VOER HET UIT. Geen audit/status-only of dezelfde recoverable blocker opnieuw; kies een andere veilige route en bewijs echte uitvoering."
-        : "DOE HET NU ECHT. Ga door met dezelfde assignment en voer nu een concrete materiële stap uit.";
-      prompt += "\n\nZCLOUD_QUALITY_RETRY: " + escalation +
-        " Herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. Sluit af met ZCLOUD_QUEUE_RESULT en concrete ZCLOUD_QUEUE_EVIDENCE.";
+      prompt += "\n\nZCLOUD_QUALITY_RETRY: DOE HET NU ECHT. Voer vóór je antwoord één concrete write/run/state-change uit voor dezelfde assignment; alleen WAIT_HUMAN bij secret, vereiste toestemming of echte externe dependency.";
     }
     return prompt;
   }
