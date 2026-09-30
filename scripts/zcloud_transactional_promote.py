@@ -121,6 +121,27 @@ PRECHANGE_REPLACEABLE_DRIFT = frozenset({
     "firefox-extension/background.js",
 })
 
+# Production deploys are intentionally split into small transactions. A prior
+# transaction/rollback may therefore leave one of these repo-managed files
+# already at the exact bytes of the next tested candidate while the recovery
+# baseline still points at older bytes. Such drift is idempotent and safe to
+# acknowledge, but only after byte-for-byte candidate verification.
+CANDIDATE_MATCH_RECONCILABLE_PATHS = frozenset({
+    "server.py",
+    "scripts/zcloud_recovery.py",
+    "autonomy-policy.json",
+    "vps-execution-policy.json",
+    "portfolio_queue.seed.json",
+    "public/zcloud-worker.user.js",
+    "firefox-extension/background.js",
+    "public/app.js",
+    "public/index.html",
+    "public/style.css",
+    "public/enhancements.js",
+    "public/enhancements.css",
+    "projects.json",
+})
+
 
 class PromotionError(RuntimeError):
     pass
@@ -203,6 +224,38 @@ def validate_candidate(candidate: Path, root: Path, paths: list[str]) -> dict[st
             raise PromotionError(f"live target is not a file: {rel}")
         hashes[rel] = sha256_file(source)
     return hashes
+
+
+def candidate_matching_prechange_drift(candidate: Path, root: Path) -> list[str]:
+    """Return deploy-managed live files already equal to this exact candidate."""
+    matches = []
+    for rel in sorted(CANDIDATE_MATCH_RECONCILABLE_PATHS):
+        source = candidate / rel
+        target = root / rel
+        if not source.is_file() or not target.is_file():
+            continue
+        if sha256_file(source) == sha256_file(target):
+            matches.append(rel)
+    return matches
+
+
+def verify_candidate_matching_drift(
+    candidate: Path,
+    root: Path,
+    allowed_matches: list[str] | tuple[str, ...],
+) -> None:
+    """Fail closed if a candidate-matched allowance changed after hashing."""
+    for rel in allowed_matches:
+        source = candidate / rel
+        target = root / rel
+        if not source.is_file() or not target.is_file():
+            raise PromotionError(
+                f"candidate-matched managed path disappeared before promotion: {rel}"
+            )
+        if sha256_file(source) != sha256_file(target):
+            raise PromotionError(
+                f"candidate-matched managed path changed before promotion: {rel}"
+            )
 
 
 def config_changes(candidate: Path, root: Path, paths: list[str]) -> list[dict]:
@@ -928,16 +981,24 @@ def promote(
     )
 
     with promotion_lock(state):
-        allowed_prechange_drift = [
-            rel for rel in normalized
-            if rel in PRECHANGE_REPLACEABLE_DRIFT
-        ]
+        candidate_matches = candidate_matching_prechange_drift(candidate, root)
+        allowed_prechange_drift = sorted(set(
+            [
+                rel for rel in normalized
+                if rel in PRECHANGE_REPLACEABLE_DRIFT
+            ]
+            + candidate_matches
+        ))
         pre = run_prechange(
             effective_prechange,
             root,
             state,
             allowed_changes=allowed_prechange_drift,
         )
+        # The guard only receives path allowlists. Re-validate candidate-matched
+        # paths immediately after it returns so a stale equality decision can
+        # never silently widen the guard.
+        verify_candidate_matching_drift(candidate, root, candidate_matches)
         mapping_before = mapping_snapshot(root / "history.db")
         mapping_sha = str(mapping_before["sha256"])
         if dry_run:
@@ -961,6 +1022,9 @@ def promote(
             f"candidate={candidate.name}; paths={','.join(normalized)}",
             recovery_script=effective_recovery,
         )
+        # Capture can take several seconds; validate the exact-candidate
+        # allowances once more before any source byte is replaced.
+        verify_candidate_matching_drift(candidate, root, candidate_matches)
         # The LKG capture can take several seconds. Take the immutable runtime
         # mapping checkpoint afterwards so legitimate browser adoption during
         # that pre-write window is already part of the baseline.
