@@ -99,6 +99,7 @@ AUDITED_CONFIG_PATHS = {
 }
 
 HIGH_BLAST_FLAG = "high_blast_radius_promotion"
+PRECHANGE_REPLACEABLE_DRIFT = frozenset({"portfolio_queue.seed.json"})
 
 
 class PromotionError(RuntimeError):
@@ -378,13 +379,21 @@ def mapping_from_recovery_status(root: Path, state: Path) -> str:
     return str(value)
 
 
-def run_prechange(prechange: Path, root: Path, state: Path) -> dict:
-    proc = run([
+def run_prechange(
+    prechange: Path,
+    root: Path,
+    state: Path,
+    allowed_changes: list[str] | tuple[str, ...] = (),
+) -> dict:
+    args = [
         str(prechange),
         "--root", str(root),
         "--state", str(state),
-        "--json",
-    ], check=False)
+    ]
+    for rel in allowed_changes:
+        args.extend(["--allow-change", rel])
+    args.append("--json")
+    proc = run(args, check=False)
     payload = parse_json_output(proc, "pre-change guard")
     if proc.returncode or not payload.get("ok"):
         failed = [
@@ -683,7 +692,16 @@ def promote(
         effective_prechange = candidate_prechange
 
     with promotion_lock(state):
-        pre = run_prechange(effective_prechange, root, state)
+        allowed_prechange_drift = [
+            rel for rel in normalized
+            if rel in PRECHANGE_REPLACEABLE_DRIFT
+        ]
+        pre = run_prechange(
+            effective_prechange,
+            root,
+            state,
+            allowed_changes=allowed_prechange_drift,
+        )
         mapping_sha = mapping_from_recovery_status(root, state)
         if dry_run:
             return {

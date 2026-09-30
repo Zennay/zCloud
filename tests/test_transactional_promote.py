@@ -385,6 +385,40 @@ class TransactionalPromotionTests(unittest.TestCase):
             command[command.index("--projects") + 1],
         )
 
+    def test_prechange_only_allows_selected_replaceable_seed_drift(self):
+        calls = []
+        original_run = promote.run
+
+        class Result:
+            returncode = 0
+            stdout = '{"ok":true,"checks":[]}'
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        promote.run = fake_run
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                allowed_changes=["portfolio_queue.seed.json"],
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertTrue(result["ok"])
+        command = calls[0]
+        self.assertEqual(1, command.count("--allow-change"))
+        index = command.index("--allow-change")
+        self.assertEqual("portfolio_queue.seed.json", command[index + 1])
+        self.assertNotIn("server.py", promote.PRECHANGE_REPLACEABLE_DRIFT)
+        self.assertEqual(
+            {"portfolio_queue.seed.json"},
+            set(promote.PRECHANGE_REPLACEABLE_DRIFT),
+        )
+
     def test_postdeploy_command_contract_requires_requested_features(self):
         calls = []
         original_run = promote.run
