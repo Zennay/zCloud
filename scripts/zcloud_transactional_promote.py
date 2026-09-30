@@ -61,6 +61,12 @@ DEFAULT_RELOAD_HELPER = Path(os.environ.get(
 ))
 SERVICE = os.environ.get("ZCLOUD_SERVICE", "zennay-cloud.service")
 HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/status")
+# Match the service manager's bounded startup budget. VPS evidence shows
+# TimeoutStartUSec=1min 30s; the previous 20s window caused false rollbacks
+# while systemd was still legitimately bringing the control plane up.
+SERVICE_HEALTH_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_SERVICE_HEALTH_TIMEOUT_SECONDS", "90")
+)
 
 DEFAULT_PATHS = (
     "server.py",
@@ -361,7 +367,7 @@ def http_healthy(url: str = HEALTH_URL, timeout: float = 3.0) -> bool:
         return False
 
 
-def wait_http(timeout: float = 20.0) -> None:
+def wait_http(timeout: float = SERVICE_HEALTH_TIMEOUT_SECONDS) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if http_healthy():

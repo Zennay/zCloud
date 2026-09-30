@@ -6,6 +6,13 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zcloud-live-debug.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-live-debug.yml"
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - "scripts/zcloud_transactional_promote.py"
+      - "server.py"
 
 permissions:
   contents: read
@@ -35,7 +42,12 @@ jobs:
           echo "=== SERVICES ==="
           systemctl is-active zennay-cloud.service
           systemctl --no-pager --full status zennay-cloud.service || true
-          journalctl -u zennay-cloud.service -n 100 --no-pager || true
+          systemctl show zennay-cloud.service \
+            -p ActiveState -p SubState -p MainPID -p NRestarts \
+            -p ExecMainStartTimestamp -p ExecMainExitTimestamp -p ExecMainStatus \
+            -p Restart -p RestartUSec -p TimeoutStartUSec || true
+          sudo -n journalctl -u zennay-cloud.service --since "10 minutes ago" --no-pager -n 240 || \
+            journalctl -u zennay-cloud.service -n 100 --no-pager || true
           systemctl --user is-active chatgpt-firefox.service
           echo "=== LIVE PRECHANGE GUARD ==="
           "$HOME/.local/bin/zcloud-prechange-guard" \

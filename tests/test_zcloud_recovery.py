@@ -9,6 +9,13 @@ from scripts import zcloud_recovery as recovery
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_rollback_health_timeout_matches_systemd_start_budget(self):
+        self.assertEqual(90.0, recovery.SERVICE_HEALTH_TIMEOUT_SECONDS)
+        self.assertEqual(
+            recovery.SERVICE_HEALTH_TIMEOUT_SECONDS,
+            recovery.wait_service_healthy.__defaults__[0],
+        )
+
     def test_health_probe_allows_slow_status_endpoint(self):
         self.assertEqual(
             8,

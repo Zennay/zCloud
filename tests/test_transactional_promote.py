@@ -456,6 +456,13 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_REPLACEABLE_DRIFT),
         )
 
+    def test_service_health_timeout_matches_systemd_start_budget(self):
+        self.assertEqual(90.0, promote.SERVICE_HEALTH_TIMEOUT_SECONDS)
+        self.assertEqual(
+            promote.SERVICE_HEALTH_TIMEOUT_SECONDS,
+            promote.wait_http.__defaults__[0],
+        )
+
     def test_prechange_retries_transient_http_only_failure(self):
         calls = []
         original_run = promote.run
