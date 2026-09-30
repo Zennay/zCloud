@@ -23,6 +23,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -123,6 +124,13 @@ PRECHANGE_REPLACEABLE_DRIFT = frozenset({
 
 class PromotionError(RuntimeError):
     pass
+
+
+class PostdeployError(PromotionError):
+    def __init__(self, message: str, *, failed: list[dict], payload: dict):
+        super().__init__(message)
+        self.failed = failed
+        self.payload = payload
 
 
 def utc_now() -> str:
@@ -413,6 +421,187 @@ def mapping_from_recovery_status(
     return str(value)
 
 
+def mapping_snapshot(db_path: Path) -> dict:
+    """Read the durable project/chat identity plus the runner-event cursor atomically."""
+    if not db_path.exists():
+        raise PromotionError("project/chat mapping database unavailable")
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        # Keep this fingerprint contract aligned with zcloud_recovery.py and
+        # zcloud_postdeploy_canary.py: runtime allocation fields are excluded.
+        targets = [
+            dict(row) for row in conn.execute(
+                "SELECT project_id,conversation_id "
+                "FROM runner_targets ORDER BY project_id"
+            )
+        ]
+        workers = [
+            dict(row) for row in conn.execute(
+                "SELECT project_id,worker_slot,conversation_id "
+                "FROM runner_workers ORDER BY project_id,worker_slot"
+            )
+        ]
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_events'"
+        ).fetchone()
+        event_cursor = 0
+        if table:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id),0) AS max_id FROM runner_events"
+            ).fetchone()
+            event_cursor = int((row or {"max_id": 0})["max_id"] or 0)
+        conn.close()
+    except Exception as exc:
+        raise PromotionError(f"project/chat mapping snapshot unavailable: {exc}") from exc
+
+    payload = json.dumps(
+        {"targets": targets, "workers": workers},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return {
+        "available": True,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "targets": targets,
+        "workers": workers,
+        "event_cursor": event_cursor,
+    }
+
+
+def _conversation_id_from_target(target: str) -> str:
+    match = re.search(r"/c/([^/?#]+)", str(target or ""))
+    return match.group(1)[:160] if match else ""
+
+
+def _conversation_adoptions(
+    db_path: Path,
+    *,
+    after_event_id: int,
+    through_event_id: int,
+) -> list[dict]:
+    if through_event_id <= after_event_id:
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        conn.row_factory = sqlite3.Row
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(runner_events)")
+        }
+        required = {"id", "event", "target", "project_id", "worker_slot"}
+        if not required.issubset(columns):
+            conn.close()
+            return []
+        rows = [
+            dict(row) for row in conn.execute(
+                "SELECT id,project_id,worker_slot,target FROM runner_events "
+                "WHERE id>? AND id<=? AND event='conversation-adopted' ORDER BY id",
+                (int(after_event_id), int(through_event_id)),
+            )
+        ]
+        conn.close()
+    except Exception:
+        return []
+
+    adoptions = []
+    for row in rows:
+        conversation_id = _conversation_id_from_target(row.get("target"))
+        project_id = str(row.get("project_id") or "")
+        if not conversation_id or not project_id:
+            continue
+        try:
+            worker_slot = max(1, int(row.get("worker_slot") or 1))
+        except Exception:
+            worker_slot = 1
+        adoptions.append({
+            "id": int(row.get("id") or 0),
+            "project_id": project_id,
+            "worker_slot": worker_slot,
+            "conversation_id": conversation_id,
+        })
+    return adoptions
+
+
+def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
+    """Allow only durable conversation remaps proven by new adoption events."""
+    if not before.get("available") or not after.get("available"):
+        return {"ok": False, "reason": "mapping_unavailable"}
+    if after.get("sha256") == before.get("sha256"):
+        return {"ok": True, "reason": "unchanged", "changes": []}
+
+    before_targets = {str(row["project_id"]): row for row in before.get("targets") or []}
+    after_targets = {str(row["project_id"]): row for row in after.get("targets") or []}
+    before_workers = {
+        (str(row["project_id"]), int(row["worker_slot"])): row
+        for row in before.get("workers") or []
+    }
+    after_workers = {
+        (str(row["project_id"]), int(row["worker_slot"])): row
+        for row in after.get("workers") or []
+    }
+    if set(before_targets) != set(after_targets):
+        return {"ok": False, "reason": "target_set_changed"}
+    if set(before_workers) != set(after_workers):
+        return {"ok": False, "reason": "worker_set_changed"}
+
+    worker_changes = []
+    for key in sorted(before_workers):
+        old_cid = str(before_workers[key].get("conversation_id") or "")
+        new_cid = str(after_workers[key].get("conversation_id") or "")
+        if old_cid != new_cid:
+            if not new_cid:
+                return {"ok": False, "reason": "worker_conversation_cleared"}
+            worker_changes.append((key[0], key[1], new_cid))
+
+    target_changes = []
+    for project_id in sorted(before_targets):
+        old_cid = str(before_targets[project_id].get("conversation_id") or "")
+        new_cid = str(after_targets[project_id].get("conversation_id") or "")
+        if old_cid != new_cid:
+            if not new_cid:
+                return {"ok": False, "reason": "target_conversation_cleared"}
+            slot_one = after_workers.get((project_id, 1))
+            if not slot_one or str(slot_one.get("conversation_id") or "") != new_cid:
+                return {"ok": False, "reason": "target_worker_mapping_inconsistent"}
+            target_changes.append((project_id, new_cid))
+
+    if not worker_changes and not target_changes:
+        return {"ok": False, "reason": "unexplained_mapping_hash_change"}
+
+    adoptions = _conversation_adoptions(
+        db_path,
+        after_event_id=int(before.get("event_cursor") or 0),
+        through_event_id=int(after.get("event_cursor") or 0),
+    )
+    adoption_index = {
+        (item["project_id"], item["worker_slot"], item["conversation_id"]): item["id"]
+        for item in adoptions
+    }
+    evidence = []
+    for project_id, worker_slot, new_cid in worker_changes:
+        event_id = adoption_index.get((project_id, worker_slot, new_cid))
+        if not event_id:
+            return {"ok": False, "reason": "worker_mapping_changed_without_adoption"}
+        evidence.append({
+            "project_id": project_id,
+            "worker_slot": worker_slot,
+            "event_id": event_id,
+        })
+
+    for project_id, new_cid in target_changes:
+        if not adoption_index.get((project_id, 1, new_cid)):
+            return {"ok": False, "reason": "target_mapping_changed_without_adoption"}
+
+    return {
+        "ok": True,
+        "reason": "conversation_adopted",
+        "changes": evidence,
+        "event_cursor_from": int(before.get("event_cursor") or 0),
+        "event_cursor_to": int(after.get("event_cursor") or 0),
+    }
+
+
 def run_prechange(
     prechange: Path,
     root: Path,
@@ -554,9 +743,11 @@ def run_postdeploy(
             for item in (payload.get("checks") or [])
             if not item.get("ok")
         ]
-        raise PromotionError(
+        raise PostdeployError(
             "post-deploy canary is not green"
-            + (": " + json.dumps(failed, ensure_ascii=False)[:1600] if failed else "")
+            + (": " + json.dumps(failed, ensure_ascii=False)[:1600] if failed else ""),
+            failed=failed,
+            payload=payload,
         )
     return payload
 
@@ -790,12 +981,18 @@ def promote(
             f"candidate={candidate.name}; paths={','.join(normalized)}",
             recovery_script=effective_recovery,
         )
+        # Capture the durable runtime identity after the LKG snapshot and as
+        # close as possible to the first write. runner_events.id is the
+        # monotonic evidence cursor for any later legitimate adoption.
+        mapping_before = mapping_snapshot(root / "history.db")
+        mapping_sha = str(mapping_before["sha256"])
         tx_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{os.getpid()}"
         tx_root = state / "promotion-transactions" / tx_id
         log = state / "promotion.log"
         runtime_backups: dict[str, Path | None] = {}
         created_source_paths = [rel for rel in normalized if not (root / rel).exists()]
         source_promoted = False
+        mapping_advances: list[dict] = []
         write_json_line(
             log,
             "promotion_started",
@@ -820,13 +1017,61 @@ def promote(
                     root, runtime_extension, reload_helper, tx_root, extension_paths
                 )
 
-            post = run_postdeploy(
-                effective_postdeploy,
-                root=root,
-                expected_mapping_sha=mapping_sha,
-                require_worker_read_model=require_worker_read_model,
-                require_incidents=require_incidents,
-            )
+            mapping_checkpoint = mapping_snapshot(root / "history.db")
+            if mapping_checkpoint.get("sha256") != mapping_sha:
+                advance = explain_mapping_advance(
+                    mapping_before, mapping_checkpoint, root / "history.db"
+                )
+                if not advance.get("ok"):
+                    raise PromotionError(
+                        "project/chat mapping changed during promotion without "
+                        f"matching conversation-adopted evidence ({advance.get('reason')})"
+                    )
+                mapping_advances.append(advance)
+                mapping_before = mapping_checkpoint
+                mapping_sha = str(mapping_checkpoint["sha256"])
+
+            # The browser can adopt a conversation while the canary is reading.
+            # Retry exactly once and only when mapping_unchanged is the sole
+            # canary failure and the newer identity has exact adoption evidence.
+            for post_attempt in range(2):
+                try:
+                    post = run_postdeploy(
+                        effective_postdeploy,
+                        root=root,
+                        expected_mapping_sha=mapping_sha,
+                        require_worker_read_model=require_worker_read_model,
+                        require_incidents=require_incidents,
+                    )
+                    break
+                except PostdeployError as exc:
+                    mapping_failures = [
+                        item for item in exc.failed
+                        if item.get("name") == "mapping_unchanged"
+                    ]
+                    other_failures = [
+                        item for item in exc.failed
+                        if item.get("name") != "mapping_unchanged"
+                    ]
+                    if post_attempt or len(mapping_failures) != 1 or other_failures:
+                        raise
+                    latest_mapping = mapping_snapshot(root / "history.db")
+                    if latest_mapping.get("sha256") == mapping_sha:
+                        raise
+                    advance = explain_mapping_advance(
+                        mapping_before, latest_mapping, root / "history.db"
+                    )
+                    if not advance.get("ok"):
+                        raise PromotionError(
+                            "project/chat mapping changed during post-deploy canary "
+                            "without matching conversation-adopted evidence "
+                            f"({advance.get('reason')})"
+                        ) from exc
+                    mapping_advances.append(advance)
+                    mapping_before = latest_mapping
+                    mapping_sha = str(latest_mapping["sha256"])
+            else:
+                raise PromotionError("post-deploy canary did not complete")
             write_config_audit(
                 root / "history.db",
                 pending_config_changes,
@@ -848,6 +1093,7 @@ def promote(
                 transaction_id=tx_id,
                 deployed_hashes=deployed_hashes,
                 postdeploy=post,
+                mapping_advances=mapping_advances,
                 new_lkg=after.get("snapshot_id"),
             )
             return {
@@ -856,6 +1102,7 @@ def promote(
                 "paths": normalized,
                 "deployed_hashes": deployed_hashes,
                 "mapping_sha256": mapping_sha,
+                "mapping_advances": mapping_advances,
                 "feature_gate": feature_gate,
                 "postdeploy": post,
                 "new_lkg": after.get("snapshot_id"),
