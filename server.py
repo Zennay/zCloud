@@ -123,9 +123,8 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     project=PROJECT_INDEX.get(project_id) or {}
     return (
-        f'zCloud worker voor "{name}" / "{project_id}". '
-        'Voer alleen de VPS_QUEUE_ASSIGNMENT uit; zCloud SQLite is de queue/source-of-truth. '
-        'Notion is alleen documentatie, nooit scheduler of blocker. '
+        f'zCloud worker: "{name}" / "{project_id}". '
+        'Werk alleen aan VPS_QUEUE_ASSIGNMENT uit zCloud SQLite. '
         f'HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
         + VPS_EXECUTION_DIRECTIVE
     )
@@ -140,26 +139,26 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     )
     queue_id=str(item.get('queue_id') or 'NONE')
     project_guard=(
-        'FTMO: houd preregistration, walk-forward en final holdout strikt gescheiden. '
+        'FTMO: houd preregistration, walk-forward en final holdout gescheiden. '
         if project_id == 'ftmo' else
-        'zCloud FINISH: bij iteration_count=9 is dit de tiende/harde laatste iteratie. '
-        'ZCLOUD_ITERATION_COMPLETE alleen na echte implementatie; gebruik '
-        'ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1 of OPEN_P0P1 en ZCLOUD_FINAL_AUDIT: GREEN of FAIL wanneer van toepassing. '
+        'zCloud finish: iteration_count=9 is de tiende/harde laatste iteratie; na implementatie ZCLOUD_ITERATION_COMPLETE; ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1; ZCLOUD_FINAL_AUDIT: GREEN. '
         if project_id == 'cloud' else ''
     )
-    return base_prompt + assignment + (
-        f'Jij bent Worker {slot}/{total}. VOER UIT, NIET RAPPORTEREN. '
-        'Werk alleen aan deze assignment. Geen audit/status-only antwoord zolang er veilig uitvoerbaar werk is. '
-        'Bij een recoverable blocker: probeer in dezelfde cyclus een andere veilige route; herhaal geen oude WAIT/BLOCKED zonder nieuwe evidence. '
-        'WAIT_HUMAN alleen voor vereiste secrets, expliciete destructieve/brede goedkeuring of een echte externe dependency. '
-        'VPS/shell/deploy/test via de self-hosted runner-route. '
-        'DONE alleen als alle completion criteria aantoonbaar gehaald zijn; CONTINUE alleen na echte voortgang. '
+    # Always rebuild the canonical base prompt. This intentionally ignores any
+    # stale/oversized prompt persisted in SQLite from older zCloud versions.
+    prompt=project_runner_prompt(project_id, name)
+    return prompt + assignment + (
+        f'Worker {slot}/{total}. '
+        'DOEN: voer vóór je antwoord minimaal één echte actie uit: write/commit/PR, workflow/run, test/deploy, queue/state-write of concrete worker-taak. '
+        'Alleen lezen, auditen of status geven telt niet. Faalt een route, probeer direct een andere veilige route. '
+        "CONTINUE alleen na zo'n actie; DONE alleen met geteste completion-evidence. "
+        'WAIT_HUMAN alleen voor een secret, destructieve/brede toestemming of echte externe dependency. Geen secrets in prompts/logs. '
         + project_guard +
         f'OUTPUT exact:\nZCLOUD_QUEUE_ITEM: {queue_id}\n'
-        'ZCLOUD_QUEUE_RESULT: DONE|BLOCKED|CONTINUE\n'
-        'ZCLOUD_QUEUE_EVIDENCE: <concreet bewijs>\n'
-        'ZCLOUD_WORK_PROJECT: haxlab|ftmo|cloud|supa|raiseai|ulab|zssh|NONE\n'
-        'ZCLOUD_AUTONOMY: CONTINUE|WAIT_VPS|WAIT_HUMAN|COMPLETE'
+        'ZCLOUD_QUEUE_RESULT: DONE|CONTINUE\n'
+        'ZCLOUD_QUEUE_EVIDENCE: <actie + commit/workflow/run/resultaat>\n'
+        f'ZCLOUD_WORK_PROJECT: {project_id}\n'
+        'ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE'
     )
 
 RUNNER_DEFAULTS = {
