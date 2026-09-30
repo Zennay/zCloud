@@ -49,6 +49,17 @@ jobs:
           sudo -n journalctl -u zennay-cloud.service --since "10 minutes ago" --no-pager -n 240 || \
             journalctl -u zennay-cloud.service -n 100 --no-pager || true
           systemctl --user is-active chatgpt-firefox.service
+          echo "=== SELF-HEAL COORDINATION ==="
+          systemctl is-active zcloud-self-heal.timer || true
+          systemctl is-active zcloud-self-heal.service || true
+          systemctl --no-pager --full status zcloud-self-heal.timer || true
+          systemctl --no-pager --full status zcloud-self-heal.service || true
+          sudo -n journalctl -u zcloud-self-heal.service -u zcloud-self-heal.timer --since "10 minutes ago" --no-pager -n 240 || true
+          sudo -n stat -c 'SELF_HEAL_LOCK mode=%a owner=%U group=%G path=%n' /run/zcloud-self-heal.lock || true
+          echo "=== STATUS LATENCY SAMPLES ==="
+          for n in 1 2 3; do
+            curl -sS -o /dev/null --max-time 15 -w "sample=$n http=%{http_code} total=%{time_total} rc=0\\n" http://127.0.0.1:8765/api/status || echo "sample=$n curl_rc=$?"
+          done
           echo "=== LIVE PRECHANGE GUARD ==="
           "$HOME/.local/bin/zcloud-prechange-guard" \
             --root /home/ubuntu/zennay-cloud \
