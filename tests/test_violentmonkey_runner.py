@@ -111,6 +111,22 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             self.assertIn("for (const sel of MODEL_PICKER_SELECTORS_PRIORITY)", source)
             self.assertNotIn("[...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(", source)
 
+    def test_reasoning_effort_data_attribute_is_authoritative_and_locale_free(self):
+        # The live composer exposes its current reasoning effort directly via
+        # data-selected-reasoning-effort on a data-composer-navigation-target
+        # "reasoning" button. aria-label text on that button is localized
+        # (e.g. Dutch "ChatGPT-model selecteren"), so this attribute check
+        # must not depend on any English-only label matching.
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        for source in (userscript, background):
+            self.assertIn('data-composer-navigation-target="reasoning"', source)
+            self.assertIn("data-selected-reasoning-effort", source)
+            self.assertIn("function reasoningPickerButton()", source)
+            self.assertIn("function reasoningEffortIsHigh(", source)
+        self.assertIn("if (reasoningEffortIsHigh(reasoningPickerButton())) return true;", userscript)
+        self.assertIn("if (reasoningEffortIsHigh(reasoningPickerButton())) return true;", background)
+
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 

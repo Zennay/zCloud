@@ -23,6 +23,10 @@
   // order, which can let the unrelated "Switch mode" button win over the
   // real model/power picker that holds the effort slider).
   const MODEL_PICKER_SELECTORS_PRIORITY = [
+    // Locale-independent attribute the live composer sets on its
+    // model/reasoning-effort control; aria-label is localized (e.g. Dutch
+    // "ChatGPT-model selecteren") and must not be relied on alone.
+    '[data-composer-navigation-target="reasoning"]',
     'button[aria-label="Select ChatGPT model"]',
     'button[title="Select ChatGPT model"]',
     '[data-testid="model-switcher-dropdown-button"]',
@@ -257,6 +261,17 @@
     return thinkingOptions().find(el => isHigh(label(el)) && selected(el)) || null;
   }
 
+  // The live composer exposes its current reasoning effort directly as a
+  // data attribute on the reasoning/model picker button, independent of UI
+  // language (Dutch "Hoog" vs English "High"). Treat this as authoritative
+  // whenever present.
+  function reasoningPickerButton() {
+    return document.querySelector('[data-composer-navigation-target="reasoning"]');
+  }
+  function reasoningEffortIsHigh(el) {
+    return String(el?.getAttribute?.("data-selected-reasoning-effort") || "").toLowerCase() === "high";
+  }
+
   function pickerShowsHigh() {
     return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
       .filter(visible)
@@ -264,6 +279,10 @@
   }
 
   function thinkingSliders() {
+    // data-reasoning-slider is a stable, locale-independent marker on the
+    // live power/effort slider; prefer it when present.
+    const tagged = [...document.querySelectorAll('[data-reasoning-slider]')].filter(visible);
+    if (tagged.length) return tagged;
     return [...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visible);
   }
 
@@ -380,6 +399,7 @@
   }
 
   function highVerified() {
+    if (reasoningEffortIsHigh(reasoningPickerButton())) return true;
     // Live ChatGPT DOM (2026-09-30) exposes thinking effort separately from
     // the model switcher, e.g. aria-label="High selector". Treat that
     // dedicated effort control as the authoritative current-effort signal.

@@ -342,6 +342,10 @@ function runProject(cfg) {
   // let the unrelated "Switch mode" button win over the real model/power
   // picker that holds the effort slider).
   const MODEL_PICKER_SELECTORS_PRIORITY = [
+    // Locale-independent attribute the live composer sets on its
+    // model/reasoning-effort control; aria-label is localized (e.g. Dutch
+    // "ChatGPT-model selecteren") and must not be relied on alone.
+    '[data-composer-navigation-target="reasoning"]',
     'button[aria-label="Select ChatGPT model"]',
     'button[title="Select ChatGPT model"]',
     '[data-testid="model-switcher-dropdown-button"]',
@@ -408,12 +412,27 @@ function runProject(cfg) {
   function selectedHighOption() {
     return thinkingOptions().find(el => isHighLabel(controlLabel(el)) && elementSignalsSelected(el)) || null;
   }
+
+  // The live composer exposes its current reasoning effort directly as a
+  // data attribute on the reasoning/model picker button, independent of UI
+  // language (Dutch "Hoog" vs English "High"). Treat this as authoritative
+  // whenever present.
+  function reasoningPickerButton() {
+    return document.querySelector('[data-composer-navigation-target="reasoning"]');
+  }
+  function reasoningEffortIsHigh(el) {
+    return String(el?.getAttribute?.("data-selected-reasoning-effort") || "").toLowerCase() === "high";
+  }
   function pickerShowsHigh() {
     return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
       .filter(el => visibleElement(el))
       .some(el => isHighLabel(controlLabel(el)));
   }
   function thinkingSliders() {
+    // data-reasoning-slider is a stable, locale-independent marker on the
+    // live power/effort slider; prefer it when present.
+    const tagged = [...document.querySelectorAll('[data-reasoning-slider]')].filter(visibleElement);
+    if (tagged.length) return tagged;
     return [...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visibleElement);
   }
   function sliderNumeric(el) {
@@ -570,6 +589,7 @@ function runProject(cfg) {
     }) || null;
   }
   function highSelectionVerified() {
+    if (reasoningEffortIsHigh(reasoningPickerButton())) return true;
     return pickerShowsHigh() || !!selectedHighOption() || thinkingSliders().some(sliderAtMax);
   }
   async function waitForHighSelection(timeoutMs = 3500) {
