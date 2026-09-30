@@ -26,6 +26,11 @@ DEFAULT_STATE = Path(os.environ.get("ZCLOUD_RECOVERY_DIR", str(Path.home() / ".l
 SERVICE = os.environ.get("ZCLOUD_SERVICE", "zennay-cloud.service")
 BROWSER_SERVICE = os.environ.get("ZCLOUD_BROWSER_SERVICE", "chatgpt-firefox.service")
 HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/status")
+# Keep rollback verification on the same bounded budget as production startup.
+# The live unit advertises TimeoutStartUSec=1min 30s.
+SERVICE_HEALTH_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_SERVICE_HEALTH_TIMEOUT_SECONDS", "90")
+)
 
 MANAGED_PATHS = (
     "server.py",
@@ -285,7 +290,7 @@ def set_service(active: bool) -> None:
     run(systemctl_command(action), check=True)
 
 
-def wait_service_healthy(active: bool, timeout=20) -> None:
+def wait_service_healthy(active: bool, timeout=SERVICE_HEALTH_TIMEOUT_SECONDS) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         current = service_meta().get("active_state") == "active"
