@@ -20,6 +20,9 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertIn('candidate_postdeploy = candidate / "scripts/zcloud_postdeploy_canary.py"', source)
         self.assertIn("if postdeploy == DEFAULT_POSTDEPLOY and candidate_postdeploy.is_file()", source)
         self.assertIn("effective_postdeploy", source)
+        self.assertIn('candidate_prechange = candidate / "scripts/zcloud_prechange_guard.py"', source)
+        self.assertIn("if prechange == DEFAULT_PRECHANGE and candidate_prechange.is_file()", source)
+        self.assertIn("effective_prechange", source)
 
 
     def setUp(self):

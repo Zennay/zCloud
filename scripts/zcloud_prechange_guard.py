@@ -102,7 +102,7 @@ def service_active(service: str, *, user: bool = False) -> bool:
     return subprocess.run(cmd, env=env).returncode == 0
 
 
-def http_healthy(url: str, timeout: float = 3.0) -> bool:
+def http_healthy(url: str, timeout: float = 8.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status == 200

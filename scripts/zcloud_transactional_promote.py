@@ -659,8 +659,15 @@ def promote(
     if postdeploy == DEFAULT_POSTDEPLOY and candidate_postdeploy.is_file():
         effective_postdeploy = candidate_postdeploy
 
+    # As with the post-deploy canary, validate with the guard from the exact
+    # green candidate revision so a reliability-only guard fix can bootstrap safely.
+    effective_prechange = prechange
+    candidate_prechange = candidate / "scripts/zcloud_prechange_guard.py"
+    if prechange == DEFAULT_PRECHANGE and candidate_prechange.is_file():
+        effective_prechange = candidate_prechange
+
     with promotion_lock(state):
-        pre = run_prechange(prechange, root, state)
+        pre = run_prechange(effective_prechange, root, state)
         mapping_sha = mapping_from_recovery_status(root, state)
         if dry_run:
             return {
