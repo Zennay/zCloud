@@ -1,0 +1,47 @@
+name: zCloud read-only dynamic worker DOM dump
+
+on:
+  push:
+    branches:
+      - debug/dynamic-worker-dom-20260930
+    paths:
+      - ".github/workflows/zcloud-worker-dom-dump.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+      - name: Dump recent runner events and live worker payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== RECENT RUNNER EVENTS ==="
+          python3 - <<'PY'
+          import json, sqlite3, urllib.request
+          db="/home/ubuntu/zennay-cloud/history.db"
+          con=sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+          con.row_factory=sqlite3.Row
+          rows=con.execute("""
+            SELECT id,ts,event,project_id,worker_slot,target,title,generating,sending,reason,error
+            FROM runner_events
+            WHERE event IN ('send-blocked','prompt-sent','generation-started','generation-progress','generation-finished','runner-heartbeat')
+               OR reason LIKE '%high-option%'
+               OR error LIKE '%high-option%'
+            ORDER BY id DESC LIMIT 40
+          """).fetchall()
+          for row in reversed(rows):
+              print(json.dumps(dict(row), ensure_ascii=False, sort_keys=True))
+          con.close()
+          print("=== LIVE CHATGPT RUNNERS ===")
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/status?project=zcloud", timeout=15) as r:
+              status=json.load(r)
+          print(json.dumps(status.get("chatgpt_runners") or {}, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
