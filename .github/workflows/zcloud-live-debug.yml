@@ -113,6 +113,45 @@ jobs:
           except Exception as e:
               print("served_userscript_error", repr(e))
           PY
+          echo "=== MANAGED SOURCE DRIFT HASHES ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+
+          live_root = Path("/home/ubuntu/zennay-cloud")
+          candidate_root = Path(os.environ["GITHUB_WORKSPACE"])
+          state = Path.home() / ".local/state/zcloud/recovery"
+
+          def sha(path):
+              path = Path(path)
+              return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+          lkg_files = {}
+          pointer_path = state / "last-known-good.json"
+          if pointer_path.is_file():
+              try:
+                  pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+                  manifest_path = Path(pointer.get("manifest") or "")
+                  if manifest_path.is_file():
+                      manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                      lkg_files = manifest.get("files") or {}
+              except Exception as exc:
+                  print("lkg_manifest_error", type(exc).__name__)
+
+          for rel in ("server.py", "scripts/zcloud_recovery.py"):
+              live_sha = sha(live_root / rel)
+              candidate_sha = sha(candidate_root / rel)
+              lkg_meta = lkg_files.get(rel) if isinstance(lkg_files, dict) else None
+              lkg_sha = lkg_meta.get("sha256") if isinstance(lkg_meta, dict) else None
+              print(json.dumps({
+                  "path": rel,
+                  "live_sha256": live_sha,
+                  "candidate_sha256": candidate_sha,
+                  "lkg_sha256": lkg_sha,
+                  "live_equals_candidate": bool(live_sha and live_sha == candidate_sha),
+                  "live_equals_lkg": bool(live_sha and live_sha == lkg_sha),
+              }, sort_keys=True))
+          PY
           echo "=== FIREFOX JOURNAL TAIL ==="
           journalctl --user -u chatgpt-firefox.service -n 80 --no-pager
           echo "=== PROCESSES ==="
