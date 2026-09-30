@@ -50,15 +50,14 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             self.assertIn('"high-thinking-required|" + diagnostic', source)
             self.assertIn('getAttribute?.("data-testid")', source)
             self.assertIn('getAttribute?.("aria-label")', source)
-            self.assertIn("no-relevant-controls", source)
-        self.assertIn('error: diagnostic', userscript)
+            self.assertIn("aria-expanded", source)\n            self.assertIn("menuRoots", source)\n            self.assertIn("outerHTML", source)\n            self.assertIn("slice(0, 3500)", source)\n        self.assertIn('error: diagnostic', userscript)
         self.assertIn('error: diagnostic', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.1";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.2";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)

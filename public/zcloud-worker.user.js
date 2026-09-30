@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.1
+// @version      1.1.2
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.1";
+  const SCRIPT_VERSION = "1.1.2";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     '[data-testid="model-switcher-dropdown-button"]',
@@ -273,25 +273,63 @@
       '[role="radio"]',
       '[role="slider"]',
       'input[type="range"]',
-      '[aria-haspopup="menu"]',
-      '[aria-haspopup="listbox"]'
+      '[aria-haspopup]',
+      '[aria-label]',
+      '[data-testid]'
     ].join(",");
-    const clean = value => String(value || "").replace(/[|;\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 38);
-    const controls = [...document.querySelectorAll(selector)]
+    const clean = (value, max = 120) => String(value || "")
+      .replace(/[|;\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+    const snap = el => {
+      if (!el || !el.getAttribute) return null;
+      return {
+        tag: String(el.tagName || "").toLowerCase(),
+        testid: clean(el.getAttribute("data-testid"), 80),
+        aria: clean(el.getAttribute("aria-label"), 100),
+        role: clean(el.getAttribute("role"), 40),
+        text: clean(label(el), 140),
+        expanded: clean(el.getAttribute("aria-expanded"), 12),
+        haspopup: clean(el.getAttribute("aria-haspopup"), 24),
+        checked: clean(el.getAttribute("aria-checked"), 12),
+        selected: clean(el.getAttribute("aria-selected"), 12),
+        state: clean(el.getAttribute("data-state"), 24),
+        valuetext: clean(el.getAttribute("aria-valuetext"), 80),
+        html: clean(el.outerHTML, 420)
+      };
+    };
+    const scored = [...document.querySelectorAll(selector)]
       .filter(visible)
       .map(el => {
-        const testId = clean(el.getAttribute?.("data-testid"));
-        const aria = clean(el.getAttribute?.("aria-label"));
-        const role = clean(el.getAttribute?.("role"));
-        const text = clean(label(el));
-        const relevant = testId || aria || role === "slider" ||
-          /model|gpt|instant|medium|high|hoog|hard|think|thinking|reason|effort|denk|redeneer/i.test(text);
-        if (!relevant) return "";
-        return "t=" + testId + ",a=" + aria + ",r=" + role + ",x=" + text;
+        const item = snap(el);
+        const haystack = [item?.testid, item?.aria, item?.role, item?.text].join(" ").toLowerCase();
+        let score = 0;
+        if (el.matches?.(MODEL_PICKER_SELECTOR)) score += 200;
+        if (/model|gpt|instant|medium|high|hoog|hard|think|thinking|reason|effort|denk|redeneer/.test(haystack)) score += 100;
+        if (item?.haspopup) score += 30;
+        if (/menuitem|option|radio|slider/.test(item?.role || "")) score += 20;
+        if (item?.testid) score += 10;
+        return {score, item};
       })
-      .filter(Boolean)
-      .slice(0, 6);
-    lastThinkingDiagnostic = (String(stage || "unknown") + ":" + (controls.join("||") || "no-relevant-controls")).slice(0, 180);
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 24)
+      .map(entry => entry.item);
+    const menuRoots = [...document.querySelectorAll(
+      '[role="menu"],[role="listbox"],[role="dialog"],[data-radix-menu-content],[data-radix-popper-content-wrapper]'
+    )].filter(visible).slice(0, 8).map(el => ({
+      role: clean(el.getAttribute("role"), 40),
+      text: clean(el.innerText || el.textContent, 700),
+      html: clean(el.outerHTML, 900)
+    }));
+    const explicitPicker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible) || null;
+    const payload = {
+      stage: String(stage || "unknown"),
+      href: clean(location.href, 240),
+      title: clean(document.title, 160),
+      active: snap(document.activeElement),
+      picker: snap(explicitPicker),
+      controls: scored,
+      menus: menuRoots
+    };
+    lastThinkingDiagnostic = (String(stage || "unknown") + ":" + JSON.stringify(payload)).slice(0, 3500);
     return lastThinkingDiagnostic;
   }
 
