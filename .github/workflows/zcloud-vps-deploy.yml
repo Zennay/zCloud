@@ -47,6 +47,31 @@ jobs:
             echo "CURRENT_MAIN_CONFIRMED sha=$current"
           fi
 
+      - name: Quarantine stale selector backup before guarded promotion
+        if: steps.freshness.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup="/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js.pre-effort-selector.bak"
+          if [[ -f "$backup" ]]; then
+            quarantine="$HOME/.local/state/zcloud/runtime-backups"
+            mkdir -p "$quarantine"
+            stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+            mv -- "$backup" "$quarantine/zcloud-worker.user.js.pre-effort-selector.bak.$stamp"
+            echo "QUARANTINED_STALE_SELECTOR_BACKUP=$quarantine/zcloud-worker.user.js.pre-effort-selector.bak.$stamp"
+          else
+            echo "NO_STALE_SELECTOR_BACKUP"
+          fi
+
+      - name: Promote Violentmonkey worker
+        if: steps.freshness.outputs.deploy == 'true'
+        run: |
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path public/zcloud-worker.user.js \
+            --actor "github-actions-vps-deploy" \
+            --json
+
       - name: Promote backend and autonomy policy
         if: steps.freshness.outputs.deploy == 'true'
         run: |
@@ -79,15 +104,6 @@ jobs:
             --path public/style.css \
             --path public/enhancements.js \
             --path public/enhancements.css \
-            --actor "github-actions-vps-deploy" \
-            --json
-
-      - name: Promote Violentmonkey worker
-        if: steps.freshness.outputs.deploy == 'true'
-        run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path public/zcloud-worker.user.js \
             --actor "github-actions-vps-deploy" \
             --json
 
