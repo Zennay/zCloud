@@ -29,6 +29,16 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn(".dynamic-worker-provider-grid", css)
         self.assertIn("@media(max-width:760px)", css)
 
+    def test_dynamic_worker_provider_counts_are_independent(self):
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
+        app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("DYNAMIC_CHATGPT_WORKERS = 2", server)
+        self.assertIn("DYNAMIC_CLAUDE_WORKERS = 1", server)
+        self.assertIn("chat=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(DYNAMIC_CHATGPT_WORKERS)))", server)
+        self.assertIn("claude=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(DYNAMIC_CLAUDE_WORKERS)))", server)
+        self.assertIn("const chatgpt=Math.max(0,Number(cfg.chatgpt_count??cfg.providers?.chatgpt?.count??2));", app)
+        self.assertIn("const claude=Math.max(0,Number(cfg.claude_count??cfg.providers?.claude?.count??1));", app)
+
     def test_project_card_tap_opens_detail_without_pointer_heuristic(self):
         app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
         self.assertIn("const projectCardTarget=e.target.closest('[data-project-id]')", app)
