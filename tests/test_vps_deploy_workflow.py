@@ -19,7 +19,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(1, text.count("scripts/zcloud_transactional_promote.py"))\n        self.assertIn("Promote zCloud managed runtime atomically", text)
         for path in (
             "server.py",
             "scripts/zcloud_recovery.py",
