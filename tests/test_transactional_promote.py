@@ -455,6 +455,10 @@ class TransactionalPromotionTests(unittest.TestCase):
             },
             set(promote.PRECHANGE_REPLACEABLE_DRIFT),
         )
+        self.assertEqual(
+            {"server.py"},
+            set(promote.PRECHANGE_TRUSTED_ANCESTOR_DRIFT),
+        )
 
     def test_prechange_reconciles_only_exact_candidate_aligned_drift(self):
         calls = []
@@ -529,6 +533,89 @@ class TransactionalPromotionTests(unittest.TestCase):
 
         self.assertEqual(1, len(calls))
         self.assertNotIn("server.py", calls[0])
+
+    def test_prechange_reconciles_selected_recent_ancestor_drift(self):
+        calls = []
+        original_run = promote.run
+        original_matcher = promote.matches_recent_first_parent_ancestor
+        (self.root / "server.py").write_text("older-green-server\n")
+        (self.candidate / "server.py").write_text("current-green-server\n")
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        promote.matches_recent_first_parent_ancestor = (
+            lambda candidate, rel, live: rel == "server.py"
+        )
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+                trusted_ancestor_changes=["server.py"],
+            )
+        finally:
+            promote.run = original_run
+            promote.matches_recent_first_parent_ancestor = original_matcher
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertNotIn("server.py", calls[0])
+        self.assertIn("server.py", calls[1])
+
+    def test_prechange_rejects_unproven_ancestor_drift(self):
+        calls = []
+        original_run = promote.run
+        original_matcher = promote.matches_recent_first_parent_ancestor
+        (self.root / "server.py").write_text("unknown-server\n")
+        (self.candidate / "server.py").write_text("current-green-server\n")
+
+        class Result:
+            returncode = 2
+            stdout = (
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}'
+            )
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        promote.run = fake_run
+        promote.matches_recent_first_parent_ancestor = (
+            lambda candidate, rel, live: False
+        )
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.run_prechange(
+                    Path("/bin/prechange"),
+                    self.root,
+                    Path(self.tmp.name) / "state",
+                    candidate=self.candidate,
+                    trusted_ancestor_changes=["server.py"],
+                )
+        finally:
+            promote.run = original_run
+            promote.matches_recent_first_parent_ancestor = original_matcher
+
+        self.assertEqual(1, len(calls))
 
     def test_service_health_timeout_matches_systemd_start_budget(self):
         self.assertEqual(90.0, promote.SERVICE_HEALTH_TIMEOUT_SECONDS)
