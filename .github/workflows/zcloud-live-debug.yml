@@ -99,6 +99,12 @@ jobs:
           def sha(p):
               p=Path(p)
               return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
+          def git_blob_sha(p):
+              p=Path(p)
+              if not p.exists():
+                  return None
+              data=p.read_bytes()
+              return hashlib.sha1(f"blob {len(data)}\\0".encode()+data).hexdigest()
           paths={
               "live_background":"/home/ubuntu/zennay-cloud/firefox-extension/background.js",
               "runtime_background":"/home/ubuntu/snap/firefox/common/chatgpt-project-extension/background.js",
@@ -107,7 +113,7 @@ jobs:
               "candidate_server":"server.py",
           }
           for k,p in paths.items():
-              print(k, sha(p), p)
+              print(k, sha(p), "git_blob="+str(git_blob_sha(p)), p)
           try:
               text=urllib.request.urlopen("http://127.0.0.1:8765/zcloud-worker.user.js",timeout=5).read().decode("utf-8","replace")
               print("served_userscript_version", next((line.strip() for line in text.splitlines() if "@version" in line), "missing"))
