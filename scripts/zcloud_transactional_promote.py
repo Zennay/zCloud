@@ -120,6 +120,13 @@ PRECHANGE_REPLACEABLE_DRIFT = frozenset({
     "public/zcloud-worker.user.js",
     "firefox-extension/background.js",
 })
+# A failed guarded rollout can legitimately restore a previously green source
+# revision while the repository continues moving forward. Only these explicitly
+# selected paths may be reconciled when the live bytes exactly match the same
+# path in a recent first-parent ancestor of the tested candidate.
+PRECHANGE_TRUSTED_ANCESTOR_DRIFT = frozenset({
+    "server.py",
+})
 
 
 class PromotionError(RuntimeError):
@@ -143,6 +150,45 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def matches_recent_first_parent_ancestor(
+    candidate: Path,
+    rel: str,
+    live: Path,
+    *,
+    max_commits: int = 64,
+) -> bool:
+    """Return True only when live bytes are from recent tested repo ancestry."""
+    candidate = candidate.resolve()
+    if not live.is_file() or not (candidate / ".git").exists():
+        return False
+    try:
+        revs = subprocess.run(
+            [
+                "git", "-C", str(candidate), "rev-list", "--first-parent",
+                f"--max-count={max(1, int(max_commits))}", "HEAD^",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if revs.returncode:
+        return False
+    live_sha = sha256_file(live)
+    for commit in (line.strip() for line in revs.stdout.splitlines()):
+        if not commit:
+            continue
+        blob = subprocess.run(
+            ["git", "-C", str(candidate), "show", f"{commit}:{rel}"],
+            capture_output=True,
+            check=False,
+        )
+        if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == live_sha:
+            return True
+    return False
 
 
 def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -632,11 +678,15 @@ def run_prechange(
     allowed_changes: list[str] | tuple[str, ...] = (),
     *,
     candidate: Path | None = None,
+    trusted_ancestor_changes: list[str] | tuple[str, ...] = (),
     health_retry_seconds: float = 20.0,
     retry_interval: float = 0.5,
 ) -> dict:
     current_allowed = list(dict.fromkeys(str(rel) for rel in allowed_changes))
-    candidate_reconcile_used = False
+    trusted_ancestors = {
+        validate_relpath(str(rel)) for rel in trusted_ancestor_changes
+    }
+    source_reconcile_used = False
 
     def command() -> list[str]:
         args = [
@@ -668,7 +718,7 @@ def run_prechange(
         # that narrow state: every unexpected live file must already be byte-
         # identical to the current tested candidate. Unknown/manual drift still
         # fails closed and is never added to the allowlist.
-        if candidate is not None and not candidate_reconcile_used:
+        if candidate is not None and not source_reconcile_used:
             managed = [item for item in failed if item.get("name") == "managed_source_state"]
             other = [item for item in failed if item.get("name") != "managed_source_state"]
             if len(managed) == 1 and not other:
@@ -684,11 +734,16 @@ def run_prechange(
                         continue
                     live = root / rel
                     desired = candidate / rel
-                    if (
+                    exact_candidate = (
                         live.is_file()
                         and desired.is_file()
                         and sha256_file(live) == sha256_file(desired)
-                    ):
+                    )
+                    trusted_ancestor = (
+                        rel in trusted_ancestors
+                        and matches_recent_first_parent_ancestor(candidate, rel, live)
+                    )
+                    if exact_candidate or trusted_ancestor:
                         aligned.append(rel)
                     else:
                         unsafe.append(rel)
@@ -696,7 +751,7 @@ def run_prechange(
                     for rel in aligned:
                         if rel not in current_allowed:
                             current_allowed.append(rel)
-                    candidate_reconcile_used = True
+                    source_reconcile_used = True
                     continue
 
         # A just-finished promotion can leave the local HTTP endpoint in a
@@ -1019,12 +1074,17 @@ def promote(
             rel for rel in normalized
             if rel in PRECHANGE_REPLACEABLE_DRIFT
         ]
+        trusted_ancestor_drift = [
+            rel for rel in normalized
+            if rel in PRECHANGE_TRUSTED_ANCESTOR_DRIFT
+        ]
         pre = run_prechange(
             effective_prechange,
             root,
             state,
             allowed_changes=allowed_prechange_drift,
             candidate=candidate,
+            trusted_ancestor_changes=trusted_ancestor_drift,
         )
         mapping_before = mapping_snapshot(root / "history.db")
         mapping_sha = str(mapping_before["sha256"])

@@ -16,6 +16,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("git ls-remote origin refs/heads/main", text)
         self.assertIn("STALE_DEPLOY_SKIPPED", text)
         self.assertIn("steps.freshness.outputs.deploy == 'true'", text)
+        self.assertIn("fetch-depth: 64", text)
+        self.assertLess(
+            text.index("- name: Promote backend and autonomy policy"),
+            text.index("- name: Promote Violentmonkey worker"),
+        )
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
