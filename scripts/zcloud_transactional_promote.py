@@ -67,6 +67,12 @@ HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/stat
 SERVICE_HEALTH_TIMEOUT_SECONDS = float(
     os.environ.get("ZCLOUD_SERVICE_HEALTH_TIMEOUT_SECONDS", "90")
 )
+# Keep individual status requests aligned with the already-hardened
+# pre-change/post-deploy/rollback probes. Live VPS evidence shows /api/status
+# can legitimately take more than 3 seconds while the sampler is warming up.
+HEALTH_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_HEALTH_REQUEST_TIMEOUT_SECONDS", "8")
+)
 
 DEFAULT_PATHS = (
     "server.py",
@@ -359,7 +365,10 @@ def needs_service_restart(paths: list[str]) -> bool:
     )
 
 
-def http_healthy(url: str = HEALTH_URL, timeout: float = 3.0) -> bool:
+def http_healthy(
+    url: str = HEALTH_URL,
+    timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS,
+) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status == 200
