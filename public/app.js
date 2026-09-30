@@ -161,8 +161,8 @@ async function setRunnerWorkers(projectId,count,input){
 function dynamicWorkerControl(){
   const cfg=DATA?.dynamic_workers||{};
   const max=Math.max(1,Number(cfg.max_workers_per_provider||8));
-  const chatgpt=Math.max(0,Number(cfg.chatgpt_count??cfg.providers?.chatgpt?.count??cfg.count??1));
-  const claude=Math.max(0,Number(cfg.claude_count??cfg.providers?.claude?.count??0));
+  const chatgpt=Math.max(0,Number(cfg.chatgpt_count??cfg.providers?.chatgpt?.count??2));
+  const claude=Math.max(0,Number(cfg.claude_count??cfg.providers?.claude?.count??1));
   const total=chatgpt+claude;
   const state=total>0?'On · '+total+' workers':'Off';
   const field=(key,label,value,min,max,step=1,suffix='')=>`<label><span>${esc(label)}</span><div class="dynamic-worker-input"><input type="number" inputmode="numeric" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-dynamic-setting="${esc(key)}" aria-label="${esc(label)}">${suffix?`<em>${esc(suffix)}</em>`:''}</div></label>`;
