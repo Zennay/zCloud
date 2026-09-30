@@ -70,6 +70,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py acquire", text)
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py verify", text)
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py release", text)
+        self.assertIn("scripts/zcloud_recovery.py", text)
         self.assertIn("if: always()", text)
         self.assertIn("actions/upload-artifact@v4", text)
 
