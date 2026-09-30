@@ -1,0 +1,29 @@
+name: zSSH privilege-mode verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-privilege-mode-verify.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    env:
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+    steps:
+      - name: Verify live zSSH privilege mode
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(id -un)" = "ubuntu"
+          systemctl --user is-active --quiet zssh.service
+          test "$(systemctl --user show zssh.service -p NoNewPrivileges --value)" = "no"
+          grep -q '^ZSSH_EXEC_MODE=full$' "$HOME/.config/zssh/gateway.env"
+          echo "ZSSH_PRIVILEGE_MODE_GREEN"
