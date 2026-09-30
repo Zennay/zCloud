@@ -49,6 +49,23 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)
 
+    def test_deploy_holds_browser_safe_idle_across_all_promotions(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        enter = text.index("Enter browser safe-idle for guarded promotion")
+        first_promotion = text.index("Promote Violentmonkey worker")
+        last_guarded_step = text.index("Install aligned self-heal probe")
+        restore = text.index("Restore browser workers after guarded promotion")
+        evidence = text.index("Capture green production deploy evidence")
+        self.assertLess(enter, first_promotion)
+        self.assertLess(first_promotion, last_guarded_step)
+        self.assertLess(last_guarded_step, restore)
+        self.assertLess(restore, evidence)
+        self.assertIn("scripts/zcloud_deploy_safe_idle.py enter", text)
+        self.assertIn("--timeout-seconds 240", text)
+        self.assertIn("steps.safe_idle.outcome == 'success'", text)
+        self.assertIn("scripts/zcloud_deploy_safe_idle.py restore", text)
+        self.assertIn("zcloud-deploy-safe-idle.json", text)
+
     # Commit status is the durable, connector-readable production evidence surface.\n    def test_deploy_publishes_sanitized_green_evidence_for_exact_revision(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn("statuses: write", text)
@@ -72,6 +89,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py release", text)
         self.assertIn("if: always()", text)
         self.assertIn("actions/upload-artifact@v4", text)
+        self.assertIn("scripts/zcloud_deploy_safe_idle.py", text)
+        self.assertIn("scripts/zcloud_recovery.py", text)
 
         coordination = (ROOT / "scripts/zcloud_vps_deploylane_coordination.py").read_text(encoding="utf-8")
         self.assertIn('PROJECT = "cloud"', coordination)
