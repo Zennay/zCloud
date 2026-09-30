@@ -625,6 +625,7 @@ class TransactionalPromotionTests(unittest.TestCase):
                     project_id TEXT,
                     worker_slot INTEGER,
                     conversation_id TEXT,
+                    provider TEXT NOT NULL DEFAULT 'chatgpt',
                     PRIMARY KEY(project_id,worker_slot)
                 );
                 CREATE TABLE runner_events(
@@ -642,7 +643,8 @@ class TransactionalPromotionTests(unittest.TestCase):
                 (conversation,),
             )
             conn.execute(
-                "INSERT INTO runner_workers VALUES('cloud',1,?)",
+                "INSERT INTO runner_workers(project_id,worker_slot,conversation_id,provider) "
+                "VALUES('cloud',1,?,'chatgpt')",
                 (conversation,),
             )
         return db
@@ -698,6 +700,49 @@ class TransactionalPromotionTests(unittest.TestCase):
         evidence = promote.explain_mapping_advance(before, after, db)
         self.assertFalse(evidence["ok"])
         self.assertIn("without_adoption", evidence["reason"])
+
+    def test_mapping_advance_accepts_secondary_provider_switch_release(self):
+        db = self._create_mapping_db()
+        secondary = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO runner_workers(project_id,worker_slot,conversation_id,provider) "
+                "VALUES('cloud',2,?,'chatgpt')",
+                (secondary,),
+            )
+        before = promote.mapping_snapshot(db)
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE runner_workers SET conversation_id='',provider='claude' "
+                "WHERE project_id='cloud' AND worker_slot=2"
+            )
+        after = promote.mapping_snapshot(db)
+        evidence = promote.explain_mapping_advance(before, after, db)
+        self.assertTrue(evidence["ok"], evidence)
+        self.assertEqual("provider_switch_release", evidence["reason"])
+        self.assertEqual("provider_switch_release", evidence["changes"][0]["kind"])
+        self.assertEqual("chatgpt", evidence["changes"][0]["old_provider"])
+        self.assertEqual("claude", evidence["changes"][0]["new_provider"])
+
+    def test_mapping_advance_rejects_secondary_clear_without_provider_change(self):
+        db = self._create_mapping_db()
+        secondary = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO runner_workers(project_id,worker_slot,conversation_id,provider) "
+                "VALUES('cloud',2,?,'chatgpt')",
+                (secondary,),
+            )
+        before = promote.mapping_snapshot(db)
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE runner_workers SET conversation_id='' "
+                "WHERE project_id='cloud' AND worker_slot=2"
+            )
+        after = promote.mapping_snapshot(db)
+        evidence = promote.explain_mapping_advance(before, after, db)
+        self.assertFalse(evidence["ok"])
+        self.assertEqual("worker_conversation_cleared", evidence["reason"])
 
     def test_mapping_snapshot_ignores_runtime_allocation_like_canary_contract(self):
         db = self._create_mapping_db()
