@@ -65,11 +65,28 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('error: diagnostic', userscript)
         self.assertIn('error: diagnostic', background)
 
+    def test_userscript_and_extension_versions_match(self):
+        import re
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        header = re.search(r"@version\s+(\S+)", userscript).group(1)
+        const = re.search(r'const SCRIPT_VERSION = "([^"]+)"', userscript).group(1)
+        required = re.search(r'const VIOLENTMONKEY_REQUIRED_VERSION = "([^"]+)"', background).group(1)
+        self.assertEqual(header, const)
+        self.assertEqual(const, required)
+
+    def test_high_thinking_is_best_effort_and_never_blocks_send(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        for source in (userscript, background):
+            self.assertIn('"thinking-effort-high-unavailable-proceeding"', source)
+            self.assertNotIn('"send-blocked", {\n          reason: ("high-thinking-required|"', source)
+
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.4";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.8";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)

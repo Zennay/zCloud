@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.4";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.8";
 const violentmonkeyReadyProjects = new Set();
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
@@ -808,15 +808,15 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        // Think Hard is a hard UI gate. Prompt wording is not a substitute for
-        // selecting and verifying the ChatGPT control.
+        // High/Think Hard is best-effort: it is attempted and verified on every
+        // send, but a ChatGPT UI without a High option must not stall execution
+        // (a hard gate produced 50k+ blocked sends and no generation).
         const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-        status("send-blocked", {
+        status("thinking-effort-high-unavailable-proceeding", {
           reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
           error: diagnostic,
           required: REQUIRED_THINKING_EFFORT
         });
-        return false;
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.7
+// @version      1.1.8
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.7";
+  const SCRIPT_VERSION = "1.1.8";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -576,13 +576,14 @@
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
+        // High/Think Hard is best-effort: attempted and verified on every send,
+        // but a ChatGPT UI without a High option must not stall execution.
         const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-        await status("send-blocked", {
+        await status("thinking-effort-high-unavailable-proceeding", {
           reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
           error: diagnostic,
           required: REQUIRED_THINKING_EFFORT
         });
-        return false;
       }
 
       if (!(await fill(prompt))) {
