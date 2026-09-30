@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -102,12 +103,28 @@ def service_active(service: str, *, user: bool = False) -> bool:
     return subprocess.run(cmd, env=env).returncode == 0
 
 
-def http_healthy(url: str, timeout: float = 8.0) -> bool:
+def http_healthy(url: str, timeout: float = 2.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status == 200
     except Exception:
         return False
+
+
+def wait_http_healthy(
+    url: str,
+    *,
+    retry_window: float = 10.0,
+    interval: float = 0.5,
+) -> bool:
+    """Tolerate only short transient API gaps; remain fail-closed afterwards."""
+    deadline = time.monotonic() + max(0.0, retry_window)
+    while True:
+        if http_healthy(url):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
 
 
 def evaluate(
@@ -178,7 +195,7 @@ def evaluate(
             },
             {
                 "name": "zcloud_http",
-                "ok": http_healthy(health_url),
+                "ok": wait_http_healthy(health_url),
                 "detail": health_url,
             },
         ])
