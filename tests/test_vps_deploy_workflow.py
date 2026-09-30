@@ -49,6 +49,19 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)
 
+    def test_deploy_publishes_sanitized_green_evidence_for_exact_revision(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        self.assertIn("statuses: write", text)
+        self.assertIn("Mark production deploy pending", text)
+        self.assertIn("Capture green production deploy evidence", text)
+        self.assertIn("scripts/zcloud_healthcheck.py --json", text)
+        self.assertIn("last-known-good.json", text)
+        self.assertIn("POSTDEPLOY_GREEN", text)
+        self.assertIn("zcloud-production-deploy-evidence-", text)
+        self.assertIn("actions/upload-artifact@v4", text)
+        self.assertIn('"context": "zcloud/vps-production"', text)
+        self.assertIn("Publish production deploy result", text)
+        self.assertIn("github.event.workflow_run.head_sha", text)
 
     def test_execution_probe_claims_cloud_task_on_self_hosted_runner(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
