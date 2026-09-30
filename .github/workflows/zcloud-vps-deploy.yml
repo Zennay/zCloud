@@ -79,7 +79,7 @@ jobs:
             echo "FIREFOX_AUTOMATION_SERVICE=recovered"
           fi
 
-      - name: Promote browser-managed worker surfaces
+      - name: Promote Violentmonkey worker
         if: steps.freshness.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
