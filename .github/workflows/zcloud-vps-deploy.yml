@@ -137,16 +137,6 @@ jobs:
             echo "FIREFOX_AUTOMATION_SERVICE=recovered"
           fi
 
-      - name: Promote Violentmonkey worker
-        if: steps.freshness.outputs.deploy == 'true'
-        run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path public/zcloud-worker.user.js \
-            --path firefox-extension/background.js \
-            --actor "github-actions-vps-deploy" \
-            --json
-
       - name: Promote backend and autonomy policy
         if: steps.freshness.outputs.deploy == 'true'
         run: |
@@ -157,6 +147,16 @@ jobs:
             --path autonomy-policy.json \
             --path vps-execution-policy.json \
             --path portfolio_queue.seed.json \
+            --actor "github-actions-vps-deploy" \
+            --json
+
+      - name: Promote Violentmonkey worker
+        if: steps.freshness.outputs.deploy == 'true'
+        run: |
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path public/zcloud-worker.user.js \
+            --path firefox-extension/background.js \
             --actor "github-actions-vps-deploy" \
             --json
 
