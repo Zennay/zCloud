@@ -448,7 +448,11 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertEqual("portfolio_queue.seed.json", command[index + 1])
         self.assertNotIn("server.py", promote.PRECHANGE_REPLACEABLE_DRIFT)
         self.assertEqual(
-            {"portfolio_queue.seed.json", "public/zcloud-worker.user.js"},
+            {
+                "portfolio_queue.seed.json",
+                "public/zcloud-worker.user.js",
+                "firefox-extension/background.js",
+            },
             set(promote.PRECHANGE_REPLACEABLE_DRIFT),
         )
 

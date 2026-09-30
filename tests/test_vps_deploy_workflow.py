@@ -19,7 +19,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(5, text.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
             "scripts/zcloud_recovery.py",
@@ -36,6 +36,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(f"--path {path}", text)
         self.assertIn("deploy/chatgpt-firefox.service", text)
+        self.assertIn("Ensure Firefox automation service for guarded canaries", text)
+        self.assertIn("systemctl --user start chatgpt-firefox.service", text)
+        self.assertIn("FIREFOX_AUTOMATION_SERVICE=recovered", text)
         self.assertIn("systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100", text)
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)

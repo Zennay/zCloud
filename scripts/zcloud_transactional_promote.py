@@ -105,6 +105,7 @@ HIGH_BLAST_FLAG = "high_blast_radius_promotion"
 PRECHANGE_REPLACEABLE_DRIFT = frozenset({
     "portfolio_queue.seed.json",
     "public/zcloud-worker.user.js",
+    "firefox-extension/background.js",
 })
 
 
