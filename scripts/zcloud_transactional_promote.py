@@ -587,22 +587,28 @@ def run_prechange(
     state: Path,
     allowed_changes: list[str] | tuple[str, ...] = (),
     *,
+    candidate: Path | None = None,
     health_retry_seconds: float = 20.0,
     retry_interval: float = 0.5,
 ) -> dict:
-    args = [
-        str(prechange),
-        "--root", str(root),
-        "--state", str(state),
-    ]
-    for rel in allowed_changes:
-        args.extend(["--allow-change", rel])
-    args.append("--json")
+    current_allowed = list(dict.fromkeys(str(rel) for rel in allowed_changes))
+    candidate_reconcile_used = False
+
+    def command() -> list[str]:
+        args = [
+            str(prechange),
+            "--root", str(root),
+            "--state", str(state),
+        ]
+        for rel in current_allowed:
+            args.extend(["--allow-change", rel])
+        args.append("--json")
+        return args
 
     deadline = time.monotonic() + max(0.0, float(health_retry_seconds))
     retry_interval = max(0.01, float(retry_interval))
     while True:
-        proc = run(args, check=False)
+        proc = run(command(), check=False)
         payload = parse_json_output(proc, "pre-change guard")
         if not proc.returncode and payload.get("ok"):
             return payload
@@ -612,6 +618,43 @@ def run_prechange(
             for item in (payload.get("checks") or [])
             if not item.get("ok")
         ]
+
+        # A prior guarded transaction may have written bytes from the exact
+        # green candidate before a later canary/rollback failed. Reconcile only
+        # that narrow state: every unexpected live file must already be byte-
+        # identical to the current tested candidate. Unknown/manual drift still
+        # fails closed and is never added to the allowlist.
+        if candidate is not None and not candidate_reconcile_used:
+            managed = [item for item in failed if item.get("name") == "managed_source_state"]
+            other = [item for item in failed if item.get("name") != "managed_source_state"]
+            if len(managed) == 1 and not other:
+                detail = managed[0].get("detail") or {}
+                unexpected = list(detail.get("unexpected") or [])
+                aligned: list[str] = []
+                unsafe: list[str] = []
+                for raw in unexpected:
+                    try:
+                        rel = validate_relpath(str(raw))
+                    except PromotionError:
+                        unsafe.append(str(raw))
+                        continue
+                    live = root / rel
+                    desired = candidate / rel
+                    if (
+                        live.is_file()
+                        and desired.is_file()
+                        and sha256_file(live) == sha256_file(desired)
+                    ):
+                        aligned.append(rel)
+                    else:
+                        unsafe.append(rel)
+                if aligned and not unsafe:
+                    for rel in aligned:
+                        if rel not in current_allowed:
+                            current_allowed.append(rel)
+                    candidate_reconcile_used = True
+                    continue
+
         # A just-finished promotion can leave the local HTTP endpoint in a
         # very short recovery window. Retry only that single health failure;
         # drift, mapping, service and every other guard failure stay fail-closed.
@@ -937,6 +980,7 @@ def promote(
             root,
             state,
             allowed_changes=allowed_prechange_drift,
+            candidate=candidate,
         )
         mapping_before = mapping_snapshot(root / "history.db")
         mapping_sha = str(mapping_before["sha256"])
