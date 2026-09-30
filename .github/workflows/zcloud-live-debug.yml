@@ -34,6 +34,12 @@ jobs:
           echo "=== SERVICES ==="
           systemctl is-active zennay-cloud.service
           systemctl --user is-active chatgpt-firefox.service
+          echo "=== LIVE PRECHANGE GUARD ==="
+          "$HOME/.local/bin/zcloud-prechange-guard" \
+            --root /home/ubuntu/zennay-cloud \
+            --state "$HOME/.local/state/zcloud/recovery" \
+            --json
+          echo "PRECHANGE_RC=$?"
           echo "=== LIVE POSTDEPLOY CANARY ==="
           "$HOME/.local/bin/zcloud-postdeploy-canary" \
             --root /home/ubuntu/zennay-cloud \
