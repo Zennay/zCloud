@@ -79,6 +79,14 @@ jobs:
             echo "FIREFOX_AUTOMATION_SERVICE=recovered"
           fi
 
+      - name: Pause zCloud self-heal during production transaction
+        if: steps.freshness.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch /home/ubuntu/zennay-cloud/.disable-self-heal
+          echo "ZCLOUD_SELF_HEAL=paused"
+
       - name: Promote Violentmonkey worker
         if: steps.freshness.outputs.deploy == 'true'
         run: |
@@ -101,6 +109,15 @@ jobs:
             --path portfolio_queue.seed.json \
             --actor "github-actions-vps-deploy" \
             --json
+
+      - name: Install lightweight zCloud self-heal probe
+        if: steps.freshness.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n install -m 0755 "$GITHUB_WORKSPACE/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal
+          sudo -n grep -F "/api/health" /usr/local/sbin/zcloud-self-heal >/dev/null
+          echo "ZCLOUD_SELF_HEAL_PROBE=installed"
 
       - name: Promote mobile UI
         if: steps.freshness.outputs.deploy == 'true'
@@ -132,3 +149,13 @@ jobs:
           export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
           systemctl --user daemon-reload
           systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100
+
+
+      - name: Resume zCloud self-heal
+        if: always() && steps.freshness.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /home/ubuntu/zennay-cloud/.disable-self-heal
+          sudo -n systemctl is-active --quiet zcloud-self-heal.timer
+          echo "ZCLOUD_SELF_HEAL=resumed"
