@@ -53,6 +53,15 @@ jobs:
           systemctl --user is-active --quiet zssh.service
           curl --fail --silent --show-error http://127.0.0.1:8788/health
           echo "ZSSH_STANDALONE_M1_LIVE_GREEN sha=$ZSSH_RELEASE_SHA"
+      - name: Verify public static-header MCP auth
+        run: |
+          set -a
+          source /home/ubuntu/.config/zssh/gateway.env
+          set +a
+          test -n "$ZSSH_API_KEY"
+          ZSSH_MCP_URL="https://198.244.191.182/mcp" \
+          ZSSH_MCP_API_KEY="$ZSSH_API_KEY" \
+          node zssh-source/mcp-claude-canary.mjs
       - name: Release coordination claim
         if: always()
         run: python3 scripts/zssh_release_coordination.py release
