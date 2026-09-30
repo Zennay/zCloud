@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.6
+// @version      1.1.7
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.6";
+  const SCRIPT_VERSION = "1.1.7";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -421,6 +421,12 @@
     }
     picker.click();
     await sleep(450);
+    // Some ChatGPT layouts reveal the current effort control only after
+    // opening the mode picker. Its High label is already authoritative.
+    if (highVerified()) {
+      lastThinkingDiagnostic = "";
+      return true;
+    }
 
     const openedSlider = thinkingSliders()[0] || null;
     if (openedSlider && await setSliderHigh(openedSlider) && highVerified()) return true;
