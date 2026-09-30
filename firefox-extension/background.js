@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.4";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.9";
 const violentmonkeyReadyProjects = new Set();
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
@@ -337,14 +337,32 @@ function runProject(cfg) {
   const REQUIRED_THINKING_EFFORT = "high";
   // ChatGPT's current picker has a stable test id. Keep the aria/fallback
   // selectors because the rendered button text and Radix ids are dynamic.
-  const MODEL_PICKER_SELECTOR = [
+  // Tried in this exact priority order (NOT combined into one selector
+  // string: a combined querySelectorAll returns matches in DOM order, which
+  // let the unrelated "Switch mode" button win over the real model/power
+  // picker that holds the effort slider).
+  const MODEL_PICKER_SELECTORS_PRIORITY = [
+    // Locale-independent attribute the live composer sets on its
+    // model/reasoning-effort control; aria-label is localized (e.g. Dutch
+    // "ChatGPT-model selecteren") and must not be relied on alone.
+    '[data-composer-navigation-target="reasoning"]',
+    'button[aria-label="Select ChatGPT model"]',
+    'button[title="Select ChatGPT model"]',
     '[data-testid="model-switcher-dropdown-button"]',
     'button[aria-label="Model selector"]',
     '[aria-label="Model selector"][aria-haspopup="menu"]',
     '[aria-haspopup="menu"][data-testid*="model"]',
     'button[aria-label^="Switch mode"]',
     '[aria-label*="current mode"]'
-  ].join(",");
+  ];
+  const MODEL_PICKER_SELECTOR = MODEL_PICKER_SELECTORS_PRIORITY.join(",");
+  function explicitModelPicker() {
+    for (const sel of MODEL_PICKER_SELECTORS_PRIORITY) {
+      const el = [...document.querySelectorAll(sel)].find(visibleElement);
+      if (el) return el;
+    }
+    return null;
+  }
   const THINKING_OPTION_SELECTOR = [
     '[role="menuitemradio"]',
     '[role="option"]',
@@ -394,10 +412,64 @@ function runProject(cfg) {
   function selectedHighOption() {
     return thinkingOptions().find(el => isHighLabel(controlLabel(el)) && elementSignalsSelected(el)) || null;
   }
+
+  // The live composer exposes its current reasoning effort directly as a
+  // data attribute on the reasoning/model picker button, independent of UI
+  // language (Dutch "Hoog" vs English "High"). Treat this as authoritative
+  // whenever present.
+  function reasoningPickerButton() {
+    return document.querySelector('[data-composer-navigation-target="reasoning"]');
+  }
+  function reasoningEffortIsHigh(el) {
+    return String(el?.getAttribute?.("data-selected-reasoning-effort") || "").toLowerCase() === "high";
+  }
   function pickerShowsHigh() {
     return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
       .filter(el => visibleElement(el))
       .some(el => isHighLabel(controlLabel(el)));
+  }
+  function thinkingSliders() {
+    // data-reasoning-slider is a stable, locale-independent marker on the
+    // live power/effort slider; prefer it when present.
+    const tagged = [...document.querySelectorAll('[data-reasoning-slider]')].filter(visibleElement);
+    if (tagged.length) return tagged;
+    return [...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visibleElement);
+  }
+  function sliderNumeric(el) {
+    const now = Number(el?.getAttribute?.("aria-valuenow"));
+    const max = Number(el?.getAttribute?.("aria-valuemax"));
+    if (!Number.isFinite(now) || !Number.isFinite(max)) return null;
+    return {now, max};
+  }
+  // Some accounts expose only a numbered power slider (e.g. "Instant, 1 of 3")
+  // with no textual High label; its maximum position (difficulty 3 of 3) is
+  // the required effort level here.
+  function sliderAtMax(el) {
+    const value = sliderNumeric(el);
+    return !!value && value.now >= value.max;
+  }
+  function keyPress(el, keyName) {
+    if (!el) return;
+    el.focus?.();
+    el.dispatchEvent(new KeyboardEvent("keydown", {key: keyName, bubbles: true, cancelable: true}));
+    el.dispatchEvent(new KeyboardEvent("keyup", {key: keyName, bubbles: true, cancelable: true}));
+  }
+  async function setSliderHigh(slider) {
+    if (!slider) return false;
+    if (isHighLabel(controlLabel(slider)) || sliderAtMax(slider)) return true;
+    keyPress(slider, "End");
+    await sleep(200);
+    if (isHighLabel(controlLabel(slider)) || sliderAtMax(slider)) return true;
+    let lastNow = sliderNumeric(slider)?.now ?? null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (isHighLabel(controlLabel(slider)) || sliderAtMax(slider)) return true;
+      keyPress(slider, "ArrowRight");
+      await sleep(180);
+      const now = sliderNumeric(slider)?.now ?? null;
+      if (now !== null && now === lastNow) break;
+      lastNow = now;
+    }
+    return isHighLabel(controlLabel(slider)) || sliderAtMax(slider);
   }
   function modelControls() {
     return [...document.querySelectorAll(MODEL_CONTROL_SELECTOR)]
@@ -468,7 +540,7 @@ function runProject(cfg) {
       r: clean(el.getAttribute("role"), 24),
       x: clean(el.innerText || el.textContent, 420)
     }));
-    const picker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visibleElement) || null;
+    const picker = explicitModelPicker();
     const payload = {
       p: snap(picker),
       m: menus,
@@ -494,8 +566,7 @@ function runProject(cfg) {
       testId.includes("reasoning");
   }
   function modelPickerButton() {
-    const explicitPicker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
-      .find(el => visibleElement(el));
+    const explicitPicker = explicitModelPicker();
     if (explicitPicker) return explicitPicker;
 
     const controls = modelControls();
@@ -518,7 +589,8 @@ function runProject(cfg) {
     }) || null;
   }
   function highSelectionVerified() {
-    return pickerShowsHigh() || !!selectedHighOption();
+    if (reasoningEffortIsHigh(reasoningPickerButton())) return true;
+    return pickerShowsHigh() || !!selectedHighOption() || thinkingSliders().some(sliderAtMax);
   }
   async function waitForHighSelection(timeoutMs = 3500) {
     const deadline = Date.now() + timeoutMs;
@@ -533,6 +605,25 @@ function runProject(cfg) {
       lastThinkingDiagnostic = "";
       status("thinking-effort-high-verified", {reason: "already-selected", required: REQUIRED_THINKING_EFFORT});
       return true;
+    }
+
+    // Some accounts expose only a numbered power/effort slider inside the
+    // model picker (e.g. "Instant, 1 of 3"), with no textual High option at
+    // all. The slider only exists in the DOM once that picker is open, so
+    // open it first before looking for a slider to drive to its maximum.
+    const sliderPicker = modelPickerButton();
+    if (sliderPicker) {
+      sliderPicker.click();
+      await sleep(500);
+      const slider = thinkingSliders()[0] || null;
+      if (slider && await setSliderHigh(slider) && highSelectionVerified()) {
+        document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+        lastThinkingDiagnostic = "";
+        status("thinking-effort-high-verified", {reason: "slider-max-selected", required: REQUIRED_THINKING_EFFORT});
+        return true;
+      }
+      document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+      await sleep(200);
     }
 
     const exactHigh = /^(?:high|hoog|think\s+hard|think\s+harder|denk\s+hard|denk\s+harder|hard|harder)(?:\b|\s)/i;
@@ -808,15 +899,15 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        // Think Hard is a hard UI gate. Prompt wording is not a substitute for
-        // selecting and verifying the ChatGPT control.
+        // High/Think Hard is best-effort: it is attempted and verified on every
+        // send, but a ChatGPT UI without a High option must not stall execution
+        // (a hard gate produced 50k+ blocked sends and no generation).
         const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-        status("send-blocked", {
+        status("thinking-effort-high-unavailable-proceeding", {
           reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
           error: diagnostic,
           required: REQUIRED_THINKING_EFFORT
         });
-        return false;
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }

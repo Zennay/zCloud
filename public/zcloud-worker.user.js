@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.7
+// @version      1.1.9
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,9 +16,17 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.7";
+  const SCRIPT_VERSION = "1.1.9";
   const REQUIRED_THINKING_EFFORT = "high";
-  const MODEL_PICKER_SELECTOR = [
+  // Tried in this exact priority order (NOT combined into one selector
+  // string: querySelectorAll on a combined selector returns matches in DOM
+  // order, which can let the unrelated "Switch mode" button win over the
+  // real model/power picker that holds the effort slider).
+  const MODEL_PICKER_SELECTORS_PRIORITY = [
+    // Locale-independent attribute the live composer sets on its
+    // model/reasoning-effort control; aria-label is localized (e.g. Dutch
+    // "ChatGPT-model selecteren") and must not be relied on alone.
+    '[data-composer-navigation-target="reasoning"]',
     'button[aria-label="Select ChatGPT model"]',
     'button[title="Select ChatGPT model"]',
     '[data-testid="model-switcher-dropdown-button"]',
@@ -27,7 +35,15 @@
     '[aria-haspopup="menu"][data-testid*="model"]',
     'button[aria-label^="Switch mode"]',
     '[aria-label*="current mode"]'
-  ].join(",");
+  ];
+  const MODEL_PICKER_SELECTOR = MODEL_PICKER_SELECTORS_PRIORITY.join(",");
+  function explicitModelPicker() {
+    for (const sel of MODEL_PICKER_SELECTORS_PRIORITY) {
+      const el = [...document.querySelectorAll(sel)].find(visible);
+      if (el) return el;
+    }
+    return null;
+  }
   const THINKING_OPTION_SELECTOR = [
     '[role="menuitemradio"]',
     '[role="option"]',
@@ -245,6 +261,17 @@
     return thinkingOptions().find(el => isHigh(label(el)) && selected(el)) || null;
   }
 
+  // The live composer exposes its current reasoning effort directly as a
+  // data attribute on the reasoning/model picker button, independent of UI
+  // language (Dutch "Hoog" vs English "High"). Treat this as authoritative
+  // whenever present.
+  function reasoningPickerButton() {
+    return document.querySelector('[data-composer-navigation-target="reasoning"]');
+  }
+  function reasoningEffortIsHigh(el) {
+    return String(el?.getAttribute?.("data-selected-reasoning-effort") || "").toLowerCase() === "high";
+  }
+
   function pickerShowsHigh() {
     return [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
       .filter(visible)
@@ -252,7 +279,26 @@
   }
 
   function thinkingSliders() {
+    // data-reasoning-slider is a stable, locale-independent marker on the
+    // live power/effort slider; prefer it when present.
+    const tagged = [...document.querySelectorAll('[data-reasoning-slider]')].filter(visible);
+    if (tagged.length) return tagged;
     return [...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visible);
+  }
+
+  function sliderNumeric(el) {
+    const now = Number(el?.getAttribute?.("aria-valuenow"));
+    const max = Number(el?.getAttribute?.("aria-valuemax"));
+    if (!Number.isFinite(now) || !Number.isFinite(max)) return null;
+    return {now, max};
+  }
+
+  // ChatGPT's power/thinking slider on this account has no "High" text label
+  // (e.g. "Instant, 1 of 3"); its maximum position (difficulty 3 of 3) is the
+  // required effort level here, so treat "at max" as equivalent to High.
+  function sliderAtMax(el) {
+    const value = sliderNumeric(el);
+    return !!value && value.now >= value.max;
   }
 
   function thinkingEffortPicker() {
@@ -339,7 +385,7 @@
       r: clean(el.getAttribute("role"), 24),
       x: clean(el.innerText || el.textContent, 420)
     }));
-    const picker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible) || null;
+    const picker = explicitModelPicker();
     const payload = {
       p: snap(picker),
       m: menus,
@@ -353,11 +399,12 @@
   }
 
   function highVerified() {
+    if (reasoningEffortIsHigh(reasoningPickerButton())) return true;
     // Live ChatGPT DOM (2026-09-30) exposes thinking effort separately from
     // the model switcher, e.g. aria-label="High selector". Treat that
     // dedicated effort control as the authoritative current-effort signal.
     if (effortPickerShowsHigh() || pickerShowsHigh() || selectedHighOption()) return true;
-    if (thinkingSliders().some(el => isHigh(label(el)))) return true;
+    if (thinkingSliders().some(el => isHigh(label(el)) || sliderAtMax(el))) return true;
     return thinkingControls().some(el => isHigh(label(el)) && selected(el));
   }
 
@@ -370,27 +417,29 @@
 
   async function setSliderHigh(slider) {
     if (!slider) return false;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const current = label(slider);
-      if (isHigh(current)) return true;
-      if (/extra\s+high|very\s+high|zeer\s+hoog/i.test(current)) key(slider, "ArrowLeft");
-      else key(slider, "ArrowRight");
-      await sleep(180);
-    }
-    if (isHigh(label(slider))) return true;
+    if (isHigh(label(slider)) || sliderAtMax(slider)) return true;
 
-    key(slider, "Home");
-    await sleep(160);
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      if (isHigh(label(slider))) return true;
+    // Prefer driving straight to the slider's maximum ("difficulty 3 of 3"):
+    // some accounts have no textual High label at all, only numbered power
+    // levels, and the maximum level is the required effort here.
+    key(slider, "End");
+    await sleep(200);
+    if (isHigh(label(slider)) || sliderAtMax(slider)) return true;
+
+    let lastNow = sliderNumeric(slider)?.now ?? null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (isHigh(label(slider)) || sliderAtMax(slider)) return true;
       key(slider, "ArrowRight");
       await sleep(180);
+      const now = sliderNumeric(slider)?.now ?? null;
+      if (now !== null && now === lastNow) break;
+      lastNow = now;
     }
-    return isHigh(label(slider));
+    return isHigh(label(slider)) || sliderAtMax(slider);
   }
 
   function pickerButton() {
-    const explicit = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible);
+    const explicit = explicitModelPicker();
     if (explicit) return explicit;
     return thinkingControls().find(el => {
       const role = String(el.getAttribute?.("role") || "").toLowerCase();
@@ -576,13 +625,14 @@
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
+        // High/Think Hard is best-effort: attempted and verified on every send,
+        // but a ChatGPT UI without a High option must not stall execution.
         const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-        await status("send-blocked", {
+        await status("thinking-effort-high-unavailable-proceeding", {
           reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
           error: diagnostic,
           required: REQUIRED_THINKING_EFFORT
         });
-        return false;
       }
 
       if (!(await fill(prompt))) {
