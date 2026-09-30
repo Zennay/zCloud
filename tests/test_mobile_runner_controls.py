@@ -18,10 +18,15 @@ class MobileRunnerControlsTests(unittest.TestCase):
         app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
         css = (ROOT / "public" / "enhancements.css").read_text(encoding="utf-8")
         self.assertIn("function dynamicWorkerControl", app)
-        self.assertIn('data-dynamic-workers', app)
-        self.assertIn("setDynamicWorkers", app)
-        self.assertIn("Continuous iteration", app)
+        self.assertIn("chatgpt_count", app)
+        self.assertIn("claude_count", app)
+        self.assertIn("chatgpt_cooldown_seconds", app)
+        self.assertIn("claude_cooldown_seconds", app)
+        self.assertIn("check_interval_ms", app)
+        self.assertIn("saveDynamicWorkerSettings", app)
+        self.assertIn("data-save-dynamic-workers", app)
         self.assertIn(".dynamic-worker-control", css)
+        self.assertIn(".dynamic-worker-provider-grid", css)
         self.assertIn("@media(max-width:760px)", css)
 
     def test_project_card_tap_opens_detail_without_pointer_heuristic(self):
