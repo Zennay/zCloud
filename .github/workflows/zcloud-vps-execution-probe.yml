@@ -8,6 +8,9 @@ on:
       - vps-execution-policy.json
       - scripts/zcloud_vps_execution_probe.sh
       - scripts/zcloud_vps_deploylane_coordination.py
+      - scripts/zcloud_transactional_promote.py
+      - tests/test_transactional_promote.py
+      - .github/workflows/zcloud-vps-deploy.yml
       - .github/workflows/zcloud-vps-execution-probe.yml
   pull_request:
     branches: [main]
