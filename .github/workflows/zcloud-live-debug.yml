@@ -6,6 +6,13 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zcloud-live-debug.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-live-debug.yml"
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - "scripts/zcloud_transactional_promote.py"
+      - "server.py"
 
 permissions:
   contents: read
