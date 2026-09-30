@@ -807,7 +807,14 @@ def _coordination_claims_fingerprint(project_id, exclude_owner=None):
     with connect() as c:
         return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner)
 
-def coordination_vps_health():
+def coordination_vps_health(profile='default'):
+    profile=str(profile or 'default').strip().lower()
+    profiles={
+        'default':('zcloud_service','firefox_automation','state_store'),
+        'control_plane':('zcloud_service','state_store'),
+    }
+    if profile not in profiles:
+        raise ValueError('Onbekend VPS-healthprofiel')
     checks={}
     try:
         checks['zcloud_service']=cmd(['systemctl','is-active','zennay-cloud.service'])=='active'
@@ -821,7 +828,13 @@ def coordination_vps_health():
         checks['state_store']=bool(quick and str(quick[0]).lower()=='ok')
     except Exception:
         checks['state_store']=False
-    return {'ok':all(checks.values()),'checks':checks}
+    required=profiles[profile]
+    return {
+        'ok':all(checks.get(name) is True for name in required),
+        'profile':profile,
+        'required_checks':list(required),
+        'checks':checks,
+    }
 
 def _preflight_external_evidence(payload,label):
     evidence=payload if isinstance(payload,dict) else {}
@@ -878,7 +891,7 @@ def _verify_preflight_sources(project_id,notion_evidence,github_evidence):
     if expected_repo and str(github_evidence.get('repo') or '').lower().removesuffix('.git')!=expected_repo.lower():
         raise ValueError('GitHub repo wijkt af van de canonieke projectrepo')
 
-def worker_preflight_record(project_id,worker_id,owner_id,notion,github):
+def worker_preflight_record(project_id,worker_id,owner_id,notion,github,vps_profile='default'):
     project_id=str(project_id or '').strip()[:80]
     worker_id=str(worker_id or '').strip()[:160]
     owner_id=str(owner_id or '').strip()[:160]
@@ -890,7 +903,12 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github):
     notion_evidence=_preflight_external_evidence(notion,'Notion')
     github_evidence=_preflight_external_evidence(github,'GitHub')
     _verify_preflight_sources(project_id,notion_evidence,github_evidence)
-    vps=coordination_vps_health()
+    vps_profile=str(vps_profile or 'default').strip().lower()
+    if vps_profile not in ('default','control_plane'):
+        raise ValueError('Onbekend VPS-healthprofiel')
+    # Preserve the legacy zero-argument call for the default profile so
+    # existing callers/test doubles keep the exact historical contract.
+    vps=coordination_vps_health() if vps_profile=='default' else coordination_vps_health(vps_profile)
     if not vps.get('ok'):
         return {'ok':False,'blocked':'vps_unhealthy','vps':vps}
     fingerprint,claims=_coordination_claims_fingerprint(project_id,owner_id)
@@ -2479,7 +2497,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     result=worker_preflight_record(
                         payload.get('project_id'),payload.get('worker_id'),payload.get('owner_id'),
-                        payload.get('notion'),payload.get('github'),
+                        payload.get('notion'),payload.get('github'),payload.get('vps_profile','default'),
                     )
                     return self.reply(result,200 if result.get('ok') else 409)
                 except ValueError as e:

@@ -398,6 +398,9 @@ def run_prechange(
     root: Path,
     state: Path,
     allowed_changes: list[str] | tuple[str, ...] = (),
+    *,
+    health_retry_seconds: float = 20.0,
+    retry_interval: float = 0.5,
 ) -> dict:
     args = [
         str(prechange),
@@ -407,19 +410,35 @@ def run_prechange(
     for rel in allowed_changes:
         args.extend(["--allow-change", rel])
     args.append("--json")
-    proc = run(args, check=False)
-    payload = parse_json_output(proc, "pre-change guard")
-    if proc.returncode or not payload.get("ok"):
+
+    deadline = time.monotonic() + max(0.0, float(health_retry_seconds))
+    retry_interval = max(0.01, float(retry_interval))
+    while True:
+        proc = run(args, check=False)
+        payload = parse_json_output(proc, "pre-change guard")
+        if not proc.returncode and payload.get("ok"):
+            return payload
+
         failed = [
             {"name": item.get("name"), "detail": item.get("detail")}
             for item in (payload.get("checks") or [])
             if not item.get("ok")
         ]
+        # A just-finished promotion can leave the local HTTP endpoint in a
+        # very short recovery window. Retry only that single health failure;
+        # drift, mapping, service and every other guard failure stay fail-closed.
+        http_only = bool(failed) and all(
+            item.get("name") == "zcloud_http" for item in failed
+        )
+        remaining = deadline - time.monotonic()
+        if http_only and remaining > 0:
+            time.sleep(min(retry_interval, remaining))
+            continue
+
         raise PromotionError(
             "pre-change guard is not green"
             + (": " + json.dumps(failed, ensure_ascii=False)[:1600] if failed else "")
         )
-    return payload
 
 
 def run_config_validation(

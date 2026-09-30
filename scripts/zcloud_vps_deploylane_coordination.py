@@ -104,6 +104,7 @@ def acquire() -> None:
             "open_prs": [str(item["number"]) for item in prs],
             "branches": [item["name"] for item in branches],
         },
+        "vps_profile": "control_plane",
     })
     if not preflight.get("ok"):
         raise RuntimeError(f"coordination preflight blocked: {preflight.get('blocked')}")

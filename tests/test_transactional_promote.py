@@ -452,6 +452,72 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_REPLACEABLE_DRIFT),
         )
 
+    def test_prechange_retries_transient_http_only_failure(self):
+        calls = []
+        original_run = promote.run
+        original_sleep = promote.time.sleep
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"zcloud_http","ok":false,"detail":"http://127.0.0.1:8765/api/status"}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[{"name":"zcloud_http","ok":true}]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        promote.time.sleep = lambda _: None
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                health_retry_seconds=1.0,
+                retry_interval=0.01,
+            )
+        finally:
+            promote.run = original_run
+            promote.time.sleep = original_sleep
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+
+    def test_prechange_does_not_retry_non_http_failure(self):
+        calls = []
+        original_run = promote.run
+
+        class Result:
+            returncode = 2
+            stdout = '{"ok":false,"checks":[{"name":"source_tree","ok":false,"detail":"drift"}]}'
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        promote.run = fake_run
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.run_prechange(
+                    Path("/bin/prechange"),
+                    self.root,
+                    Path(self.tmp.name) / "state",
+                    health_retry_seconds=1.0,
+                    retry_interval=0.01,
+                )
+        finally:
+            promote.run = original_run
+
+        self.assertEqual(1, len(calls))
+
     def test_postdeploy_command_contract_requires_requested_features(self):
         calls = []
         original_run = promote.run
