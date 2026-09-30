@@ -99,16 +99,19 @@ jobs:
               if int(command.get("id") or 0) != int(command_id):
                   return None
               command_status = str(command.get("status") or "")
-              if command_status == "failed":
-                  raise SystemExit(f"worker command failed for {key}: {command}")
-              if command_status != "completed":
-                  return None
               event = str((worker.get("last_event") or {}).get("event") or "")
+              # A browser-side send block is terminal for this dispatch even while
+              # the API command is still pending. Fail immediately so a broken
+              # selector cannot occupy the sole VPS runner for the full recovery loop.
               if event == "send-blocked":
                   raise SystemExit(
                       f"worker dispatch blocked for {key}: "
                       f"{(worker.get('last_event') or {}).get('reason') or 'unknown'}"
                   )
+              if command_status == "failed":
+                  raise SystemExit(f"worker command failed for {key}: {command}")
+              if command_status != "completed":
+                  return None
               if not worker.get("generating") and event not in DISPATCH_EVENTS:
                   return None
               return worker
