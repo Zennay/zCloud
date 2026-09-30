@@ -71,7 +71,7 @@ def service_active(service: str, *, user: bool = False) -> bool:
     return subprocess.run(cmd, env=env).returncode == 0
 
 
-def http_json(url: str, timeout: float = 3.0) -> dict:
+def http_json(url: str, timeout: float = 8.0) -> dict:
     with urllib.request.urlopen(url, timeout=timeout) as response:
         if response.status != 200:
             raise RuntimeError(f"HTTP {response.status}: {url}")
@@ -81,7 +81,7 @@ def http_json(url: str, timeout: float = 3.0) -> dict:
         return data
 
 
-def http_ok(url: str, timeout: float = 3.0) -> bool:
+def http_ok(url: str, timeout: float = 8.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status == 200

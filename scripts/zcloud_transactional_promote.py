@@ -651,6 +651,13 @@ def promote(
         root=root,
         paths=normalized,
     )
+    # Use the canary from the exact green candidate revision when available.
+    # This lets a canary reliability fix validate its own deployment while
+    # retaining the same fail-closed checks and rollback semantics.
+    effective_postdeploy = postdeploy
+    candidate_postdeploy = candidate / "scripts/zcloud_postdeploy_canary.py"
+    if postdeploy == DEFAULT_POSTDEPLOY and candidate_postdeploy.is_file():
+        effective_postdeploy = candidate_postdeploy
 
     with promotion_lock(state):
         pre = run_prechange(prechange, root, state)
@@ -706,7 +713,7 @@ def promote(
                 )
 
             post = run_postdeploy(
-                postdeploy,
+                effective_postdeploy,
                 root=root,
                 expected_mapping_sha=mapping_sha,
                 require_worker_read_model=require_worker_read_model,
