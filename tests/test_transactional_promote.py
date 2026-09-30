@@ -625,7 +625,18 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertFalse(evidence["ok"])
         self.assertIn("without_adoption", evidence["reason"])
 
-    def test_mapping_advance_rejects_non_conversation_mutation_even_with_adoption(self):
+    def test_mapping_snapshot_ignores_runtime_allocation_like_canary_contract(self):
+        db = self._create_mapping_db()
+        before = promote.mapping_snapshot(db)
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE runner_targets SET active=0,worker_count=7 WHERE project_id='cloud'"
+            )
+        after = promote.mapping_snapshot(db)
+        self.assertEqual(before["sha256"], after["sha256"])
+        self.assertEqual(before["targets"], after["targets"])
+
+    def test_mapping_adoption_remains_valid_during_runtime_allocation_churn(self):
         db = self._create_mapping_db()
         before = promote.mapping_snapshot(db)
         new_id = "dddddddd-dddd-dddd-dddd-dddddddddddd"
@@ -647,14 +658,14 @@ class TransactionalPromotionTests(unittest.TestCase):
                 (new_id,),
             )
             conn.execute(
-                "UPDATE runner_targets SET conversation_id=?,active=0 "
+                "UPDATE runner_targets SET conversation_id=?,active=0,worker_count=7 "
                 "WHERE project_id='cloud'",
                 (new_id,),
             )
         after = promote.mapping_snapshot(db)
         evidence = promote.explain_mapping_advance(before, after, db)
-        self.assertFalse(evidence["ok"])
-        self.assertEqual("target_active_changed", evidence["reason"])
+        self.assertTrue(evidence["ok"], evidence)
+        self.assertEqual("conversation_adopted", evidence["reason"])
 
     def test_postdeploy_command_contract_requires_requested_features(self):
         calls = []
