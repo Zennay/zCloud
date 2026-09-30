@@ -239,14 +239,46 @@ def load_lkg(state: Path) -> tuple[Path, dict]:
     return snap, manifest
 
 
-def capture(root: Path, state: Path, evidence: str, *, require_health=True, service_state: dict | None = None, browser_state: dict | None = None) -> dict:
+def wait_capture_healthy(
+    service_state: dict | None = None,
+    *,
+    timeout: float = SERVICE_HEALTH_TIMEOUT_SECONDS,
+    retry_interval: float = 0.5,
+) -> dict:
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    retry_interval = max(0.01, float(retry_interval))
+    while True:
+        svc = service_state or service_meta()
+        if svc.get("active_state") == "active" and http_healthy():
+            return svc
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RecoveryError("zCloud is not healthy; refusing to mark last-known-good")
+        time.sleep(min(retry_interval, remaining))
+
+
+def capture(
+    root: Path,
+    state: Path,
+    evidence: str,
+    *,
+    require_health=True,
+    service_state: dict | None = None,
+    browser_state: dict | None = None,
+    health_timeout_seconds: float = SERVICE_HEALTH_TIMEOUT_SECONDS,
+    health_retry_interval: float = 0.5,
+) -> dict:
     root = root.resolve()
     if not evidence.strip():
         raise RecoveryError("evidence is required before marking last-known-good")
     svc = service_state or service_meta()
     browser = browser_state or browser_service_meta()
-    if require_health and (svc.get("active_state") != "active" or not http_healthy()):
-        raise RecoveryError("zCloud is not healthy; refusing to mark last-known-good")
+    if require_health:
+        svc = wait_capture_healthy(
+            service_state,
+            timeout=health_timeout_seconds,
+            retry_interval=health_retry_interval,
+        )
     git = git_meta(root)
     short = (git.get("head") or "working-tree")[:8]
     snap_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + short
