@@ -141,7 +141,7 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     project_guard=(
         'FTMO: houd preregistration, walk-forward en final holdout gescheiden. '
         if project_id == 'ftmo' else
-        'zCloud: bij iteration_count=9 is dit de laatste iteratie; DONE vereist groene finish-review/audit. '
+        'zCloud finish: iteration_count=9 is de tiende/harde laatste iteratie; na implementatie ZCLOUD_ITERATION_COMPLETE; ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1; ZCLOUD_FINAL_AUDIT: GREEN. '
         if project_id == 'cloud' else ''
     )
     # Always rebuild the canonical base prompt. This intentionally ignores any
