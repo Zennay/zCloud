@@ -341,7 +341,15 @@ def syntax_check(candidate: Path, paths: list[str]) -> None:
 
 
 def needs_service_restart(paths: list[str]) -> bool:
-    return any(not str(rel).startswith("firefox-extension/") for rel in paths)
+    # Static dashboard/userscript assets are served from disk and do not
+    # require restarting the control-plane HTTP service. Restart only when
+    # Python/service/deployment sources change.
+    service_paths = {"server.py", "enhancements.py"}
+    service_prefixes = ("scripts/", "deploy/")
+    return any(
+        str(rel) in service_paths or str(rel).startswith(service_prefixes)
+        for rel in paths
+    )
 
 
 def http_healthy(url: str = HEALTH_URL, timeout: float = 3.0) -> bool:
