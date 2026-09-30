@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.2
+// @version      1.1.3
 // @description  Database-backed ChatGPT dynamic worker for zCloud.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,13 +16,15 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.2";
+  const SCRIPT_VERSION = "1.1.3";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     '[data-testid="model-switcher-dropdown-button"]',
     'button[aria-label="Model selector"]',
     '[aria-label="Model selector"][aria-haspopup="menu"]',
-    '[aria-haspopup="menu"][data-testid*="model"]'
+    '[aria-haspopup="menu"][data-testid*="model"]',
+    'button[aria-label^="Switch mode"]',
+    '[aria-label*="current mode"]'
   ].join(",");
   const THINKING_OPTION_SELECTOR = [
     '[role="menuitemradio"]',
@@ -278,56 +280,52 @@
       '[data-testid]'
     ].join(",");
     const clean = (value, max = 120) => String(value || "")
-      .replace(/[|;\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+      .replace(/[|;\\n\\r]+/g, " ").replace(/\\s+/g, " ").trim().slice(0, max);
     const snap = el => {
       if (!el || !el.getAttribute) return null;
       return {
-        tag: String(el.tagName || "").toLowerCase(),
-        testid: clean(el.getAttribute("data-testid"), 80),
-        aria: clean(el.getAttribute("aria-label"), 100),
-        role: clean(el.getAttribute("role"), 40),
-        text: clean(label(el), 140),
-        expanded: clean(el.getAttribute("aria-expanded"), 12),
-        haspopup: clean(el.getAttribute("aria-haspopup"), 24),
-        checked: clean(el.getAttribute("aria-checked"), 12),
-        selected: clean(el.getAttribute("aria-selected"), 12),
-        state: clean(el.getAttribute("data-state"), 24),
-        valuetext: clean(el.getAttribute("aria-valuetext"), 80),
-        html: clean(el.outerHTML, 420)
+        t: clean(el.getAttribute("data-testid"), 60),
+        a: clean(el.getAttribute("aria-label"), 90),
+        r: clean(el.getAttribute("role"), 24),
+        x: clean(label(el), 120),
+        e: clean(el.getAttribute("aria-expanded"), 8),
+        h: clean(el.getAttribute("aria-haspopup"), 16),
+        c: clean(el.getAttribute("aria-checked"), 8),
+        s: clean(el.getAttribute("aria-selected"), 8),
+        st: clean(el.getAttribute("data-state"), 16),
+        v: clean(el.getAttribute("aria-valuetext"), 60)
       };
     };
     const scored = [...document.querySelectorAll(selector)]
       .filter(visible)
       .map(el => {
         const item = snap(el);
-        const haystack = [item?.testid, item?.aria, item?.role, item?.text].join(" ").toLowerCase();
+        const haystack = [item?.t, item?.a, item?.r, item?.x].join(" ").toLowerCase();
         let score = 0;
         if (el.matches?.(MODEL_PICKER_SELECTOR)) score += 200;
-        if (/model|gpt|instant|medium|high|hoog|hard|think|thinking|reason|effort|denk|redeneer/.test(haystack)) score += 100;
-        if (item?.haspopup) score += 30;
-        if (/menuitem|option|radio|slider/.test(item?.role || "")) score += 20;
-        if (item?.testid) score += 10;
+        if (/model|mode|gpt|instant|medium|high|hoog|hard|think|thinking|reason|effort|denk|redeneer/.test(haystack)) score += 100;
+        if (item?.h) score += 30;
+        if (/menuitem|option|radio|slider/.test(item?.r || "")) score += 20;
+        if (item?.t) score += 10;
         return {score, item};
       })
       .sort((a, b) => b.score - a.score)
-      .slice(0, 24)
+      .slice(0, 12)
       .map(entry => entry.item);
-    const menuRoots = [...document.querySelectorAll(
+    const menus = [...document.querySelectorAll(
       '[role="menu"],[role="listbox"],[role="dialog"],[data-radix-menu-content],[data-radix-popper-content-wrapper]'
-    )].filter(visible).slice(0, 8).map(el => ({
-      role: clean(el.getAttribute("role"), 40),
-      text: clean(el.innerText || el.textContent, 700),
-      html: clean(el.outerHTML, 900)
+    )].filter(visible).slice(0, 4).map(el => ({
+      r: clean(el.getAttribute("role"), 24),
+      x: clean(el.innerText || el.textContent, 420)
     }));
-    const explicitPicker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible) || null;
+    const picker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)].find(visible) || null;
     const payload = {
-      stage: String(stage || "unknown"),
-      href: clean(location.href, 240),
-      title: clean(document.title, 160),
-      active: snap(document.activeElement),
-      picker: snap(explicitPicker),
-      controls: scored,
-      menus: menuRoots
+      p: snap(picker),
+      m: menus,
+      c: scored,
+      s: String(stage || "unknown"),
+      u: clean(location.href, 120),
+      a: snap(document.activeElement)
     };
     lastThinkingDiagnostic = (String(stage || "unknown") + ":" + JSON.stringify(payload)).slice(0, 3500);
     return lastThinkingDiagnostic;

@@ -54,6 +54,11 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             self.assertIn("menuRoots", source)
             self.assertIn("outerHTML", source)
             self.assertIn("slice(0, 3500)", source)
+            self.assertIn('button[aria-label^="Switch mode"]', source)
+            self.assertIn('[aria-label*="current mode"]', source)
+            self.assertIn("p: snap(picker)", source)
+            self.assertIn("m: menus", source)
+            self.assertIn("c: scored", source)
         self.assertIn('error: diagnostic', userscript)
         self.assertIn('error: diagnostic', background)
 
@@ -61,7 +66,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.2";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.3";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
