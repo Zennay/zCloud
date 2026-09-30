@@ -101,6 +101,25 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual("new-secret\n", (self.root / ".watch-token").read_text())
         self.assertEqual(before["sha256"], recovery.mapping_fingerprint(self.root / "history.db")["sha256"])
 
+    def test_mapping_fingerprint_tracks_chat_identity_not_runtime_allocation(self):
+        before = recovery.mapping_fingerprint(self.root / "history.db")
+        with sqlite3.connect(self.root / "history.db") as conn:
+            conn.execute(
+                "UPDATE runner_targets SET active=0, worker_count=5 WHERE project_id='cloud'"
+            )
+        self.assertEqual(
+            before["sha256"],
+            recovery.mapping_fingerprint(self.root / "history.db")["sha256"],
+        )
+        with sqlite3.connect(self.root / "history.db") as conn:
+            conn.execute(
+                "UPDATE runner_targets SET conversation_id='conversation-2' WHERE project_id='cloud'"
+            )
+        self.assertNotEqual(
+            before["sha256"],
+            recovery.mapping_fingerprint(self.root / "history.db")["sha256"],
+        )
+
     def test_failed_rollback_reverts_to_pre_rollback_tree(self):
         self.capture()
         (self.root / "server.py").write_text("version-two\n")
