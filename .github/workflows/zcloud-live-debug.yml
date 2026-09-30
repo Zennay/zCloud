@@ -103,6 +103,8 @@ jobs:
               "live_background":"/home/ubuntu/zennay-cloud/firefox-extension/background.js",
               "runtime_background":"/home/ubuntu/snap/firefox/common/chatgpt-project-extension/background.js",
               "live_userscript":"/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js",
+              "live_server":"/home/ubuntu/zennay-cloud/server.py",
+              "candidate_server":"server.py",
           }
           for k,p in paths.items():
               print(k, sha(p), p)
