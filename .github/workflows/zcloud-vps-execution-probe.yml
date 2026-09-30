@@ -12,6 +12,7 @@ on:
       - scripts/zcloud_vps_execution_probe.sh
       - scripts/zcloud_vps_deploylane_coordination.py
       - scripts/zcloud_transactional_promote.py
+      - scripts/zcloud_recovery.py
       - tests/test_transactional_promote.py
       - server.py
       - .github/workflows/zcloud-vps-deploy.yml

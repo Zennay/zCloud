@@ -63,6 +63,38 @@ class RecoveryTests(unittest.TestCase):
             browser_state={"active_state": "active"},
         )
 
+    def test_capture_retries_transient_health_before_marking_lkg(self):
+        with patch.object(recovery, "http_healthy", side_effect=[False, False, True]) as health:
+            with patch.object(recovery.time, "sleep", return_value=None):
+                manifest = recovery.capture(
+                    self.root,
+                    self.state,
+                    "postdeploy green",
+                    require_health=True,
+                    service_state=self.fake_service,
+                    browser_state={"active_state": "active"},
+                    health_timeout_seconds=1.0,
+                    health_retry_interval=0.01,
+                )
+        self.assertEqual("postdeploy green", manifest["evidence"])
+        self.assertEqual(3, health.call_count)
+
+    def test_capture_stays_fail_closed_when_health_never_recovers(self):
+        with patch.object(recovery, "http_healthy", return_value=False):
+            with patch.object(recovery.time, "sleep", return_value=None):
+                with self.assertRaises(recovery.RecoveryError):
+                    recovery.capture(
+                        self.root,
+                        self.state,
+                        "must not capture",
+                        require_health=True,
+                        service_state=self.fake_service,
+                        browser_state={"active_state": "active"},
+                        health_timeout_seconds=0.001,
+                        health_retry_interval=0.01,
+                    )
+        self.assertFalse((self.state / "last-known-good.json").exists())
+
     def test_systemctl_command_uses_noninteractive_sudo_for_service_user(self):
         with patch.object(recovery.os, "geteuid", return_value=1000):
             self.assertEqual(
