@@ -903,7 +903,12 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github,vps_prof
     notion_evidence=_preflight_external_evidence(notion,'Notion')
     github_evidence=_preflight_external_evidence(github,'GitHub')
     _verify_preflight_sources(project_id,notion_evidence,github_evidence)
-    vps=coordination_vps_health(vps_profile)
+    vps_profile=str(vps_profile or 'default').strip().lower()
+    if vps_profile not in ('default','control_plane'):
+        raise ValueError('Onbekend VPS-healthprofiel')
+    # Preserve the legacy zero-argument call for the default profile so
+    # existing callers/test doubles keep the exact historical contract.
+    vps=coordination_vps_health() if vps_profile=='default' else coordination_vps_health(vps_profile)
     if not vps.get('ok'):
         return {'ok':False,'blocked':'vps_unhealthy','vps':vps}
     fingerprint,claims=_coordination_claims_fingerprint(project_id,owner_id)
