@@ -16,7 +16,7 @@ SPEC.loader.exec_module(promote)
 
 class TransactionalPromotionTests(unittest.TestCase):
     def test_candidate_postdeploy_canary_is_authoritative_for_default_path(self):
-        source = (ROOT / "scripts" / "zcloud_transactional_promote.py").read_text(encoding="utf-8")
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "zcloud_transactional_promote.py").read_text(encoding="utf-8")
         self.assertIn('candidate_postdeploy = candidate / "scripts/zcloud_postdeploy_canary.py"', source)
         self.assertIn("if postdeploy == DEFAULT_POSTDEPLOY and candidate_postdeploy.is_file()", source)
         self.assertIn("effective_postdeploy", source)
