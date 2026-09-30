@@ -416,10 +416,17 @@ def mapping_snapshot(db_path: Path) -> dict:
                 "FROM runner_targets ORDER BY project_id"
             )
         ]
+        worker_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(runner_workers)")
+        }
+        provider_select = (
+            "provider" if "provider" in worker_columns else "'chatgpt' AS provider"
+        )
         workers = [
             dict(row) for row in conn.execute(
-                "SELECT project_id,worker_slot,conversation_id "
-                "FROM runner_workers ORDER BY project_id,worker_slot"
+                "SELECT project_id,worker_slot,conversation_id,"
+                + provider_select
+                + " FROM runner_workers ORDER BY project_id,worker_slot"
             )
         ]
         table = conn.execute(
@@ -432,8 +439,19 @@ def mapping_snapshot(db_path: Path) -> dict:
         conn.close()
     except Exception as exc:
         raise PromotionError(f"project/chat mapping snapshot unavailable: {exc}") from exc
+    # Provider is carried alongside worker mapping only as causal evidence for
+    # a provider-switch conversation release. Keep the durable mapping hash
+    # stable when provider changes without changing any conversation identity.
+    hashed_workers = [
+        {
+            "project_id": row["project_id"],
+            "worker_slot": row["worker_slot"],
+            "conversation_id": row.get("conversation_id"),
+        }
+        for row in workers
+    ]
     payload = json.dumps(
-        {"targets": targets, "workers": workers},
+        {"targets": targets, "workers": hashed_workers},
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
@@ -521,6 +539,7 @@ def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
         return {"ok": False, "reason": "worker_set_changed"}
 
     worker_changes = []
+    provider_releases = []
     for key in sorted(before_workers):
         old = before_workers[key]
         new = after_workers[key]
@@ -528,6 +547,17 @@ def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
         new_cid = str(new.get("conversation_id") or "")
         if old_cid != new_cid:
             if not new_cid:
+                old_provider = str(old.get("provider") or "chatgpt")
+                new_provider = str(new.get("provider") or "chatgpt")
+                # Dynamic secondary slots intentionally drop a provider-specific
+                # conversation when their provider changes (for example ChatGPT
+                # -> Claude). This is a narrow, state-proven release: slot 1 stays
+                # fail-closed because it also anchors runner_targets identity.
+                if key[1] > 1 and old_cid and old_provider != new_provider:
+                    provider_releases.append(
+                        (key[0], key[1], old_cid, old_provider, new_provider)
+                    )
+                    continue
                 return {"ok": False, "reason": "worker_conversation_cleared"}
             worker_changes.append((key[0], key[1], old_cid, new_cid))
 
@@ -545,7 +575,7 @@ def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
                 return {"ok": False, "reason": "target_worker_mapping_inconsistent"}
             target_changes.append((project_id, old_cid, new_cid))
 
-    if not worker_changes and not target_changes:
+    if not worker_changes and not target_changes and not provider_releases:
         return {"ok": False, "reason": "unexplained_mapping_hash_change"}
 
     adoptions = _conversation_adoptions(
@@ -557,7 +587,17 @@ def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
         (item["project_id"], item["worker_slot"], item["conversation_id"]): item["id"]
         for item in adoptions
     }
-    evidence = []
+    evidence = [
+        {
+            "project_id": project_id,
+            "worker_slot": worker_slot,
+            "kind": "provider_switch_release",
+            "old_provider": old_provider,
+            "new_provider": new_provider,
+        }
+        for project_id, worker_slot, _old_cid, old_provider, new_provider
+        in provider_releases
+    ]
     for project_id, worker_slot, _old_cid, new_cid in worker_changes:
         event_id = adoption_index.get((project_id, worker_slot, new_cid))
         if not event_id:
@@ -572,9 +612,13 @@ def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
         if not adoption_index.get((project_id, 1, new_cid)):
             return {"ok": False, "reason": "target_mapping_changed_without_adoption"}
 
+    if worker_changes or target_changes:
+        reason = "conversation_mapping_advanced" if provider_releases else "conversation_adopted"
+    else:
+        reason = "provider_switch_release"
     return {
         "ok": True,
-        "reason": "conversation_adopted",
+        "reason": reason,
         "changes": evidence,
         "event_cursor_from": int(before.get("event_cursor") or 0),
         "event_cursor_to": int(after.get("event_cursor") or 0),
