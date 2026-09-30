@@ -2723,6 +2723,9 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as c:
                 rows=c.execute("SELECT id,project_id,action,created_at FROM runner_commands WHERE status='pending' ORDER BY id LIMIT 10").fetchall()
             return self.reply({'commands':[dict(r) for r in rows]})
+        if u.path=='/api/health':
+            with LOCK:ready=CACHE is not None
+            return self.reply({'ok':ready,'service':'zcloud','time':now()},200 if ready else 503)
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
             if data is None:return self.reply({'error':'Monitor start op'},503)
