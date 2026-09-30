@@ -280,6 +280,49 @@ class TransactionalPromotionTests(unittest.TestCase):
         )
         self.assertFalse((runtime.parent / "recovery.js").exists())
 
+    def test_candidate_matching_prechange_drift_only_allows_exact_managed_bytes(self):
+        # server.py starts different from the candidate and must stay blocked.
+        matches = promote.candidate_matching_prechange_drift(self.candidate, self.root)
+        self.assertNotIn("server.py", matches)
+
+        # Exact candidate bytes are safe/idempotent even if the LKG is older.
+        (self.root / "server.py").write_bytes((self.candidate / "server.py").read_bytes())
+        matches = promote.candidate_matching_prechange_drift(self.candidate, self.root)
+        self.assertIn("server.py", matches)
+
+        # An arbitrary path is never auto-allowed merely because bytes match.
+        self._write(self.root, "unmanaged.txt", "same\n")
+        self._write(self.candidate, "unmanaged.txt", "same\n")
+        matches = promote.candidate_matching_prechange_drift(self.candidate, self.root)
+        self.assertNotIn("unmanaged.txt", matches)
+
+    def test_candidate_matching_drift_revalidation_fails_closed_on_change(self):
+        (self.root / "server.py").write_bytes((self.candidate / "server.py").read_bytes())
+        promote.verify_candidate_matching_drift(
+            self.candidate, self.root, ["server.py"]
+        )
+        (self.root / "server.py").write_text("mutated-after-hash\n")
+        with self.assertRaises(promote.PromotionError):
+            promote.verify_candidate_matching_drift(
+                self.candidate, self.root, ["server.py"]
+            )
+
+    def test_candidate_match_allowlist_covers_every_transactional_deploy_path(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/zcloud-vps-deploy.yml"
+        ).read_text(encoding="utf-8")
+        deploy_paths = set()
+        for line in workflow.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("--path "):
+                deploy_paths.add(stripped.split("--path ", 1)[1].strip().rstrip("\\").strip())
+        self.assertTrue(deploy_paths)
+        self.assertTrue(
+            deploy_paths.issubset(promote.CANDIDATE_MATCH_RECONCILABLE_PATHS),
+            deploy_paths - promote.CANDIDATE_MATCH_RECONCILABLE_PATHS,
+        )
+
     def test_config_changes_capture_only_real_selected_config_changes(self):
         self._write(self.root, "resource-policy.json", '{"cloud":{"priority":"normal"}}\n')
         self._write(self.candidate, "resource-policy.json", '{"cloud":{"priority":"high"}}\n')
