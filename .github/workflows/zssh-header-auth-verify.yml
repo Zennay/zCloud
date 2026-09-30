@@ -14,8 +14,11 @@ jobs:
   verify:
     runs-on: self-hosted
     timeout-minutes: 5
+    env:
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
-      - name: Verify active release and public static-header MCP path
+      - name: Verify active release and public no-sign-in capability path
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -25,8 +28,9 @@ jobs:
           set -a
           source /home/ubuntu/.config/zssh/gateway.env
           set +a
-          test -n "$ZSSH_API_KEY"
+          test -n "$ZSSH_MCP_CAPABILITY_TOKEN"
           curl --fail --silent --show-error https://198.244.191.182/health >/dev/null
           ZSSH_MCP_URL="https://198.244.191.182/mcp" \
-          ZSSH_MCP_API_KEY="$ZSSH_API_KEY" \
+          ZSSH_MCP_API_KEY="" \
+          ZSSH_MCP_CAPABILITY_TOKEN="$ZSSH_MCP_CAPABILITY_TOKEN" \
           node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
