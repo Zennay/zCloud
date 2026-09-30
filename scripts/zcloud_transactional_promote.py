@@ -387,7 +387,15 @@ def run_prechange(prechange: Path, root: Path, state: Path) -> dict:
     ], check=False)
     payload = parse_json_output(proc, "pre-change guard")
     if proc.returncode or not payload.get("ok"):
-        raise PromotionError("pre-change guard is not green")
+        failed = [
+            {"name": item.get("name"), "detail": item.get("detail")}
+            for item in (payload.get("checks") or [])
+            if not item.get("ok")
+        ]
+        raise PromotionError(
+            "pre-change guard is not green"
+            + (": " + json.dumps(failed, ensure_ascii=False)[:1600] if failed else "")
+        )
     return payload
 
 
@@ -473,7 +481,15 @@ def run_postdeploy(
     proc = run(args, check=False)
     payload = parse_json_output(proc, "post-deploy canary")
     if proc.returncode or not payload.get("ok"):
-        raise PromotionError("post-deploy canary is not green")
+        failed = [
+            {"name": item.get("name"), "detail": item.get("detail")}
+            for item in (payload.get("checks") or [])
+            if not item.get("ok")
+        ]
+        raise PromotionError(
+            "post-deploy canary is not green"
+            + (": " + json.dumps(failed, ensure_ascii=False)[:1600] if failed else "")
+        )
     return payload
 
 
