@@ -31,6 +31,9 @@ HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/stat
 SERVICE_HEALTH_TIMEOUT_SECONDS = float(
     os.environ.get("ZCLOUD_SERVICE_HEALTH_TIMEOUT_SECONDS", "90")
 )
+LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS", "30")
+)
 
 MANAGED_PATHS = (
     "server.py",
@@ -194,6 +197,21 @@ def http_healthy(url: str = HEALTH_URL, timeout=8) -> bool:
         return False
 
 
+def wait_http_healthy(
+    timeout: float = LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS,
+    interval: float = 0.5,
+) -> bool:
+    """Bound transient HTTP gaps before declaring an LKG capture unhealthy."""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while True:
+        if http_healthy():
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(max(0.01, float(interval)), remaining))
+
+
 def mapping_fingerprint(db: Path) -> dict:
     if not db.exists():
         return {"available": False}
@@ -245,7 +263,9 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
         raise RecoveryError("evidence is required before marking last-known-good")
     svc = service_state or service_meta()
     browser = browser_state or browser_service_meta()
-    if require_health and (svc.get("active_state") != "active" or not http_healthy()):
+    if require_health and (
+        svc.get("active_state") != "active" or not wait_http_healthy()
+    ):
         raise RecoveryError("zCloud is not healthy; refusing to mark last-known-good")
     git = git_meta(root)
     short = (git.get("head") or "working-tree")[:8]
