@@ -1,5 +1,5 @@
 name: zCloud live dynamic worker debug
-# retrigger: inspect deployed picker diagnostics
+# retrigger: inspect zCloud service health before worker activation
 
 on:
   push:
@@ -34,6 +34,8 @@ jobs:
           date -Ins
           echo "=== SERVICES ==="
           systemctl is-active zennay-cloud.service
+          systemctl --no-pager --full status zennay-cloud.service || true
+          journalctl -u zennay-cloud.service -n 100 --no-pager || true
           systemctl --user is-active chatgpt-firefox.service
           echo "=== LIVE PRECHANGE GUARD ==="
           "$HOME/.local/bin/zcloud-prechange-guard" \
