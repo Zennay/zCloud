@@ -29,161 +29,61 @@ jobs:
         run: |
           set -euo pipefail
           REQUEST=".github/vps-ops-request.json"
-          RESULT=".github/vps-ops-result.json"
-          TMP="$(mktemp -d)"
-          trap 'rm -rf "$TMP"' EXIT
+          RESULT=".github/vps-ops-result.txt"
+          PHASE="$(python3 -c 'import json; print(json.load(open(".github/vps-ops-request.json", encoding="utf-8")).get("phase",""))')"
+          BURST_TICKS="$(python3 -c 'import json; print(int(json.load(open(".github/vps-ops-request.json", encoding="utf-8")).get("burst_ticks",0)))')"
+          case "$PHASE" in inspect_prepare|install_token) ;; *) echo "unsupported phase"; exit 2 ;; esac
+          test "$BURST_TICKS" -ge 0
+          test "$BURST_TICKS" -le 24
 
-          if [ ! -f "$REQUEST" ]; then
-            echo "No request file yet; nothing to do."
-            exit 0
-          fi
-
-          PHASE="$(python3 - "$REQUEST" <<'PY'
-import json, sys
-raw=json.load(open(sys.argv[1], encoding="utf-8"))
-phase=str(raw.get("phase") or "")
-if phase not in {"inspect_prepare","install_token"}:
-    raise SystemExit("unsupported phase")
-print(phase)
-PY
-)"
-          BURST_TICKS="$(python3 - "$REQUEST" <<'PY'
-import json, sys
-raw=json.load(open(sys.argv[1], encoding="utf-8"))
-n=int(raw.get("burst_ticks") or 0)
-if n < 0 or n > 24:
-    raise SystemExit("burst_ticks out of range")
-print(n)
-PY
-)"
-
-          snapshot_cpu() {
+          {
+            echo "phase=$PHASE"
+            echo "=== CPU BEFORE ==="
             ps -eo pid,user,comm,%cpu,%mem,etime --sort=-%cpu | head -n 30
-          }
-
-          service_state() {
-            for u in               haxlab-ingest.service               haxlab-worker.service               haxlab-analyzer.service               haxlab-live-bot.service               haxlab-autonomy.timer               ftmo-autonomous.service               ftmo-autonomous.timer; do
-              printf '%s=' "$u"
-              systemctl is-active "$u" 2>/dev/null || true
+            echo "=== SERVICES BEFORE ==="
+            for u in haxlab-ingest.service haxlab-worker.service haxlab-analyzer.service haxlab-live-bot.service haxlab-autonomy.timer ftmo-autonomous.service ftmo-autonomous.timer; do
+              printf '%s=' "$u"; systemctl is-active "$u" 2>/dev/null || true
             done
-          }
+            echo "=== FTMO STATUS BEFORE ==="
+            cat /opt/ftmo-autonomous/.scratch/autonomy/status.json 2>/dev/null || true
 
-          ftmo_status() {
-            python3 - <<'PY'
-import json
-from pathlib import Path
-p=Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json")
-if not p.is_file():
-    print(json.dumps({"present":False}))
-    raise SystemExit
-raw=json.loads(p.read_text(encoding="utf-8"))
-research=raw.get("research") if isinstance(raw.get("research"),dict) else {}
-controller=raw.get("research_controller") if isinstance(raw.get("research_controller"),dict) else {}
-generation=controller.get("generation_loop") if isinstance(controller.get("generation_loop"),dict) else {}
-print(json.dumps({
-  "present": True,
-  "ok": raw.get("ok"),
-  "completed_at_utc": raw.get("completed_at_utc"),
-  "research": research,
-  "controller_compute_ok": (controller.get("compute") or {}).get("ok") if isinstance(controller.get("compute"),dict) else None,
-  "generation_loop": generation,
-  "live_trading_allowed": raw.get("live_trading_allowed"),
-  "broker_order_submission_allowed": raw.get("broker_order_submission_allowed"),
-}, sort_keys=True))
-PY
-          }
-
-          snapshot_cpu >"$TMP/cpu_before.txt"
-          service_state >"$TMP/services_before.txt"
-          ftmo_status >"$TMP/ftmo_before.json" || true
-
-          if [ "$PHASE" = "inspect_prepare" ]; then
-            {
-              echo "Pausing HaxLab compute services; live room service is left separate."
+            if [ "$PHASE" = "inspect_prepare" ]; then
+              echo "=== ACTIONS ==="
               sudo -n systemctl stop haxlab-analyzer.service 2>/dev/null || true
               sudo -n systemctl stop haxlab-worker.service 2>/dev/null || true
               sudo -n systemctl stop haxlab-autonomy.timer 2>/dev/null || true
-              echo "Ensuring FTMO autonomous timer is enabled and active."
               sudo -n systemctl enable --now ftmo-autonomous.timer
-            } >"$TMP/actions.txt" 2>&1
+              echo "HaxLab compute paused; FTMO timer enabled."
+              echo "=== HAXBALL TOKEN PUBLIC KEY ==="
+              sudo -n /usr/local/sbin/haxlab-actions-control live-host-keygen
 
-            sudo -n /usr/local/sbin/haxlab-actions-control live-host-keygen >"$TMP/public_key.txt" 2>&1
-
-            : >"$TMP/ftmo_burst.txt"
-            if [ "$BURST_TICKS" -gt 0 ]; then
-              for i in $(seq 1 "$BURST_TICKS"); do
-                echo "=== FTMO autonomous tick $i/$BURST_TICKS ===" >>"$TMP/ftmo_burst.txt"
-                set +e
-                sudo -n systemctl start ftmo-autonomous.service >>"$TMP/ftmo_burst.txt" 2>&1
-                rc=$?
-                set -e
-                echo "rc=$rc" >>"$TMP/ftmo_burst.txt"
-                ftmo_status >>"$TMP/ftmo_burst.txt" 2>&1 || true
-                if [ "$rc" -ne 0 ]; then
-                  break
-                fi
+              echo "=== FTMO BURST ==="
+              i=1
+              while [ "$i" -le "$BURST_TICKS" ]; do
+                echo "--- tick $i/$BURST_TICKS ---"
+                sudo -n systemctl start ftmo-autonomous.service || true
+                python3 -c 'import json; from pathlib import Path; p=Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json"); d=json.loads(p.read_text()) if p.exists() else {}; c=d.get("research_controller") or {}; g=c.get("generation_loop") or {}; print(json.dumps({"ok":d.get("ok"),"completed_at_utc":d.get("completed_at_utc"),"research":d.get("research"),"generation_loop":g,"live_trading_allowed":d.get("live_trading_allowed"),"broker_order_submission_allowed":d.get("broker_order_submission_allowed")},sort_keys=True))'
+                i=$((i+1))
               done
+            else
+              CIPHERTEXT="$(python3 -c 'import json; print(str(json.load(open(".github/vps-ops-request.json", encoding="utf-8")).get("ciphertext","")).strip())')"
+              echo "=== TOKEN INSTALL / ROOM START ==="
+              sudo -n /usr/local/sbin/haxlab-actions-control live-host-install-token "$CIPHERTEXT"
+              echo "=== LIVE HOST STATUS ==="
+              sudo -n /usr/local/sbin/haxlab-actions-control live-host-status || true
             fi
-          else
-            CIPHERTEXT="$(python3 - "$REQUEST" <<'PY'
-import json, re, sys
-raw=json.load(open(sys.argv[1], encoding="utf-8"))
-value=str(raw.get("ciphertext") or "").strip()
-if not (100 <= len(value) <= 1000) or re.fullmatch(r"[A-Za-z0-9+/=]+", value) is None:
-    raise SystemExit("invalid encrypted token payload")
-print(value)
-PY
-)"
-            sudo -n /usr/local/sbin/haxlab-actions-control live-host-install-token "$CIPHERTEXT" >"$TMP/token_install.txt" 2>&1
-            sudo -n /usr/local/sbin/haxlab-actions-control live-host-status >"$TMP/live_host_status.txt" 2>&1 || true
-          fi
 
-          snapshot_cpu >"$TMP/cpu_after.txt"
-          service_state >"$TMP/services_after.txt"
-          ftmo_status >"$TMP/ftmo_after.json" || true
-          systemctl list-timers --all --no-pager | grep -E 'ftmo-autonomous|haxlab-autonomy' >"$TMP/timers.txt" || true
-
-          python3 - "$PHASE" "$TMP" "$RESULT" <<'PY'
-import json, sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-phase=sys.argv[1]
-tmp=Path(sys.argv[2])
-result=Path(sys.argv[3])
-
-def text(name):
-    p=tmp/name
-    return p.read_text(encoding="utf-8", errors="replace") if p.exists() else None
-
-def json_file(name):
-    p=tmp/name
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {"raw": p.read_text(encoding="utf-8", errors="replace")}
-
-payload={
-  "schema_version":1,
-  "phase":phase,
-  "completed_at_utc":datetime.now(timezone.utc).isoformat(),
-  "cpu_before":text("cpu_before.txt"),
-  "services_before":text("services_before.txt"),
-  "actions":text("actions.txt"),
-  "public_key":text("public_key.txt"),
-  "ftmo_burst":text("ftmo_burst.txt"),
-  "token_install":text("token_install.txt"),
-  "live_host_status":text("live_host_status.txt"),
-  "cpu_after":text("cpu_after.txt"),
-  "services_after":text("services_after.txt"),
-  "ftmo_before":json_file("ftmo_before.json"),
-  "ftmo_after":json_file("ftmo_after.json"),
-  "timers":text("timers.txt"),
-}
-result.write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n", encoding="utf-8")
-PY
+            echo "=== CPU AFTER ==="
+            ps -eo pid,user,comm,%cpu,%mem,etime --sort=-%cpu | head -n 30
+            echo "=== SERVICES AFTER ==="
+            for u in haxlab-ingest.service haxlab-worker.service haxlab-analyzer.service haxlab-live-bot.service haxlab-autonomy.timer ftmo-autonomous.service ftmo-autonomous.timer; do
+              printf '%s=' "$u"; systemctl is-active "$u" 2>/dev/null || true
+            done
+            echo "=== FTMO STATUS AFTER ==="
+            cat /opt/ftmo-autonomous/.scratch/autonomy/status.json 2>/dev/null || true
+            echo "=== TIMERS ==="
+            systemctl list-timers --all --no-pager | grep -E 'ftmo-autonomous|haxlab-autonomy' || true
+          } >"$RESULT" 2>&1
 
       - name: Persist sanitized operation result
         shell: bash
@@ -191,7 +91,7 @@ PY
           set -euo pipefail
           git config user.name "zcloud-ops-bot"
           git config user.email "zcloud-ops-bot@users.noreply.github.com"
-          git add .github/vps-ops-result.json
+          git add .github/vps-ops-result.txt
           if git diff --cached --quiet; then
             exit 0
           fi
