@@ -49,7 +49,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)
 
-    def test_deploy_publishes_sanitized_green_evidence_for_exact_revision(self):
+    # Commit status is the durable, connector-readable production evidence surface.\n    def test_deploy_publishes_sanitized_green_evidence_for_exact_revision(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn("statuses: write", text)
         self.assertIn("Mark production deploy pending", text)
