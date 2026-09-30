@@ -120,6 +120,15 @@ PRECHANGE_REPLACEABLE_DRIFT = frozenset({
     "public/zcloud-worker.user.js",
     "firefox-extension/background.js",
 })
+# Service files are never generically replaceable drift. A failed guarded
+# promotion can, however, leave a selected service file already equal to the
+# exact next candidate while the LKG pointer still references the previous
+# tree. Permit that no-op reconciliation only when live and candidate bytes
+# are identical; arbitrary service drift remains fail-closed.
+EXACT_CANDIDATE_RECONCILABLE_DRIFT = frozenset({
+    "server.py",
+    "scripts/zcloud_recovery.py",
+})
 
 
 class PromotionError(RuntimeError):
@@ -203,6 +212,27 @@ def validate_candidate(candidate: Path, root: Path, paths: list[str]) -> dict[st
             raise PromotionError(f"live target is not a file: {rel}")
         hashes[rel] = sha256_file(source)
     return hashes
+
+
+def exact_candidate_reconcilable_drift(
+    candidate: Path,
+    root: Path,
+    paths: list[str],
+) -> list[str]:
+    allowed = []
+    for raw in paths:
+        rel = validate_relpath(raw)
+        if rel not in EXACT_CANDIDATE_RECONCILABLE_DRIFT:
+            continue
+        source = candidate / rel
+        target = root / rel
+        if (
+            source.is_file()
+            and target.is_file()
+            and sha256_file(source) == sha256_file(target)
+        ):
+            allowed.append(rel)
+    return allowed
 
 
 def config_changes(candidate: Path, root: Path, paths: list[str]) -> list[dict]:
@@ -932,6 +962,12 @@ def promote(
             rel for rel in normalized
             if rel in PRECHANGE_REPLACEABLE_DRIFT
         ]
+        allowed_prechange_drift.extend(
+            rel for rel in exact_candidate_reconcilable_drift(
+                candidate, root, normalized
+            )
+            if rel not in allowed_prechange_drift
+        )
         pre = run_prechange(
             effective_prechange,
             root,
