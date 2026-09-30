@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "phase": "inspect_prepare",
+  "burst_ticks": 12,
+  "requested_at": "2026-09-30T12:51:00Z",
+  "purpose": "Inspect VPS CPU, pause HaxLab compute, ensure FTMO autonomous timer, run bounded FTMO generation burst, prepare HaxBall token public key"
+}
