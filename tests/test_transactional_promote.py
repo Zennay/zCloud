@@ -456,6 +456,80 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_REPLACEABLE_DRIFT),
         )
 
+    def test_prechange_reconciles_only_exact_candidate_aligned_drift(self):
+        calls = []
+        original_run = promote.run
+        (self.root / "server.py").write_text("same-tested-bytes\n")
+        (self.candidate / "server.py").write_text("same-tested-bytes\n")
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertNotIn("server.py", calls[0])
+        self.assertIn("server.py", calls[1])
+        index = calls[1].index("--allow-change")
+        self.assertEqual("server.py", calls[1][index + 1])
+
+    def test_prechange_keeps_divergent_managed_drift_fail_closed(self):
+        calls = []
+        original_run = promote.run
+        (self.root / "server.py").write_text("unknown-live-drift\n")
+        (self.candidate / "server.py").write_text("green-candidate\n")
+
+        class Result:
+            returncode = 2
+            stdout = (
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}'
+            )
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        promote.run = fake_run
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.run_prechange(
+                    Path("/bin/prechange"),
+                    self.root,
+                    Path(self.tmp.name) / "state",
+                    candidate=self.candidate,
+                )
+        finally:
+            promote.run = original_run
+
+        self.assertEqual(1, len(calls))
+        self.assertNotIn("server.py", calls[0])
+
     def test_service_health_timeout_matches_systemd_start_budget(self):
         self.assertEqual(90.0, promote.SERVICE_HEALTH_TIMEOUT_SECONDS)
         self.assertEqual(
