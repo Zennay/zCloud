@@ -39,6 +39,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("Ensure Firefox automation service for guarded canaries", text)
         self.assertIn("systemctl --user start chatgpt-firefox.service", text)
         self.assertIn("FIREFOX_AUTOMATION_SERVICE=recovered", text)
+        self.assertIn("Suspend external self-heal during guarded deploy", text)
+        self.assertIn('touch "$sentinel"', text)
+        self.assertIn("steps.self_heal_guard.outputs.created == 'true'", text)
+        self.assertIn("rm -f /home/ubuntu/zennay-cloud/.disable-self-heal", text)
+        self.assertIn("Install aligned self-heal probe", text)
+        self.assertIn('sudo -n install -m 0755 "$GITHUB_WORKSPACE/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal', text)
         self.assertIn("systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100", text)
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)

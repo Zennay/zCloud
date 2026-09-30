@@ -463,6 +463,13 @@ class TransactionalPromotionTests(unittest.TestCase):
             promote.wait_http.__defaults__[0],
         )
 
+    def test_health_request_timeout_matches_live_probe_budget(self):
+        self.assertEqual(8.0, promote.HEALTH_REQUEST_TIMEOUT_SECONDS)
+        self.assertEqual(
+            promote.HEALTH_REQUEST_TIMEOUT_SECONDS,
+            promote.http_healthy.__defaults__[1],
+        )
+
     def test_prechange_retries_transient_http_only_failure(self):
         calls = []
         original_run = promote.run
