@@ -16,7 +16,7 @@ flock -n 9 || exit 0
 
 healthy() {
   systemctl is-active --quiet "${SERVICE}" &&
-    curl -fsS --max-time 5 "${URL}" >/dev/null
+    curl -fsS --max-time 8 "${URL}" >/dev/null
 }
 
 heal_zcloud() {
