@@ -1,0 +1,65 @@
+name: FTMO bounded burst once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-burst-once.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  burst:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - name: Run bounded FTMO autonomous burst
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== PRE ==="
+          systemctl is-active ftmo-autonomous.timer || true
+          systemctl is-active haxlab-autonomy.timer || true
+          pgrep -af '[h]axlab-train-bc' || true
+          sudo -n systemctl enable --now ftmo-autonomous.timer
+          for i in $(seq 1 12); do
+            echo "=== TICK $i/12 ==="
+            set +e
+            sudo -n systemctl start ftmo-autonomous.service
+            rc=$?
+            set -e
+            echo "service_rc=$rc"
+            python3 - <<'PY'
+import json
+from pathlib import Path
+p=Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json")
+d=json.loads(p.read_text()) if p.exists() else {}
+r=d.get("research") or {}
+c=d.get("research_controller") or {}
+g=c.get("generation_loop") or {}
+print(json.dumps({
+  "ok":d.get("ok"),
+  "completed_at_utc":d.get("completed_at_utc"),
+  "generation_number":r.get("generation_number"),
+  "generation_id":r.get("generation_id"),
+  "next_stage":r.get("next_stage"),
+  "missing_evidence":r.get("missing_evidence"),
+  "controller_action":c.get("action"),
+  "loop_action":g.get("action"),
+  "loop_stage":g.get("stage"),
+  "candidates":g.get("candidate_count"),
+  "passes":g.get("pass_count"),
+  "live_trading_allowed":d.get("live_trading_allowed"),
+  "broker_order_submission_allowed":d.get("broker_order_submission_allowed"),
+}, sort_keys=True))
+PY
+            if [ "$rc" -ne 0 ]; then
+              journalctl -u ftmo-autonomous.service -n 30 --no-pager || true
+              exit "$rc"
+            fi
+          done
+          echo "=== POST ==="
+          systemctl is-active ftmo-autonomous.timer
+          pgrep -af '[h]axlab-train-bc' || true
+          ps -eo pid,user,comm,%cpu,%mem,etime --sort=-%cpu | head -n 20
