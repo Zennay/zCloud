@@ -1,0 +1,32 @@
+name: zSSH public header auth verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-header-auth-verify.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Verify active release and public static-header MCP path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(id -un)" = "ubuntu"
+          systemctl --user is-active --quiet zssh.service
+          test -f /home/ubuntu/.config/zssh/gateway.env
+          set -a
+          source /home/ubuntu/.config/zssh/gateway.env
+          set +a
+          test -n "$ZSSH_API_KEY"
+          curl --fail --silent --show-error https://198.244.191.182/health >/dev/null
+          ZSSH_MCP_URL="https://198.244.191.182/mcp" \
+          ZSSH_MCP_API_KEY="$ZSSH_API_KEY" \
+          node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
