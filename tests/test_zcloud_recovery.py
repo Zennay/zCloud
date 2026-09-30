@@ -23,6 +23,31 @@ class RecoveryTests(unittest.TestCase):
         )
 
 
+    def test_wait_http_healthy_retries_transient_status_failure(self):
+        calls = []
+        with patch.object(
+            recovery,
+            "http_healthy",
+            side_effect=lambda *args, **kwargs: len(calls) > 0,
+        ) as probe, patch.object(recovery.time, "sleep", return_value=None):
+            calls.append("first")
+            # Reset the visible marker so the mock returns False once, then True.
+            calls.clear()
+            probe.side_effect = [False, True]
+            self.assertTrue(
+                recovery.wait_http_healthy(timeout=1.0, interval=0.01)
+            )
+            self.assertEqual(2, probe.call_count)
+
+    def test_wait_http_healthy_remains_bounded_when_endpoint_stays_down(self):
+        ticks = iter([0.0, 0.25, 0.75, 1.25])
+        with patch.object(recovery, "http_healthy", return_value=False), \
+             patch.object(recovery.time, "sleep", return_value=None), \
+             patch.object(recovery.time, "monotonic", side_effect=lambda: next(ticks)):
+            self.assertFalse(
+                recovery.wait_http_healthy(timeout=1.0, interval=0.1)
+            )
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-recovery-test-")
         self.base = Path(self.tmp.name)
