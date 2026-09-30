@@ -47,6 +47,22 @@ jobs:
             echo "CURRENT_MAIN_CONFIRMED sha=$current"
           fi
 
+      - name: Suspend external self-heal during guarded deploy
+        id: self_heal_guard
+        if: steps.freshness.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sentinel="/home/ubuntu/zennay-cloud/.disable-self-heal"
+          if [[ -e "$sentinel" ]]; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "SELF_HEAL_GUARD=preexisting"
+          else
+            touch "$sentinel"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            echo "SELF_HEAL_GUARD=created"
+          fi
+
       - name: Quarantine stale selector backup before guarded promotion
         if: steps.freshness.outputs.deploy == 'true'
         shell: bash
@@ -132,3 +148,19 @@ jobs:
           export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
           systemctl --user daemon-reload
           systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100
+
+      - name: Install aligned self-heal probe
+        if: steps.freshness.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n install -m 0755 "$GITHUB_WORKSPACE/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal
+          echo "SELF_HEAL_PROBE_INSTALLED=max_time_8"
+
+      - name: Resume external self-heal
+        if: always() && steps.freshness.outputs.deploy == 'true' && steps.self_heal_guard.outputs.created == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /home/ubuntu/zennay-cloud/.disable-self-heal
+          echo "SELF_HEAL_GUARD=released"
