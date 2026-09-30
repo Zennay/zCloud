@@ -25,11 +25,11 @@ AUTONOMY_TICK_SECONDS = 5
 AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait-human','autonomy-complete')
 # Compatibility: this remains the TOTAL number of dynamic browser workers.
 # Provider-specific counts live in DYNAMIC_CHATGPT_WORKERS / DYNAMIC_CLAUDE_WORKERS.
-GLOBAL_CHATGPT_WORKER_LIMIT = 1
+GLOBAL_CHATGPT_WORKER_LIMIT = 3
 MAX_CHATGPT_WORKERS = 8
 MAX_DYNAMIC_WORKERS_PER_PROVIDER = 8
-DYNAMIC_CHATGPT_WORKERS = 1
-DYNAMIC_CLAUDE_WORKERS = 0
+DYNAMIC_CHATGPT_WORKERS = 2
+DYNAMIC_CLAUDE_WORKERS = 1
 DYNAMIC_CHATGPT_COOLDOWN_SECONDS = 120
 DYNAMIC_CLAUDE_COOLDOWN_SECONDS = 120
 DYNAMIC_WORKER_CHECK_INTERVAL_MS = 5000
@@ -367,13 +367,10 @@ def _dynamic_int(value,name,minimum,maximum):
     return parsed
 
 def _dynamic_provider_counts():
-    total=max(0,int(GLOBAL_CHATGPT_WORKER_LIMIT))
-    chat=max(0,min(total,int(DYNAMIC_CHATGPT_WORKERS)))
-    claude=max(0,min(total-chat,int(DYNAMIC_CLAUDE_WORKERS)))
-    # Legacy tests/callers may only mutate GLOBAL_CHATGPT_WORKER_LIMIT.
-    # Any unclassified slots remain ChatGPT to preserve old behavior.
-    if chat + claude < total:
-        chat += total - chat - claude
+    # Provider counts are independent sources of truth. The legacy global
+    # value is derived from these counts, never used to repartition them.
+    chat=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(DYNAMIC_CHATGPT_WORKERS)))
+    claude=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(DYNAMIC_CLAUDE_WORKERS)))
     return {'chatgpt':chat,'claude':claude}
 
 def dynamic_provider_for_global_slot(slot):
@@ -397,9 +394,10 @@ def dynamic_provider_url(provider,conversation_id=''):
 
 def dynamic_worker_settings():
     counts=_dynamic_provider_counts()
+    total=counts['chatgpt']+counts['claude']
     return {
-        'count':int(GLOBAL_CHATGPT_WORKER_LIMIT),
-        'enabled':bool(GLOBAL_CHATGPT_WORKER_LIMIT > 0),
+        'count':int(total),
+        'enabled':bool(total > 0),
         'max_workers':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER*2),
         'max_workers_per_provider':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER),
         'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
@@ -580,8 +578,8 @@ def init_db():
         try: legacy_count=max(0,min(MAX_DYNAMIC_WORKERS_PER_PROVIDER,int(legacy_row['value'])))
         except Exception: legacy_count=1
         defaults={
-            DYNAMIC_WORKER_SETTING_KEYS['chatgpt_count']:legacy_count,
-            DYNAMIC_WORKER_SETTING_KEYS['claude_count']:0,
+            DYNAMIC_WORKER_SETTING_KEYS['chatgpt_count']:DYNAMIC_CHATGPT_WORKERS,
+            DYNAMIC_WORKER_SETTING_KEYS['claude_count']:DYNAMIC_CLAUDE_WORKERS,
             DYNAMIC_WORKER_SETTING_KEYS['chatgpt_cooldown_seconds']:PORTFOLIO_AI_COOLDOWN_SECONDS,
             DYNAMIC_WORKER_SETTING_KEYS['claude_cooldown_seconds']:PORTFOLIO_AI_COOLDOWN_SECONDS,
             DYNAMIC_WORKER_SETTING_KEYS['check_interval_ms']:5000,
@@ -600,8 +598,8 @@ def init_db():
         def setting_int(name,default,minimum,maximum):
             try: return max(minimum,min(maximum,int(rows.get(DYNAMIC_WORKER_SETTING_KEYS[name],default))))
             except Exception: return default
-        DYNAMIC_CHATGPT_WORKERS=setting_int('chatgpt_count',legacy_count,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
-        DYNAMIC_CLAUDE_WORKERS=setting_int('claude_count',0,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CHATGPT_WORKERS=setting_int('chatgpt_count',DYNAMIC_CHATGPT_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CLAUDE_WORKERS=setting_int('claude_count',DYNAMIC_CLAUDE_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
         DYNAMIC_CHATGPT_COOLDOWN_SECONDS=setting_int('chatgpt_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_CLAUDE_COOLDOWN_SECONDS=setting_int('claude_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_WORKER_CHECK_INTERVAL_MS=setting_int('check_interval_ms',5000,1000,60000)
