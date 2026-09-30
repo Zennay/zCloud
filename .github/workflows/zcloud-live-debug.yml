@@ -1,5 +1,5 @@
 name: zCloud live dynamic worker debug
-# retrigger: inspect zCloud service health before worker activation
+# retrigger: inspect backend restart failure for permanent VPS deploylane
 
 on:
   push:
