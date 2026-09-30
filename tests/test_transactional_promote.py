@@ -385,6 +385,35 @@ class TransactionalPromotionTests(unittest.TestCase):
             command[command.index("--projects") + 1],
         )
 
+    def test_lkg_capture_can_use_candidate_recovery_helper(self):
+        calls = []
+        original_run = promote.run
+
+        class Result:
+            returncode = 0
+            stdout = '{"format_version":1,"snapshot_id":"test"}'
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        helper = self.candidate / "scripts" / "zcloud_recovery.py"
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text("# helper\n")
+        promote.run = fake_run
+        try:
+            result = promote.capture_lkg(
+                self.root,
+                Path(self.tmp.name) / "state",
+                "green",
+                recovery_script=helper,
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertEqual("test", result["snapshot_id"])
+        self.assertEqual(str(helper), calls[0][1])
+
     def test_prechange_only_allows_selected_replaceable_seed_drift(self):
         calls = []
         original_run = promote.run

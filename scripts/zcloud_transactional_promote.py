@@ -445,10 +445,16 @@ def run_config_validation(
     return payload
 
 
-def capture_lkg(root: Path, state: Path, evidence: str) -> dict:
+def capture_lkg(
+    root: Path,
+    state: Path,
+    evidence: str,
+    recovery_script: Path | None = None,
+) -> dict:
+    helper = recovery_script or (root / "scripts/zcloud_recovery.py")
     proc = run([
         sys.executable,
-        str(root / "scripts/zcloud_recovery.py"),
+        str(helper),
         "--root", str(root),
         "--state-dir", str(state),
         "capture",
@@ -691,6 +697,13 @@ def promote(
     if prechange == DEFAULT_PRECHANGE and candidate_prechange.is_file():
         effective_prechange = candidate_prechange
 
+    candidate_recovery = candidate / "scripts/zcloud_recovery.py"
+    effective_recovery = (
+        candidate_recovery
+        if candidate_recovery.is_file()
+        else root / "scripts/zcloud_recovery.py"
+    )
+
     with promotion_lock(state):
         allowed_prechange_drift = [
             rel for rel in normalized
@@ -722,6 +735,7 @@ def promote(
             state,
             "pre-transactional-promotion: PRECHANGE_GREEN; "
             f"candidate={candidate.name}; paths={','.join(normalized)}",
+            recovery_script=effective_recovery,
         )
         tx_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{os.getpid()}"
         tx_root = state / "promotion-transactions" / tx_id
@@ -773,6 +787,7 @@ def promote(
                 state,
                 "transactional promotion green: POSTDEPLOY_GREEN; "
                 f"tx={tx_id}; mapping={mapping_sha}",
+                recovery_script=effective_recovery,
             )
             write_json_line(
                 log,
