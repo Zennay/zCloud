@@ -476,7 +476,7 @@ class TransactionalPromotionTests(unittest.TestCase):
         responses = [
             Result(
                 2,
-                '{"ok":false,"checks":[{"name":"zcloud_http","ok":false,"detail":"http://127.0.0.1:8765/api/status"}]}',
+                '{"ok":false,"checks":[{"name":"zcloud_http","ok":false,"detail":"http://127.0.0.1:8765/api/health"}]}',
             ),
             Result(0, '{"ok":true,"checks":[{"name":"zcloud_http","ok":true}]}'),
         ]
