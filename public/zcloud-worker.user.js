@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.1.7
-// @description  Database-backed ChatGPT dynamic worker for zCloud.
-// @match        https://chatgpt.com/*
+// @version      1.3.0
+// @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
+// @match        http://*/*
+// @match        https://*/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -16,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.1.7";
+  const SCRIPT_VERSION = "1.3.0";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -36,10 +40,14 @@
     '[data-testid*="thinking"]',
     '[data-testid*="reasoning"]'
   ].join(",");
-  const REFRESH_MS = 5000;
-  const TICK_MS = 1500;
-  const HEARTBEAT_MS = 30000;
-  const GENERATION_START_TIMEOUT_MS = 120000;
+  const DEFAULT_TIMING = Object.freeze({
+    refreshMs: 5000,
+    tickMs: 1500,
+    heartbeatMs: 30000,
+    generationStartTimeoutMs: 120000
+  });
+  const TAB_CLAIM_LEASE_MS = 90000;
+  let timing = {...DEFAULT_TIMING};
 
   let target = null;
   let bridgedProjectId = "";
@@ -88,9 +96,206 @@
     });
   }
 
+  function provider() {
+    const host = String(location.hostname || "").toLowerCase();
+    if (host === "claude.ai" || host === "claude.com" || host.endsWith(".claude.ai") || host.endsWith(".claude.com")) return "claude";
+    if (host === "chatgpt.com" || host.endsWith(".chatgpt.com")) return "chatgpt";
+    return "other";
+  }
+
+  function isWorkerProvider(value = provider()) {
+    return value === "chatgpt" || value === "claude";
+  }
+
+  function normalizeProvider(value, fallback = "chatgpt") {
+    const text = String(value || "").trim().toLowerCase();
+    if (text === "claude" || text === "anthropic") return "claude";
+    if (text === "chatgpt" || text === "openai") return "chatgpt";
+    return fallback;
+  }
+
   function conversationId() {
-    const match = location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i);
-    return match ? match[1] : "";
+    const current = provider();
+    if (current === "claude") {
+      const match = location.pathname.match(/^\/chat\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i);
+      return match ? match[1] : "";
+    }
+    if (current === "chatgpt") {
+      const match = location.pathname.match(/^\/c\/([0-9a-f-]{20,})(?:\/|$)/i);
+      return match ? match[1] : "";
+    }
+    return "";
+  }
+
+  function isNewChatPage(providerName = provider()) {
+    if (providerName === "claude") return location.pathname === "/new" || location.pathname === "/";
+    if (providerName === "chatgpt") return location.pathname === "/" || location.pathname === "";
+    return false;
+  }
+
+  function newChatUrl(providerName = provider()) {
+    return normalizeProvider(providerName) === "claude" ? "https://claude.ai/new" : "https://chatgpt.com/";
+  }
+
+  function conversationUrl(conversationIdValue, providerName = provider()) {
+    const expected = normalizeProvider(providerName);
+    const id = encodeURIComponent(String(conversationIdValue || "").trim());
+    if (!id) return newChatUrl(expected);
+    return expected === "claude"
+      ? "https://claude.ai/chat/" + id
+      : "https://chatgpt.com/c/" + id;
+  }
+
+  function candidateProvider(candidate) {
+    if (!candidate || typeof candidate !== "object") return "chatgpt";
+    const explicit = String(candidate.provider || candidate.ai_provider || candidate.chat_provider || candidate.runner_provider || "").trim().toLowerCase();
+    if (explicit === "claude" || explicit === "anthropic") return "claude";
+    if (explicit === "chatgpt" || explicit === "openai") return "chatgpt";
+    const urlValue = String(candidate.conversation_url || candidate.target_url || candidate.url || "").trim();
+    if (urlValue) {
+      try {
+        const host = new URL(urlValue, location.href).hostname.toLowerCase();
+        if (host === "claude.ai" || host === "claude.com" || host.endsWith(".claude.ai") || host.endsWith(".claude.com")) return "claude";
+        if (host === "chatgpt.com" || host.endsWith(".chatgpt.com")) return "chatgpt";
+      } catch (_) {}
+    }
+    return "chatgpt";
+  }
+
+  function navigationUrlForCandidate(candidate, token) {
+    const expected = candidateProvider(candidate);
+    const base = candidate?.conversation_id
+      ? conversationUrl(candidate.conversation_id, expected)
+      : newChatUrl(expected);
+    try {
+      const url = new URL(base);
+      const projectId = String(candidate?.project_id || "").trim();
+      if (projectId) url.searchParams.set("zcloud_worker", projectId);
+      if (token) url.searchParams.set("zcloud_tab", token);
+      return url.toString();
+    } catch (_) {
+      return base;
+    }
+  }
+
+  function randomToken() {
+    try {
+      const bytes = new Uint8Array(12);
+      crypto.getRandomValues(bytes);
+      return [...bytes].map(value => value.toString(16).padStart(2, "0")).join("");
+    } catch (_) {
+      return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+    }
+  }
+
+  function readUrlValue(name) {
+    try { return String(new URL(location.href).searchParams.get(name) || "").trim(); }
+    catch (_) { return ""; }
+  }
+
+  let tabToken = readUrlValue("zcloud_tab");
+  try {
+    if (!tabToken) tabToken = sessionStorage.getItem("zcloud-tab-token") || "";
+    if (!tabToken) tabToken = randomToken();
+    sessionStorage.setItem("zcloud-tab-token", tabToken);
+  } catch (_) {
+    if (!tabToken) tabToken = randomToken();
+  }
+
+  function pendingProjectId() {
+    const fromUrl = readUrlValue("zcloud_worker");
+    if (fromUrl) return fromUrl;
+    try { return sessionStorage.getItem("zcloud-pending-project") || ""; }
+    catch (_) { return ""; }
+  }
+
+  function setPendingProject(projectId) {
+    try { sessionStorage.setItem("zcloud-pending-project", String(projectId || "")); } catch (_) {}
+  }
+
+  function clearNavigationMarkers() {
+    try { sessionStorage.removeItem("zcloud-pending-project"); } catch (_) {}
+    try {
+      const url = new URL(location.href);
+      let changed = false;
+      for (const key of ["zcloud_worker", "zcloud_tab"]) {
+        if (url.searchParams.has(key)) { url.searchParams.delete(key); changed = true; }
+      }
+      if (changed) history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+    } catch (_) {}
+  }
+
+  function claimKey(projectId) {
+    return "zcloud-tab-claim:" + String(projectId || "");
+  }
+
+  function readClaim(projectId) {
+    try {
+      const value = GM_getValue(claimKey(projectId), null);
+      return value && typeof value === "object" ? value : null;
+    } catch (_) { return null; }
+  }
+
+  function claimCandidate(candidate) {
+    const projectId = String(candidate?.project_id || "");
+    if (!projectId) return false;
+    const current = readClaim(projectId);
+    const now = Date.now();
+    if (current && current.token !== tabToken && Number(current.expiresAt || 0) > now) return false;
+    try {
+      GM_setValue(claimKey(projectId), {
+        token: tabToken,
+        expiresAt: now + TAB_CLAIM_LEASE_MS,
+        provider: candidateProvider(candidate),
+        href: location.href
+      });
+      const verified = readClaim(projectId);
+      return !!verified && verified.token === tabToken;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function renewClaim(candidate = target) {
+    const projectId = String(candidate?.project_id || "");
+    if (!projectId) return;
+    const current = readClaim(projectId);
+    if (current && current.token !== tabToken && Number(current.expiresAt || 0) > Date.now()) return;
+    try {
+      GM_setValue(claimKey(projectId), {
+        token: tabToken,
+        expiresAt: Date.now() + TAB_CLAIM_LEASE_MS,
+        provider: candidateProvider(candidate),
+        href: location.href
+      });
+    } catch (_) {}
+  }
+
+  function releaseClaim(candidate = target) {
+    const projectId = String(candidate?.project_id || "");
+    if (!projectId) return;
+    const current = readClaim(projectId);
+    if (current && current.token === tabToken) {
+      try { GM_deleteValue(claimKey(projectId)); } catch (_) {}
+    }
+  }
+
+  function clampTiming(value, fallback, min, max) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.round(parsed))) : fallback;
+  }
+
+  function applyRuntimeSettings(payload) {
+    const cfg = payload?.dynamic_workers || payload?.runner_settings || {};
+    const next = {
+      refreshMs: clampTiming(cfg.check_interval_ms ?? cfg.refresh_ms, DEFAULT_TIMING.refreshMs, 1000, 60000),
+      tickMs: clampTiming(cfg.tick_interval_ms, DEFAULT_TIMING.tickMs, 250, 10000),
+      heartbeatMs: clampTiming(cfg.heartbeat_interval_ms, DEFAULT_TIMING.heartbeatMs, 5000, 300000),
+      generationStartTimeoutMs: clampTiming(cfg.generation_start_timeout_ms, DEFAULT_TIMING.generationStartTimeoutMs, 10000, 600000)
+    };
+    const changed = Object.keys(next).some(key => next[key] !== timing[key]);
+    timing = next;
+    if (changed && (refreshTimer || tickTimer || heartbeatTimer)) scheduleTimers();
   }
 
   function baseProjectId() {
@@ -137,22 +342,66 @@
       if (target) await status("userscript-config-unavailable", {error: String(error.message || error)});
       return;
     }
+    applyRuntimeSettings(payload);
     const projects = payload.projects || {};
+    const active = Object.values(projects).filter(item => item?.active === true);
+    const ready = active.filter(assignmentReady);
+    const pending = pendingProjectId();
     let next = null;
-    if (bridgedProjectId && projects[bridgedProjectId]) next = projects[bridgedProjectId];
-    if (!next) {
+
+    if (pending && projects[pending] && claimCandidate(projects[pending])) next = projects[pending];
+    if (!next && bridgedProjectId && projects[bridgedProjectId] && claimCandidate(projects[bridgedProjectId])) next = projects[bridgedProjectId];
+
+    const currentProvider = provider();
+    if (!next && isWorkerProvider(currentProvider)) {
       const cid = conversationId();
-      if (cid) next = Object.values(projects).find(item => item?.conversation_id === cid) || null;
+      if (cid) {
+        const matched = active.find(item => candidateProvider(item) === currentProvider && item?.conversation_id === cid) || null;
+        if (matched && claimCandidate(matched)) next = matched;
+      }
     }
-    if (!next && target?.project_id && projects[target.project_id]) next = projects[target.project_id];
+
+    if (!next && target?.project_id && projects[target.project_id] && claimCandidate(projects[target.project_id])) {
+      next = projects[target.project_id];
+    }
+
     if (!next) {
+      const ordered = [
+        ...ready.filter(item => candidateProvider(item) === currentProvider),
+        ...ready.filter(item => candidateProvider(item) !== currentProvider),
+        ...active.filter(item => candidateProvider(item) === currentProvider),
+        ...active.filter(item => candidateProvider(item) !== currentProvider)
+      ];
+      next = ordered.find(claimCandidate) || null;
+    }
+
+    if (!next) {
+      releaseClaim(target);
       target = null;
+      draining = false;
       return;
     }
 
+    const expectedProvider = candidateProvider(next);
+    const currentConversation = conversationId();
+    const onRightPage = next.conversation_id
+      ? currentProvider === expectedProvider && currentConversation === String(next.conversation_id)
+      : currentProvider === expectedProvider && isNewChatPage(expectedProvider);
+
+    if (!onRightPage) {
+      if (!generationActive() && !sending) {
+        setPendingProject(next.project_id);
+        renewClaim(next);
+        location.assign(navigationUrlForCandidate(next, tabToken));
+      }
+      return;
+    }
+
+    clearNavigationMarkers();
     const previousConversation = target?.conversation_id || "";
     target = {...target, ...next};
     draining = target.desired_state === "draining";
+    renewClaim(target);
 
     const cid = conversationId();
     if (cid && cid !== previousConversation && cid !== target.conversation_id) {
@@ -172,30 +421,108 @@
   }
 
   function stopButton() {
-    return document.querySelector('button[data-testid="stop-button"]') ||
-      [...document.querySelectorAll("button")].find(button => {
-        const label = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
-        return label.includes("stop") || label.includes("stoppen");
-      }) || null;
+    const current = provider();
+    if (current === "other") return null;
+    const selectors = current === "claude"
+      ? [
+          'button[data-testid="chat-input-stop"]',
+          'button[data-testid="stop-button"]',
+          'button[data-testid*="stop"]',
+          'button[data-testid*="cancel"]',
+          'button[aria-label="Stop response"]',
+          'button[aria-label="Stop generating"]',
+          'button[aria-label*="Stop"]',
+          'button[aria-label*="stop"]'
+        ]
+      : ['button[data-testid="stop-button"]'];
+    const explicit = document.querySelector(selectors.join(","));
+    if (explicit && visible(explicit)) return explicit;
+    return [...document.querySelectorAll("button")].find(button => {
+      if (!visible(button)) return false;
+      const text = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
+      return /(?:^|\s)(?:stop|stoppen)(?:\s|$)/i.test(text) || /stop (?:response|generating|generation)/i.test(text);
+    }) || null;
+  }
+
+  function streamingNode() {
+    if (provider() !== "claude") return null;
+    return [...document.querySelectorAll('[data-is-streaming]')].find(el => {
+      if (!visible(el)) return false;
+      const value = String(el.getAttribute("data-is-streaming") || "").trim().toLowerCase();
+      return value === "" || value === "true" || value === "1" || value === "yes";
+    }) || null;
+  }
+
+  function generationActive() {
+    if (!isWorkerProvider()) return false;
+    return !!stopButton() || !!streamingNode();
   }
 
   function composer() {
+    const current = provider();
+    if (current === "other") return null;
+    if (current === "claude") {
+      return document.querySelector('[data-testid="chat-input"][contenteditable="true"]') ||
+        document.querySelector('[contenteditable="true"][role="textbox"][aria-label*="Claude"]') ||
+        document.querySelector('[data-cds="Editor"][contenteditable="true"]') ||
+        document.querySelector('[contenteditable="true"][role="textbox"]');
+    }
     return document.querySelector("#prompt-textarea") ||
       document.querySelector('[contenteditable="true"][role="textbox"]') ||
       document.querySelector("textarea");
   }
 
   function sendButton() {
+    const current = provider();
+    if (current === "other") return null;
+    if (current === "claude") {
+      return document.querySelector('button[data-testid="chat-input-send"]') ||
+        document.querySelector('button[aria-label="Send message"]') ||
+        [...document.querySelectorAll("button")].find(button => {
+          if (!visible(button)) return false;
+          const text = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
+          return text.includes("send message") || text === "send";
+        }) || null;
+    }
     return document.querySelector('button[data-testid="send-button"]') ||
       [...document.querySelectorAll("button")].find(button => {
-        const label = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
-        return label.includes("send") || label.includes("verzenden");
+        const text = ((button.getAttribute("aria-label") || "") + " " + (button.textContent || "")).toLowerCase();
+        return text.includes("send") || text.includes("verzenden");
       }) || null;
   }
 
   function assistantText() {
+    const current = provider();
+    if (current === "other") return "";
+    if (current === "claude") {
+      const responseSelector = [
+        '.font-claude-response',
+        '[data-testid="ai-message"]',
+        '[data-testid="message-assistant"]',
+        '[data-testid="assistant-message"]',
+        '[data-testid^="assistant-message"]',
+        '[data-testid*="assistant-response"]',
+        '[data-testid*="claude-response"]',
+        '.font-claude-message',
+        '.assistant-message'
+      ].join(",");
+      const turns = [...document.querySelectorAll('[data-testid^="conversation-turn"],[data-testid*="conversation-turn"],[data-test-render-count]')];
+      for (let i = turns.length - 1; i >= 0; i -= 1) {
+        const response = turns[i].querySelector(responseSelector);
+        if (response) return String(response.innerText || response.textContent || "").trim();
+      }
+      const nodes = [...document.querySelectorAll(responseSelector)].filter(visible);
+      return nodes.length ? String(nodes[nodes.length - 1].innerText || nodes[nodes.length - 1].textContent || "").trim() : "";
+    }
     const nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
     return nodes.length ? String(nodes[nodes.length - 1].innerText || "").trim() : "";
+  }
+
+  function buttonUnavailable(button) {
+    if (!button) return true;
+    return !!button.disabled ||
+      button.getAttribute?.("aria-disabled") === "true" ||
+      button.hasAttribute?.("data-disabled");
   }
 
   function visible(el) {
@@ -404,6 +731,7 @@
   }
 
   async function ensureHighThinking() {
+    if (provider() !== "chatgpt") return true;
     if (highVerified()) {
       lastThinkingDiagnostic = "";
       return true;
@@ -503,11 +831,12 @@
       title: document.title,
       event,
       at: new Date().toISOString(),
-      generating: !!stopButton(),
+      generating: generationActive(),
       sending,
       progressAt: new Date(lastProgressAt).toISOString(),
       assistantCharacters: text.length,
       runner: "violentmonkey",
+      provider: isWorkerProvider() ? provider() : candidateProvider(target),
       runnerVersion: SCRIPT_VERSION,
       ...extra
     };
@@ -568,21 +897,24 @@
   }
 
   async function sendPrompt(reason) {
-    if (!target || !assignmentReady(target) || sending || draining || stopButton()) return false;
+    const currentProvider = provider();
+    if (!target || !assignmentReady(target) || !isWorkerProvider(currentProvider) || candidateProvider(target) !== currentProvider || sending || draining || generationActive()) return false;
     const prompt = promptWithHandoffAndRecovery(target.prompt);
     if (!prompt) return false;
 
     sending = true;
     try {
-      const highReady = await ensureHighThinking();
-      if (!highReady) {
-        const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-        await status("send-blocked", {
-          reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
-          error: diagnostic,
-          required: REQUIRED_THINKING_EFFORT
-        });
-        return false;
+      if (currentProvider === "chatgpt") {
+        const highReady = await ensureHighThinking();
+        if (!highReady) {
+          const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
+          await status("send-blocked", {
+            reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
+            error: diagnostic,
+            required: REQUIRED_THINKING_EFFORT
+          });
+          return false;
+        }
       }
 
       if (!(await fill(prompt))) {
@@ -590,7 +922,7 @@
         return false;
       }
       const button = sendButton();
-      if (!button || button.disabled) {
+      if (buttonUnavailable(button)) {
         await status("send-blocked", {reason: "send-button-unavailable"});
         return false;
       }
@@ -601,12 +933,12 @@
       lastPromptSentAt = Date.now();
       lastProgressAt = Date.now();
       awaitingGeneration = true;
-      generationDeadline = Date.now() + GENERATION_START_TIMEOUT_MS;
+      generationDeadline = Date.now() + timing.generationStartTimeoutMs;
       sawGeneration = false;
       finishedAt = 0;
       await status("prompt-sent", {
         reason,
-        thinkingEffort: REQUIRED_THINKING_EFFORT
+        thinkingEffort: currentProvider === "chatgpt" ? REQUIRED_THINKING_EFFORT : "provider-default"
       });
       return true;
     } finally {
@@ -724,7 +1056,7 @@
 
     await handleCommands();
 
-    const generating = !!stopButton();
+    const generating = generationActive();
     const text = assistantText();
     const now = Date.now();
 
@@ -794,7 +1126,8 @@
   async function heartbeat() {
     readBridge();
     if (!target) return;
-    await status("heartbeat", {reason: "violentmonkey-primary-runner"});
+    renewClaim(target);
+    await status("heartbeat", {reason: "violentmonkey-primary-runner", provider: provider()});
   }
 
   function installBridgeListeners() {
@@ -809,19 +1142,28 @@
     });
   }
 
+  function scheduleTimers() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    if (tickTimer) clearInterval(tickTimer);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    refreshTimer = setInterval(() => refreshTarget().catch(() => {}), timing.refreshMs);
+    tickTimer = setInterval(() => tick().catch(() => {}), timing.tickMs);
+    heartbeatTimer = setInterval(() => heartbeat().catch(() => {}), timing.heartbeatMs);
+  }
+
   async function start() {
     document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready", SCRIPT_VERSION);
+    document.documentElement?.setAttribute("data-zcloud-provider", provider());
     window.dispatchEvent(new Event("zcloud-violentmonkey-ready"));
     installBridgeListeners();
     readBridge();
     await refreshTarget();
     await status("runner-started", {
       reason: "violentmonkey-primary-runner",
-      scriptVersion: SCRIPT_VERSION
+      scriptVersion: SCRIPT_VERSION,
+      provider: isWorkerProvider() ? provider() : candidateProvider(target)
     });
-    refreshTimer = setInterval(() => refreshTarget().catch(() => {}), REFRESH_MS);
-    tickTimer = setInterval(() => tick().catch(() => {}), TICK_MS);
-    heartbeatTimer = setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_MS);
+    scheduleTimers();
   }
 
   start().catch(() => {});
