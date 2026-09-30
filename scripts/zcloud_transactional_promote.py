@@ -410,7 +410,7 @@ def mapping_snapshot(db_path: Path) -> dict:
         conn.execute("BEGIN")
         targets = [
             dict(row) for row in conn.execute(
-                "SELECT project_id,active,worker_count,conversation_id "
+                "SELECT project_id,conversation_id "
                 "FROM runner_targets ORDER BY project_id"
             )
         ]
@@ -533,10 +533,6 @@ def explain_mapping_advance(before: dict, after: dict, db_path: Path) -> dict:
     for project_id in sorted(before_targets):
         old = before_targets[project_id]
         new = after_targets[project_id]
-        if int(old.get("active") or 0) != int(new.get("active") or 0):
-            return {"ok": False, "reason": "target_active_changed"}
-        if int(old.get("worker_count") or 0) != int(new.get("worker_count") or 0):
-            return {"ok": False, "reason": "target_worker_count_changed"}
         old_cid = str(old.get("conversation_id") or "")
         new_cid = str(new.get("conversation_id") or "")
         if old_cid != new_cid:
