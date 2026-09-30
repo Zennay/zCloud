@@ -46,7 +46,7 @@ jobs:
             -p ActiveState -p SubState -p MainPID -p NRestarts \
             -p ExecMainStartTimestamp -p ExecMainExitTimestamp -p ExecMainStatus \
             -p Restart -p RestartUSec -p TimeoutStartUSec || true
-          sudo -n journalctl -u zennay-cloud.service --since "2026-09-30 22:18:30" --no-pager -n 240 || \
+          sudo -n journalctl -u zennay-cloud.service --since "10 minutes ago" --no-pager -n 240 || \
             journalctl -u zennay-cloud.service -n 100 --no-pager || true
           systemctl --user is-active chatgpt-firefox.service
           echo "=== LIVE PRECHANGE GUARD ==="
