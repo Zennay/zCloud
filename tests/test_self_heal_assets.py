@@ -20,7 +20,7 @@ class SelfHealAssetsTest(unittest.TestCase):
         text = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
         self.assertIn(".disable-self-heal", text)
         self.assertIn("flock -n", text)
-        self.assertIn("curl -fsS --max-time 5", text)
+        self.assertIn("curl -fsS --max-time 5", text)\n        self.assertIn("/api/health", text)
         self.assertIn('systemctl restart "${SERVICE}"', text)
         self.assertIn("for _ in {1..20}", text)
         self.assertIn(".disable-runtime-heal", text)
