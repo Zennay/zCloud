@@ -10,8 +10,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('workflows: ["zCloud regression smoke"]', text)
         self.assertIn("branches: [main]", text)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
+        self.assertIn("github.run_attempt == 1", text)
         self.assertIn("runs-on: self-hosted", text)
         self.assertIn("cancel-in-progress: false", text)
+        deploy_block = text[text.index("jobs:\n  deploy:"):text.index("    steps:")]
+        self.assertIn("    concurrency:\n      group: zcloud-production-deploy", deploy_block)
+        self.assertNotIn("\nconcurrency:\n  group: zcloud-production-deploy", text)
         self.assertIn("Reject stale workflow-run revisions", text)
         self.assertIn("git ls-remote origin refs/heads/main", text)
         self.assertIn("STALE_DEPLOY_SKIPPED", text)
