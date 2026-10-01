@@ -360,6 +360,7 @@ jobs:
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
+            --path lane_generator.py \
             --path scripts/zcloud_recovery.py \
             --path autonomy-policy.json \
             --path vps-execution-policy.json \

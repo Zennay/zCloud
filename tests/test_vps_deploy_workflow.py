@@ -155,6 +155,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
+            "lane_generator.py",
             "scripts/zcloud_recovery.py",
             "autonomy-policy.json",
             "portfolio_queue.seed.json",
