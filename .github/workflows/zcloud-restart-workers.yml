@@ -19,15 +19,6 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 6
     steps:
-      - name: Restart browser worker host
-        shell: bash
-        run: |
-          set -euo pipefail
-          export XDG_RUNTIME_DIR=/run/user/1000
-          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
-          systemctl --user restart chatgpt-firefox.service
-          systemctl --user is-active --quiet chatgpt-firefox.service
-
       - name: Restart dashboard-owned allocated workers
         shell: bash
         run: |
@@ -65,6 +56,13 @@ jobs:
               project = str(item.get("project_id") or "").strip()
               slot = int(item.get("worker_slot") or 1)
               return f"{project}::w{slot}" if project else ""
+
+          firefox_status, firefox = call("POST", "/api/runner-control", {
+              "project_id": "",
+              "action": "restart_firefox",
+          })
+          if firefox_status >= 300 or not firefox.get("ok"):
+              print("firefox restart warning:", firefox_status, firefox, flush=True)
 
           _, targets = call("GET", "/api/runner-targets")
           allocation = targets.get("global_allocation") or {}
