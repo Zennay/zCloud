@@ -16,10 +16,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         deploy_block = text[text.index("jobs:\n  deploy:"):text.index("    steps:")]
         self.assertIn("    concurrency:\n      group: zcloud-production-deploy", deploy_block)
         self.assertNotIn("\nconcurrency:\n  group: zcloud-production-deploy", text)
-        self.assertIn("Reject stale workflow-run revisions", text)
+        self.assertIn("Resolve latest green main revision", text)
+        self.assertIn("actions: read", text)
+        self.assertIn("ref: main", text)
         self.assertIn("git ls-remote origin refs/heads/main", text)
-        self.assertIn("STALE_DEPLOY_SKIPPED", text)
+        self.assertIn("zcloud-regression-smoke.yml/runs", text)
+        self.assertIn("?branch=main&event=push&status=success&per_page=100", text)
+        self.assertIn("GREEN_MAIN_CONFIRMED", text)
+        self.assertIn("CURRENT_MAIN_NOT_GREEN", text)
+        self.assertIn("Reconfirm green main before VPS writes", text)
+        self.assertIn("PREWRITE_MAIN_CONFIRMED", text)
         self.assertIn("steps.freshness.outputs.deploy == 'true'", text)
+        self.assertIn("steps.prewrite.outputs.deploy == 'true'", text)
         self.assertIn("fetch-depth: 64", text)
         self.assertLess(
             text.index("- name: Promote backend and autonomy policy"),
@@ -42,6 +50,20 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             1,
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
+
+    def test_deploy_coalesces_only_to_current_green_main(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        resolve = text[
+            text.index("- name: Resolve latest green main revision"):
+            text.index("- name: Reconfirm green main before VPS writes")
+        ]
+        self.assertIn('str(run.get("head_sha") or "") == sha', resolve)
+        self.assertIn('str(run.get("conclusion") or "") == "success"', resolve)
+        self.assertIn('str(run.get("event") or "") == "push"', resolve)
+        self.assertIn('str(run.get("head_branch") or "") == "main"', resolve)
+        self.assertIn('handle.write(f"deploy_sha={sha}\\n")', resolve)
+        self.assertIn('handle.write(f"regression_run_id={int(matched[\'id\'])}\\n")', resolve)
+        self.assertIn("MAIN_MOVED_BEFORE_GREEN_CHECK", resolve)
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
@@ -87,7 +109,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("actions/upload-artifact@v4", text)
         self.assertIn('"context": "zcloud/vps-production"', text)
         self.assertIn("Publish production deploy result", text)
-        self.assertIn("github.event.workflow_run.head_sha", text)
+        self.assertIn("steps.freshness.outputs.deploy_sha", text)
+        self.assertNotIn("DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}", text)
 
     def test_execution_probe_claims_cloud_task_on_self_hosted_runner(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
