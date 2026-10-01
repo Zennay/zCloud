@@ -29,8 +29,10 @@ jobs:
           test -d "$ROOT"
           test -x "$ROOT/.venv/bin/python"
           test -f "$ROOT/configs/autonomous_runtime.json"
-          test -x "$ROOT/scripts/run-autonomous-marathon.sh"
+          test -f "$ROOT/scripts/run-autonomous-marathon.sh"
+          grep -q 'safe provider gate blocked; keeping marathon alive' "$ROOT/scripts/run-autonomous-marathon.sh"
           id ftmo-runner >/dev/null
+          sudo -n chmod 0755 "$ROOT/scripts/run-autonomous-marathon.sh"
 
           rendered="$(mktemp)"
           trap 'rm -f "$rendered"' EXIT
