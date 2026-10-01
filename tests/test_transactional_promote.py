@@ -575,6 +575,72 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_AUDITED_RUNTIME_DRIFT),
         )
 
+    def test_prechange_reconciles_only_exact_reviewed_live_hash(self):
+        calls = []
+        original_run = promote.run
+        (self.root / "server.py").write_text("reviewed-live-drift\n")
+        (self.candidate / "server.py").write_text("current-green-server\n")
+        expected = promote.sha256_file(self.root / "server.py")
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+                known_live_hashes={"server.py": expected},
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertIn("server.py", calls[1])
+
+    def test_prechange_rejects_mismatched_reviewed_live_hash(self):
+        original_run = promote.run
+        (self.root / "server.py").write_text("different-live-drift\n")
+        (self.candidate / "server.py").write_text("current-green-server\n")
+
+        class Result:
+            returncode = 2
+            stdout = (
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}'
+            )
+
+        promote.run = lambda args, check=True: Result()
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.run_prechange(
+                    Path("/bin/prechange"),
+                    self.root,
+                    Path(self.tmp.name) / "state",
+                    candidate=self.candidate,
+                    known_live_hashes={"server.py": "0" * 64},
+                )
+        finally:
+            promote.run = original_run
+
     def test_explicit_prechange_drift_rejects_non_replaceable_paths(self):
         with self.assertRaises(promote.PromotionError):
             promote.promote(
