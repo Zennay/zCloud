@@ -130,6 +130,14 @@ PRECHANGE_TRUSTED_ANCESTOR_DRIFT = frozenset({
     "firefox-extension/background.js",
 })
 
+# Runtime-owned configuration can legitimately diverge from the last-known-good
+# source snapshot after a dashboard write. It is reconciled only when SQLite
+# config_audit proves the exact current value was written after that LKG.
+PRECHANGE_AUDITED_RUNTIME_DRIFT = frozenset({
+    "resource-policy.json",
+})
+RESOURCE_PRIORITY_VALUES = frozenset({"background", "normal", "high", "turbo"})
+
 
 class PromotionError(RuntimeError):
     pass
@@ -197,6 +205,76 @@ def matches_recent_first_parent_ancestor(
         if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == live_sha:
             return True
     return False
+
+
+def audited_runtime_config_drift_matches(
+    root: Path,
+    state: Path,
+    rel: str,
+) -> bool:
+    """Trust mutable runtime config only with exact post-LKG audit evidence."""
+
+    try:
+        normalized = validate_relpath(rel)
+        if normalized not in PRECHANGE_AUDITED_RUNTIME_DRIFT:
+            return False
+
+        pointer = json.loads((state / "last-known-good.json").read_text(encoding="utf-8"))
+        snapshot = state / "snapshots" / str(pointer["snapshot_id"])
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        baseline_path = snapshot / "files" / normalized
+        current_path = root / normalized
+        if not baseline_path.is_file() or not current_path.is_file():
+            return False
+
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        current = json.loads(current_path.read_text(encoding="utf-8"))
+        if not isinstance(baseline, dict) or not isinstance(current, dict):
+            return False
+
+        changed: list[tuple[str, str]] = []
+        for project_id in sorted(set(baseline) | set(current)):
+            old_entry = baseline.get(project_id) or {}
+            new_entry = current.get(project_id) or {}
+            if not isinstance(old_entry, dict) or not isinstance(new_entry, dict):
+                return False
+            old_priority = old_entry.get("priority")
+            new_priority = new_entry.get("priority")
+            if old_priority == new_priority:
+                continue
+            if str(new_priority or "") not in RESOURCE_PRIORITY_VALUES:
+                return False
+            changed.append((str(project_id), str(new_priority)))
+
+        # A byte-level drift with no semantic priority change is not a legitimate
+        # dashboard mutation and therefore remains fail-closed.
+        if not changed:
+            return False
+
+        lkg_created_raw = str(manifest.get("created_at") or "")
+        lkg_created = datetime.fromisoformat(lkg_created_raw.replace("Z", "+00:00"))
+        db_path = root / "history.db"
+        if not db_path.is_file():
+            return False
+
+        with sqlite3.connect(db_path, timeout=4) as conn:
+            for project_id, current_priority in changed:
+                row = conn.execute(
+                    "SELECT ts,new_value_json FROM config_audit "
+                    "WHERE config_key='resource.priority' AND target=? "
+                    "AND result='succeeded' ORDER BY id DESC LIMIT 1",
+                    (project_id,),
+                ).fetchone()
+                if not row:
+                    return False
+                audited_at = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+                if audited_at <= lkg_created:
+                    return False
+                if json.loads(row[1]) != current_priority:
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -756,7 +834,11 @@ def run_prechange(
                         (rel in trusted_ancestors or allow_recent_ancestor_drift)
                         and matches_recent_first_parent_ancestor(candidate, rel, live)
                     )
-                    if exact_candidate or trusted_ancestor:
+                    audited_runtime = (
+                        rel in PRECHANGE_AUDITED_RUNTIME_DRIFT
+                        and audited_runtime_config_drift_matches(root, state, rel)
+                    )
+                    if exact_candidate or trusted_ancestor or audited_runtime:
                         aligned.append(rel)
                     else:
                         unsafe.append(rel)
