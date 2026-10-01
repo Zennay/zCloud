@@ -1922,12 +1922,21 @@ def _portfolio_lane_descriptor(item):
             'source':'explicit',
             'conflict_scope':explicit_scope,
         }
-    text=(str(item.get('title') or '')+' '+str(item.get('completion_criteria') or '')).lower()
+    title_text=str(item.get('title') or '').lower()
+    criteria_text=str(item.get('completion_criteria') or '').lower()
     lane_key='core'
+    best_score=0
     for candidate,keywords in PORTFOLIO_LANE_BLUEPRINTS.get(project_type,()):
-        if any(keyword in text for keyword in keywords):
+        score=0
+        for keyword in keywords:
+            pattern=r'(?<![a-z0-9])'+re.escape(keyword)+r'(?![a-z0-9])'
+            if re.search(pattern,title_text):
+                score+=3
+            if re.search(pattern,criteria_text):
+                score+=1
+        if score>best_score:
             lane_key=candidate
-            break
+            best_score=score
     scope={'capabilities':[f'worker-lane:{project_type}:{lane_key}'],'files':[]}
     return {
         'lane_id':f'{project_id}:{lane_key}',
