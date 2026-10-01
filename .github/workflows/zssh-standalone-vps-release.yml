@@ -20,7 +20,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     env:
-      ZSSH_RELEASE_SHA: 395dd4171758b07b56c4ae7bb58cf5537db7b930
+      ZSSH_RELEASE_SHA: 22fe28be7dc4dc38406ff08c3475831323eee38d
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
@@ -55,9 +55,24 @@ jobs:
         run: bash zssh-source/deploy/install-live.sh "$GITHUB_WORKSPACE/zssh-source"
       - name: Verify live release provenance
         run: |
+          set -euo pipefail
           test "$(readlink -f /home/ubuntu/.local/share/zssh/current)" = "/home/ubuntu/.local/share/zssh/releases/$ZSSH_RELEASE_SHA"
           systemctl --user is-active --quiet zssh.service
-          curl --fail --silent --show-error http://127.0.0.1:8788/health
+          health_json="$(curl --fail --silent --show-error http://127.0.0.1:8788/health)"
+          printf '%s\n' "$health_json"
+          python3 - "$GITHUB_WORKSPACE/zssh-source/package.json" "$health_json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          package = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          health = json.loads(sys.argv[2])
+          expected = str(package.get("version") or "")
+          actual = str(health.get("version") or "")
+          if not expected or actual != expected:
+              raise SystemExit(f"live zSSH version mismatch: expected {expected!r}, got {actual!r}")
+          print("ZSSH_LIVE_VERSION_GREEN", json.dumps({"version": actual}, sort_keys=True))
+          PY
           echo "ZSSH_STANDALONE_M1_LIVE_GREEN sha=$ZSSH_RELEASE_SHA"
       - name: Verify public hosted-client MCP auth
         run: |
