@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
-    def test_userscript_is_database_backed_and_fail_closed_on_high(self):
+    def test_userscript_is_database_backed_and_soft_falls_back_on_high(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
         self.assertIn("@name         zCloud Dynamic Worker", userscript)
@@ -43,7 +43,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("think\\s+hard", userscript)
         self.assertIn("Re-open once", userscript)
         self.assertIn("compactThinkingDiagnostic", userscript)
-        self.assertIn('"high-thinking-required|" + diagnostic', userscript)
+        self.assertIn('status("thinking-effort-unavailable"', userscript)
+        self.assertIn('reason: "high-thinking-picker-unavailable"', userscript)
+        self.assertNotIn('"high-thinking-required|" + diagnostic', userscript)
         self.assertIn('getAttribute?.("data-testid")', userscript)
         self.assertIn('getAttribute?.("aria-label")', userscript)
         self.assertIn('return false;', userscript)
@@ -64,7 +66,6 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         for source in (userscript, background):
             self.assertIn("lastThinkingDiagnostic", source)
             self.assertIn("compactThinkingDiagnostic", source)
-            self.assertIn('"high-thinking-required|" + diagnostic', source)
             self.assertIn('getAttribute?.("data-testid")', source)
             self.assertIn('getAttribute?.("aria-label")', source)
             self.assertIn("aria-expanded", source)
@@ -76,7 +77,10 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             self.assertIn("p: snap(picker)", source)
             self.assertIn("m: menus", source)
             self.assertIn("c: scored", source)
-        self.assertIn('error: diagnostic', userscript)
+        self.assertIn('status("thinking-effort-unavailable"', userscript)
+        self.assertIn('diagnostic: diagnostic', userscript)
+        self.assertNotIn('error: diagnostic', userscript)
+        self.assertIn('"high-thinking-required|" + diagnostic', background)
         self.assertIn('error: diagnostic', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
