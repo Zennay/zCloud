@@ -1916,6 +1916,30 @@ def portfolio_queue_allocate():
             selected.append(_portfolio_queue_row(row))
     return selected
 
+def portfolio_write_continuation(project_id,parent_queue_id=None):
+    project_id=str(project_id or '').strip().lower()
+    project=PROJECT_INDEX.get(project_id) or {}
+    name=str(project.get('name') or project_id or 'project').strip()
+    next_step=str(project.get('next_step') or '').strip()
+    priority='P1' if project_id=='haxlab' else 'P2'
+    criteria=(
+        f'Read the current {name} HQ/handoff and execute the highest-value safe unblocked write-capable roadmap step. '
+        'Completion requires at least one material code/config/workflow/experiment/runtime state change plus automated '
+        'test/build/run evidence. Read-only inspection, audit, status, checklist, documentation-only or evidence collection '
+        'alone cannot complete this item. If a narrow evidence gate is already resolved, continue within this assignment '
+        'to the next safe write-capable roadmap step instead of stopping.'
+    )
+    if next_step:
+        criteria += ' Current project next-step hint: ' + next_step
+    return portfolio_queue_enqueue(
+        project_id,
+        f'Implement next {name} roadmap increment',
+        priority,
+        criteria,
+        project.get('notion_url') or project.get('handoff_url') or '',
+        parent_queue_id=parent_queue_id,
+    )
+
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
     if result not in ('DONE','BLOCKED','CONTINUE'):
@@ -1953,16 +1977,10 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             parent_queue_id=queue_id
         )
     elif result in ('DONE','BLOCKED'):
-        # Keep the project iterating even when the model forgot to nominate a
-        # follow-up. The next assignment must execute a concrete project step,
-        # never fill the cycle with a generic audit/status recap.
-        created=portfolio_queue_enqueue(
-            row['project_id'],
-            'Continue project autonomously with the next concrete implementation step',
-            'P3',
-            'Select the next safe unblocked implementation/deploy/test step from the project HQ/handoff, execute it, and prove a material state change. Audit-only, checklist-only and status-only output do not satisfy completion.',
-            parent_queue_id=queue_id
-        )
+        # Keep every project moving with a write-first continuation. A finished
+        # evidence/audit gate must never strand the worker pool in another
+        # read-only/status-only loop.
+        created=portfolio_write_continuation(row['project_id'],queue_id)
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created}
 
 def portfolio_queue_allocation():
