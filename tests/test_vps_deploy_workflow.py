@@ -64,7 +64,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("for _ in $(seq 1 20)", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=recovered", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=failed", block)
-        self.assertLess(text.index(recover), text.index(suspend))
+        self.assertIn('lock_file="/run/zcloud-self-heal.lock"', block)
+        self.assertIn('flock -w 30 9', block)
+        self.assertLess(text.index(suspend), text.index(recover))
         self.assertLess(text.index(recover), text.index(promote))
 
     def test_deploy_quarantines_non_runtime_userscript_backups_before_prechange(self):
