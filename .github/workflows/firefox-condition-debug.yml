@@ -1,0 +1,51 @@
+name: Diagnose Firefox runner ExecCondition
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/firefox-condition-debug.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Inspect live Firefox unit and drop-ins
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+          echo "=== UNIT CAT ==="
+          systemctl --user cat chatgpt-firefox.service || true
+          echo "=== UNIT SHOW ==="
+          systemctl --user show chatgpt-firefox.service \
+            -p LoadState -p ActiveState -p SubState -p Result \
+            -p ExecCondition -p DropInPaths -p FragmentPath || true
+
+          echo "=== PERSISTENT DROP-INS ==="
+          if [ -d "$HOME/.config/systemd/user/chatgpt-firefox.service.d" ]; then
+            find "$HOME/.config/systemd/user/chatgpt-firefox.service.d" -maxdepth 1 -type f -print -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
+          else
+            echo "none"
+          fi
+
+          echo "=== RUNTIME CONTROL DROP-INS ==="
+          runtime_dir="/run/user/1000/systemd/user.control/chatgpt-firefox.service.d"
+          if [ -d "$runtime_dir" ]; then
+            find "$runtime_dir" -maxdepth 1 -type f -print -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
+          else
+            echo "none"
+          fi
+
+          echo "=== PRESTART / SENTINELS ==="
+          if [ -f "$HOME/.local/bin/chatgpt-firefox-prestart.sh" ]; then
+            sed -n '1,220p' "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          fi
+          find "$HOME/.local/state/zcloud" -maxdepth 3 -type f \( -name '*firefox*' -o -name '*runner*' -o -name '*pause*' \) -print 2>/dev/null | head -n 80 || true
