@@ -150,7 +150,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("P3", continuation["priority"])
         self.assertEqual("Execute substantial HaxLab roadmap work package", continuation["title"])
         self.assertIn("adjacent write-capable steps", continuation["completion_criteria"])
-        self.assertIn("Read-only inspection", continuation["completion_criteria"])
+        self.assertIn("read-only inspection", continuation["completion_criteria"])
         self.assertIn(server.PROJECT_INDEX["haxlab"]["next_step"], continuation["completion_criteria"])
         self.assertEqual(server.PROJECT_INDEX["haxlab"]["notion_url"], continuation["source_url"])
 
