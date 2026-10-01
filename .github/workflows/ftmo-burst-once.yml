@@ -29,6 +29,32 @@ jobs:
           test -x "$FTMO_ROOT/.venv/bin/python"
           test -f "$FTMO_ROOT/.scratch/autonomy/status.json"
 
+          # Main 76bcfefd fixed an interpreter fallback that can leave an older
+          # stable copy crash-looping while the dedicated FTMO runner is busy.
+          # Apply only that already-merged semantic fix when the exact legacy
+          # line is still present; refuse any unknown source shape.
+          runtime_py="$FTMO_ROOT/src/prop_trading_ai/ops/autonomous_runtime.py"
+          if grep -Fq 'python = os.environ.get("FTMO_PYTHON", "python")' "$runtime_py"; then
+            sudo -n python3 - "$runtime_py" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
+          old = '    python = os.environ.get("FTMO_PYTHON", "python")'
+          new = '    python = os.environ.get("FTMO_PYTHON") or str(root / ".venv/bin/python")'
+          if text.count(old) != 1:
+              raise SystemExit("legacy FTMO Python fallback shape changed; refusing hotfix")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+            echo "FTMO_RUNTIME_HOTFIX=merged-python-fallback-applied"
+          elif grep -Fq 'python = _runtime_python()' "$runtime_py" || grep -Fq 'python = os.environ.get("FTMO_PYTHON") or str(root / ".venv/bin/python")' "$runtime_py"; then
+            echo "FTMO_RUNTIME_HOTFIX=not-needed"
+          else
+            echo "FTMO runtime Python fallback is neither known old nor known fixed shape" >&2
+            exit 76
+          fi
+          "$FTMO_ROOT/.venv/bin/python" -m py_compile "$runtime_py"
+
           # The persistent marathon is the source of FTMO compute. Keep the
           # legacy timer disabled so it cannot contend for the same tick lock.
           sudo -n systemctl disable --now ftmo-autonomous.timer || true
