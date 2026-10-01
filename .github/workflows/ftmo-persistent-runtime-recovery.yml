@@ -105,7 +105,8 @@ jobs:
 
           "$ROOT/.venv/bin/python" -m prop_trading_ai.cli.v1_cpu_attribution \
             --sample-seconds 8 \
-            --output "$ROOT/.scratch/autonomy/recovery-cpu-attribution.json"
+            --output "/tmp/ftmo-recovery-cpu-attribution.json"
+          systemctl show "$SERVICE" -p NRestarts -p MainPID -p ActiveState -p SubState --no-pager
           "$ROOT/.venv/bin/python" - <<'PY'
           import json
           from pathlib import Path
