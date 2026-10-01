@@ -126,10 +126,10 @@ def project_runner_prompt(project_id, name):
     project=PROJECT_INDEX.get(project_id) or {}
     return (
         f'zCloud worker: "{name}" / "{project_id}". '
-        'Ga verder met de VPS queue assignments uit de SQLite queue (source of truth). '
+        'Ga door met de queue: de SQLite queue van zCloud op de VPS (portfolio_queue, source of truth); jouw assignment staat hieronder. '
         'Notion is alleen documentatie, nooit scheduler of blocker. '
-        'Werk hier intens aan verder: je hebt connectoren met GitHub en Notion. '
-        'Alles wat via SSH/VPS moet lopen zet je in een queue, dan pakt de zSSH-worker dat op. '
+        'Werk hier intens aan verder met je connectoren: GitHub (code, PR, Actions) en Notion (HQ, handoff). '
+        'Alles wat via SSH/VPS moet lopen zet je in de queue voor project zssh; de zSSH-worker pakt dat op. '
         f'HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
         + VPS_EXECUTION_DIRECTIVE
     )
@@ -158,11 +158,15 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         'Een status- of auditrapport is geen resultaat. Faalt een route, probeer meteen een andere veilige route. '
         'Gebruik WAIT_HUMAN alleen voor een secret, destructieve toestemming of een echte externe afhankelijkheid. '
         + project_guard +
-        'Pas helemaal aan het einde, als je klaar bent of echt vastzit, sluit je af met exact (DONE alleen met bewijs, anders CONTINUE):\n'
+        'Pas helemaal aan het einde, als je klaar bent of echt vastzit, sluit je af met exact dit blok (DONE alleen met bewijs, anders CONTINUE). '
+        'Bij DONE of BLOCKED denk je eerst breder over heel zCloud na (alle projecten, cloud = zCloud zelf): wat moet er nog aan de queue komen? '
+        'Vul dan precies één ZCLOUD_NEXT_TASK in: het belangrijkste, geen duplicaat van wat er al ligt, bij voorkeur een stap die echt iets verandert (geen ; in title/criteria). '
+        'Bij CONTINUE laat je die regel weg:\n'
         f'ZCLOUD_QUEUE_ITEM: {queue_id}\n'
         'ZCLOUD_QUEUE_RESULT: DONE|CONTINUE\n'
         'ZCLOUD_QUEUE_EVIDENCE: <actie + commit/workflow/run/resultaat>\n'
         f'ZCLOUD_WORK_PROJECT: {project_id}\n'
+        'ZCLOUD_NEXT_TASK: project=<' + '|'.join(sorted(PROJECT_INDEX)) + '>; priority=P1|P2|P3; title=<volgende stap>; criteria=<bewijs dat het klaar is>\n'
         'ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE'
     )
 
