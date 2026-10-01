@@ -57,6 +57,38 @@ class PostdeployCanaryTests(unittest.TestCase):
     def test_green_baseline(self):
         self.assertTrue(self.evaluate()["ok"])
 
+    def test_intentional_violentmonkey_only_mode_allows_legacy_firefox_inactive(self):
+        status, targets, mapping = self.sample()
+        status["chatgpt_firefox"] = {"state": "inactive", "active": False}
+        result = canary.evaluate(
+            status,
+            targets,
+            mapping,
+            services={"zcloud": True, "firefox": False},
+            static_assets_ok=True,
+            source_runtime_match=False,
+            legacy_firefox_disabled=True,
+        )
+        checks = {x["name"]: x for x in result["checks"]}
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(checks["firefox_service"]["ok"])
+        self.assertTrue(checks["firefox_runtime_active"]["ok"])
+        self.assertTrue(checks["firefox_source_runtime_match"]["ok"])
+
+    def test_inactive_legacy_firefox_without_explicit_disable_still_blocks(self):
+        status, targets, mapping = self.sample()
+        status["chatgpt_firefox"] = {"state": "inactive", "active": False}
+        result = canary.evaluate(
+            status,
+            targets,
+            mapping,
+            services={"zcloud": True, "firefox": False},
+            static_assets_ok=True,
+            source_runtime_match=False,
+            legacy_firefox_disabled=False,
+        )
+        self.assertFalse(result["ok"])
+
     def test_blocks_service_failure(self):
         status, targets, mapping = self.sample()
         result = canary.evaluate(
