@@ -288,6 +288,8 @@ jobs:
       - name: Promote backend and autonomy policy
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
+          # One-time reviewed migration from the last direct-live server patch.
+          # Exact hash match is required; any different live source remains fail-closed.
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
@@ -298,8 +300,6 @@ jobs:
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
-            # One-time reviewed migration from the last direct-live server patch.
-            # Exact hash match is required; any different live source remains fail-closed.
             --reconcile-known-live-sha server.py=48fc7d97078c8d89959de1c03341f579b4e200bd9ce54603540edd15f18dccf6 \
             --actor "github-actions-vps-deploy" \
             --json
