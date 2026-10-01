@@ -2,6 +2,10 @@ name: zCloud restart allocated workers
 
 on:
   workflow_dispatch:
+  schedule:
+    # Forced hourly refresh for the seven ChatGPT workers. The workflow itself
+    # prefers fresh chats and already recovers by recycling the Firefox consumer.
+    - cron: "3 * * * *"
   push:
     branches: [main]
     paths:
