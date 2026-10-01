@@ -166,6 +166,63 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         reclaimed = server.portfolio_queue_current_for_slot(1)
         self.assertEqual(item["queue_id"], reclaimed["queue_id"])
 
+    def test_queue_rejects_read_only_status_work(self):
+        with self.assertRaisesRegex(ValueError, "uitvoerbare write/build/test/deploy"):
+            server.portfolio_queue_enqueue(
+                "cloud",
+                "Inspect current deployment status",
+                "P1",
+                "Read-only verification of current VPS state; record evidence only.",
+            )
+
+    def test_blocked_human_gate_moves_to_attention_and_leaves_queue(self):
+        item = server.portfolio_queue_enqueue(
+            "raiseai",
+            "Implement physical-device handoff",
+            "P1",
+            "Implement the code/config handoff and tests for the device step.",
+        )
+        server.portfolio_queue_allocate()
+
+        result = server.portfolio_queue_finish(
+            1,
+            item["queue_id"],
+            "BLOCKED",
+            "Physical Watch test requires human action on the paired device.",
+        )
+
+        rows = {row["queue_id"]: row for row in server.portfolio_queue_items(True)}
+        self.assertEqual("dropped", rows[item["queue_id"]]["status"])
+        self.assertFalse(rows[item["queue_id"]]["eligible"])
+        attention = server.portfolio_attention_items()
+        self.assertTrue(any(row["project_id"] == "raiseai" for row in attention))
+        self.assertIsNotNone(result["attention"])
+
+    def test_human_gated_project_never_enters_worker_queue(self):
+        with self.assertRaisesRegex(ValueError, "human-gated"):
+            server.portfolio_queue_enqueue(
+                "ulab",
+                "Implement another M5 preparation task",
+                "P2",
+                "Implement code and tests.",
+            )
+        audit = server.portfolio_queue_audit()
+        active_projects = {row["project_id"] for row in server.portfolio_queue_items()}
+        self.assertNotIn("ulab", active_projects)
+        self.assertGreaterEqual(audit["projects"], 1)
+
+    def test_queue_audit_refills_broad_execution_work(self):
+        audit = server.portfolio_queue_audit()
+        projects = {row["project_id"] for row in server.portfolio_queue_items()}
+        self.assertIn("cloud", projects)
+        self.assertIn("haxlab", projects)
+        self.assertIn("ftmo", projects)
+        self.assertIn("supa", projects)
+        self.assertIn("raiseai", projects)
+        self.assertIn("zssh", projects)
+        self.assertNotIn("ulab", projects)
+        self.assertGreaterEqual(audit["ready"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()
