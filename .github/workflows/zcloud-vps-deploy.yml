@@ -14,11 +14,11 @@ jobs:
   deploy:
     if: github.run_attempt == 1 && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     concurrency:
-      # Exact-green revisions are serialized; stale revisions self-skip before
-      # any VPS write, leaving only current main eligible for promotion.
       group: zcloud-production-deploy
       # Never cancel an in-flight production transaction. Keeping concurrency
       # at job scope means skipped deploy reruns cannot evict a fresh pending job.
+      # Exact-green revisions are serialized; stale revisions self-skip before
+      # any VPS write, leaving only current main eligible for promotion.
       cancel-in-progress: false
     runs-on: self-hosted
     timeout-minutes: 15
