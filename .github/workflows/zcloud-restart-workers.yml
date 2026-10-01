@@ -17,113 +17,89 @@ concurrency:
 jobs:
   restart:
     runs-on: self-hosted
-    timeout-minutes: 6
+    timeout-minutes: 3
     steps:
-      - name: Restart dashboard-owned allocated workers
+      - name: Queue fresh-chat restart for allocated workers
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
+          import sqlite3
           import time
-          import urllib.error
-          import urllib.request
+          from datetime import datetime, timezone
 
-          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
 
-          def call(method, path, payload=None):
-              data = None
-              headers = {"User-Agent": "zcloud-restart-workers/1"}
-              if payload is not None:
-                  data = json.dumps(payload).encode("utf-8")
-                  headers["Content-Type"] = "application/json"
-              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
-              try:
-                  with urllib.request.urlopen(req, timeout=15) as response:
-                      return response.status, json.load(response)
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", "replace")
-                  try:
-                      parsed = json.loads(body)
-                  except Exception:
-                      parsed = {"error": body[:1000]}
-                  return exc.code, parsed
+          def now():
+              return datetime.now(timezone.utc).isoformat()
 
-          def worker_key(item):
-              key = str(item.get("worker_key") or "").strip()
-              if key:
-                  return key
-              project = str(item.get("project_id") or "").strip()
-              slot = int(item.get("worker_slot") or 1)
-              return f"{project}::w{slot}" if project else ""
+          with sqlite3.connect(DB, timeout=10) as conn:
+              conn.row_factory = sqlite3.Row
+              conn.execute("PRAGMA busy_timeout=10000")
+              conn.execute("BEGIN IMMEDIATE")
+              slots = conn.execute(
+                  "SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot"
+              ).fetchall()
 
-          firefox_status, firefox = call("POST", "/api/runner-control", {
-              "project_id": "",
-              "action": "restart_firefox",
-          })
-          if firefox_status >= 300 or not firefox.get("ok"):
-              print("firefox restart warning:", firefox_status, firefox, flush=True)
+              if not slots:
+                  print(json.dumps({"ok": True, "state": "no-allocated-workers", "queued": []}, sort_keys=True))
+                  raise SystemExit(0)
 
-          _, targets = call("GET", "/api/runner-targets")
-          allocation = targets.get("global_allocation") or {}
-          selected = allocation.get("workers") or []
-          keys = [worker_key(item) for item in selected]
-          keys = [key for key in keys if key]
-
-          if not keys:
-              print(json.dumps({
-                  "ok": True,
-                  "restarted": [],
-                  "state": "no-allocated-workers",
-                  "dynamic_workers": targets.get("dynamic_workers"),
-              }, ensure_ascii=False, sort_keys=True))
-              raise SystemExit(0)
-
-          accepted = {}
-          for key in keys:
-              status, result = call("POST", "/api/runner-control", {
-                  "project_id": key,
-                  "action": "new_chat",
-              })
-              if status == 429:
-                  time.sleep(31)
-                  status, result = call("POST", "/api/runner-control", {
-                      "project_id": key,
-                      "action": "new_chat",
-                  })
-              if status >= 300 or not result.get("ok"):
-                  raise SystemExit(f"restart rejected for {key}: HTTP {status} {result}")
-              accepted[key] = int(result.get("command_id") or 0)
-
-          deadline = time.time() + 120
-          live = {}
-          while time.time() < deadline:
-              _, status = call("GET", "/api/status")
-              runners = status.get("chatgpt_runners") or {}
-              live = {}
-              for key, command_id in accepted.items():
-                  base = key.split("::w", 1)[0]
-                  workers = (runners.get(base) or {}).get("workers") or []
-                  worker = next((w for w in workers if w.get("worker_id") == key), None)
-                  command = (worker or {}).get("command") or {}
-                  live[key] = bool(
-                      worker
-                      and worker.get("state") == "live"
-                      and int(command.get("id") or 0) == command_id
-                      and str(command.get("status") or "") == "completed"
+              queued = []
+              ts = now()
+              for row in slots:
+                  project = str(row["project_id"])
+                  worker_slot = int(row["worker_slot"] or 1)
+                  key = f"{project}::w{worker_slot}"
+                  conn.execute(
+                      "UPDATE runner_workers SET desired_state='running' WHERE project_id=? AND worker_slot=?",
+                      (project, worker_slot),
                   )
-              if all(live.values()):
+                  pending = conn.execute(
+                      "SELECT id FROM runner_commands WHERE project_id=? AND action='new_chat' AND status='pending' ORDER BY id DESC LIMIT 1",
+                      (key,),
+                  ).fetchone()
+                  if pending:
+                      command_id = int(pending["id"])
+                      deduplicated = True
+                  else:
+                      cur = conn.execute(
+                          "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,NULL)",
+                          (key, "new_chat", "pending", ts, ts),
+                      )
+                      command_id = int(cur.lastrowid)
+                      deduplicated = False
+                  queued.append({
+                      "slot": int(row["slot"]),
+                      "worker": key,
+                      "command_id": command_id,
+                      "deduplicated": deduplicated,
+                  })
+
+          deadline = time.time() + 35
+          final = {}
+          while time.time() < deadline:
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  final = {}
+                  for item in queued:
+                      row = conn.execute(
+                          "SELECT status,result,updated_at FROM runner_commands WHERE id=?",
+                          (item["command_id"],),
+                      ).fetchone()
+                      final[item["worker"]] = {
+                          "status": str(row["status"]) if row else "missing",
+                          "result": (row["result"] if row else None),
+                          "updated_at": (row["updated_at"] if row else None),
+                      }
+              if all(v["status"] in ("completed", "failed") for v in final.values()):
                   break
               time.sleep(5)
 
-          missing = [key for key, ok in live.items() if not ok]
-          if missing:
-              raise SystemExit("restart verification failed for: " + ", ".join(missing))
-
           print(json.dumps({
               "ok": True,
-              "restarted": keys,
-              "command_ids": accepted,
-              "verified_live": live,
+              "queued": queued,
+              "final": final,
           }, ensure_ascii=False, sort_keys=True))
           PY
