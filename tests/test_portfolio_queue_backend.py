@@ -34,6 +34,12 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         server.PORTFOLIO_QUEUE_SEED_FILE = self.original_seed
         self.tmp.cleanup()
 
+    def test_connect_uses_bounded_busy_timeout(self):
+        with server.connect() as conn:
+            busy_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        self.assertEqual(server.DB_BUSY_TIMEOUT_MS, busy_timeout)
+        self.assertGreaterEqual(busy_timeout, 15000)
+
     def test_claims_priority_and_two_global_slots(self):
         server.portfolio_queue_enqueue("haxlab", "normal", "P2", "prove normal")
         server.portfolio_queue_enqueue("raiseai", "high", "P1", "prove high")
