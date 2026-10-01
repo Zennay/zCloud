@@ -136,8 +136,10 @@ def project_runner_prompt(project_id, name):
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
     item=queue_item or {}
+    lane=item.get('execution_lane') or (portfolio_lane_for_item(item) if item else {})
     assignment=(
         f'VPS_QUEUE_ASSIGNMENT id={item.get("queue_id")}; project={item.get("project_id")}; priority={item.get("priority")}; '
+        f'lane={lane.get("lane_key") or "n/a"}; conflict_scope={json.dumps(lane.get("conflict_scope") or {},separators=(",",":"))}; '
         f'task={item.get("title")}; completion={item.get("completion_criteria")}; source={item.get("source_url") or "n/a"}. '
         if item else
         'VPS_QUEUE_ASSIGNMENT none. '
@@ -1834,11 +1836,122 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
-def _portfolio_queue_row(row):
+def _portfolio_project_type(project_id):
+    project=PROJECT_INDEX.get(str(project_id or '').strip().lower()) or {}
+    if str(project.get('queue_mode') or '').lower()=='human-gated':
+        return 'human-gated'
+    if str(project.get('priority') or '').lower()=='system':
+        return 'infrastructure'
+    if str(project_id or '').strip().lower() in ('ftmo','haxlab'):
+        return 'compute'
+    return 'product'
+
+_PORTFOLIO_LANE_RULES=(
+    ('delivery',('deploy','deployment','workflow','github actions','release','rollout')),
+    ('coordination',('queue','worker','lane','scheduler','claim','allocation','autonomy','orchestrat')),
+    ('wearable',('watch','wear os','wear-os','android')),
+    ('auth',('oauth','auth','identity','revocation','credential','token')),
+    ('integration',('connector','gateway','webhook','api ')),
+    ('research',('experiment','backtest','walk-forward','holdout','generation','train','model','arena')),
+    ('ui',('dashboard','frontend',' ui ','interface','mobile-first','screen')),
+    ('runtime',('vps','systemd','service','runtime','daemon')),
+)
+
+def portfolio_lane_for_item(item):
+    item=dict(item or {})
+    project_id=str(item.get('project_id') or '').strip().lower()
+    combined=(' '+str(item.get('title') or '')+' '+str(item.get('completion_criteria') or '')+' ').lower()
+    domain='core'
+    for candidate,markers in _PORTFOLIO_LANE_RULES:
+        if any(marker in combined for marker in markers):
+            domain=candidate
+            break
+    project_type=_portfolio_project_type(project_id)
+    capability=f'{project_id}:{project_type}:{domain}'
+    files=[]
+    if project_id=='cloud':
+        files={
+            'coordination':['server.py'],
+            'delivery':['.github/workflows'],
+            'wearable':['wear-os'],
+        }.get(domain,[])
+    scope={'capabilities':[capability],'files':files}
+    return {
+        'lane_key':capability,
+        'project_type':project_type,
+        'domain':domain,
+        'conflict_scope':scope,
+    }
+
+def _portfolio_lane_blocker(connection,item,selected,ts):
+    lane=portfolio_lane_for_item(item)
+    project_id=str(item.get('project_id') or '')
+    scope=lane['conflict_scope']
+    claim_conflict=_claim_scope_conflict(connection,project_id,'__portfolio_lane_allocator__',scope,ts)
+    if claim_conflict:
+        return {'kind':'task_claim','conflict':claim_conflict}
+    for other in selected:
+        if str(other.get('project_id') or '')!=project_id:
+            continue
+        other_lane=portfolio_lane_for_item(other)
+        overlap=_conflict_scope_overlap(scope,other_lane['conflict_scope'])
+        if overlap['capabilities'] or overlap['files']:
+            return {
+                'kind':'portfolio_lane',
+                'queue_id':other.get('queue_id'),
+                'lane_key':other_lane['lane_key'],
+                'overlap':overlap,
+            }
+    return None
+
+def portfolio_worker_lanes(project_id=None):
+    ts=now()
+    params=[]
+    where="eligible=1 AND status IN ('queued','claimed','running','verifying')"
+    if project_id:
+        where+=' AND project_id=?'
+        params.append(str(project_id).strip().lower())
+    with connect() as c:
+        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+        rows=c.execute(
+            f"""SELECT * FROM portfolio_queue WHERE {where}
+                ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'verifying' THEN 1 WHEN 'claimed' THEN 2 ELSE 3 END,
+                         CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                         created_at,queue_id""",
+            tuple(params),
+        ).fetchall()
+        accepted=[]
+        lanes=[]
+        for row in rows:
+            item=_portfolio_queue_row(row,include_lane=False)
+            lane=portfolio_lane_for_item(item)
+            active=str(item.get('status') or '') in ('claimed','running','verifying')
+            blocker=None if active else _portfolio_lane_blocker(c,item,accepted,ts)
+            safe=active or blocker is None
+            lanes.append({
+                'queue_id':item.get('queue_id'),
+                'project_id':item.get('project_id'),
+                'priority':item.get('priority'),
+                'status':item.get('status'),
+                **lane,
+                'safe':safe,
+                'blocked_by':blocker,
+            })
+            if safe:
+                accepted.append(item)
+    return lanes
+
+def _portfolio_queue_row(row,include_lane=True):
     if not row:
         return None
     item=dict(row)
     item['eligible']=bool(item.get('eligible'))
+    try:
+        item['metadata']=json.loads(item.get('metadata_json') or '{}')
+    except Exception:
+        item['metadata']={}
+    if include_lane:
+        item['execution_lane']=portfolio_lane_for_item(item)
     return item
 
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
@@ -2170,6 +2283,10 @@ def portfolio_queue_allocate():
                                     ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                                              created_at, queue_id LIMIT 80""").fetchall()
             candidates=[candidate for candidate in candidates if str(candidate['queue_id']) not in preempted]
+            candidates=[
+                candidate for candidate in candidates
+                if _portfolio_lane_blocker(c,dict(candidate),selected,ts) is None
+            ]
             if not candidates:
                 continue
             used_projects={str(item.get('project_id') or '') for item in selected}
