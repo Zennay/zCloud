@@ -101,7 +101,7 @@ jobs:
 
               proc = subprocess.run(
                   ["pgrep", "-u", str(os.getuid()), "-f",
-                   r"/snap/firefox/.*/usr/lib/firefox/firefox$"],
+                   r"/snap/firefox/.*/usr/lib/firefox/firefox(?:\\s|$)"],
                   text=True, capture_output=True, check=False,
               )
               pids = [int(x) for x in proc.stdout.split() if x.isdigit()]
@@ -174,7 +174,7 @@ jobs:
               while time.time() < deadline:
                   proc = subprocess.run(
                       ["pgrep", "-u", str(os.getuid()), "-f",
-                       r"/snap/firefox/.*/usr/lib/firefox/firefox$"],
+                       r"/snap/firefox/.*/usr/lib/firefox/firefox(?:\\s|$)"],
                       text=True, capture_output=True, check=False,
                   )
                   candidates = [
