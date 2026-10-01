@@ -107,8 +107,27 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertFalse(done["eligible"])
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
-        self.assertEqual("P3", continuation["priority"])
+        self.assertEqual("P2", continuation["priority"])
         self.assertEqual("cloud", continuation["project_id"])
+        self.assertIn("Implement next zCloud roadmap increment", continuation["title"])
+        self.assertIn("material code/config/workflow/experiment/runtime state change", continuation["completion_criteria"])
+        self.assertIn("Read-only inspection", continuation["completion_criteria"])
+
+    def test_haxlab_done_creates_p1_write_first_continuation(self):
+        item = server.portfolio_queue_enqueue("haxlab", "close evidence gate", "P2", "prove current gate")
+        server.portfolio_queue_allocate()
+
+        result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate closed with current evidence")
+
+        continuation = result["next_task"]
+        self.assertIsNotNone(continuation)
+        self.assertEqual("haxlab", continuation["project_id"])
+        self.assertEqual("P1", continuation["priority"])
+        self.assertEqual("Implement next HaxLab roadmap increment", continuation["title"])
+        self.assertIn("write-capable roadmap step", continuation["completion_criteria"])
+        self.assertIn("Read-only inspection", continuation["completion_criteria"])
+        self.assertIn(server.PROJECT_INDEX["haxlab"]["next_step"], continuation["completion_criteria"])
+        self.assertEqual(server.PROJECT_INDEX["haxlab"]["notion_url"], continuation["source_url"])
 
     def test_backend_rejects_complete_while_other_queue_work_exists(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
