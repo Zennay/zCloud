@@ -62,11 +62,11 @@
   {
     "queue_id": "ftmo-current-generation-safe-gate",
     "project_id": "ftmo",
-    "title": "Advance FTMO through the next preregistered safe generation gate",
+    "title": "Keep FTMO autonomous progression healthy and self-recovering",
     "priority": "P0",
     "status": "queued",
     "eligible": true,
-    "completion_criteria": "Advance the current FTMO generation by implementing or executing the next allowed preregistered code/config/workflow gate on the self-hosted path. Preserve provider provenance, frozen split, development/walk-forward/final-holdout isolation, zero paid cloud and paper-only safety. Completion requires a material persisted change plus deterministic test/workflow evidence; do not inspect sealed outcomes early.",
+    "completion_criteria": "Do not manually act as the normal generation loop. FTMO research progression belongs to the persistent self-hosted runtime. Only intervene when that runtime cannot self-advance: fix the concrete code/config/service/data-gate cause, preserve provider provenance and sealed outcome boundaries, then prove the persistent runtime resumes autonomous safe progression with deterministic workflow/runtime evidence.",
     "source_url": "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"
   },
   {
