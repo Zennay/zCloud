@@ -113,6 +113,33 @@ class WorkerDebugE2ETests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual(2, len(self.get("/api/runner-commands")["commands"]))
 
+    def test_recent_worker_commands_are_not_starved_by_old_pending_backlog(self):
+        # Old pending control commands must not hide fresh force-push work from
+        # browser workers. The endpoint serves a bounded recent tail and keeps
+        # FIFO order inside that window.
+        with server.connect() as c:
+            for index in range(120):
+                ts = utc()
+                c.execute(
+                    "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    ("legacy::w1", "new_chat", "pending", ts, ts),
+                )
+
+        status, body = self.post("/api/dynamic-workers/force-push", {})
+        self.assertEqual(200, status)
+        fresh_ids = {
+            row["command_id"]
+            for row in body["results"]
+            if row.get("queued") and row.get("command_id")
+        }
+        self.assertEqual(3, len(fresh_ids))
+
+        commands = self.get("/api/runner-commands")["commands"]
+        visible_ids = {row["id"] for row in commands}
+        self.assertTrue(fresh_ids <= visible_ids)
+        self.assertLessEqual(len(commands), 100)
+        self.assertEqual(sorted(row["id"] for row in commands), [row["id"] for row in commands])
+
     def test_broken_prompt_contract_is_reported_not_silent(self):
         original = server.project_worker_prompt
         server.project_worker_prompt = lambda *a, **k: original(*a, **k).replace("Jij bent ", "")
