@@ -1,0 +1,94 @@
+name: Apply zSSH public plugin P0 queue priority
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-public-plugin-priority.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue and verify zSSH P0 item in live SQLite
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-openai-public-plugin-release"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "zSSH publieke ChatGPT-plugin submission-ready maken",
+              "priority": "P0",
+              "completion_criteria": (
+                  "zSSH heeft een production-grade publieke OpenAI-pluginroute met OAuth 2.1, "
+                  "target pairing/revocation, stabiele HTTPS MCP-endpoint, review package en "
+                  "groene end-to-end submission-readiness evidence zonder de bestaande private "
+                  "zSSH-flow te breken."
+              ),
+              "source_url": "https://github.com/Zennay/zSSH",
+          }
+
+          request = urllib.request.Request(
+              base + "/api/portfolio-queue",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              body = json.load(response)
+              if response.status != 200:
+                  raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
+          print("QUEUE_ENQUEUE_RESPONSE", json.dumps(body, sort_keys=True))
+
+          with urllib.request.urlopen(base + "/api/portfolio-queue", timeout=10) as response:
+              live = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(live)
+          if not item:
+              raise RuntimeError(f"{queue_id} not found in live SQLite queue")
+          if str(item.get("priority") or "").upper() != "P0":
+              raise RuntimeError(f"{queue_id} priority is not P0: {item.get('priority')}")
+          if str(item.get("project_id") or "").lower() != "zssh":
+              raise RuntimeError(f"{queue_id} is attached to wrong project: {item.get('project_id')}")
+
+          print(
+              "ZSSH_QUEUE_PRIORITY_GREEN",
+              json.dumps(
+                  {
+                      "queue_id": item.get("queue_id"),
+                      "project_id": item.get("project_id"),
+                      "priority": item.get("priority"),
+                      "status": item.get("status"),
+                      "eligible": item.get("eligible"),
+                      "worker_slot": item.get("worker_slot"),
+                  },
+                  sort_keys=True,
+              ),
+          )
+          PY
