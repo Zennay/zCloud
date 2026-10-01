@@ -59,7 +59,8 @@
     "repo_url": "https://github.com/Zennay/Haxlab",
     "notion_url": "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
     "handoff_url": "https://app.notion.com/p/3e59e19ac95581528ae2c563f789d8eb",
-    "queue_mode": "execution"
+    "queue_mode": "execution",
+    "work_type": "ml-training"
   },
   {
     "id": "ftmo",
@@ -120,7 +121,8 @@
     "repo_url": "https://github.com/Zennay/Ftmo",
     "notion_url": "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e",
     "handoff_url": "https://app.notion.com/p/3db9e19ac9558151bb4debd3d9057322",
-    "queue_mode": "execution"
+    "queue_mode": "execution",
+    "work_type": "research-validation"
   },
   {
     "id": "cloud",
@@ -212,7 +214,8 @@
     "repo_url": "https://github.com/Zennay/zCloud",
     "notion_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8",
     "handoff_url": "https://app.notion.com/p/3e79e19ac955819e9ccee5bec98bbb9c",
-    "queue_mode": "execution"
+    "queue_mode": "execution",
+    "work_type": "control-plane"
   },
   {
     "id": "supa",
@@ -274,7 +277,8 @@
     "priority": "normal",
     "notion_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3",
     "handoff_url": "https://app.notion.com/p/3e79e19ac955816cb232d2b2bcfb8604",
-    "queue_mode": "execution"
+    "queue_mode": "execution",
+    "work_type": "product-app"
   },
   {
     "id": "raiseai",
@@ -324,7 +328,8 @@
     "repo_url": "https://github.com/Zennay/RaiseAI",
     "notion_url": "https://app.notion.com/p/3e09e19ac95581709502f992608b8abd",
     "handoff_url": "https://app.notion.com/p/3e09e19ac95581d1a6aaed3c09443f5c",
-    "queue_mode": "execution"
+    "queue_mode": "execution",
+    "work_type": "device-app"
   },
   {
     "id": "ulab",
@@ -377,7 +382,8 @@
         "severity": "urgent",
         "source_url": "https://app.notion.com/p/3df9e19ac9558198bdd0d9ff4be46221"
       }
-    ]
+    ],
+    "work_type": "platform"
   },
   {
     "id": "zssh",
@@ -432,6 +438,7 @@
     "repo_url": "https://github.com/Zennay/zSSH",
     "notion_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634",
     "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8",
-    "queue_mode": "execution"
+    "queue_mode": "execution",
+    "work_type": "infrastructure"
   }
 ]
