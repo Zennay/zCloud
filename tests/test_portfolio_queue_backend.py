@@ -134,9 +134,9 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIsNotNone(continuation)
         self.assertEqual("P2", continuation["priority"])
         self.assertEqual("cloud", continuation["project_id"])
-        self.assertIn("Implement next zCloud roadmap increment", continuation["title"])
-        self.assertIn("material code/config/workflow/experiment/runtime state change", continuation["completion_criteria"])
-        self.assertIn("Read-only inspection", continuation["completion_criteria"])
+        self.assertEqual("Execute substantial zCloud roadmap work package", continuation["title"])
+        self.assertIn("at least three material implementation actions", continuation["completion_criteria"])
+        self.assertIn("read-only inspection", continuation["completion_criteria"])
 
     def test_haxlab_done_creates_p3_write_first_continuation(self):
         item = server.portfolio_queue_enqueue("haxlab", "close evidence gate", "P2", "prove current gate")
@@ -148,9 +148,9 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIsNotNone(continuation)
         self.assertEqual("haxlab", continuation["project_id"])
         self.assertEqual("P3", continuation["priority"])
-        self.assertEqual("Implement next HaxLab roadmap increment", continuation["title"])
-        self.assertIn("write-capable roadmap step", continuation["completion_criteria"])
-        self.assertIn("Read-only inspection", continuation["completion_criteria"])
+        self.assertEqual("Execute substantial HaxLab roadmap work package", continuation["title"])
+        self.assertIn("adjacent write-capable steps", continuation["completion_criteria"])
+        self.assertIn("read-only inspection", continuation["completion_criteria"])
         self.assertIn(server.PROJECT_INDEX["haxlab"]["next_step"], continuation["completion_criteria"])
         self.assertEqual(server.PROJECT_INDEX["haxlab"]["notion_url"], continuation["source_url"])
 
@@ -164,7 +164,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIsNotNone(continuation)
         self.assertEqual("ftmo", continuation["project_id"])
         self.assertEqual("P0", continuation["priority"])
-        self.assertEqual("Implement next FTMO roadmap increment", continuation["title"])
+        self.assertEqual("Execute substantial FTMO roadmap work package", continuation["title"])
 
     def test_haxlab_explicit_implementation_priority_is_preserved(self):
         p1 = server.portfolio_queue_enqueue(

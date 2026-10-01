@@ -15,6 +15,11 @@ class VpsExecutionPolicyTests(unittest.TestCase):
         self.assertEqual(set(policy["projects"]), set(server.PROJECT_INDEX))
         self.assertIn("github-actions-self-hosted-runner", policy["transport"])
         self.assertIn("vps-bb300bba", policy["runner"]["host"])
+        self.assertIn("haxlab", policy["runner"]["forbidden_name_tokens"])
+        self.assertEqual(
+            "scripts/zcloud_vps_runner_guard.py",
+            policy["runner"]["identity_guard"],
+        )
         self.assertIn("WAIT_VPS", policy["prompt_directive"])
         self.assertIn("niet gebruiken", policy["prompt_directive"])
 

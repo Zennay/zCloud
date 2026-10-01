@@ -51,6 +51,19 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
 
+    def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        guard = "Enforce permanent zCloud VPS runner identity"
+        self.assertIn(guard, text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertLess(text.index(guard), text.index("Mark production deploy pending"))
+        self.assertLess(text.index(guard), text.index("Promote backend and autonomy policy"))
+
+        probe = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
+        self.assertIn(guard, probe)
+        self.assertLess(probe.index(guard), probe.index("Acquire cloud deploylane coordination claim"))
+        self.assertIn("zcloud-vps-runner-guard.json", probe)
+
     def test_deploy_coalesces_only_to_current_green_main(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         resolve = text[

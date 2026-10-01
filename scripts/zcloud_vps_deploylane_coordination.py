@@ -126,6 +126,7 @@ def acquire() -> None:
                     ".github/workflows/zcloud-vps-execution-probe.yml",
                     ".github/workflows/zcloud-vps-deploy.yml",
                     "scripts/zcloud_vps_execution_probe.sh",
+                    "scripts/zcloud_vps_runner_guard.py",
                 ],
             },
         },

@@ -20,8 +20,16 @@ class SelfHealAssetsTest(unittest.TestCase):
         text = (ROOT / ".github/workflows/ftmo-persistent-runtime-recovery.yml").read_text()
         self.assertIn('! systemctl is-active --quiet "$RUNNER_SERVICE"', text)
         self.assertIn('systemctl start "$RUNNER_SERVICE"', text)
-        self.assertNotIn('systemctl restart "$RUNNER_SERVICE"', text)
         self.assertNotIn('systemctl disable --now "$RUNNER_SERVICE"', text)
+        guard = "elif pgrep -u ftmo-runner -f 'Runner\\.Worker' >/dev/null; then"
+        restart = 'sudo -n systemctl restart "$RUNNER_SERVICE"'
+        self.assertIn(guard, text)
+        self.assertIn("sleep 5", text)
+        self.assertIn("FTMO Actions Runner.Worker appeared during guard window", text)
+        self.assertIn(restart, text)
+        self.assertGreaterEqual(text.count("pgrep -u ftmo-runner -f 'Runner\\.Worker'"), 2)
+        self.assertLess(text.index(guard), text.index(restart))
+        self.assertLess(text.index("sleep 5"), text.index(restart))
 
     def test_probe_has_disable_sentinel_and_bounded_health_checks(self):
         text = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
