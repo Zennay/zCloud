@@ -20,6 +20,16 @@
     "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
   },
   {
+    "queue_id": "cloud-continuous-queue-refill",
+    "project_id": "cloud",
+    "title": "Implement continuous portfolio queue replenishment",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a permanent queue-refill mechanism for the SQLite portfolio_queue source of truth so substantial executable work is continuously added while safe project work exists. Refill after completion/block/drop and during scheduler ticks when runnable inventory falls below its target; derive concrete next work from current project state/HQ/handoff and existing claims. Prevent duplicate/conflicting write scopes, micro-task spam, read-only/status-only items and human-gated work from entering the runnable queue. Preserve project priorities and worker diversity. Completion requires production code/config changes plus regression tests proving the queue replenishes repeatedly without duplicate spam and does not run dry under normal worker turnover.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
     "queue_id": "cloud-auto-lane-generator",
     "project_id": "cloud",
     "title": "Implement automatic worker lanes from project type and backlog",
