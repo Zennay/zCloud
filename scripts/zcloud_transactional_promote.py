@@ -766,6 +766,7 @@ def run_prechange(
     candidate: Path | None = None,
     trusted_ancestor_changes: list[str] | tuple[str, ...] = (),
     allow_recent_ancestor_drift: bool = False,
+    known_live_hashes: dict[str, str] | None = None,
     health_retry_seconds: float = 20.0,
     retry_interval: float = 0.5,
 ) -> dict:
@@ -774,6 +775,10 @@ def run_prechange(
         validate_relpath(str(rel)) for rel in trusted_ancestor_changes
     }
     source_reconcile_used = False
+    known_live_hashes = {
+        validate_relpath(rel): str(value).lower()
+        for rel, value in (known_live_hashes or {}).items()
+    }
 
     def command() -> list[str]:
         args = [
@@ -838,7 +843,12 @@ def run_prechange(
                         rel in PRECHANGE_AUDITED_RUNTIME_DRIFT
                         and audited_runtime_config_drift_matches(root, state, rel)
                     )
-                    if exact_candidate or trusted_ancestor or audited_runtime:
+                    known_live = (
+                        rel in known_live_hashes
+                        and live.is_file()
+                        and sha256_file(live) == known_live_hashes[rel]
+                    )
+                    if exact_candidate or trusted_ancestor or audited_runtime or known_live:
                         aligned.append(rel)
                     else:
                         unsafe.append(rel)
@@ -1120,6 +1130,7 @@ def promote(
     reload_helper: Path = DEFAULT_RELOAD_HELPER,
     prechange_allow_changes: list[str] | tuple[str, ...] = (),
     allow_recent_ancestor_prechange_drift: bool = False,
+    known_live_hashes: dict[str, str] | None = None,
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
     dry_run: bool = False,
@@ -1151,6 +1162,17 @@ def promote(
             + ",".join(missing_prechange_candidates)
         )
     candidate_hashes = validate_candidate(candidate, root, normalized)
+    normalized_known_live_hashes: dict[str, str] = {}
+    for raw_rel, raw_hash in (known_live_hashes or {}).items():
+        rel = validate_relpath(str(raw_rel))
+        expected = str(raw_hash or "").strip().lower()
+        if rel not in normalized:
+            raise PromotionError(
+                f"known live hash path is not selected for promotion: {rel}"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise PromotionError(f"invalid known live sha256 for {rel}")
+        normalized_known_live_hashes[rel] = expected
     syntax_check(candidate, normalized)
     feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
     pending_config_changes = config_changes(candidate, root, normalized)
@@ -1208,6 +1230,7 @@ def promote(
             candidate=candidate,
             trusted_ancestor_changes=trusted_ancestor_drift,
             allow_recent_ancestor_drift=allow_recent_ancestor_prechange_drift,
+            known_live_hashes=normalized_known_live_hashes,
         )
         mapping_before = mapping_snapshot(root / "history.db")
         mapping_sha = str(mapping_before["sha256"])
@@ -1440,13 +1463,29 @@ def main(argv: list[str] | None = None) -> int:
             "remains fail-closed."
         ),
     )
+    parser.add_argument(
+        "--reconcile-known-live-sha",
+        action="append",
+        default=[],
+        metavar="PATH=SHA256",
+        help=(
+            "One-time reviewed drift migration. The path must also be selected "
+            "for this promotion and its live bytes must exactly match SHA256."
+        ),
+    )
     parser.add_argument("--require-worker-read-model", action="store_true")
     parser.add_argument("--require-incidents", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--actor", default="transactional-promote")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    known_live_hashes = {}
     try:
+        for item in args.reconcile_known_live_sha:
+            if "=" not in item:
+                raise PromotionError("--reconcile-known-live-sha requires PATH=SHA256")
+            rel, expected = item.split("=", 1)
+            known_live_hashes[rel] = expected
         result = promote(
             args.candidate,
             args.root,
@@ -1459,6 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
             reload_helper=args.reload_helper,
             prechange_allow_changes=args.prechange_allow_changes or (),
             allow_recent_ancestor_prechange_drift=args.allow_recent_ancestor_prechange_drift,
+            known_live_hashes=known_live_hashes,
             require_worker_read_model=args.require_worker_read_model,
             require_incidents=args.require_incidents,
             dry_run=args.dry_run,
