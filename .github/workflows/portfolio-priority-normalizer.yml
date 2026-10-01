@@ -74,6 +74,16 @@ jobs:
               },"portfolio-priority-normalizer")
               print("QUEUE_PRIORITY",qid,priority,json.dumps(result,sort_keys=True))
 
+          legacy_runtime_tasks=(
+              "ftmo-useful-compute-cpu-attribution",
+          )
+          for qid in legacy_runtime_tasks:
+              result=post("/api/portfolio-queue",{
+                  "action":"drop","queue_id":qid,
+                  "evidence":"Superseded by persistent ftmo-autonomous-marathon.service; normal FTMO compute is no longer worker-queue work.",
+              },"portfolio-priority-normalizer")
+              print("QUEUE_RETIRED",qid,json.dumps(result,sort_keys=True))
+
           # Reconcile current allocation with unchanged worker settings. Existing
           # real claimed/running work is not killed; newly free slots follow P0>P1>P2>P3.
           dynamic=get("/api/dynamic-workers").get("dynamic_workers") or {}
