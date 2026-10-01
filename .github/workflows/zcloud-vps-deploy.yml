@@ -179,20 +179,36 @@ jobs:
             echo "SELF_HEAL_GUARD=created"
           fi
 
-      - name: Quarantine stale selector backup before guarded promotion
+      - name: Quarantine stale non-runtime userscript backups before guarded promotion
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          backup="/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js.pre-effort-selector.bak"
-          if [[ -f "$backup" ]]; then
-            quarantine="$HOME/.local/state/zcloud/runtime-backups"
-            mkdir -p "$quarantine"
-            stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-            mv -- "$backup" "$quarantine/zcloud-worker.user.js.pre-effort-selector.bak.$stamp"
-            echo "QUARANTINED_STALE_SELECTOR_BACKUP=$quarantine/zcloud-worker.user.js.pre-effort-selector.bak.$stamp"
-          else
-            echo "NO_STALE_SELECTOR_BACKUP"
+          live="/home/ubuntu/zennay-cloud/public"
+          quarantine="$HOME/.local/state/zcloud/runtime-backups"
+          mkdir -p "$quarantine"
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          shopt -s nullglob
+          backups=(
+            "$live/zcloud-worker.user.js.pre-effort-selector.bak"
+            "$live"/zcloud-worker.user.js.bak-*
+          )
+          moved=0
+          for backup in "${backups[@]}"; do
+            [[ -f "$backup" ]] || continue
+            name="$(basename "$backup")"
+            target="$quarantine/$name.$stamp"
+            suffix=0
+            while [[ -e "$target" ]]; do
+              suffix=$((suffix + 1))
+              target="$quarantine/$name.$stamp.$suffix"
+            done
+            mv -- "$backup" "$target"
+            echo "QUARANTINED_NON_RUNTIME_BACKUP=$target"
+            moved=$((moved + 1))
+          done
+          if [[ "$moved" -eq 0 ]]; then
+            echo "NO_STALE_NON_RUNTIME_USERSCRIPT_BACKUPS"
           fi
 
       - name: Ensure Firefox automation service for guarded canaries

@@ -19,3 +19,9 @@ This document records the contract while the deploy workflow implementation is b
 - Any runner whose `RUNNER_NAME` contains the forbidden token `haxlab` is rejected before claims or production writes.
 - The guard is policy-backed by `vps-execution-policy.json` and covered by regression tests.
 - Sanitized runner-identity evidence is uploaded with the deploylane probe.
+
+## Audited runtime drift recovery
+- Runtime-mutated `resource-policy.json` drift is preserved only when SQLite `config_audit` proves the exact current priority was written after the active LKG snapshot.
+- Untracked/manual resource-policy drift remains fail-closed.
+- Known non-runtime userscript backup files are moved into the existing zCloud runtime-backup directory before the pre-change guard, never deleted.
+- This keeps dashboard-owned resource priorities persistent without weakening source-drift protection for executable files.

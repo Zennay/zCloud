@@ -464,6 +464,117 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_TRUSTED_ANCESTOR_DRIFT),
         )
 
+    def test_audited_resource_policy_drift_requires_matching_post_lkg_audit(self):
+        state = Path(self.tmp.name) / "audit-state"
+        snapshot = state / "snapshots" / "lkg-1"
+        files = snapshot / "files"
+        files.mkdir(parents=True)
+        (state / "last-known-good.json").parent.mkdir(parents=True, exist_ok=True)
+        (state / "last-known-good.json").write_text(
+            json.dumps({"snapshot_id": "lkg-1"}),
+            encoding="utf-8",
+        )
+        (snapshot / "manifest.json").write_text(
+            json.dumps({
+                "snapshot_id": "lkg-1",
+                "created_at": "2026-10-01T20:00:00+00:00",
+            }),
+            encoding="utf-8",
+        )
+        (files / "resource-policy.json").write_text(
+            json.dumps({"ftmo": {"priority": "normal"}}),
+            encoding="utf-8",
+        )
+        (self.root / "resource-policy.json").write_text(
+            json.dumps({"ftmo": {"priority": "turbo"}}),
+            encoding="utf-8",
+        )
+        db = self.root / "history.db"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "CREATE TABLE config_audit("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
+                "config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, "
+                "new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+            )
+            conn.execute(
+                "INSERT INTO config_audit(ts,actor,config_key,target,old_value_json,new_value_json,result,detail) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "2026-10-01T21:00:00+00:00",
+                    "dashboard@test",
+                    "resource.priority",
+                    "ftmo",
+                    json.dumps("normal"),
+                    json.dumps("turbo"),
+                    "succeeded",
+                    "saved",
+                ),
+            )
+
+        self.assertTrue(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "resource-policy.json"
+            )
+        )
+
+        (self.root / "resource-policy.json").write_text(
+            json.dumps({"ftmo": {"priority": "high"}}),
+            encoding="utf-8",
+        )
+        self.assertFalse(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "resource-policy.json"
+            )
+        )
+
+    def test_run_prechange_reconciles_only_audited_runtime_config_drift(self):
+        calls = []
+        original_run = promote.run
+        original_audit = promote.audited_runtime_config_drift_matches
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["resource-policy.json"],"allowed":[],'
+                '"unexpected":["resource-policy.json"]}}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        promote.audited_runtime_config_drift_matches = (
+            lambda root, state, rel: rel == "resource-policy.json"
+        )
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+            )
+        finally:
+            promote.run = original_run
+            promote.audited_runtime_config_drift_matches = original_audit
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertIn("resource-policy.json", calls[1])
+        self.assertEqual(
+            {"resource-policy.json"},
+            set(promote.PRECHANGE_AUDITED_RUNTIME_DRIFT),
+        )
+
     def test_explicit_prechange_drift_rejects_non_replaceable_paths(self):
         with self.assertRaises(promote.PromotionError):
             promote.promote(
