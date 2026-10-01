@@ -13,7 +13,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("github.run_attempt == 1", text)
         self.assertIn("runs-on: self-hosted", text)
         self.assertIn("cancel-in-progress: false", text)
-        deploy_block = text[text.index("jobs:\n  deploy:"):text.index("    steps:")]
+        deploy_start = text.index("\n  deploy:")
+        deploy_steps = text.index("    steps:", deploy_start)
+        deploy_block = text[deploy_start:deploy_steps]
+        self.assertIn("    needs: freshness", deploy_block)
+        self.assertIn("    if: needs.freshness.outputs.deploy == 'true'", deploy_block)
         self.assertIn("    concurrency:\n      group: zcloud-production-deploy", deploy_block)
         self.assertNotIn("\nconcurrency:\n  group: zcloud-production-deploy", text)
         self.assertIn("Reject stale workflow-run revisions", text)
@@ -42,6 +46,22 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             1,
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
+
+    def test_freshness_gate_clears_stale_queue_before_vps_job(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        freshness_start = text.index("jobs:\n  freshness:")
+        deploy_start = text.index("\n  deploy:")
+        freshness = text[freshness_start:deploy_start]
+        self.assertIn("runs-on: ubuntu-latest", freshness)
+        self.assertIn("actions: write", text)
+        self.assertIn("Resolve current main before consuming VPS capacity", freshness)
+        self.assertIn("STALE_BEFORE_VPS_QUEUE", freshness)
+        self.assertIn("Cancel stale queued production deploys", freshness)
+        self.assertIn('cancellable = {"queued", "pending", "waiting", "requested"}', freshness)
+        self.assertIn("/actions/runs/{run_id}/cancel", freshness)
+        self.assertIn("STALE_QUEUED_DEPLOYS_CANCELLED=", freshness)
+        self.assertIn('if str(run.get("head_sha") or "") == current_sha:', freshness)
+        self.assertNotIn("runs-on: self-hosted", freshness)
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
