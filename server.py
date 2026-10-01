@@ -1948,8 +1948,9 @@ def _portfolio_requeue_conflicting_claimed_lanes_locked(connection,ts):
     """Release only unstarted claimed rows whose derived write lane already conflicts."""
     rows=connection.execute(
         """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status='claimed' AND worker_slot IS NOT NULL
-           ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+           WHERE eligible=1 AND status IN ('claimed','running','verifying') AND worker_slot IS NOT NULL
+           ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'verifying' THEN 1 ELSE 2 END,
+                    CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                     claimed_at,created_at,queue_id"""
     ).fetchall()
     accepted=[]
@@ -1972,7 +1973,7 @@ def _portfolio_requeue_conflicting_claimed_lanes_locked(connection,ts):
                     'overlap':overlap,
                 }
                 break
-        if conflict:
+        if conflict and str(row['status'])=='claimed':
             connection.execute(
                 """UPDATE portfolio_queue
                    SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
