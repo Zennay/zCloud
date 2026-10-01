@@ -860,7 +860,14 @@
         "Handoff-context: " + JSON.stringify(handoff);
     }
     if (qualityRetryPending) {
-      prompt += "\n\nZCLOUD_QUALITY_RETRY: DOE HET NU ECHT. Voer vóór je antwoord één concrete write/run/state-change uit voor dezelfde assignment; alleen WAIT_HUMAN bij secret, vereiste toestemming of echte externe dependency.";
+      const retryLevel = qualityRetryCount >= 4 ? 3 : qualityRetryCount >= 2 ? 2 : 1;
+      const escalation = retryLevel === 3
+        ? "HERHAALDE KWALITEITSRETRY. Stop met korte/status-only cycli. Neem aantoonbaar meer redeneertijd, onderzoek waarom de vorige routes niets opleverden, kies een ANDERE veilige uitvoeringsroute en voer meerdere concrete stappen uit totdat er materiële progressie + bewijs is."
+        : retryLevel === 2
+          ? "DOE HET NU ECHT. Dit is opnieuw een te korte/ongeldige cyclus. Ga door met de REST van dezelfde assignment, kies zo nodig een andere veilige uitvoeringsroute en lever concrete write/run/state-change + bewijs."
+          : "DOE HET NU ECHT. De vorige generatie was te kort, te snel, blocker-only of zonder betrouwbare queue-evidence. Ga door met dezelfde assignment en voer vóór je antwoord minimaal één concrete write/run/state-change uit.";
+      prompt += "\n\nZCLOUD_QUALITY_RETRY #" + qualityRetryCount + ": " + escalation +
+        " Pauzeer of stop de worker NIET vanwege korte output. Alleen WAIT_HUMAN bij secret, vereiste toestemming of echte externe dependency. Geef concrete ZCLOUD_QUEUE_EVIDENCE.";
     }
     return prompt;
   }
@@ -1122,6 +1129,10 @@
           missingQueueEvidence: quality.missingEvidence,
           recoverableBlocker: quality.recoverableBlocker
         });
+      } else if (qualityRetryCount > 0) {
+        qualityRetryPending = false;
+        qualityRetryCount = 0;
+        await status("quality-retry-cleared", {reason: "valid-generation"});
       }
       if (draining) {
         await status("runner-drained", {reason: "current-task-finished"});
