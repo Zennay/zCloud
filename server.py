@@ -52,7 +52,9 @@ AI_SLOT_DIVERSITY_PENALTY = 500
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
 PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
+PORTFOLIO_ATTENTION_NOTION_URL = 'https://app.notion.com/p/3ec9e19ac9558140a2d8d05d5ebbf103'
 PORTFOLIO_QUEUE_LEASE_SECONDS = 1800
+PORTFOLIO_QUEUE_MIN_READY_PER_WORKER = 3
 PORTFOLIO_AI_COOLDOWN_SECONDS = 120
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
@@ -554,6 +556,19 @@ def init_db():
         )""")
         c.execute('CREATE INDEX IF NOT EXISTS portfolio_queue_sched ON portfolio_queue(eligible,status,priority,created_at)')
         c.execute('CREATE INDEX IF NOT EXISTS portfolio_queue_worker ON portfolio_queue(worker_slot,status)')
+        c.execute("""CREATE TABLE IF NOT EXISTS portfolio_attention(
+            attention_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT 'attention',
+            source_url TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            resolved_at TEXT
+        )""")
+        c.execute('CREATE INDEX IF NOT EXISTS portfolio_attention_status ON portfolio_attention(status,severity,updated_at)')
         c.execute("""CREATE TABLE IF NOT EXISTS worker_preflights(
             project_id TEXT NOT NULL,
             worker_id TEXT NOT NULL,
@@ -631,6 +646,21 @@ def init_db():
                     ))
             except Exception:
                 logging.exception('Could not seed VPS portfolio queue')
+        # Human/external gates are intentionally stored outside the execution queue.
+        for project in PROJECT_INDEX.values():
+            for gate in project.get('human_gates') or []:
+                attention_id=str(gate.get('id') or '').strip()
+                action=str(gate.get('action') or '').strip()
+                if not attention_id or not action:
+                    continue
+                ts=now()
+                c.execute("""INSERT OR IGNORE INTO portfolio_attention(
+                    attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)""",(
+                    attention_id,str(project.get('id') or ''),action,str(gate.get('detail') or ''),
+                    str(gate.get('severity') or 'attention'),str(gate.get('source_url') or project.get('notion_url') or ''),
+                    'open',ts,ts
+                ))
         for flag_name,definition in FEATURE_FLAG_DEFINITIONS.items():
             c.execute("INSERT OR IGNORE INTO feature_flags(name,enabled,expires_at,updated_at,actor) VALUES(?,?,?,?,?)",
                       (flag_name,1 if definition['default'] else 0,None,now(),'system-default'))
@@ -769,7 +799,7 @@ def collect():
         p['last_chatgpt_run']=watch_last_run(p['id'])
     with connect() as c:
         c.executemany('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)',events)
-    data={'version':3,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam'}
+    data={'version':3,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam','attention_needed':portfolio_attention_items(),'portfolio_queue_health':portfolio_queue_health()}
     try: enhancements.evaluate_alerts(data,runner_status(),DB)
     except Exception: logging.exception('Alert evaluation failed')
     return data
@@ -1807,6 +1837,100 @@ def _portfolio_queue_row(row):
     item['eligible']=bool(item.get('eligible'))
     return item
 
+def _portfolio_queue_execution_capable(title,completion_criteria=''):
+    title_text=str(title or '').strip().lower()
+    criteria=str(completion_criteria or '').strip().lower()
+    combined=title_text+'\n'+criteria
+    human_only=(
+        'human-only','human only','requires human','waiting for human','wait for human',
+        'external gate only','physical test only','manual-only','manual only',
+    )
+    if any(marker in combined for marker in human_only):
+        return False
+    non_exec_prefixes=('inspect ','audit ','review ','verify ','check ','monitor ','report ','summarize ','status ')
+    execution_markers=(
+        'implement','build','fix','change','write','deploy','merge','create','update','refactor',
+        'execute','run ','train','generate','migrate','configure','persist','material code',
+        'material config','material workflow','runtime state change','experiment',
+    )
+    if title_text.startswith(non_exec_prefixes) and not any(marker in combined for marker in execution_markers):
+        return False
+    if ('read-only evidence is recorded' in combined or 'read-only verification' in combined) and not any(
+        marker in combined for marker in execution_markers
+    ):
+        return False
+    return True
+
+def portfolio_attention_items(include_resolved=False):
+    with connect() as c:
+        if include_resolved:
+            rows=c.execute("""SELECT * FROM portfolio_attention
+                              ORDER BY CASE severity WHEN 'urgent' THEN 0 WHEN 'attention' THEN 1 ELSE 2 END,
+                                       updated_at DESC, attention_id""").fetchall()
+        else:
+            rows=c.execute("""SELECT * FROM portfolio_attention WHERE status='open'
+                              ORDER BY CASE severity WHEN 'urgent' THEN 0 WHEN 'attention' THEN 1 ELSE 2 END,
+                                       updated_at DESC, attention_id""").fetchall()
+    return [dict(row) for row in rows]
+
+def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
+    project_id=str(project_id or '').strip().lower()
+    action=str(action or '').strip()
+    if project_id not in PROJECT_INDEX:
+        raise ValueError('Onbekend project voor attention item')
+    if not action:
+        raise ValueError('action is verplicht')
+    if severity not in ('urgent','attention','later'):
+        severity='attention'
+    if not attention_id:
+        digest=hashlib.sha256((project_id+'\n'+action).encode()).hexdigest()[:16]
+        attention_id=project_id+'-'+digest
+    attention_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(attention_id).strip())[:160]
+    ts=now()
+    with connect() as c:
+        c.execute("""INSERT INTO portfolio_attention(
+            attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
+        ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
+        ON CONFLICT(attention_id) DO UPDATE SET
+            project_id=excluded.project_id,action=excluded.action,detail=excluded.detail,
+            severity=excluded.severity,source_url=excluded.source_url,status='open',
+            updated_at=excluded.updated_at,resolved_at=NULL""",
+            (attention_id,project_id,action,str(detail or '')[:4000],severity,str(source_url or ''),ts,ts))
+        row=c.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',(attention_id,)).fetchone()
+    return dict(row)
+
+def portfolio_attention_resolve(attention_id):
+    attention_id=str(attention_id or '').strip()
+    if not attention_id:
+        raise ValueError('attention_id is verplicht')
+    ts=now()
+    with connect() as c:
+        cur=c.execute("""UPDATE portfolio_attention SET status='resolved',resolved_at=?,updated_at=?
+                         WHERE attention_id=? AND status='open'""",(ts,ts,attention_id))
+    return {'resolved':bool(cur.rowcount),'attention_id':attention_id}
+
+def _blocker_needs_human(evidence):
+    text=str(evidence or '').lower()
+    markers=(
+        'human','user action','manual approval','physical','watch','participant','maintainer',
+        'credential','api key','secret','oauth approval','review submission','external gate',
+        'needs_human','wait_human'
+    )
+    return any(marker in text for marker in markers)
+
+def _attention_action_for_blocker(project_id,title,evidence):
+    text=(str(title or '')+' '+str(evidence or '')).lower()
+    name=str((PROJECT_INDEX.get(project_id) or {}).get('name') or project_id)
+    if 'participant' in text or 'maintainer' in text or 'usability' in text:
+        return f'{name}: do or arrange the real user/maintainer test'
+    if 'watch' in text or 'physical' in text or 'device' in text:
+        return f'{name}: complete the physical device test'
+    if 'credential' in text or 'api key' in text or 'secret' in text:
+        return f'{name}: add or approve the required account credential'
+    if 'review' in text or 'submission' in text:
+        return f'{name}: complete the external review/submission step'
+    return f'{name}: your input is needed to unblock this step'
+
 def portfolio_queue_items(include_done=False):
     with connect() as c:
         if include_done:
@@ -1861,6 +1985,10 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         raise ValueError('title is verplicht')
     if priority not in ('P0','P1','P2','P3'):
         raise ValueError('priority moet P0, P1, P2 of P3 zijn')
+    if str((PROJECT_INDEX.get(project_id) or {}).get('queue_mode') or '').lower()=='human-gated':
+        raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
+    if not _portfolio_queue_execution_capable(title,completion_criteria):
+        raise ValueError('Alleen uitvoerbare write/build/test/deploy taken mogen in de workerqueue')
     if not queue_id:
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
@@ -1880,7 +2008,99 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
     return _portfolio_queue_row(row)
 
+def portfolio_write_continuation(project_id,parent_queue_id=None):
+    project_id=str(project_id or '').strip().lower()
+    project=PROJECT_INDEX.get(project_id) or {}
+    if str(project.get('queue_mode') or '').lower()=='human-gated':
+        return None
+    name=str(project.get('name') or project_id or 'project').strip()
+    next_step=str(project.get('next_step') or '').strip()
+    priority='P1' if project_id in ('haxlab','ftmo','cloud','zssh') else 'P2'
+    if parent_queue_id is None:
+        with connect() as c:
+            sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
+        parent_queue_id=f'auto-refill-{project_id}-{sequence}'
+    criteria=(
+        f'Read the current {name} HQ/handoff and execute the highest-value safe unblocked write-capable roadmap step. '
+        'Completion requires at least one material code/config/workflow/experiment/runtime state change plus automated '
+        'test/build/run evidence. Read-only inspection, audit, status, checklist, documentation-only or evidence collection '
+        'alone cannot complete this item. If a narrow evidence gate is already resolved, continue within this assignment '
+        'to the next safe write-capable roadmap step instead of stopping.'
+    )
+    if next_step:
+        criteria += ' Current project next-step hint: ' + next_step
+    return portfolio_queue_enqueue(
+        project_id,
+        f'Implement next {name} roadmap increment',
+        priority,
+        criteria,
+        project.get('notion_url') or project.get('handoff_url') or '',
+        parent_queue_id=parent_queue_id,
+    )
+
+def portfolio_queue_audit():
+    """Keep the execution queue write-only, broad enough, and separate from human gates."""
+    removed=[]
+    with connect() as c:
+        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria FROM portfolio_queue
+                          WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
+        for row in rows:
+            project=PROJECT_INDEX.get(str(row['project_id'])) or {}
+            human_gated=str(project.get('queue_mode') or '').lower()=='human-gated'
+            if human_gated or not _portfolio_queue_execution_capable(row['title'],row['completion_criteria']):
+                c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
+                             claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=? WHERE queue_id=?""",
+                          ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
+                removed.append(str(row['queue_id']))
+    # Keep at least one executable item available for every non-human-gated active project.
+    with connect() as c:
+        rows=c.execute("""SELECT DISTINCT project_id FROM portfolio_queue
+                          WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
+        represented={str(row['project_id']) for row in rows}
+    project_order=sorted(
+        PROJECT_INDEX.values(),
+        key=lambda p: ({'system':0,'high':1,'normal':2,'low':3,'background':4}.get(str(p.get('priority') or 'normal'),2), str(p.get('id') or ''))
+    )
+    created=[]
+    for project in project_order:
+        project_id=str(project.get('id') or '')
+        if not project_id or str(project.get('status') or 'active')!='active':
+            continue
+        if str(project.get('queue_mode') or '').lower()=='human-gated' or project_id in represented:
+            continue
+        try:
+            item=portfolio_write_continuation(project_id)
+            if item:
+                created.append(item['queue_id'])
+                represented.add(project_id)
+        except ValueError:
+            continue
+    with connect() as c:
+        ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue
+                           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+        projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue
+                              WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+    return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':created,'time':now()}
+
+def portfolio_queue_health():
+    with connect() as c:
+        ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue
+                           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+        queued=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status='queued'").fetchone()[0]
+        projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue
+                              WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+        dropped=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE status='dropped'").fetchone()[0]
+        attention=c.execute("SELECT COUNT(*) FROM portfolio_attention WHERE status='open'").fetchone()[0]
+    target=max(6,max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))*PORTFOLIO_QUEUE_MIN_READY_PER_WORKER)
+    return {
+        'ready':int(ready),'queued':int(queued),'projects':int(projects),'dropped':int(dropped),
+        'attention':int(attention),'target_ready':int(target),
+        'healthy':int(ready)>=min(target,max(1,len([p for p in PROJECT_INDEX.values() if str(p.get('queue_mode') or '').lower()!='human-gated']))),
+        'notion_attention_url':PORTFOLIO_ATTENTION_NOTION_URL,
+    }
+
 def portfolio_queue_allocate():
+    portfolio_queue_audit()
     ts_dt=datetime.now(timezone.utc)
     ts=ts_dt.isoformat()
     lease_until=(ts_dt+timedelta(seconds=PORTFOLIO_QUEUE_LEASE_SECONDS)).isoformat()
@@ -1902,12 +2122,22 @@ def portfolio_queue_allocate():
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
-            row=c.execute("""SELECT * FROM portfolio_queue
-                             WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-                             ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                                      created_at, queue_id LIMIT 1""").fetchone()
-            if not row:
+            candidates=c.execute("""SELECT * FROM portfolio_queue
+                                    WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                                    ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                                             created_at, queue_id LIMIT 80""").fetchall()
+            if not candidates:
                 continue
+            used_projects={str(item.get('project_id') or '') for item in selected}
+            row=min(
+                candidates,
+                key=lambda candidate: (
+                    _portfolio_priority_rank(candidate['priority']),
+                    1 if str(candidate['project_id']) in used_projects else 0,
+                    str(candidate['created_at'] or ''),
+                    str(candidate['queue_id'] or ''),
+                )
+            )
             c.execute("""UPDATE portfolio_queue
                          SET status='claimed',worker_slot=?,claimed_at=?,claim_expires=?,updated_at=?,attempts=attempts+1
                          WHERE queue_id=? AND status='queued' AND eligible=1""",
@@ -1960,28 +2190,44 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
         elif result=='BLOCKED':
-            c.execute("""UPDATE portfolio_queue SET status='blocked',eligible=0,evidence=?,blocker=?,
+            # BLOCKED is a transition, never runnable queue inventory.
+            c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,evidence=?,blocker=?,
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
         else:
             c.execute("""UPDATE portfolio_queue SET status='queued',eligible=1,evidence=?,
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
+    attention=None
+    if result=='BLOCKED' and _blocker_needs_human(evidence):
+        attention=portfolio_attention_add(
+            row['project_id'],
+            _attention_action_for_blocker(row['project_id'],row['title'],evidence),
+            str(evidence or '')[:4000],
+            row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
+            'urgent' if str(row['priority']).upper()=='P0' else 'attention',
+            attention_id='queue:'+queue_id,
+        )
     created=None
     if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
-        created=portfolio_queue_enqueue(
-            next_task.get('project_id') or row['project_id'],
-            next_task.get('title'),
-            next_task.get('priority') or 'P2',
-            next_task.get('completion_criteria') or '',
-            parent_queue_id=queue_id
-        )
+        try:
+            created=portfolio_queue_enqueue(
+                next_task.get('project_id') or row['project_id'],
+                next_task.get('title'),
+                next_task.get('priority') or 'P2',
+                next_task.get('completion_criteria') or '',
+                next_task.get('source_url') or '',
+                parent_queue_id=queue_id
+            )
+        except ValueError:
+            created=None
     elif result in ('DONE','BLOCKED'):
-        # Keep every project moving with a write-first continuation. A finished
-        # evidence/audit gate must never strand the worker pool in another
-        # read-only/status-only loop.
-        created=portfolio_write_continuation(row['project_id'],queue_id)
-    return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created}
+        try:
+            created=portfolio_write_continuation(row['project_id'],queue_id)
+        except ValueError:
+            created=None
+    audit=portfolio_queue_audit()
+    return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
 
 def portfolio_queue_allocation():
     active=[]
@@ -2877,6 +3123,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'error':'Ongeldige portfolio-queue actie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
+            if u.path=='/api/portfolio-attention':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                action=str(payload.get('action') or '').lower()
+                try:
+                    if action=='resolve':
+                        result=portfolio_attention_resolve(payload.get('attention_id'))
+                        return self.reply({'ok':bool(result.get('resolved')),'result':result,'time':now()},200 if result.get('resolved') else 409)
+                    if action=='add':
+                        item=portfolio_attention_add(
+                            payload.get('project_id'),payload.get('action_text') or payload.get('title'),
+                            payload.get('detail') or '',payload.get('source_url') or '',
+                            payload.get('severity') or 'attention',payload.get('attention_id')
+                        )
+                        return self.reply({'ok':True,'item':item,'time':now()})
+                    return self.reply({'error':'Ongeldige attention actie'},400)
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
             if u.path=='/api/feature-flags':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
@@ -2990,6 +3253,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
             return self.reply({'backend':'sqlite','items':portfolio_queue_items(include_done),'allocation':global_worker_allocation(),'time':now()})
+        if u.path=='/api/portfolio-attention':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            include_resolved=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
+            return self.reply({'items':portfolio_attention_items(include_resolved),'notion_url':PORTFOLIO_ATTENTION_NOTION_URL,'time':now()})
         if u.path=='/api/autonomy':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             states=autonomy_states()
