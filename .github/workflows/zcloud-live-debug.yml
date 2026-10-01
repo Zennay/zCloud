@@ -100,6 +100,8 @@ jobs:
               p=Path(p)
               return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
           paths={
+              "live_server":"/home/ubuntu/zennay-cloud/server.py",
+              "live_queue_seed":"/home/ubuntu/zennay-cloud/portfolio_queue.seed.json",
               "live_background":"/home/ubuntu/zennay-cloud/firefox-extension/background.js",
               "runtime_background":"/home/ubuntu/snap/firefox/common/chatgpt-project-extension/background.js",
               "live_userscript":"/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js",
