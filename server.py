@@ -2943,6 +2943,14 @@ class Handler(BaseHTTPRequestHandler):
                 action=str(payload.get('action') or '')
                 if action=='restart_firefox':
                     try:
+                        # Recover the full user-service dependency chain. Restarting
+                        # Firefox alone can stay inactive when display/openbox failed.
+                        for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
+                            try: user_systemctl('reset-failed',dependency)
+                            except Exception: pass
+                            user_systemctl('start',dependency)
+                        try: user_systemctl('reset-failed',FIREFOX_RUNNER_SERVICE)
+                        except Exception: pass
                         user_systemctl('restart',FIREFOX_RUNNER_SERVICE)
                         status=firefox_runner_status()
                         return self.reply({'ok':bool(status.get('active')),'status':status},200 if status.get('active') else 503)
