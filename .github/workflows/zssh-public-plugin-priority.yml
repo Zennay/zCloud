@@ -51,7 +51,7 @@ jobs:
                   raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
           print("QUEUE_ENQUEUE_RESPONSE", json.dumps(body, sort_keys=True))
 
-          with urllib.request.urlopen(base + "/api/portfolio-queue", timeout=10) as response:
+          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
               live = json.load(response)
 
           def find(value):
@@ -87,6 +87,45 @@ jobs:
                       "status": item.get("status"),
                       "eligible": item.get("eligible"),
                       "worker_slot": item.get("worker_slot"),
+                  },
+                  sort_keys=True,
+              ),
+          )
+
+          ftmo_id = "ftmo-current-generation-safe-gate"
+
+          def find_queue(value, wanted):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == wanted:
+                      return value
+                  for child in value.values():
+                      found = find_queue(child, wanted)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find_queue(child, wanted)
+                      if found:
+                          return found
+              return None
+
+          ftmo = find_queue(live, ftmo_id)
+          if not ftmo:
+              raise RuntimeError(f"{ftmo_id} not found in live SQLite queue")
+          if str(ftmo.get("priority") or "").upper() != "P0":
+              raise RuntimeError(f"{ftmo_id} priority is not P0: {ftmo.get('priority')}")
+          if str(ftmo.get("project_id") or "").lower() != "ftmo":
+              raise RuntimeError(f"{ftmo_id} is attached to wrong project: {ftmo.get('project_id')}")
+          print(
+              "FTMO_P0_PRIORITY_GREEN",
+              json.dumps(
+                  {
+                      "queue_id": ftmo.get("queue_id"),
+                      "project_id": ftmo.get("project_id"),
+                      "priority": ftmo.get("priority"),
+                      "status": ftmo.get("status"),
+                      "eligible": ftmo.get("eligible"),
+                      "worker_slot": ftmo.get("worker_slot"),
                   },
                   sort_keys=True,
               ),
