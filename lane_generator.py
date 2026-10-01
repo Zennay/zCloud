@@ -361,6 +361,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             if overlap["capabilities"] or overlap["files"]:
                 conflicts.append({
                     "kind": "claim",
+                    "reason": "task_claim_scope_conflict",
                     "claim_key": claim["claim_key"],
                     "owner_id": claim["owner_id"],
                     "worker_id": claim["worker_id"],
@@ -371,6 +372,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             if overlap["capabilities"] or overlap["files"]:
                 conflicts.append({
                     "kind": "queue",
+                    "reason": "queue_scope_conflict",
                     "queue_id": occupied["queue_id"],
                     "lane_id": occupied["lane_id"],
                     "overlap": overlap,
