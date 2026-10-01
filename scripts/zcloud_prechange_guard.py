@@ -112,6 +112,33 @@ def service_active(service: str, *, user: bool = False) -> bool:
     return subprocess.run(cmd, env=env).returncode == 0
 
 
+def firefox_runtime_active() -> bool:
+    """Accept either the legacy user service or the live standalone Firefox runtime.
+
+    The userscript-only worker architecture intentionally disables the legacy
+    chatgpt-firefox.service. In that mode a healthy standalone Firefox process is
+    the expected automation consumer and must not make guarded deploys fail.
+    """
+    if service_active("chatgpt-firefox.service", user=True):
+        return True
+    try:
+        proc = subprocess.run(
+            [
+                "pgrep",
+                "-u",
+                str(os.getuid()),
+                "-f",
+                r"/snap/firefox/.*/usr/lib/firefox/firefox",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return proc.returncode == 0
+    except OSError:
+        return False
+
+
 def http_healthy(url: str, timeout: float = 8.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -187,8 +214,8 @@ def evaluate(
             },
             {
                 "name": "firefox_service",
-                "ok": service_active("chatgpt-firefox.service", user=True),
-                "detail": "user service active",
+                "ok": firefox_runtime_active(),
+                "detail": "user service or standalone Firefox runtime active",
             },
             {
                 "name": "zcloud_http",
