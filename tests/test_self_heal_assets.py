@@ -16,6 +16,13 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn("Persistent=true", text)
         self.assertIn("zcloud-self-heal.service", text)
 
+    def test_ftmo_recovery_does_not_restart_an_active_runner(self):
+        text = (ROOT / ".github/workflows/ftmo-persistent-runtime-recovery.yml").read_text()
+        self.assertIn('! systemctl is-active --quiet "$RUNNER_SERVICE"', text)
+        self.assertIn('systemctl start "$RUNNER_SERVICE"', text)
+        self.assertNotIn('systemctl restart "$RUNNER_SERVICE"', text)
+        self.assertNotIn('systemctl disable --now "$RUNNER_SERVICE"', text)
+
     def test_probe_has_disable_sentinel_and_bounded_health_checks(self):
         text = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
         self.assertIn(".disable-self-heal", text)
