@@ -56,8 +56,38 @@ jobs:
                       "UPDATE runner_workers SET desired_state='running' WHERE project_id=? AND worker_slot=?",
                       (project, worker_slot),
                   )
+                  pending_rows = conn.execute(
+                      "SELECT id,created_at FROM runner_commands "
+                      "WHERE project_id=? AND status='pending' ORDER BY id",
+                      (key,),
+                  ).fetchall()
+                  stale_ids = []
+                  cutoff = time.time() - 120
+                  for pending in pending_rows:
+                      try:
+                          created = datetime.fromisoformat(
+                              str(pending["created_at"]).replace("Z", "+00:00")
+                          ).timestamp()
+                      except Exception:
+                          created = 0
+                      if created <= cutoff:
+                          stale_ids.append(int(pending["id"]))
+                  if stale_ids:
+                      placeholders = ",".join("?" for _ in stale_ids)
+                      conn.execute(
+                          f"UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                          f"WHERE id IN ({placeholders})",
+                          (
+                              ts,
+                              "restart workflow superseded stale pending command",
+                              *stale_ids,
+                          ),
+                      )
+
                   pending = conn.execute(
-                      "SELECT id FROM runner_commands WHERE project_id=? AND action='new_chat' AND status='pending' ORDER BY id DESC LIMIT 1",
+                      "SELECT id FROM runner_commands "
+                      "WHERE project_id=? AND action='new_chat' AND status='pending' "
+                      "ORDER BY id DESC LIMIT 1",
                       (key,),
                   ).fetchone()
                   if pending:
@@ -65,7 +95,8 @@ jobs:
                       deduplicated = True
                   else:
                       cur = conn.execute(
-                          "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,NULL)",
+                          "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) "
+                          "VALUES(?,?,?,?,?,NULL)",
                           (key, "new_chat", "pending", ts, ts),
                       )
                       command_id = int(cur.lastrowid)
@@ -97,9 +128,23 @@ jobs:
                   break
               time.sleep(5)
 
+          pending_workers = [
+              worker for worker, value in final.items()
+              if value["status"] not in ("completed", "failed")
+          ]
+          failed_workers = [
+              worker for worker, value in final.items()
+              if value["status"] == "failed"
+          ]
           print(json.dumps({
-              "ok": True,
+              "ok": not pending_workers and not failed_workers,
               "queued": queued,
               "final": final,
+              "pending_workers": pending_workers,
+              "failed_workers": failed_workers,
           }, ensure_ascii=False, sort_keys=True))
+          if pending_workers:
+              raise SystemExit("restart commands remained pending: " + ", ".join(pending_workers))
+          if failed_workers:
+              raise SystemExit("restart commands failed: " + ", ".join(failed_workers))
           PY
