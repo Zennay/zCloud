@@ -566,6 +566,32 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual("Veilige workerkaart bouwen", worker["current_task"]["title"])
         self.assertEqual("worker/test", worker["current_task"]["branch"])
 
+    def test_worker_status_exposes_queue_generated_execution_lane(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        with server.connect() as conn:
+            conn.execute("DELETE FROM portfolio_queue")
+            conn.execute("DELETE FROM ai_global_slots")
+        server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement automatic queue lane scheduling",
+            "P1",
+            "Implement queue scheduler allocation with deterministic regression tests.",
+        )
+        server.portfolio_queue_allocate()
+        server._persist_global_worker_allocation(server.portfolio_queue_allocation())
+        self.request(
+            "/api/runner-status",
+            {"event": "heartbeat", "projectId": "cloud::w1",
+             "baseProjectId": "cloud", "workerSlot": 1, "title": "zCloud · worker 1/1"},
+        )
+
+        worker = server.runner_statuses()["cloud"]["workers"][0]
+
+        self.assertEqual("control-plane", worker["work_area"])
+        self.assertEqual("control-plane", worker["execution_lane"]["lane_id"])
+        self.assertIn("zcloud-queue", worker["execution_lane"]["scope"]["capabilities"])
+        self.assertEqual("Implement automatic queue lane scheduling", worker["current_task"]["title"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
