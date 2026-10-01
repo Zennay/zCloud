@@ -29,6 +29,7 @@ jobs:
           import time
           import urllib.error
           import urllib.request
+          import urllib.parse
           from datetime import datetime, timezone
 
           DB = "/home/ubuntu/zennay-cloud/history.db"
@@ -80,6 +81,24 @@ jobs:
               pass
 
           if legacy_vm_only:
+              bootstrap_urls = []
+              with sqlite3.connect(DB, timeout=5) as bootstrap_db:
+                  bootstrap_db.row_factory = sqlite3.Row
+                  bootstrap_rows = bootstrap_db.execute(
+                      "SELECT s.project_id,s.worker_slot,COALESCE(w.provider,'chatgpt') provider "
+                      "FROM ai_global_slots s "
+                      "LEFT JOIN runner_workers w "
+                      "ON w.project_id=s.project_id AND w.worker_slot=s.worker_slot "
+                      "ORDER BY s.slot"
+                  ).fetchall()
+                  for row in bootstrap_rows:
+                      worker = f"{row['project_id']}::w{int(row['worker_slot'] or 1)}"
+                      marker = urllib.parse.quote(worker, safe="")
+                      provider = str(row["provider"] or "chatgpt").lower()
+                      base = "https://claude.ai/new" if provider == "claude" else "https://chatgpt.com/"
+                      sep = "&" if "?" in base else "?"
+                      bootstrap_urls.append(base + sep + "zcloud_worker=" + marker)
+
               proc = subprocess.run(
                   ["pgrep", "-u", str(os.getuid()), "-f",
                    r"/snap/firefox/.*/usr/lib/firefox/firefox$"],
@@ -141,7 +160,7 @@ jobs:
               log_path = "/tmp/zcloud-violentmonkey-firefox-restart.log"
               with open(log_path, "ab", buffering=0) as log:
                   subprocess.Popen(
-                      ["/usr/bin/firefox"],
+                      ["/usr/bin/firefox", *bootstrap_urls],
                       stdin=subprocess.DEVNULL,
                       stdout=log,
                       stderr=log,
@@ -176,6 +195,7 @@ jobs:
                   "old_pid": primary,
                   "new_pid": new_pid,
                   "display": launch_env.get("DISPLAY"),
+                  "bootstrap_urls": bootstrap_urls,
               }, ensure_ascii=False, sort_keys=True))
               time.sleep(12)
           else:
