@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "zcloud-vps-execution-lane",
   "enabled": true,
   "transport": "github-actions-self-hosted-runner",
@@ -9,7 +9,11 @@
     ],
     "host": "vps-bb300bba",
     "user": "ubuntu",
-    "workspace": "/home/ubuntu"
+    "workspace": "/home/ubuntu",
+    "forbidden_name_tokens": [
+      "haxlab"
+    ],
+    "identity_guard": "scripts/zcloud_vps_runner_guard.py"
   },
   "projects": [
     "haxlab",
