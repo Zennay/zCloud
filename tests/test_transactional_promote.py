@@ -539,6 +539,47 @@ class TransactionalPromotionTests(unittest.TestCase):
         index = calls[1].index("--allow-change")
         self.assertEqual("server.py", calls[1][index + 1])
 
+    def test_prechange_reconciles_safe_drift_even_with_transient_health_failure(self):
+        calls = []
+        original_run = promote.run
+        (self.root / "server.py").write_text("same-tested-bytes\n")
+        (self.candidate / "server.py").write_text("same-tested-bytes\n")
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":['
+                '{"name":"managed_source_state","ok":false,"detail":'
+                '{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}},'
+                '{"name":"zcloud_http","ok":false,"detail":"temporary timeout"}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertIn("server.py", calls[1])
+
     def test_prechange_keeps_divergent_managed_drift_fail_closed(self):
         calls = []
         original_run = promote.run
