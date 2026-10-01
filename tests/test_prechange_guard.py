@@ -103,6 +103,19 @@ class PrechangeGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("lkg_integrity", result["checks"][0]["name"])
 
+    def test_exact_legacy_app_backup_is_ignored_but_other_unknown_backups_block(self):
+        legacy = self.root / "public/app.js.bak"
+        legacy.write_text("legacy-local-backup\n")
+        result = self.evaluate()
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("public/app.js.bak", result["unexpected_changes"])
+
+        unknown = self.root / "public/other.js.bak"
+        unknown.write_text("unknown-local-backup\n")
+        result = self.evaluate()
+        self.assertFalse(result["ok"])
+        self.assertIn("public/other.js.bak", result["unexpected_changes"])
+
     def test_new_managed_file_is_unexpected(self):
         (self.root / "scripts").mkdir()
         (self.root / "scripts/new_deploy.py").write_text("new\n")

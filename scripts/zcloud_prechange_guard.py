@@ -41,6 +41,13 @@ MANAGED_PATHS = (
     "scripts",
 )
 
+# One legacy local editor/deploy backup is known to exist on the live host.
+# It is never served or executed. Ignore only this exact non-runtime path in
+# drift comparison; other unknown backup/source files remain fail-closed.
+IGNORED_NON_RUNTIME_PATHS = frozenset({
+    "public/app.js.bak",
+})
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -60,7 +67,10 @@ def tree_hashes(root: Path) -> dict[str, str]:
             p for p in base.rglob("*") if p.is_file() and not p.is_symlink()
         )
         for path in files:
-            hashes[path.relative_to(root).as_posix()] = sha256_file(path)
+            relative = path.relative_to(root).as_posix()
+            if relative in IGNORED_NON_RUNTIME_PATHS:
+                continue
+            hashes[relative] = sha256_file(path)
     return hashes
 
 
@@ -135,7 +145,11 @@ def evaluate(
         "detail": manifest.get("snapshot_id"),
     })
     current = tree_hashes(root)
-    baseline = manifest.get("hashes") or {}
+    baseline = {
+        path: value
+        for path, value in (manifest.get("hashes") or {}).items()
+        if path not in IGNORED_NON_RUNTIME_PATHS
+    }
     changed = changed_paths(current, baseline)
     unexpected = [path for path in changed if path not in allowed]
     checks.append({
