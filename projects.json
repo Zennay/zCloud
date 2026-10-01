@@ -389,13 +389,13 @@
     "id": "zssh",
     "name": "zSSH",
     "eyebrow": "SECURE REMOTE OPERATIONS",
-    "goal": "Secure Linux/VPS operations from normal ChatGPT chats through a published remote MCP plugin.",
+    "goal": "Ship zSSH as a secure public ChatGPT plugin with a simple connection website, self-hosted target pairing, explicit scoped sudo grants, production OAuth, and review-ready packaging.",
     "icon": "server",
     "accent": "#f6c56f",
-    "phase": "Standalone repository · canonical source migrated",
+    "phase": "Public plugin · ship-ready program",
     "status": "active",
-    "next_step": "P0 enabling-infrastructure gate: complete the M1 live file-capability proof, then move to paired target identity/auth/revocation; prioritize zSSH while it directly unblocks other project work.",
-    "milestone_revision": "zssh-standalone-v2",
+    "next_step": "Execute the research-first zSSH ship queue in order: current OpenAI contract → universal endpoint architecture → connect website → scoped sudo grants → production OAuth → plugin package/reviewer materials → red-team → final submission-ready gate.",
+    "milestone_revision": "zssh-ship-ready-v1",
     "progress_basis": "Build progress is the average of evidence-based milestones; production readiness counts only after auth/security/review validation.",
     "milestones": [
       {
