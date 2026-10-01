@@ -16,11 +16,11 @@ jobs:
       - name: Verify permanent VPS runner
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Check out exact Supa candidate
+      - name: Check out exact Supa release state
         uses: actions/checkout@v4
         with:
           repository: Zennay/Supa
-          ref: c6acc574796a3d3c5dcc47692431a4b01f558f02
+          ref: c61615bd2074e36b39800001152496be9692ee24
           path: supa
 
       - name: Set up Node
