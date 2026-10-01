@@ -1921,7 +1921,16 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     project=PROJECT_INDEX.get(project_id) or {}
     name=str(project.get('name') or project_id or 'project').strip()
     next_step=str(project.get('next_step') or '').strip()
-    priority='P1' if project_id=='haxlab' else 'P2'
+    priority_by_project={
+        'ftmo':'P0',
+        'zssh':'P0',
+        'raiseai':'P1',
+        'supa':'P1',
+        'cloud':'P2',
+        'ulab':'P2',
+        'haxlab':'P3',
+    }
+    priority=priority_by_project.get(project_id,'P2')
     criteria=(
         f'Read the current {name} HQ/handoff and execute the highest-value safe unblocked write-capable roadmap step. '
         'Completion requires at least one material code/config/workflow/experiment/runtime state change plus automated '
