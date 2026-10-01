@@ -201,6 +201,14 @@ jobs:
             exit 0
           fi
 
+          legacy_disable="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
+          if [[ -f "$legacy_disable" ]] \
+            && grep -qi 'Violentmonkey only' "$legacy_disable" \
+            && grep -q 'ExecCondition=/bin/false' "$legacy_disable"; then
+            echo "FIREFOX_AUTOMATION_SERVICE=intentionally_disabled_violentmonkey"
+            exit 0
+          fi
+
           # The Firefox unit explicitly Requires= the display and window-manager
           # units. Recover those first so a stale dependency cannot block an
           # otherwise unrelated backend/queue deployment.
