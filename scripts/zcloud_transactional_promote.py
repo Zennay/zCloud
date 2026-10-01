@@ -159,9 +159,15 @@ def matches_recent_first_parent_ancestor(
     rel: str,
     live: Path,
     *,
-    max_commits: int = 64,
+    max_commits: int = 512,
 ) -> bool:
-    """Return True only when live bytes are from recent tested repo ancestry."""
+    """Return True only when live bytes are from bounded tested repo ancestry.
+
+    zCloud can advance by dozens of commits while a production deploy is held by
+    a runner or canary failure. Keep the window bounded, but large enough to
+    recognize an older proven main revision without treating arbitrary live
+    bytes as trusted drift.
+    """
     candidate = candidate.resolve()
     if not live.is_file() or not (candidate / ".git").exists():
         return False
