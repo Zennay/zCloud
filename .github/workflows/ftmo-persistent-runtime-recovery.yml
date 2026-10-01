@@ -109,9 +109,10 @@ jobs:
           sudo -n systemctl enable --now "$SERVICE"
 
           # FTMO is the portfolio's primary useful-compute consumer on this
-          # six-vCPU host. Keep HaxLab bounded to one CPU so it cannot reclaim
-          # four cores while FTMO research is runnable.
-          sudo -n systemctl set-property haxlab-autonomy.service CPUQuota=100% CPUWeight=100
+          # six-vCPU host. Keep HaxLab bounded to half a CPU so current FTMO
+          # research remains the primary useful-compute consumer while HaxLab
+          # continues making bounded background progress.
+          sudo -n systemctl set-property haxlab-autonomy.service CPUQuota=50% CPUWeight=100
           systemctl show haxlab-autonomy.service -p ActiveState -p CPUWeight -p CPUQuotaPerSecUSec --no-pager
 
           # Recover the dedicated FTMO Actions runner without interrupting work.
