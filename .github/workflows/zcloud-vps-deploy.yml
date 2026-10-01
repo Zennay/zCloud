@@ -191,6 +191,40 @@ jobs:
           print(f"PRODUCTION_DEPLOY_STATUS=pending sha={sha}")
           PY
 
+      - name: Recover zCloud health before guarded promotion
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          service="zennay-cloud.service"
+          url="http://127.0.0.1:8765/api/status"
+
+          healthy() {
+            sudo -n systemctl is-active --quiet "$service" &&
+              curl -fsS --max-time 4 "$url" >/dev/null
+          }
+
+          if healthy; then
+            echo "ZCLOUD_PREDEPLOY_HEALTH=already_green"
+            exit 0
+          fi
+
+          echo "ZCLOUD_PREDEPLOY_HEALTH=recovering"
+          sudo -n systemctl reset-failed "$service" || true
+          sudo -n systemctl restart "$service"
+          for _ in $(seq 1 20); do
+            if healthy; then
+              echo "ZCLOUD_PREDEPLOY_HEALTH=recovered"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          sudo -n systemctl --no-pager --full status "$service" || true
+          sudo -n journalctl -u "$service" -n 120 --no-pager || true
+          echo "ZCLOUD_PREDEPLOY_HEALTH=failed"
+          exit 1
+
       - name: Suspend external self-heal during guarded deploy
         id: self_heal_guard
         if: steps.prewrite.outputs.deploy == 'true'
