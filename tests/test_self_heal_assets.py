@@ -20,7 +20,11 @@ class SelfHealAssetsTest(unittest.TestCase):
         text = (ROOT / ".github/workflows/ftmo-persistent-runtime-recovery.yml").read_text()
         self.assertIn('! systemctl is-active --quiet "$RUNNER_SERVICE"', text)
         self.assertIn('systemctl start "$RUNNER_SERVICE"', text)
-        self.assertNotIn('systemctl restart "$RUNNER_SERVICE"', text)
+        self.assertIn("pgrep -u ftmo-runner -f 'Runner\\.Worker'", text)
+        self.assertIn("sleep 5", text)
+        self.assertIn('systemctl restart "$RUNNER_SERVICE"', text)
+        self.assertIn("leaving in-flight CI untouched", text)
+        self.assertIn("appeared during guard window", text)
         self.assertNotIn('systemctl disable --now "$RUNNER_SERVICE"', text)
 
     def test_probe_has_disable_sentinel_and_bounded_health_checks(self):
