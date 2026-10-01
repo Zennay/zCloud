@@ -53,7 +53,7 @@ jobs:
             echo "FTMO runtime Python fallback is neither known old nor known fixed shape" >&2
             exit 76
           fi
-          "$FTMO_ROOT/.venv/bin/python" -m py_compile "$runtime_py"
+          sudo -n "$FTMO_ROOT/.venv/bin/python" -m py_compile "$runtime_py"
 
           # The persistent marathon is the source of FTMO compute. Keep the
           # legacy timer disabled so it cannot contend for the same tick lock.
