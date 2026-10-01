@@ -1,0 +1,84 @@
+name: Queue zSSH HaxLab Candidate-B runtime probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/haxlab-candidate-b-zssh-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue read-only Candidate-B runtime probe
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-haxlab-candidate-b-runtime-probe-20261001"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Inspect active HaxLab Candidate-B training progress",
+              "priority": "P1",
+              "completion_criteria": (
+                  "Read-only VPS evidence is recorded for Candidate-B workflow_run_id 36259774109 "
+                  "job 110291358917: verify whether the training process is alive, elapsed/runtime "
+                  "progress and recent non-secret /tmp/haxlab-candidate-b.log progress; identify a "
+                  "concrete process/runtime blocker if stalled. Do not kill, restart, deploy or "
+                  "modify HaxLab runtime."
+              ),
+              "source_url": "https://github.com/Zennay/Haxlab/issues/15",
+              "parent_queue_id": "haxlab-candidate-b-champion-evidence-gate",
+          }
+
+          req = urllib.request.Request(
+              base + "/api/portfolio-queue",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req, timeout=10) as response:
+              result = json.load(response)
+              if response.status != 200:
+                  raise RuntimeError(f"enqueue failed: HTTP {response.status}")
+          print("QUEUE_ENQUEUE_RESPONSE", json.dumps(result, sort_keys=True))
+
+          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+              live = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(live)
+          if not item:
+              raise RuntimeError(f"{queue_id} not found in live SQLite queue")
+          print("ZSSH_HAXLAB_PROBE_QUEUED", json.dumps({
+              "queue_id": item.get("queue_id"),
+              "project_id": item.get("project_id"),
+              "priority": item.get("priority"),
+              "status": item.get("status"),
+              "worker_slot": item.get("worker_slot"),
+          }, sort_keys=True))
+          PY
