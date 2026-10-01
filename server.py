@@ -1848,16 +1848,16 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
     if any(marker in combined for marker in human_only):
         return False
     non_exec_prefixes=('inspect ','audit ','review ','verify ','check ','monitor ','report ','summarize ','status ','superseded ')
-    execution_markers=(
+    execution_words=(
         'implement','build','fix','change','write','deploy','merge','create','update','refactor',
-        'execute','run ','train','generate','migrate','configure','persist','material code',
-        'material config','material workflow','runtime state change','experiment',
+        'execute','run','train','generate','migrate','configure','persist','experiment',
     )
-    if title_text.startswith(non_exec_prefixes) and not any(marker in combined for marker in execution_markers):
+    has_execution=bool(re.search(r'\\b(?:'+('|'.join(execution_words))+r')\\b',combined)) or any(
+        marker in combined for marker in ('material code','material config','material workflow','runtime state change')
+    )
+    if title_text.startswith(non_exec_prefixes) and not has_execution:
         return False
-    if ('read-only evidence is recorded' in combined or 'read-only verification' in combined) and not any(
-        marker in combined for marker in execution_markers
-    ):
+    if ('read-only evidence is recorded' in combined or 'read-only verification' in combined) and not has_execution:
         return False
     return True
 
