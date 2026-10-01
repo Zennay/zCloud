@@ -1,5 +1,15 @@
 [
   {
+    "queue_id": "zssh-openai-public-plugin-release",
+    "project_id": "zssh",
+    "title": "zSSH publieke ChatGPT-plugin submission-ready maken",
+    "priority": "P0",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "zSSH heeft een production-grade publieke OpenAI-pluginroute met OAuth 2.1, target pairing/revocation, stabiele HTTPS MCP-endpoint, review package en groene end-to-end submission-readiness evidence zonder de bestaande private zSSH-flow te breken.",
+    "source_url": "https://github.com/Zennay/zSSH"
+  },
+  {
     "queue_id": "raiseai-openrouter-provider-live",
     "project_id": "raiseai",
     "title": "OpenRouter-provider live deployen en gateway-response bewijzen",
