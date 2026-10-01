@@ -211,8 +211,7 @@ jobs:
               "live_trading_allowed": status.get("live_trading_allowed"),
           }
 
-          target = root / ".scratch/autonomy/zcloud-cpu-rescue.json"
-          target.parent.mkdir(parents=True, exist_ok=True)
+          target = Path("/tmp/zcloud-ftmo-cpu-rescue.json")
           target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
           print("FTMO_CPU_RESCUE_RECEIPT=" + json.dumps(receipt, sort_keys=True))
 
