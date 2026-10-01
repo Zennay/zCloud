@@ -1,0 +1,115 @@
+name: Advance HaxLab Arena v2 queue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/haxlab-arena-v2-queue-advance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advance:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Close Arena v2 P1 and claim next HaxLab write lane
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base="http://127.0.0.1:8765"
+          queue_id="haxlab-closed-loop-arena-v2-implementation"
+          evidence=(
+              "Arena v2 integration branch synchronized with current main via "
+              "HaxLab workflow_run_id=36847249847 SUCCESS; PR #16 became mergeable "
+              "at head 88568e6e28610d60735c6e7089997003c7e25a78. "
+              "Focused integration validation workflow_run_id=36847704165 SUCCESS: "
+              "Node Arena v2 contract test, calibrated fail-closed/raw-policy Python "
+              "contract tests and focused champion/duel/promotion/sandbox pytest "
+              "regressions all green."
+          )
+
+          def get(path):
+              with urllib.request.urlopen(base+path,timeout=10) as r:
+                  return json.load(r)
+
+          def post(path,payload):
+              req=urllib.request.Request(
+                  base+path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={
+                      "Content-Type":"application/json",
+                      "X-ZCloud-Actor":"haxlab-arena-v2-queue-advance",
+                  },
+              )
+              with urllib.request.urlopen(req,timeout=10) as r:
+                  return json.load(r)
+
+          live=get("/api/portfolio-queue?all=1")
+          item=next((x for x in live.get("items",[]) if x.get("queue_id")==queue_id),None)
+          if not item:
+              raise RuntimeError("Arena v2 queue item missing")
+          if str(item.get("project_id") or "")!="haxlab":
+              raise RuntimeError("Arena v2 project mismatch")
+          if str(item.get("status") or "").lower() not in {"claimed","running","verifying"}:
+              raise RuntimeError("Arena v2 queue item is not actively owned: "+str(item.get("status")))
+          slot=item.get("worker_slot")
+          if not slot:
+              raise RuntimeError("Arena v2 queue item has no worker slot")
+          print("ARENA_QUEUE_OWNERSHIP_VERIFIED",json.dumps({
+              "queue_id":item.get("queue_id"),
+              "status":item.get("status"),
+              "worker_slot":slot,
+              "claim_expires":item.get("claim_expires"),
+          },sort_keys=True))
+
+          done=post("/api/portfolio-queue",{
+              "action":"result",
+              "worker_slot":slot,
+              "queue_id":queue_id,
+              "result":"DONE",
+              "evidence":evidence,
+          })
+          if not done.get("ok"):
+              raise RuntimeError("Arena v2 DONE write rejected: "+json.dumps(done))
+          print("ARENA_QUEUE_DONE",json.dumps(done,sort_keys=True))
+
+          current=get("/api/dynamic-workers").get("dynamic_workers") or {}
+          keys=(
+              "chatgpt_count","claude_count",
+              "chatgpt_cooldown_seconds","claude_cooldown_seconds",
+              "check_interval_ms","tick_interval_ms",
+              "heartbeat_interval_ms","generation_start_timeout_ms",
+              "scheduler_interval_seconds",
+          )
+          same={k:current[k] for k in keys if current.get(k) is not None}
+          reconciled=post("/api/dynamic-workers",same)
+          print("POOL_RECONCILED",json.dumps(reconciled,sort_keys=True))
+
+          final=get("/api/portfolio-queue?all=1")
+          hax=[
+              x for x in final.get("items",[])
+              if x.get("project_id")=="haxlab"
+              and x.get("eligible")
+          ]
+          active=[x for x in hax if str(x.get("status") or "").lower() in {"claimed","running","verifying"}]
+          print("HAXLAB_ACTIVE_AFTER_ADVANCE",json.dumps(active,sort_keys=True))
+          print("HAXLAB_QUEUE_AFTER_ADVANCE",json.dumps([
+              {k:x.get(k) for k in ("queue_id","priority","status","worker_slot","title")}
+              for x in hax
+          ],sort_keys=True))
+
+          if not active:
+              raise RuntimeError("no next HaxLab write lane allocated")
+          if active[0].get("priority") not in {"P1","P2"}:
+              raise RuntimeError("next HaxLab lane is not implementation priority")
+          if str(active[0].get("title") or "").startswith("Superseded"):
+              raise RuntimeError("superseded HaxLab item was allocated")
+          PY
