@@ -51,6 +51,22 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
 
+    def test_deploy_recovers_unhealthy_zcloud_before_freezing_self_heal(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        recover = "Recover zCloud health before guarded promotion"
+        suspend = "Suspend external self-heal during guarded deploy"
+        promote = "Promote backend and autonomy policy"
+        block = text[text.index(recover):text.index(suspend)]
+        self.assertIn('service="zennay-cloud.service"', block)
+        self.assertIn('url="http://127.0.0.1:8765/api/status"', block)
+        self.assertIn('sudo -n systemctl restart "$service"', block)
+        self.assertIn("curl -fsS --max-time 4", block)
+        self.assertIn("for _ in $(seq 1 20)", block)
+        self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=recovered", block)
+        self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=failed", block)
+        self.assertLess(text.index(recover), text.index(suspend))
+        self.assertLess(text.index(recover), text.index(promote))
+
     def test_deploy_quarantines_non_runtime_userscript_backups_before_prechange(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
