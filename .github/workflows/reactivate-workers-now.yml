@@ -38,7 +38,18 @@ jobs:
             fi
             sleep 2
           done
-          systemctl --user is-active --quiet chatgpt-firefox.service
+          if systemctl --user is-active --quiet chatgpt-firefox.service; then
+            echo "FIREFOX_RUNTIME=managed_service"
+          elif pgrep -f '/snap/firefox/.*/firefox.*zcloud_worker=' >/dev/null; then
+            echo "FIREFOX_RUNTIME=existing_zcloud_process"
+          elif pgrep -af 'firefox' | grep -q 'zcloud_worker='; then
+            echo "FIREFOX_RUNTIME=existing_zcloud_process"
+          else
+            systemctl --user --no-pager --full status chatgpt-firefox.service || true
+            journalctl --user -u chatgpt-firefox.service -n 60 --no-pager || true
+            echo "FIREFOX_RUNTIME=missing"
+            exit 1
+          fi
 
           python3 - <<'PY'
           import json, time, urllib.request, urllib.error
