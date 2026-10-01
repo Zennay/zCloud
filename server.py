@@ -1834,11 +1834,199 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
+PORTFOLIO_LANE_BLUEPRINTS = {
+    'control-plane': (
+        ('orchestration', ('queue','worker','claim','scheduler','lane','allocation','dispatch','cooldown','autonomy')),
+        ('dashboard-ui', ('dashboard','ui','mobile','card','tab','button','frontend','layout')),
+        ('deploy-runtime', ('deploy','vps','runner','workflow','production','runtime','systemd')),
+        ('wear-client', ('watch','wear','apk','compose')),
+        ('quality', ('test','regression','qa','determinism','race')),
+    ),
+    'infrastructure': (
+        ('runtime', ('runtime','service','systemd','process','shell','command')),
+        ('security', ('auth','token','secret','permission','identity','revocation')),
+        ('release', ('release','publish','plugin','package','version')),
+        ('transport', ('mcp','http','api','bridge','connection','target')),
+        ('quality', ('test','regression','qa','determinism','race')),
+    ),
+    'research-validation': (
+        ('validation', ('walk-forward','holdout','validation','gate','preregister','oos')),
+        ('data', ('data','provider','dataset','dukascopy','provenance')),
+        ('strategy', ('strategy','generation','candidate','signal','backtest')),
+        ('compute', ('cpu','worker','parallel','performance','throughput')),
+        ('quality', ('test','regression','determinism','reproduce')),
+    ),
+    'ml-training': (
+        ('training', ('train','training','rollout','self-play','model')),
+        ('evaluation', ('evaluation','benchmark','arena','frozen','holdout')),
+        ('data', ('data','replay','dataset','preprocess','sample')),
+        ('runtime', ('bot','live','runtime','worker','performance')),
+        ('quality', ('test','regression','determinism','qa')),
+    ),
+    'device-app': (
+        ('interaction', ('gesture','raise','dictation','mic','voice','state machine')),
+        ('ui', ('ui','screen','webview','geckoview','fullscreen')),
+        ('integration', ('api','gateway','provider','openrouter','login','pairing')),
+        ('device-runtime', ('watch','wear','apk','device','sensor','battery')),
+        ('quality', ('test','regression','qa','determinism')),
+    ),
+    'product-app': (
+        ('planner-flow', ('planner','recipe','meal','basket','grocery')),
+        ('ui', ('ui','mobile','screen','flow','onboarding','frontend')),
+        ('data', ('data','offer','price','integration','catalog')),
+        ('state', ('state','persist','backend','api','sync')),
+        ('quality', ('test','regression','qa','determinism')),
+    ),
+    'platform': (
+        ('engine', ('engine','upgrade','compatibility','runner','cli')),
+        ('integration', ('integration','gitea','github','provider','api')),
+        ('ux', ('ui','ux','visual','dashboard','flow')),
+        ('runtime', ('docker','runtime','deploy','host','service')),
+        ('quality', ('test','regression','qa','determinism')),
+    ),
+}
+
+def _portfolio_project_type(project_id):
+    project=PROJECT_INDEX.get(str(project_id or '').strip().lower()) or {}
+    explicit=re.sub(r'[^a-z0-9._-]+','-',str(project.get('work_type') or '').strip().lower()).strip('-')
+    if explicit:
+        return explicit
+    if str(project.get('queue_mode') or '').lower()=='human-gated':
+        return 'human-gated'
+    if str(project.get('priority') or '').lower()=='system':
+        return 'control-plane'
+    return 'product-app'
+
+def _portfolio_queue_metadata(item):
+    raw=(item or {}).get('metadata_json') if isinstance(item,dict) else None
+    if isinstance((item or {}).get('metadata'),dict):
+        return dict(item['metadata'])
+    try:
+        value=json.loads(raw or '{}')
+        return value if isinstance(value,dict) else {}
+    except Exception:
+        return {}
+
+def _portfolio_lane_descriptor(item):
+    item=dict(item or {})
+    project_id=str(item.get('project_id') or '').strip().lower()
+    project_type=_portfolio_project_type(project_id)
+    metadata=_portfolio_queue_metadata(item)
+    explicit_scope=_normalize_conflict_scope(metadata) if metadata.get('conflict_scope') is not None else None
+    if explicit_scope and (explicit_scope.get('capabilities') or explicit_scope.get('files')):
+        canonical=json.dumps(explicit_scope,sort_keys=True,separators=(',',':'))
+        lane_key='explicit-'+hashlib.sha256(canonical.encode()).hexdigest()[:10]
+        return {
+            'lane_id':f'{project_id}:{lane_key}',
+            'project_type':project_type,
+            'source':'explicit',
+            'conflict_scope':explicit_scope,
+        }
+    text=(str(item.get('title') or '')+' '+str(item.get('completion_criteria') or '')).lower()
+    lane_key='core'
+    for candidate,keywords in PORTFOLIO_LANE_BLUEPRINTS.get(project_type,()):
+        if any(keyword in text for keyword in keywords):
+            lane_key=candidate
+            break
+    scope={'capabilities':[f'worker-lane:{project_type}:{lane_key}'],'files':[]}
+    return {
+        'lane_id':f'{project_id}:{lane_key}',
+        'project_type':project_type,
+        'source':'derived',
+        'conflict_scope':scope,
+    }
+
+def _portfolio_lane_conflict(left,right):
+    if str(left.get('project_id') or '') != str(right.get('project_id') or ''):
+        return None
+    overlap=_conflict_scope_overlap(
+        (left.get('lane') or {}).get('conflict_scope'),
+        (right.get('lane') or {}).get('conflict_scope'),
+    )
+    if overlap['capabilities'] or overlap['files']:
+        return overlap
+    return None
+
+def _portfolio_active_claim_lanes_locked(connection,ts):
+    rows=connection.execute(
+        'SELECT project_id,claim_key,owner_id,worker_id,metadata_json FROM task_claims WHERE lease_until>? ORDER BY project_id,acquired_at,claim_key',
+        (ts,),
+    ).fetchall()
+    claims=[]
+    for row in rows:
+        item=dict(row)
+        try:
+            metadata=json.loads(item.get('metadata_json') or '{}')
+            scope=_normalize_conflict_scope(metadata)
+        except Exception:
+            scope=None
+        claims.append({
+            'project_id':str(item.get('project_id') or ''),
+            'claim_key':str(item.get('claim_key') or ''),
+            'owner_id':str(item.get('owner_id') or ''),
+            'worker_id':str(item.get('worker_id') or ''),
+            'unknown_scope':not bool(scope and (scope.get('capabilities') or scope.get('files'))),
+            'lane':{'conflict_scope':scope or {'capabilities':[],'files':[]}},
+        })
+    return claims
+
+def _portfolio_candidate_blocker(candidate,reserved,claims):
+    candidate_entry={'project_id':str(candidate.get('project_id') or ''),'lane':_portfolio_lane_descriptor(candidate)}
+    for claim in claims:
+        if claim['project_id'] != candidate_entry['project_id']:
+            continue
+        if claim.get('unknown_scope'):
+            return {'kind':'claim','claim_key':claim.get('claim_key'),'reason':'unknown_claim_scope'}
+        overlap=_portfolio_lane_conflict(candidate_entry,claim)
+        if overlap:
+            return {'kind':'claim','claim_key':claim.get('claim_key'),'overlap':overlap}
+    for other in reserved:
+        overlap=_portfolio_lane_conflict(candidate_entry,other)
+        if overlap:
+            return {'kind':'queue','queue_id':other.get('queue_id'),'overlap':overlap}
+    return None
+
+def portfolio_worker_lanes(project_id=None):
+    ts=now()
+    with connect() as c:
+        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+        params=[]
+        where="eligible=1 AND status IN ('queued','claimed','running','verifying')"
+        if project_id:
+            where+=' AND project_id=?'
+            params.append(str(project_id).strip().lower())
+        rows=c.execute(
+            f"SELECT * FROM portfolio_queue WHERE {where} ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at, queue_id",
+            tuple(params),
+        ).fetchall()
+        claims=_portfolio_active_claim_lanes_locked(c,ts)
+    reserved=[]
+    result=[]
+    for row in rows:
+        item=_portfolio_queue_row(row)
+        lane=item['lane']
+        blocker=_portfolio_candidate_blocker(item,reserved,claims)
+        entry={
+            'queue_id':item['queue_id'],
+            'project_id':item['project_id'],
+            'priority':item['priority'],
+            'lane_id':lane['lane_id'],
+            'project_type':lane['project_type'],
+            'conflict_scope':lane['conflict_scope'],
+            'blocked_by':blocker,
+        }
+        result.append(entry)
+        if not blocker:
+            reserved.append({'project_id':item['project_id'],'queue_id':item['queue_id'],'lane':lane})
+    return result
+
 def _portfolio_queue_row(row):
     if not row:
         return None
     item=dict(row)
     item['eligible']=bool(item.get('eligible'))
+    item['metadata']=_portfolio_queue_metadata(item)
+    item['lane']=_portfolio_lane_descriptor(item)
     return item
 
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
@@ -1979,7 +2167,7 @@ def portfolio_queue_has_eligible_work(exclude_queue_id=None):
                              LIMIT 1""").fetchone()
     return bool(row)
 
-def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='',source_url='',parent_queue_id=None,queue_id=None):
+def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='',source_url='',parent_queue_id=None,queue_id=None,metadata=None):
     project_id=str(project_id or '').strip().lower()
     title=str(title or '').strip()
     priority=str(priority or 'P2').strip().upper()
@@ -2003,18 +2191,24 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
     queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
+    metadata=metadata if isinstance(metadata,dict) else {}
+    if metadata.get('conflict_scope') is not None:
+        metadata={**metadata,'conflict_scope':_normalize_conflict_scope(metadata)}
+    metadata_json=json.dumps(metadata,ensure_ascii=False,separators=(',',':'))
+    if len(metadata_json.encode('utf-8'))>TASK_CLAIM_METADATA_MAX_BYTES:
+        raise ValueError(f'queue metadata is te groot; maximum is {TASK_CLAIM_METADATA_MAX_BYTES} bytes')
     ts=now()
     with connect() as c:
         c.execute("""INSERT INTO portfolio_queue(
             queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
-            created_at,updated_at,parent_queue_id
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            created_at,updated_at,parent_queue_id,metadata_json
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(queue_id) DO UPDATE SET
             project_id=excluded.project_id,title=excluded.title,priority=excluded.priority,
             completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
-            updated_at=excluded.updated_at""",
+            metadata_json=excluded.metadata_json,updated_at=excluded.updated_at""",
             (queue_id,project_id,title,priority,'queued',1,str(completion_criteria or ''),
-             str(source_url or ''),ts,ts,parent_queue_id))
+             str(source_url or ''),ts,ts,parent_queue_id,metadata_json))
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
     return _portfolio_queue_row(row)
 
@@ -2173,7 +2367,7 @@ def portfolio_queue_allocate():
             if not candidates:
                 continue
             used_projects={str(item.get('project_id') or '') for item in selected}
-            row=min(
+            candidates=sorted(
                 candidates,
                 key=lambda candidate: (
                     _portfolio_priority_rank(candidate['priority']),
@@ -2182,6 +2376,20 @@ def portfolio_queue_allocate():
                     str(candidate['queue_id'] or ''),
                 )
             )
+            reserved=[
+                {'project_id':str(item.get('project_id') or ''),'queue_id':str(item.get('queue_id') or ''),'lane':item.get('lane') or _portfolio_lane_descriptor(item)}
+                for item in selected
+            ]
+            claims=_portfolio_active_claim_lanes_locked(c,ts)
+            row=next(
+                (
+                    candidate for candidate in candidates
+                    if not _portfolio_candidate_blocker(_portfolio_queue_row(candidate),reserved,claims)
+                ),
+                None,
+            )
+            if row is None:
+                continue
             c.execute("""UPDATE portfolio_queue
                          SET status='claimed',worker_slot=?,claimed_at=?,claim_expires=?,updated_at=?,attempts=attempts+1
                          WHERE queue_id=? AND status='queued' AND eligible=1""",
