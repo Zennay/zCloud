@@ -252,6 +252,12 @@ jobs:
           ps -eo pid,ppid,user,cgroup,comm,%cpu,%mem,etime --sort=-%cpu | head -n 35
           echo "=== CGROUP CPU SNAPSHOT ==="
           systemd-cgtop -b -n 1 --depth=5 --order=cpu 2>/dev/null | head -n 60 || true
+          echo "=== FTMO MARATHON STATE ==="
+          systemctl show ftmo-autonomous-marathon.service \
+            -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus \
+            -p NRestarts -p MainPID -p ControlGroup --no-pager || true
+          echo "=== FTMO MARATHON JOURNAL ==="
+          sudo -n journalctl -u ftmo-autonomous-marathon.service -n 160 --no-pager || true
 
           python3 - <<'PY'
           import json
