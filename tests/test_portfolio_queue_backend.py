@@ -414,6 +414,76 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("queue", deploy_lane["blocked_by"][0]["kind"])
         self.assertEqual(control["queue_id"], deploy_lane["blocked_by"][0]["queue_id"])
 
+    def test_allocator_requeues_duplicate_unstarted_claimed_lane(self):
+        first = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler lane allocation",
+            "P1",
+            "Implement queue scheduling with deterministic tests.",
+        )
+        second = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement worker queue claim routing",
+            "P2",
+            "Implement worker claim routing with deterministic tests.",
+        )
+        with server.connect() as conn:
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=1,claimed_at=?,claim_expires=?
+                   WHERE queue_id=?""",
+                ("2026-10-01T23:00:00+00:00", "2099-01-01T00:00:00+00:00", first["queue_id"]),
+            )
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=2,claimed_at=?,claim_expires=?
+                   WHERE queue_id=?""",
+                ("2026-10-01T23:01:00+00:00", "2099-01-01T00:00:00+00:00", second["queue_id"]),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([first["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[second["queue_id"]]["status"])
+        self.assertIsNone(rows[second["queue_id"]]["worker_slot"])
+
+    def test_running_lane_forces_conflicting_claimed_file_scope_back_to_queue(self):
+        running = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler lane allocation",
+            "P2",
+            "Implement queue scheduling with deterministic tests.",
+        )
+        waiting = server.portfolio_queue_enqueue(
+            "cloud",
+            "Harden VPS deploy workflow",
+            "P0",
+            "Implement deployment hardening with deterministic tests.",
+        )
+        scope = '{"conflict_scope":{"capabilities":[],"files":["server.py"]}}'
+        with server.connect() as conn:
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='running',worker_slot=1,claimed_at=?,claim_expires=?,metadata_json=?
+                   WHERE queue_id=?""",
+                ("2026-10-01T23:00:00+00:00", "2099-01-01T00:00:00+00:00", scope, running["queue_id"]),
+            )
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=2,claimed_at=?,claim_expires=?,metadata_json=?
+                   WHERE queue_id=?""",
+                ("2026-10-01T23:01:00+00:00", "2099-01-01T00:00:00+00:00", scope, waiting["queue_id"]),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([running["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("running", rows[running["queue_id"]]["status"])
+        self.assertEqual("queued", rows[waiting["queue_id"]]["status"])
+        self.assertIsNone(rows[waiting["queue_id"]]["worker_slot"])
+
     def test_worker_prompt_contains_persisted_execution_lane(self):
         server.portfolio_queue_enqueue(
             "cloud",
