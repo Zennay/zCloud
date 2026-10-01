@@ -1,0 +1,66 @@
+name: zCloud worker progress watchdog deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_worker_watchdog.py"
+      - "scripts/zcloud-self-heal.sh"
+      - "tests/test_worker_progress_watchdog.py"
+      - "deploy/zcloud-self-heal.service"
+      - "deploy/zcloud-self-heal.timer"
+      - ".github/workflows/zcloud-worker-watchdog-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-progress-watchdog-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Validate watchdog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_worker_watchdog.py
+          python3 -m unittest tests.test_worker_progress_watchdog
+
+      - name: Install watchdog into the existing one-minute self-heal loop
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n install -m 0755 scripts/zcloud_worker_watchdog.py /usr/local/sbin/zcloud-worker-watchdog
+          sudo -n install -m 0755 scripts/zcloud-self-heal.sh /usr/local/sbin/zcloud-self-heal
+          sudo -n install -m 0644 deploy/zcloud-self-heal.service /etc/systemd/system/zcloud-self-heal.service
+          sudo -n install -m 0644 deploy/zcloud-self-heal.timer /etc/systemd/system/zcloud-self-heal.timer
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable --now zcloud-self-heal.timer
+
+      - name: Verify live watchdog installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/zcloud-worker-watchdog --dry-run --json | tee "$RUNNER_TEMP/zcloud-worker-watchdog-dry-run.json"
+          sudo -n systemctl start zcloud-self-heal.service
+          sudo -n systemctl is-active --quiet zcloud-self-heal.timer
+          sudo -n systemctl --no-pager --full status zcloud-self-heal.timer
+          sudo -n journalctl -u zcloud-self-heal.service -n 80 --no-pager
+
+      - name: Upload watchdog evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-worker-watchdog-evidence-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/zcloud-worker-watchdog-dry-run.json
