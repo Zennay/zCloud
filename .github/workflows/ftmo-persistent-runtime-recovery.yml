@@ -1,4 +1,5 @@
 name: Recover FTMO persistent runtime
+# Recovery trigger marker: FTMO worker1 CPU-attribution lane 2026-10-01
 
 on:
   push:
