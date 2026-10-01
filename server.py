@@ -245,8 +245,12 @@ def firefox_runner_status():
         return {'state':'unknown','active':False,'main_pid':0,'active_since':None,'restarts':0,'auto_restart':'unknown','error':str(e)[:200]}
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
 @contextmanager
+DB_BUSY_TIMEOUT_SECONDS = 15
+DB_BUSY_TIMEOUT_MS = DB_BUSY_TIMEOUT_SECONDS * 1000
+
 def connect():
-    c = sqlite3.connect(DB, timeout=4)
+    c = sqlite3.connect(DB, timeout=DB_BUSY_TIMEOUT_SECONDS)
+    c.execute(f'PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}')
     c.row_factory = sqlite3.Row
     try:
         yield c
