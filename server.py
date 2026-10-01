@@ -2835,16 +2835,42 @@ def runner_worker_statuses(project_id):
             worker_claims=by_worker.get(worker_key,[])
             claim=worker_claims[0] if worker_claims else None
             metadata=(claim or {}).get('metadata') or {}
+            global_slot_row=c.execute(
+                'SELECT slot FROM ai_global_slots WHERE project_id=? AND worker_slot=?',
+                (project_id,slot),
+            ).fetchone()
+            queue_assignment=None
+            if global_slot_row:
+                queue_row=c.execute(
+                    """SELECT * FROM portfolio_queue
+                       WHERE worker_slot=? AND project_id=?
+                         AND status IN ('claimed','running','verifying')
+                       ORDER BY updated_at DESC LIMIT 1""",
+                    (global_slot_row['slot'],project_id),
+                ).fetchone()
+                queue_assignment=_portfolio_queue_row(queue_row)
+            queue_lane=(queue_assignment or {}).get('execution_lane') or {}
+            queue_task=(
+                {
+                    'claim_key':queue_assignment.get('queue_id'),
+                    'title':queue_assignment.get('title'),
+                    'lease_until':queue_assignment.get('claim_expires'),
+                    'branch':None,
+                    'pr':None,
+                }
+                if queue_assignment else None
+            )
             out.append({
                 'worker_id':worker_key,'worker_slot':slot,'worker_count':cfg.get('worker_count') or 1,
-                'work_area':WORKER_LANES[(slot-1)%len(WORKER_LANES)],
+                'work_area':queue_lane.get('lane_id') or WORKER_LANES[(slot-1)%len(WORKER_LANES)],
+                'execution_lane':queue_lane or None,
                 'desired_state':desired,'active':active,'state':state,'generating':generating if active else False,
                 'sending':bool(latest['sending']) if latest and active else False,'stalled':stalled if active else False,
                 'age_seconds':age,'progress_age_seconds':progress_age,
                 'last_event':({'time':latest['ts'],'event':latest['event'],'reason':latest['reason'] or None,'error':latest['error'] or None} if latest else None),
                 'last_heartbeat':({'time':heartbeat['ts'],'event':heartbeat['event']} if heartbeat else None),
                 'current_task':({'claim_key':claim.get('claim_key'),'title':metadata.get('task') or claim.get('claim_key'),
-                                 'lease_until':claim.get('lease_until'),'branch':metadata.get('branch'),'pr':metadata.get('pr') or metadata.get('pr_url')} if claim else None),
+                                 'lease_until':claim.get('lease_until'),'branch':metadata.get('branch'),'pr':metadata.get('pr') or metadata.get('pr_url')} if claim else queue_task),
                 'conversation_id':cfg.get('conversation_id') or None,
                 'command':dict(command) if command else None,
                 'error':(latest['error'] if latest else None) or None,
