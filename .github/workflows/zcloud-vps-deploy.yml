@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
   statuses: write
 
@@ -23,38 +24,103 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     steps:
-      - name: Check out the exact green main revision
+      - name: Check out current main candidate
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: main
           clean: true
           fetch-depth: 64
 
-      - name: Reject stale workflow-run revisions
+      - name: Resolve latest green main revision
         id: freshness
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          expected="${{ github.event.workflow_run.head_sha }}"
+          resolved="$(git rev-parse HEAD)"
           current="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           if [[ -z "$current" ]]; then
             echo "Could not resolve current main SHA" >&2
             exit 2
           fi
-          if [[ "$current" != "$expected" ]]; then
+          if [[ "$current" != "$resolved" ]]; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "STALE_DEPLOY_SKIPPED expected=$expected current=$current"
-          else
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-            echo "CURRENT_MAIN_CONFIRMED sha=$current"
+            echo "MAIN_MOVED_BEFORE_GREEN_CHECK resolved=$resolved current=$current"
+            exit 0
           fi
+          export RESOLVED_SHA="$resolved"
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
 
-      - name: Mark production deploy pending
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["RESOLVED_SHA"]
+          token = os.environ["GITHUB_TOKEN"]
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/workflows/zcloud-regression-smoke.yml/runs"
+              "?branch=main&event=push&status=success&per_page=100",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-vps-deploy",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=15) as response:
+              payload = json.load(response)
+          matched = next(
+              (
+                  run for run in payload.get("workflow_runs", [])
+                  if str(run.get("head_sha") or "") == sha
+                  and str(run.get("conclusion") or "") == "success"
+                  and str(run.get("event") or "") == "push"
+                  and str(run.get("head_branch") or "") == "main"
+              ),
+              None,
+          )
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              if matched is None:
+                  handle.write("deploy=false\n")
+              else:
+                  handle.write("deploy=true\n")
+                  handle.write(f"deploy_sha={sha}\n")
+                  handle.write(f"regression_run_id={int(matched['id'])}\n")
+          if matched is None:
+              print(f"CURRENT_MAIN_NOT_GREEN sha={sha}")
+          else:
+              print(
+                  "GREEN_MAIN_CONFIRMED "
+                  f"sha={sha} regression_run_id={matched['id']}"
+              )
+          PY
+
+      - name: Reconfirm green main before VPS writes
+        id: prewrite
         if: steps.freshness.outputs.deploy == 'true'
         shell: bash
         env:
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
+        run: |
+          set -euo pipefail
+          current="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ -n "$current" && "$current" == "$DEPLOY_SHA" ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "PREWRITE_MAIN_CONFIRMED sha=$DEPLOY_SHA"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "MAIN_MOVED_BEFORE_VPS_WRITE resolved=$DEPLOY_SHA current=$current"
+          fi
+
+      - name: Mark production deploy pending
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        env:
           GITHUB_TOKEN: ${{ github.token }}
-          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -92,7 +158,7 @@ jobs:
 
       - name: Suspend external self-heal during guarded deploy
         id: self_heal_guard
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -107,7 +173,7 @@ jobs:
           fi
 
       - name: Quarantine stale selector backup before guarded promotion
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -123,7 +189,7 @@ jobs:
           fi
 
       - name: Ensure Firefox automation service for guarded canaries
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         env:
           XDG_RUNTIME_DIR: /run/user/1000
@@ -139,7 +205,7 @@ jobs:
           fi
 
       - name: Promote backend and autonomy policy
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -155,7 +221,7 @@ jobs:
             --json
 
       - name: Promote Violentmonkey worker
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -165,7 +231,7 @@ jobs:
             --json
 
       - name: Promote mobile UI
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -178,7 +244,7 @@ jobs:
             --json
 
       - name: Promote translated project catalog
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
@@ -187,7 +253,7 @@ jobs:
             --json
 
       - name: Apply low-priority Firefox scheduler profile
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         run: |
           install -D -m 0644 "$GITHUB_WORKSPACE/deploy/chatgpt-firefox.service" "$HOME/.config/systemd/user/chatgpt-firefox.service"
           export XDG_RUNTIME_DIR=/run/user/1000
@@ -196,7 +262,7 @@ jobs:
           systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100
 
       - name: Install aligned self-heal probe
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -204,10 +270,10 @@ jobs:
           echo "SELF_HEAL_PROBE_INSTALLED=max_time_8"
 
       - name: Capture green production deploy evidence
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         env:
-          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
         run: |
           set -euo pipefail
           health="$RUNNER_TEMP/zcloud-production-health.json"
@@ -255,7 +321,7 @@ jobs:
           PY
 
       - name: Upload production deploy evidence
-        if: steps.freshness.outputs.deploy == 'true'
+        if: steps.prewrite.outputs.deploy == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zcloud-production-deploy-evidence-${{ github.run_id }}
@@ -278,7 +344,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
           DEPLOY_RESULT: ${{ job.status }}
         run: |
           set -euo pipefail
