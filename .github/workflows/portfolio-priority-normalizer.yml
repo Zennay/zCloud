@@ -26,12 +26,16 @@ jobs:
 
           base="http://127.0.0.1:8765"
           desired={
+            "zssh-openai-public-plugin-release":(
+              "zssh","P1","Finish the next zSSH public plugin release increment",
+              "Make a material production-grade code/config/workflow change that advances the self-hosted public OpenAI plugin route while FTMO retains the portfolio P0 compute/research lane.",
+              "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"),
             "ftmo-current-generation-safe-gate":(
               "ftmo","P0","Advance FTMO through the next preregistered safe generation gate",
               "Advance the current FTMO generation by implementing or executing the next allowed preregistered code/config/workflow gate on the self-hosted path. Preserve provider provenance, frozen split, development/walk-forward/final-holdout isolation, zero paid cloud and paper-only safety. Completion requires a material persisted change plus deterministic test/workflow evidence; do not inspect sealed outcomes early.",
               "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
             "ftmo-useful-compute-cpu-attribution":(
-              "ftmo","P1","Make FTMO the primary useful-compute consumer and prove CPU attribution",
+              "ftmo","P0","Make FTMO the primary useful-compute consumer and prove CPU attribution",
               "Prove whether current VPS CPU is useful FTMO research compute versus HaxLab or unattributed/control-plane work. If FTMO is not receiving useful compute, make a safe runtime/config change through the Claude/VPS execution lane that restores FTMO throughput; persist cgroup/host-share attribution and an advanced controller receipt. Diagnosis alone is not completion.",
               "https://app.notion.com/p/3e49e19ac95581fcb8c7fd06a3d98fc7"),
             "haxlab-closed-loop-arena-v2-implementation":(
