@@ -141,14 +141,30 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("P0", continuation["priority"])
         self.assertEqual("Implement next FTMO roadmap increment", continuation["title"])
 
-    def test_haxlab_enqueue_is_centrally_clamped_to_p3(self):
+    def test_haxlab_explicit_implementation_priority_is_preserved(self):
+        p1 = server.portfolio_queue_enqueue(
+            "haxlab",
+            "Implement Arena v2 increment",
+            "P1",
+            "Implement code plus deterministic tests.",
+        )
+        p2 = server.portfolio_queue_enqueue(
+            "haxlab",
+            "Implement rollout recovery increment",
+            "P2",
+            "Implement code plus deterministic tests.",
+        )
+        self.assertEqual("P1", p1["priority"])
+        self.assertEqual("P2", p2["priority"])
+
+    def test_haxlab_cannot_enter_p0_system_tier(self):
         item = server.portfolio_queue_enqueue(
             "haxlab",
             "Implement bounded HaxLab improvement",
             "P0",
             "Implement code plus deterministic tests.",
         )
-        self.assertEqual("P3", item["priority"])
+        self.assertEqual("P2", item["priority"])
 
     def test_backend_rejects_complete_while_other_queue_work_exists(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
