@@ -12,7 +12,7 @@ async function api(path){const r=await fetch(path,{cache:'no-store',signal:Abort
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
 async function saveProjectLayout(order,archived){await post('/api/project-layout',{order,archived});await refresh(true)}
 function syncNav(){document.querySelectorAll('[data-nav]').forEach(a=>a.classList.toggle('active',a.dataset.nav===route));$('projectCount').textContent=DATA.projects.length;const links=DATA.projects.map(p=>`<a href="#project/${esc(p.id)}" class="${route==='project/'+p.id?'active':''}"><span class="project-dot" style="--accent:${p.accent}"></span>${esc(p.name)}</a>`).join('');$('projectNav').innerHTML=links;const mobileProjects=$('mobileProjectNav');if(mobileProjects)mobileProjects.innerHTML=`<a href="#overview" data-nav="overview" class="mobile-overview-link ${route==='overview'?'active':''}">${icon('grid')}<span>Overview</span></a>`+links}
-function stat(label,value,note,ico,emphasis=false){return `<div class="stat"><div class="stat-label">${label}${icon(ico)}</div><div class="stat-value">${value}</div><div class="stat-note ${emphasis?'emphasis':''}">${note}</div></div>`}
+function stat(label,value,note,ico,emphasis=false){return `<div class="stat"><div class="stat-label">${label}${icon(ico)}</div><div class="stat-value">${value}</div><div class="stat-note ${emphasis?'emphasis':''}">${note}</div>`}
 function heading(eyebrow,title,sub,right=''){return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${sub}</p></div>${right}</div>`}
 function badge(p){return `<span class="badge ${p.health==='healthy'?'':'warn'}">${p.health==='healthy'?'Operational':'Needs attention'}</span>`}
 function runnerToggle(p,placement='card'){
@@ -201,7 +201,7 @@ function dynamicWorkerControl(){
         ${field('scheduler_interval_seconds','Backend scheduler',Number(cfg.scheduler_interval_seconds??5),1,300,1,'sec')}
       </div>
     </details>
-    <div class="dynamic-worker-actions"><div class="dynamic-worker-actions"><button type="button" class="runner-action runner-action-danger" data-force-recycle-workers>Force recycle workers</button><button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save</button></div></div>
+    <div class="dynamic-worker-actions"><button type="button" class="runner-action runner-action-danger" data-force-recycle-workers>Force recycle workers</button><button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save</button></div>
   </div>`;
 }
 async function saveDynamicWorkerSettings(button){
