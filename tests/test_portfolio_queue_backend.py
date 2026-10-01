@@ -280,6 +280,104 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertTrue(any(row["project_id"] == "raiseai" for row in attention))
         self.assertIsNotNone(result["attention"])
 
+    def test_lane_generator_is_deterministic_and_uses_project_type(self):
+        item = {
+            "queue_id": "cloud-lane",
+            "project_id": "cloud",
+            "title": "Implement automatic worker lanes from queue backlog",
+            "completion_criteria": "Implement scheduler claims and allocation tests.",
+        }
+
+        first = server.portfolio_lane_for_item(item)
+        second = server.portfolio_lane_for_item(dict(item))
+
+        self.assertEqual(first, second)
+        self.assertEqual("infrastructure", first["project_type"])
+        self.assertEqual("coordination", first["domain"])
+        self.assertEqual(["cloud:infrastructure:coordination"], first["conflict_scope"]["capabilities"])
+        self.assertEqual(["server.py"], first["conflict_scope"]["files"])
+
+    def test_allocator_avoids_duplicate_conflicting_write_lanes(self):
+        first = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler allocation",
+            "P1",
+            "Implement worker lane claims in server.py with regression tests.",
+        )
+        second = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement worker queue claim routing",
+            "P1",
+            "Implement scheduler allocation safeguards in server.py with tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(1, len(selected))
+        self.assertEqual(first["queue_id"], selected[0]["queue_id"])
+        rows = {row["queue_id"]: row for row in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[second["queue_id"]]["status"])
+        self.assertIsNone(rows[second["queue_id"]]["worker_slot"])
+
+    def test_allocator_allows_non_overlapping_lanes_in_same_project(self):
+        coordination = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler allocation",
+            "P1",
+            "Implement worker lane claims in server.py with regression tests.",
+        )
+        delivery = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement deployment workflow release gate",
+            "P1",
+            "Update GitHub Actions deploy workflow and run deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(2, len(selected))
+        self.assertEqual(
+            {coordination["queue_id"], delivery["queue_id"]},
+            {row["queue_id"] for row in selected},
+        )
+        self.assertEqual(
+            {"coordination", "delivery"},
+            {row["execution_lane"]["domain"] for row in selected},
+        )
+
+    def test_active_task_claim_blocks_conflicting_backlog_lane(self):
+        coordination = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler allocation",
+            "P0",
+            "Implement worker lane claims in server.py with regression tests.",
+        )
+        delivery = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement deployment workflow release gate",
+            "P1",
+            "Update GitHub Actions deploy workflow and run deterministic tests.",
+        )
+        lane = server.portfolio_lane_for_item(coordination)
+        claimed = server.task_claim_acquire(
+            "cloud",
+            "external:coordination",
+            "owner-external",
+            "cloud::external",
+            300,
+            {"conflict_scope": lane["conflict_scope"]},
+        )
+        self.assertTrue(claimed["acquired"])
+
+        lanes = server.portfolio_worker_lanes("cloud")
+        blocked = {row["queue_id"]: row for row in lanes}
+        self.assertFalse(blocked[coordination["queue_id"]]["safe"])
+        self.assertEqual("task_claim", blocked[coordination["queue_id"]]["blocked_by"]["kind"])
+        self.assertTrue(blocked[delivery["queue_id"]]["safe"])
+
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual([delivery["queue_id"]], [row["queue_id"] for row in selected])
+
     def test_human_gated_project_never_enters_worker_queue(self):
         with self.assertRaisesRegex(ValueError, "human-gated"):
             server.portfolio_queue_enqueue(
