@@ -148,7 +148,7 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     # stale/oversized prompt persisted in SQLite from older zCloud versions.
     prompt=project_runner_prompt(project_id, name)
     return prompt + assignment + (
-        f'Worker {slot}/{total}. '
+        f'Jij bent Worker {slot}/{total}. '
         'DOEN: voer vóór je antwoord minimaal één echte actie uit: write/commit/PR, workflow/run, test/deploy, queue/state-write of concrete worker-taak. '
         'Alleen lezen, auditen of status geven telt niet. Faalt een route, probeer direct een andere veilige route. '
         "CONTINUE alleen na zo'n actie; DONE alleen met geteste completion-evidence. "
@@ -159,7 +159,6 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         'ZCLOUD_QUEUE_EVIDENCE: <actie + commit/workflow/run/resultaat>\n'
         f'ZCLOUD_WORK_PROJECT: {project_id}\n'
         'ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE'
-        'De browser-worker POST-et automatisch je ZCLOUD_QUEUE_RESULT en evidence naar http://127.0.0.1:8765/api/queue-update.'
     )
 
 RUNNER_DEFAULTS = {
@@ -2534,6 +2533,106 @@ def watch_project(data,pid):
     }
 
 
+# --- Worker contract + diagnostics ---------------------------------------------
+# The browser drivers (public/zcloud-worker.user.js and firefox-extension/background.js)
+# silently refuse to send unless the server prompt satisfies their validators. These helpers
+# make that contract explicit and observable. tests/test_worker_prompt_contract.py runs the
+# REAL JS validators against server output, so this mirror cannot drift unnoticed.
+WORKER_BLOCK_EVENTS = ('assignment-invalid', 'send-blocked', 'assignment-refresh-failed', 'thinking-effort-unavailable')
+
+def worker_contract_failures(cfg):
+    problems = []
+    if cfg.get('active') is not True: problems.append('not-active')
+    if cfg.get('assignment_ready') is not True: problems.append('server-assignment-not-ready')
+    queue_id = str((cfg.get('queue_item') or {}).get('queue_id') or '').strip()
+    prompt = str(cfg.get('prompt') or '')
+    try: slot = int(cfg.get('global_worker_slot') or 0)
+    except (TypeError, ValueError): slot = 0
+    try: total = int(cfg.get('global_worker_count') or 0)
+    except (TypeError, ValueError): total = 0
+    if not queue_id: problems.append('missing-queue-id')
+    if slot < 1: problems.append('bad-global-slot')
+    if total < slot: problems.append('bad-global-count')
+    if queue_id and ('VPS_QUEUE_ASSIGNMENT id=' + queue_id) not in prompt: problems.append('prompt-missing-queue-line')
+    if f'Jij bent Worker {slot}/{total}.' not in prompt: problems.append('prompt-missing-worker-line')
+    return problems
+
+def _age_seconds(ts):
+    try: return max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(str(ts))).total_seconds()))
+    except Exception: return None
+
+def worker_debug_report():
+    workers = runner_worker_targets()
+    window = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    marks = ','.join('?' * len(WORKER_BLOCK_EVENTS))
+    rows = []
+    summary = {}
+    with connect() as c:
+        for key, cfg in workers.items():
+            if cfg.get('global_worker_slot') is None: continue
+            base = cfg['base_project_id']; slot = int(cfg['worker_slot'])
+            last = c.execute('SELECT ts,event,reason,generating FROM runner_events WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1', (base, slot)).fetchone()
+            sent = c.execute("SELECT ts FROM runner_events WHERE project_id=? AND worker_slot=? AND event='prompt-sent' ORDER BY id DESC LIMIT 1", (base, slot)).fetchone()
+            blocked = c.execute('SELECT ts,event,reason FROM runner_events WHERE project_id=? AND ts>? AND event IN (' + marks + ') ORDER BY id DESC LIMIT 1', (base, window) + WORKER_BLOCK_EVENTS).fetchone()
+            problems = worker_contract_failures(cfg)
+            last_age = _age_seconds(last['ts']) if last else None
+            sent_age = _age_seconds(sent['ts']) if sent else None
+            reason = ''
+            if not cfg.get('active'):
+                verdict = 'paused'
+            elif problems:
+                verdict = 'blocked:contract'; reason = ','.join(problems)
+            elif last and last['generating'] and last_age is not None and last_age <= 120:
+                verdict = 'generating'
+            elif blocked and (not sent or blocked['ts'] > sent['ts']):
+                verdict = 'blocked:client'; reason = (blocked['event'] + ': ' + (blocked['reason'] or '')).strip()[:200]
+            elif sent_age is not None and sent_age <= 900:
+                verdict = 'prompt-sent'
+            elif last_age is None or last_age > 120:
+                verdict = 'no-heartbeat'; reason = 'geen signaal van een browser-tab in 2 min'
+            elif not cfg.get('queue_item'):
+                verdict = 'idle:no-assignment'
+            else:
+                verdict = 'waiting'
+            summary[verdict] = summary.get(verdict, 0) + 1
+            item = cfg.get('queue_item') or {}
+            rows.append({'worker': key, 'project': base, 'slot': slot, 'global_slot': cfg.get('global_worker_slot'),
+                         'provider': cfg.get('provider'), 'queue_id': item.get('queue_id'), 'priority': item.get('priority'),
+                         'verdict': verdict, 'reason': reason, 'contract_failures': problems,
+                         'last_event': last['event'] if last else None, 'last_event_age_s': last_age,
+                         'last_prompt_age_s': sent_age, 'desired_state': cfg.get('desired_state')})
+        events = {r['event']: r['n'] for r in c.execute('SELECT event,COUNT(*) n FROM runner_events WHERE ts>? GROUP BY event ORDER BY n DESC LIMIT 14', (window,)).fetchall()}
+        failed = c.execute("SELECT COUNT(*) FROM runner_commands WHERE status='failed' AND created_at>?", (window,)).fetchone()[0]
+        cmds = [{'status': r['status'], 'result': r['r'], 'count': r['n']} for r in c.execute("SELECT status,COALESCE(substr(result,1,90),'') r,COUNT(*) n FROM runner_commands WHERE created_at>? GROUP BY 1,2 ORDER BY n DESC LIMIT 8", (window,)).fetchall()]
+    try: firefox = firefox_runner_status()
+    except Exception as exc: firefox = {'active': None, 'error': str(exc)[:120]}
+    return {'time': now(), 'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
+            'commands_15m': cmds, 'firefox': firefox,
+            'contract': {'worker_line': 'Jij bent Worker <slot>/<total>.', 'queue_line': 'VPS_QUEUE_ASSIGNMENT id=<queue_id>'}}
+
+def dynamic_force_push():
+    # Pool-level force push: enqueue a push for every active worker, bypassing the per-worker cooldown.
+    # Workers whose prompt contract is broken are reported instead of pushed (they would be refused anyway).
+    workers = runner_worker_targets()
+    results = []
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        for key, cfg in workers.items():
+            if not cfg.get('active'): continue
+            problems = [p for p in worker_contract_failures(cfg) if p != 'not-active']
+            if problems:
+                results.append({'worker': key, 'queued': False, 'reason': 'contract: ' + ','.join(problems)}); continue
+            if (cfg.get('desired_state') or 'running') != 'running':
+                results.append({'worker': key, 'queued': False, 'reason': 'desired_state=' + str(cfg.get('desired_state'))}); continue
+            inflight = c.execute("SELECT id FROM runner_commands WHERE project_id=? AND action='push' AND status='pending' ORDER BY id DESC LIMIT 1", (key,)).fetchone()
+            if inflight:
+                results.append({'worker': key, 'queued': True, 'command_id': int(inflight['id']), 'deduplicated': True}); continue
+            ts = now()
+            cur = c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)', (key, 'push', 'pending', ts, ts))
+            results.append({'worker': key, 'queued': True, 'command_id': int(cur.lastrowid)})
+    return {'ok': any(r.get('queued') for r in results), 'results': results, 'time': now()}
+
+
 class Handler(BaseHTTPRequestHandler):
     def reply(self,body,status=200,kind='application/json; charset=utf-8'):
         raw=json.dumps(body,ensure_ascii=False).encode() if not isinstance(body,bytes) else body
@@ -2569,6 +2668,9 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('UPDATE runner_commands SET status=?,updated_at=?,result=? WHERE id=?',
                               (status,now(),str(payload.get('result') or '')[:300],command_id))
                 return self.reply({'ok':True})
+            if u.path=='/api/dynamic-workers/force-push':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                return self.reply(dynamic_force_push())
             if u.path=='/api/runner-control':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or '')
@@ -2856,6 +2958,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/worker-debug':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            return self.reply(worker_debug_report())
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()

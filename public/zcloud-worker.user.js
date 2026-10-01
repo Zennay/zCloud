@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.2
+// @version      1.3.3
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.0";
+  const SCRIPT_VERSION = "1.3.3";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -59,6 +59,7 @@
   let awaitingGeneration = false;
   let generationDeadline = 0;
   let lastThinkingEffortWarningAt = 0;
+  let lastSendBlockedReport = {reason: "", at: 0};
   let lastProgressAt = Date.now();
   let lastPromptSentAt = 0;
   let lastHandledCommandId = 0;
@@ -871,28 +872,39 @@
   }
 
 
-  async function updateQueueStatus(queueId, status, evidence) {
-    if (!queueId || queueId === 'NONE') return;
-    try {
-      const response = await fetch('http://127.0.0.1:8765/api/queue-update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queue_id: queueId, status: status.toLowerCase(), evidence: evidence || '' })
-      });
-      const result = await response.json();
-      if (result.ok) {
-        await status('queue-update-sent', { queue_id: queueId, status: status });
-      } else {
-        await status('queue-update-failed', { queue_id: queueId, error: result.error });
-      }
-    } catch (err) {
-      await status('queue-update-error', { queue_id: queueId, error: String(err).slice(0, 100) });
-    }
+  // Explains WHY assignmentReady() is false, so a refused send is visible on the dashboard
+  // instead of a silent `return false`. Keep the predicates identical to assignmentReady().
+  function assignmentDiagnostic(candidate) {
+    if (!candidate) return "no-target";
+    const problems = [];
+    if (candidate.active !== true) problems.push("not-active");
+    if (candidate.assignment_ready !== true) problems.push("server-assignment-not-ready");
+    const queueId = String(candidate.queue_item?.queue_id || "").trim();
+    const prompt = String(candidate.prompt || "");
+    const slot = Number(candidate.global_worker_slot || 0);
+    const total = Number(candidate.global_worker_count || 0);
+    if (!queueId) problems.push("missing-queue-id");
+    if (!(Number.isInteger(slot) && slot >= 1)) problems.push("bad-global-slot");
+    if (!(Number.isInteger(total) && total >= slot)) problems.push("bad-global-count");
+    if (queueId && !prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId)) problems.push("prompt-missing-queue-line");
+    if (!prompt.includes("Jij bent Worker " + slot + "/" + total + ".")) problems.push("prompt-missing-worker-line");
+    return problems.join(",");
+  }
+
+  async function reportSendBlocked(reason) {
+    const nowMs = Date.now();
+    if (lastSendBlockedReport.reason === reason && nowMs - lastSendBlockedReport.at < 60000) return;
+    lastSendBlockedReport = {reason, at: nowMs};
+    await status("send-blocked", {reason});
   }
 
   async function sendPrompt(reason) {
     const currentProvider = provider();
-    if (!target || !assignmentReady(target) || !isWorkerProvider(currentProvider) || candidateProvider(target) !== currentProvider || sending || draining || generationActive()) return false;
+    if (target && !assignmentReady(target)) {
+      await reportSendBlocked("assignment-invalid:" + assignmentDiagnostic(target));
+      return false;
+    }
+    if (!target || !isWorkerProvider(currentProvider) || candidateProvider(target) !== currentProvider || sending || draining || generationActive()) return false;
     const prompt = promptWithHandoffAndRecovery(target.prompt);
     if (!prompt) return false;
 
@@ -1001,10 +1013,6 @@
     const queueEvidence = text.match(/ZCLOUD_QUEUE_EVIDENCE:\s*([^\n]+)/i);
     const queueItem = text.match(/ZCLOUD_QUEUE_ITEM:\s*([^\s\n]+)/i);
     if (queueResult) {
-      const queueId = queueItem?.[1]?.trim() || "NONE";
-      const resultStatus = queueResult[1]?.trim()?.toLowerCase() || "continue";
-      const evidence = queueEvidence?.[1]?.trim() || "";
-      await updateQueueStatus(queueId, resultStatus, evidence);
       await status("portfolio-queue-result", {
         queueItem: queueItem ? queueItem[1].trim() : String(target?.queue_item?.queue_id || ""),
         queueResult: queueResult[1].toUpperCase(),
