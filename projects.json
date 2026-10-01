@@ -52,8 +52,8 @@
         "progress": 55
       }
     ],
-    "phase": "Live champion validation · competitive behavior",
-    "next_step": "Improve kicking behavior and competitive sandbox results; then validate against real players.",
+    "phase": "Closed-Loop Arena v2 · rollout robustness",
+    "next_step": "Build and validate Closed-Loop Evaluation Arena v2 with a fresh frozen multi-source evaluation suite, then feed failures into rollout/recovery training and guard-independence gates.",
     "status": "active",
     "priority": "low",
     "repo_url": "https://github.com/Zennay/Haxlab",
