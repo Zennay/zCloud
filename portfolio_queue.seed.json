@@ -120,6 +120,16 @@
     "source_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3"
   },
   {
+    "queue_id": "supa-supermarket-html-scrapers",
+    "project_id": "supa",
+    "title": "Build supermarket HTML snapshot scrapers and selector extraction",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Build real supermarket web scrapers from captured source HTML, not invented selectors. Select the first two target supermarkets for the M1 data-feasibility lane; download representative real public product/search/offer pages and store sanitized/versioned HTML fixtures with source URL and captured-at provenance; inspect those fixtures to derive resilient selectors or embedded-data extraction paths for product identity, name, price, unit/pack size, offer mechanics and availability; implement source-specific adapters/scrapers against the captured HTML; add parser regression tests using the real snapshots plus explicit failure/staleness handling. Re-fetch live pages through the VPS execution lane to prove at least one end-to-end extraction per target source when legally/technically accessible. Do not fabricate HTML or selectors and do not bypass authentication, anti-bot controls, paywalls or terms restrictions.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3"
+  },
+  {
     "queue_id": "supa-recipe-offer-engine",
     "project_id": "supa",
     "title": "Implement the next recipe and offer engine slice",
