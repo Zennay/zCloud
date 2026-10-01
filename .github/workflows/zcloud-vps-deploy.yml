@@ -31,6 +31,13 @@ jobs:
           clean: true
           fetch-depth: 64
 
+      - name: Enforce permanent zCloud VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zcloud-vps-runner-guard.json"
+
       - name: Resolve latest green main revision
         id: freshness
         shell: bash
