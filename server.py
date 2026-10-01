@@ -1989,10 +1989,12 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         raise ValueError('title is verplicht')
     if priority not in ('P0','P1','P2','P3'):
         raise ValueError('priority moet P0, P1, P2 of P3 zijn')
-    # Project defaults belong in portfolio_write_continuation(). Explicit queue
-    # items keep the priority chosen by their roadmap/seed so a concrete HaxLab
-    # implementation lane can outrank stale generic continuations without
-    # changing HaxLab's default background priority.
+    # Project defaults belong in portfolio_write_continuation(). Explicit HaxLab
+    # implementation items may use P1/P2 so real roadmap work can outrank stale
+    # generic continuations. HaxLab remains a hobby/background project overall,
+    # so it may never claim the portfolio's P0 system/revenue tier.
+    if project_id=='haxlab' and priority=='P0':
+        priority='P2'
     if str((PROJECT_INDEX.get(project_id) or {}).get('queue_mode') or '').lower()=='human-gated':
         raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
     if not _portfolio_queue_execution_capable(title,completion_criteria):
