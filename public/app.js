@@ -201,7 +201,7 @@ function dynamicWorkerControl(){
         ${field('scheduler_interval_seconds','Backend scheduler',Number(cfg.scheduler_interval_seconds??5),1,300,1,'sec')}
       </div>
     </details>
-    <button type="button" class="runner-action runner-action-danger" data-force-recycle-workers style="margin-right:auto">Force recycle workers</button><button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save</button>
+    <div class="dynamic-worker-actions"><div class="dynamic-worker-actions"><button type="button" class="runner-action runner-action-danger" data-force-recycle-workers>Force recycle workers</button><button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save</button></div></div>
   </div>`;
 }
 async function saveDynamicWorkerSettings(button){
