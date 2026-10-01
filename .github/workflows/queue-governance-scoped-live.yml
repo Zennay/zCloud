@@ -152,32 +152,35 @@ jobs:
           else:
               raise RuntimeError("queue-governance API did not become healthy: "+str(last)[:1200])
 
-          attention=get("/api/portfolio-attention")
-          queue=get("/api/portfolio-queue?all=1")
-          runnable=[
-              x for x in queue.get("items",[])
-              if x.get("eligible") and str(x.get("status") or "").lower() in {"queued","claimed","running","verifying"}
-          ]
-          projects={str(x.get("project_id") or "") for x in runnable}
-          expected={"cloud","ftmo","haxlab","raiseai","supa","zssh"}
-          missing=sorted(expected-projects)
-          if missing:
-              raise RuntimeError("runnable roadmap projects missing: "+",".join(missing))
-          if any(x.get("project_id")=="ulab" for x in runnable):
-              raise RuntimeError("uLab human-gated work leaked into execution queue")
-
           forbidden=("inspect ","audit ","review ","verify ","check ","monitor ","report ","summarize ","status ","superseded ")
-          bad=[x.get("queue_id") for x in runnable if str(x.get("title") or "").strip().lower().startswith(forbidden)]
-          if bad:
-              raise RuntimeError("non-executable items still runnable: "+",".join(map(str,bad)))
-
-          attention_items=attention.get("items") or []
-          if not any(x.get("project_id")=="ulab" and x.get("status")=="open" for x in attention_items):
-              raise RuntimeError("uLab human gate missing from Attention Needed")
-
-          health=status["portfolio_queue_health"]
-          if int(health.get("ready") or 0)<10:
-              raise RuntimeError("queue is still too small: "+json.dumps(health,sort_keys=True))
+          expected={"cloud","ftmo","haxlab","raiseai","supa","zssh"}
+          last_state=None
+          for _ in range(35):
+              status=get("/api/status")
+              attention=get("/api/portfolio-attention")
+              queue=get("/api/portfolio-queue?all=1")
+              runnable=[
+                  x for x in queue.get("items",[])
+                  if x.get("eligible") and str(x.get("status") or "").lower() in {"queued","claimed","running","verifying"}
+              ]
+              projects={str(x.get("project_id") or "") for x in runnable}
+              missing=sorted(expected-projects)
+              human_leak=any(x.get("project_id")=="ulab" for x in runnable)
+              bad=[x.get("queue_id") for x in runnable if str(x.get("title") or "").strip().lower().startswith(forbidden)]
+              attention_items=attention.get("items") or []
+              human_visible=any(x.get("project_id")=="ulab" and x.get("status")=="open" for x in attention_items)
+              health=status.get("portfolio_queue_health") or {}
+              ready=int(health.get("ready") or 0)
+              last_state={
+                  "missing":missing,"human_leak":human_leak,"bad":bad,
+                  "human_visible":human_visible,"ready":ready,
+                  "projects":sorted(projects),
+              }
+              if not missing and not human_leak and not bad and human_visible and ready>=10:
+                  break
+              time.sleep(1)
+          else:
+              raise RuntimeError("queue audit did not converge: "+json.dumps(last_state,sort_keys=True))
 
           print("QUEUE_GOVERNANCE_LIVE_GREEN",json.dumps({
               "ready":health.get("ready"),
