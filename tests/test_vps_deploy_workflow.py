@@ -66,7 +66,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=recovered", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=failed", block)
         self.assertIn('lock_file="/run/zcloud-self-heal.lock"', block)
-        self.assertIn('flock -w 30 9', block)
+        self.assertIn('sudo -n flock -w 30 "$lock_file" true', block)
+        self.assertNotIn('exec 9>"$lock_file"', block)
+        self.assertNotIn('flock -w 30 9', block)
         self.assertLess(text.index(suspend), text.index(recover))
         self.assertLess(text.index(recover), text.index(promote))
 
