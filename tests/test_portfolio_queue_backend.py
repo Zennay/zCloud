@@ -90,8 +90,8 @@ class VpsPortfolioQueueTests(unittest.TestCase):
 
     def test_done_releases_slot_and_next_item_is_claimed(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
-        second = server.portfolio_queue_enqueue("haxlab", "second", "P1", "prove second")
-        third = server.portfolio_queue_enqueue("raiseai", "third", "P2", "prove third")
+        second = server.portfolio_queue_enqueue("raiseai", "second", "P1", "prove second")
+        third = server.portfolio_queue_enqueue("supa", "third", "P2", "prove third")
         server.portfolio_queue_allocate()
         self.assertEqual(second["queue_id"], server.portfolio_queue_current_for_slot(2)["queue_id"])
 
@@ -113,7 +113,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIn("material code/config/workflow/experiment/runtime state change", continuation["completion_criteria"])
         self.assertIn("Read-only inspection", continuation["completion_criteria"])
 
-    def test_haxlab_done_creates_p1_write_first_continuation(self):
+    def test_haxlab_done_creates_p3_write_first_continuation(self):
         item = server.portfolio_queue_enqueue("haxlab", "close evidence gate", "P2", "prove current gate")
         server.portfolio_queue_allocate()
 
@@ -122,12 +122,33 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
         self.assertEqual("haxlab", continuation["project_id"])
-        self.assertEqual("P1", continuation["priority"])
+        self.assertEqual("P3", continuation["priority"])
         self.assertEqual("Implement next HaxLab roadmap increment", continuation["title"])
         self.assertIn("write-capable roadmap step", continuation["completion_criteria"])
         self.assertIn("Read-only inspection", continuation["completion_criteria"])
         self.assertIn(server.PROJECT_INDEX["haxlab"]["next_step"], continuation["completion_criteria"])
         self.assertEqual(server.PROJECT_INDEX["haxlab"]["notion_url"], continuation["source_url"])
+
+    def test_ftmo_done_creates_p0_write_first_continuation(self):
+        item = server.portfolio_queue_enqueue("ftmo", "advance research gate", "P1", "Implement the next safe FTMO gate with tests.")
+        server.portfolio_queue_allocate()
+
+        result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate advanced with current evidence")
+
+        continuation = result["next_task"]
+        self.assertIsNotNone(continuation)
+        self.assertEqual("ftmo", continuation["project_id"])
+        self.assertEqual("P0", continuation["priority"])
+        self.assertEqual("Implement next FTMO roadmap increment", continuation["title"])
+
+    def test_haxlab_enqueue_is_centrally_clamped_to_p3(self):
+        item = server.portfolio_queue_enqueue(
+            "haxlab",
+            "Implement bounded HaxLab improvement",
+            "P0",
+            "Implement code plus deterministic tests.",
+        )
+        self.assertEqual("P3", item["priority"])
 
     def test_backend_rejects_complete_while_other_queue_work_exists(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")

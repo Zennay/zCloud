@@ -1,0 +1,101 @@
+name: Reconcile live FTMO-first portfolio priorities
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/portfolio-priority-normalizer.yml
+      - portfolio_queue.seed.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Reconcile live SQLite queue priorities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base="http://127.0.0.1:8765"
+          desired={
+            "ftmo-current-generation-safe-gate":(
+              "ftmo","P0","Advance FTMO through the next preregistered safe generation gate",
+              "Advance the current FTMO generation by implementing or executing the next allowed preregistered code/config/workflow gate on the self-hosted path. Preserve provider provenance, frozen split, development/walk-forward/final-holdout isolation, zero paid cloud and paper-only safety. Completion requires a material persisted change plus deterministic test/workflow evidence; do not inspect sealed outcomes early.",
+              "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
+            "ftmo-useful-compute-cpu-attribution":(
+              "ftmo","P1","Make FTMO the primary useful-compute consumer and prove CPU attribution",
+              "Prove whether current VPS CPU is useful FTMO research compute versus HaxLab or unattributed/control-plane work. If FTMO is not receiving useful compute, make a safe runtime/config change through the Claude/VPS execution lane that restores FTMO throughput; persist cgroup/host-share attribution and an advanced controller receipt. Diagnosis alone is not completion.",
+              "https://app.notion.com/p/3e49e19ac95581fcb8c7fd06a3d98fc7"),
+            "haxlab-closed-loop-arena-v2-implementation":(
+              "haxlab","P3","Build the next Closed-Loop Evaluation Arena v2 implementation increment",
+              "Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 with deterministic tests. HaxLab is a background lane and must not outrank FTMO or other revenue-oriented work.",
+              "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"),
+            "haxlab-multisource-evaluation-suite-v2":(
+              "haxlab","P3","Implement the frozen multi-source evaluation suite v2",
+              "Implement deterministic multi-source evaluation tooling/config with provenance and regression coverage.",
+              "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"),
+            "haxlab-guard-independence-promotion-gate-v2":(
+              "haxlab","P3","Implement guard-independence as a mandatory Arena v2 promotion gate",
+              "Implement guard-independence metrics and fail-closed promotion logic with regression tests.",
+              "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"),
+            "haxlab-rollout-recovery-dataset-v1":(
+              "haxlab","P3","Implement versioned rollout/recovery dataset generation",
+              "Implement a deterministic versioned rollout/recovery dataset pipeline with provenance and automated evidence.",
+              "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"),
+          }
+
+          def get(path):
+              with urllib.request.urlopen(base+path,timeout=10) as r:
+                  return json.load(r)
+
+          def post(path,payload,actor):
+              req=urllib.request.Request(
+                  base+path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type":"application/json","X-ZCloud-Actor":actor},
+              )
+              with urllib.request.urlopen(req,timeout=10) as r:
+                  return json.load(r)
+
+          for qid,(project,priority,title,criteria,source) in desired.items():
+              result=post("/api/portfolio-queue",{
+                  "action":"enqueue","queue_id":qid,"project_id":project,
+                  "title":title,"priority":priority,
+                  "completion_criteria":criteria,"source_url":source,
+              },"portfolio-priority-normalizer")
+              print("QUEUE_PRIORITY",qid,priority,json.dumps(result,sort_keys=True))
+
+          # Reconcile current allocation with unchanged worker settings. Existing
+          # real claimed/running work is not killed; newly free slots follow P0>P1>P2>P3.
+          dynamic=get("/api/dynamic-workers").get("dynamic_workers") or {}
+          same={
+              key:dynamic.get(key)
+              for key in (
+                  "chatgpt_count","claude_count",
+                  "chatgpt_cooldown_seconds","claude_cooldown_seconds",
+                  "check_interval_ms","tick_interval_ms","heartbeat_interval_ms",
+                  "generation_start_timeout_ms","scheduler_interval_seconds"
+              )
+              if dynamic.get(key) is not None
+          }
+          if same:
+              print("RECONCILE",json.dumps(post("/api/dynamic-workers",same,"portfolio-priority-normalizer"),sort_keys=True))
+
+          final=get("/api/portfolio-queue?all=1")
+          focus=[
+              {k:x.get(k) for k in ("queue_id","project_id","priority","status","worker_slot","title")}
+              for x in final.get("items",[])
+              if x.get("eligible") and x.get("project_id") in {"ftmo","haxlab"}
+          ]
+          print("FTMO_HAXLAB_FINAL",json.dumps(focus,sort_keys=True))
+          print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))
+          PY
