@@ -13,7 +13,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
     def test_public_plugin_queue_stays_below_ftmo_p0(self):
         text = (ROOT / ".github/workflows/zssh-public-plugin-priority.yml").read_text(encoding="utf-8")
         self.assertIn('"priority": "P1"', text)
-        self.assertIn('!= "P1"', text)
+        self.assertIn('!= expected["priority"]', text)
         self.assertNotIn('"priority": "P0"', text)
 
     def test_release_coordination_uses_control_plane_health_profile(self):
