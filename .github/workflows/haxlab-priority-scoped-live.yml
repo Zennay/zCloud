@@ -1,0 +1,223 @@
+name: Scoped HaxLab priority policy deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/haxlab-priority-scoped-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: zcloud-haxlab-priority-scoped-live
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Check out current green main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 32
+
+      - name: Require exact current-main regression green
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(git rev-parse HEAD)"
+          remote="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          [[ "$current" == "$remote" ]]
+          export CURRENT_SHA="$current"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          repo=os.environ["GITHUB_REPOSITORY"]
+          sha=os.environ["CURRENT_SHA"]
+          token=os.environ["GH_TOKEN"]
+          req=urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/workflows/zcloud-regression-smoke.yml/runs"
+              "?branch=main&event=push&status=success&per_page=100",
+              headers={
+                  "Authorization":f"Bearer {token}",
+                  "Accept":"application/vnd.github+json",
+                  "X-GitHub-Api-Version":"2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(req,timeout=15) as r:
+              payload=json.load(r)
+          if not any(x.get("head_sha")==sha and x.get("conclusion")=="success" for x in payload.get("workflow_runs",[])):
+              raise SystemExit(f"current main is not regression-green: {sha}")
+          print("HAXLAB_PRIORITY_MAIN_GREEN",sha)
+          PY
+
+      - name: Validate queue policy candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py
+          python3 -m unittest tests.test_portfolio_queue_backend
+          echo "HAXLAB_PRIORITY_CANDIDATE_GREEN"
+
+      - name: Promote only queue backend and restore explicit HaxLab priorities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=/home/ubuntu/zennay-cloud
+          live="$root/server.py"
+          sentinel="$root/.disable-self-heal"
+          backup="$HOME/.local/state/zcloud/haxlab-priority-backups/$(date -u +%Y%m%dT%H%M%SZ)-server.py"
+          mkdir -p "$(dirname "$backup")"
+          cp -a "$live" "$backup"
+          created_sentinel=0
+          if [[ ! -e "$sentinel" ]]; then
+            touch "$sentinel"
+            created_sentinel=1
+          fi
+
+          rollback() {
+            code=$?
+            trap - ERR
+            echo "HAXLAB_PRIORITY_ROLLBACK code=$code"
+            cp -a "$backup" "$live"
+            sudo -n systemctl restart zennay-cloud.service || true
+            if [[ "$created_sentinel" == "1" ]]; then rm -f "$sentinel"; fi
+            exit "$code"
+          }
+          trap rollback ERR
+
+          tmp="$root/server.py.haxlab-priority.$$"
+          cp "$GITHUB_WORKSPACE/server.py" "$tmp"
+          chmod --reference="$live" "$tmp"
+          mv -f "$tmp" "$live"
+          sudo -n systemctl restart zennay-cloud.service
+
+          python3 - <<'PY'
+          import json, sqlite3, time, urllib.request
+          base="http://127.0.0.1:8765"
+          db="/home/ubuntu/zennay-cloud/history.db"
+
+          def get(path):
+              with urllib.request.urlopen(base+path,timeout=8) as r:
+                  return json.load(r)
+
+          def post(path,payload):
+              req=urllib.request.Request(
+                  base+path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type":"application/json","X-ZCloud-Actor":"haxlab-priority-scoped-live"},
+              )
+              with urllib.request.urlopen(req,timeout=10) as r:
+                  return json.load(r)
+
+          last=None
+          for _ in range(40):
+              try:
+                  status=get("/api/status")
+                  if not status.get("errors"):
+                      print("ZCLOUD_LIVE_AFTER_SCOPED_DEPLOY",json.dumps({
+                          "time":status.get("time"),
+                          "errors":status.get("errors"),
+                      },sort_keys=True))
+                      break
+                  last=status
+              except Exception as exc:
+                  last=repr(exc)
+              time.sleep(1)
+          else:
+              raise RuntimeError("zCloud API did not recover: "+str(last)[:1000])
+
+          # Prove the new backend preserves an explicit HaxLab implementation priority.
+          canary_id="haxlab-explicit-priority-policy-canary"
+          canary=post("/api/portfolio-queue",{
+              "action":"enqueue",
+              "queue_id":canary_id,
+              "project_id":"haxlab",
+              "title":"Implement bounded HaxLab priority policy canary",
+              "priority":"P1",
+              "completion_criteria":"Implement code plus deterministic tests; this temporary row verifies explicit implementation priority preservation.",
+              "source_url":"https://github.com/Zennay/zCloud",
+          }).get("item") or {}
+          print("HAXLAB_PRIORITY_CANARY",json.dumps(canary,sort_keys=True))
+          if canary.get("priority")!="P1":
+              raise RuntimeError("live backend still clamps explicit HaxLab priority: "+json.dumps(canary))
+
+          # Remove the temporary canary directly from the local source-of-truth.
+          with sqlite3.connect(db,timeout=5) as conn:
+              conn.execute("DELETE FROM portfolio_queue WHERE queue_id=?",(canary_id,))
+              conn.commit()
+
+          items=[
+              (
+                "haxlab-multisource-evaluation-suite-v2",
+                "Implement the frozen multi-source evaluation suite v2",
+                "Implement versioned tooling/config that selects and freezes multiple disjoint replay sources with deterministic seeds, provenance and regression coverage; produce a reproducible evaluation manifest/artifact and green tests. Merely inspecting or describing candidate sources is not completion.",
+              ),
+              (
+                "haxlab-guard-independence-promotion-gate-v2",
+                "Implement guard-independence as a mandatory Arena v2 promotion gate",
+                "Add or complete executable guard-intervention/role-leash/recovery-dependency metrics and fail-closed promotion logic, with regression tests proving a guard-dependent challenger cannot pass. Requires code plus test/workflow evidence; audit-only work does not count.",
+              ),
+              (
+                "haxlab-rollout-recovery-dataset-v1",
+                "Implement versioned rollout/recovery dataset generation",
+                "Implement a deterministic versioned pipeline that persists model-visited failures/recovery states separately from raw human evidence, with provenance, idempotent reruns and automated tests or bounded workflow evidence. Read-only analysis is insufficient.",
+              ),
+          ]
+          for qid,title,criteria in items:
+              result=post("/api/portfolio-queue",{
+                  "action":"enqueue",
+                  "queue_id":qid,
+                  "project_id":"haxlab",
+                  "title":title,
+                  "priority":"P2",
+                  "completion_criteria":criteria,
+                  "source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
+              })
+              print("HAXLAB_P2_RESTORED",json.dumps(result,sort_keys=True))
+
+          current=get("/api/dynamic-workers").get("dynamic_workers") or {}
+          keys=(
+              "chatgpt_count","claude_count",
+              "chatgpt_cooldown_seconds","claude_cooldown_seconds",
+              "check_interval_ms","tick_interval_ms",
+              "heartbeat_interval_ms","generation_start_timeout_ms",
+              "scheduler_interval_seconds",
+          )
+          same={k:current[k] for k in keys if current.get(k) is not None}
+          reconciled=post("/api/dynamic-workers",same)
+          print("POOL_RECONCILED_AFTER_PRIORITY_FIX",json.dumps(reconciled,sort_keys=True))
+
+          queue=get("/api/portfolio-queue?all=1")
+          by_id={x.get("queue_id"):x for x in queue.get("items",[])}
+          for qid,_,_ in items:
+              row=by_id.get(qid)
+              if not row or row.get("priority")!="P2" or not row.get("eligible"):
+                  raise RuntimeError("HaxLab P2 not persisted: "+str(row))
+          generic=by_id.get("haxlab-40966b7cf667d3d1")
+          if generic and generic.get("priority")!="P3":
+              raise RuntimeError("generic HaxLab continuation unexpectedly promoted: "+json.dumps(generic))
+
+          print("HAXLAB_PRIORITY_LIVE_GREEN",json.dumps({
+              "explicit":[
+                  {k:by_id[qid].get(k) for k in ("queue_id","priority","status","worker_slot","title")}
+                  for qid,_,_ in items
+              ],
+              "generic":(
+                  {k:generic.get(k) for k in ("queue_id","priority","status","worker_slot","title")}
+                  if generic else None
+              ),
+              "allocation":queue.get("allocation"),
+          },sort_keys=True))
+          PY
+
+          trap - ERR
+          if [[ "$created_sentinel" == "1" ]]; then rm -f "$sentinel"; fi
+          echo "HAXLAB_PRIORITY_SCOPED_DEPLOY_GREEN"
