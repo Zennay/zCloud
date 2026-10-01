@@ -84,9 +84,9 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn('function isHighLabel(value)', background)
         self.assertIn("missingQueueEvidence", background)
         self.assertIn("backend-non-stopping-dynamic-worker-policy", server)
-        self.assertIn("Implement next {name} roadmap increment", server)
-        self.assertIn("write-capable roadmap step", server)
-        self.assertIn("Read-only inspection", server)
+        self.assertIn("Execute substantial {name} roadmap work package", server)
+        self.assertIn("adjacent write-capable steps", server)
+        self.assertIn("read-only inspection", server)
 
     def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
         policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
