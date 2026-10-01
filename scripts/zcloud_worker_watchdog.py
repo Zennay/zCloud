@@ -40,6 +40,7 @@ NEW_CHAT_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_NEW_CHAT_COOLDOW
 GLOBAL_RECOVERY_AFTER_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GLOBAL_RECOVERY_AFTER_SECONDS", "900"))
 GLOBAL_RECOVERY_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GLOBAL_RECOVERY_COOLDOWN_SECONDS", "900"))
 GENERATION_PROTECT_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GENERATION_PROTECT_SECONDS", "1200"))
+PROMPT_STALE_REFRESH_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_PROMPT_STALE_REFRESH_SECONDS", "300"))
 
 HUMAN_GATE_STATUSES = {"wait_human", "waiting_human", "human_gate", "needs_human", "approval_required"}
 
@@ -286,6 +287,7 @@ def choose_action(
     *,
     stalled_seconds: int,
     activity_age_seconds: int,
+    prompt_sent_age_seconds: int,
     runtime_state: str,
     generating: bool,
     progress_age_seconds: int | None,
@@ -310,6 +312,16 @@ def choose_action(
         # reports no token/progress movement for the protection window.
         if progress_age_seconds is None or progress_age_seconds < GENERATION_PROTECT_SECONDS:
             return None
+
+    # Browser heartbeats are not enough. If this allocated worker has not
+    # actually sent a prompt for too long, refresh its conversation even when
+    # generic liveness events keep arriving.
+    if (
+        prompt_sent_age_seconds >= PROMPT_STALE_REFRESH_SECONDS
+        and stalled_seconds >= PUSH_AFTER_SECONDS
+        and seconds_since_last_new_chat >= NEW_CHAT_COOLDOWN_SECONDS
+    ):
+        return "new_chat"
 
     if activity_age_seconds < QUIET_GRACE_SECONDS:
         return None
@@ -409,12 +421,17 @@ def run_once(
         except Exception:
             progress_age_int = None
         activity_age = latest_activity_age(live_worker, now)
+        last_prompt_sent = ((live_worker or {}).get("last_prompt_sent") or {}).get("time")
+        prompt_sent_age = seconds_since(last_prompt_sent, now)
+        worker_state["last_prompt_sent_at"] = last_prompt_sent
+        worker_state["last_prompt_sent_age_seconds"] = prompt_sent_age
 
         last_attempt_age = seconds_since(worker_state.get("last_attempt_at"), now)
         last_new_chat_age = seconds_since(worker_state.get("last_new_chat_at"), now)
         action = choose_action(
             stalled_seconds=stalled_seconds,
             activity_age_seconds=activity_age,
+            prompt_sent_age_seconds=prompt_sent_age,
             runtime_state=runtime_state,
             generating=generating,
             progress_age_seconds=progress_age_int,
@@ -466,6 +483,8 @@ def run_once(
             "material_changed": changed,
             "material_stalled_seconds": stalled_seconds,
             "activity_age_seconds": activity_age,
+            "last_prompt_sent_at": last_prompt_sent,
+            "last_prompt_sent_age_seconds": prompt_sent_age,
             "runtime_state": runtime_state,
             "generating": generating,
             "progress_age_seconds": progress_age_int,
@@ -525,6 +544,7 @@ def run_once(
             "offline_restart_after_seconds": OFFLINE_RESTART_AFTER_SECONDS,
             "quiet_grace_seconds": QUIET_GRACE_SECONDS,
             "generation_protect_seconds": GENERATION_PROTECT_SECONDS,
+            "prompt_stale_refresh_seconds": PROMPT_STALE_REFRESH_SECONDS,
             "global_recovery_after_seconds": GLOBAL_RECOVERY_AFTER_SECONDS,
         },
     }
