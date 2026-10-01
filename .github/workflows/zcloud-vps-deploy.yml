@@ -29,7 +29,7 @@ jobs:
         with:
           ref: main
           clean: true
-          fetch-depth: 64
+          fetch-depth: 513
 
       - name: Enforce permanent zCloud VPS runner identity
         shell: bash
@@ -239,6 +239,28 @@ jobs:
             echo "NO_STALE_NON_RUNTIME_USERSCRIPT_BACKUPS"
           fi
 
+      - name: Quarantine generated Python bytecode before guarded promotion
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="/home/ubuntu/zennay-cloud/scripts/__pycache__"
+          if [[ ! -d "$live" ]]; then
+            echo "NO_LIVE_PYTHON_BYTECODE_CACHE"
+            exit 0
+          fi
+          quarantine="$HOME/.local/state/zcloud/runtime-backups"
+          mkdir -p "$quarantine"
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          target="$quarantine/scripts-__pycache__.$stamp"
+          suffix=0
+          while [[ -e "$target" ]]; do
+            suffix=$((suffix + 1))
+            target="$quarantine/scripts-__pycache__.$stamp.$suffix"
+          done
+          mv -- "$live" "$target"
+          echo "QUARANTINED_LIVE_PYTHON_BYTECODE=$target"
+
       - name: Ensure Firefox automation service for guarded canaries
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
@@ -294,6 +316,8 @@ jobs:
       - name: Promote backend and autonomy policy
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
+          # One-time reviewed migration from the last direct-live server patch.
+          # Exact hash match is required; any different live source remains fail-closed.
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
@@ -304,6 +328,7 @@ jobs:
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
+            --reconcile-known-live-sha server.py=48fc7d97078c8d89959de1c03341f579b4e200bd9ce54603540edd15f18dccf6 \
             --actor "github-actions-vps-deploy" \
             --json
 

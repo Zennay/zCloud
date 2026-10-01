@@ -528,6 +528,71 @@ class TransactionalPromotionTests(unittest.TestCase):
             )
         )
 
+    def test_audited_resource_policy_accepts_json_equivalent_bytes(self):
+        state = Path(self.tmp.name) / "semantic-state"
+        snapshot = state / "snapshots" / "lkg-semantic"
+        files = snapshot / "files"
+        files.mkdir(parents=True)
+        (state / "last-known-good.json").write_text(
+            json.dumps({"snapshot_id": "lkg-semantic"}), encoding="utf-8"
+        )
+        (snapshot / "manifest.json").write_text(
+            json.dumps({"snapshot_id": "lkg-semantic", "created_at": "2026-10-01T20:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        (files / "resource-policy.json").write_text(
+            '{"ftmo":{"priority":"turbo"},"supa":{"priority":"high"}}\n',
+            encoding="utf-8",
+        )
+        (self.root / "resource-policy.json").write_text(
+            '{\n  "supa": {"priority": "high"},\n  "ftmo": {"priority": "turbo"}\n}\n',
+            encoding="utf-8",
+        )
+        self.assertTrue(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "resource-policy.json"
+            )
+        )
+
+    def test_audited_resource_policy_rejects_non_priority_semantic_drift(self):
+        state = Path(self.tmp.name) / "semantic-state-other"
+        snapshot = state / "snapshots" / "lkg-other"
+        files = snapshot / "files"
+        files.mkdir(parents=True)
+        (state / "last-known-good.json").write_text(
+            json.dumps({"snapshot_id": "lkg-other"}), encoding="utf-8"
+        )
+        (snapshot / "manifest.json").write_text(
+            json.dumps({"snapshot_id": "lkg-other", "created_at": "2026-10-01T20:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        baseline = {"ftmo": {"priority": "normal", "weight": 1}}
+        current = {"ftmo": {"priority": "turbo", "weight": 99}}
+        (files / "resource-policy.json").write_text(json.dumps(baseline), encoding="utf-8")
+        (self.root / "resource-policy.json").write_text(json.dumps(current), encoding="utf-8")
+        db = self.root / "history.db"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "CREATE TABLE config_audit("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
+                "config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, "
+                "new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+            )
+            conn.execute(
+                "INSERT INTO config_audit(ts,actor,config_key,target,old_value_json,new_value_json,result,detail) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "2026-10-01T21:00:00+00:00", "dashboard@test",
+                    "resource.priority", "ftmo", json.dumps("normal"),
+                    json.dumps("turbo"), "succeeded", "saved",
+                ),
+            )
+        self.assertFalse(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "resource-policy.json"
+            )
+        )
+
     def test_run_prechange_reconciles_only_audited_runtime_config_drift(self):
         calls = []
         original_run = promote.run
@@ -574,6 +639,72 @@ class TransactionalPromotionTests(unittest.TestCase):
             {"resource-policy.json"},
             set(promote.PRECHANGE_AUDITED_RUNTIME_DRIFT),
         )
+
+    def test_prechange_reconciles_only_exact_reviewed_live_hash(self):
+        calls = []
+        original_run = promote.run
+        (self.root / "server.py").write_text("reviewed-live-drift\n")
+        (self.candidate / "server.py").write_text("current-green-server\n")
+        expected = promote.sha256_file(self.root / "server.py")
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+                known_live_hashes={"server.py": expected},
+            )
+        finally:
+            promote.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertIn("server.py", calls[1])
+
+    def test_prechange_rejects_mismatched_reviewed_live_hash(self):
+        original_run = promote.run
+        (self.root / "server.py").write_text("different-live-drift\n")
+        (self.candidate / "server.py").write_text("current-green-server\n")
+
+        class Result:
+            returncode = 2
+            stdout = (
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["server.py"],"allowed":[],"unexpected":["server.py"]}}]}'
+            )
+
+        promote.run = lambda args, check=True: Result()
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.run_prechange(
+                    Path("/bin/prechange"),
+                    self.root,
+                    Path(self.tmp.name) / "state",
+                    candidate=self.candidate,
+                    known_live_hashes={"server.py": "0" * 64},
+                )
+        finally:
+            promote.run = original_run
 
     def test_explicit_prechange_drift_rejects_non_replaceable_paths(self):
         with self.assertRaises(promote.PromotionError):
