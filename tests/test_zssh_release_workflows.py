@@ -13,6 +13,8 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('"priority": "P1"', text)
         self.assertIn('!= "P1"', text)
         self.assertNotIn('"priority": "P0"', text)
+        self.assertIn('FTMO_P0_PRIORITY_GREEN', text)
+        self.assertIn('ftmo-current-generation-safe-gate', text)
 
     def test_release_coordination_uses_control_plane_health_profile(self):
         text = (ROOT / "scripts/zssh_release_coordination.py").read_text(encoding="utf-8")
@@ -23,6 +25,8 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: self-hosted", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("ZSSH_LIVE_VERSION_GREEN", text)
+        self.assertIn("live zSSH version mismatch", text)
         match = re.search(r"ZSSH_RELEASE_SHA:\s*([0-9a-f]{40})", text)
         self.assertIsNotNone(match)
 
