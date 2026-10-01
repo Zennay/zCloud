@@ -8,16 +8,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   enqueue:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Enqueue and verify FTMO CPU attribution proof
+      - name: Check out exact main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Enqueue zSSH P0 subtask and persist live SQLite receipt
         shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           import json
           import urllib.request
@@ -45,7 +52,6 @@ jobs:
               ),
               "source_url": "https://github.com/Zennay/Ftmo/pull/369",
           }
-
           request = urllib.request.Request(
               base + "/api/portfolio-queue",
               data=json.dumps(payload).encode(),
@@ -57,8 +63,20 @@ jobs:
               if response.status != 200:
                   raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
           print("QUEUE_ENQUEUE_RESPONSE", json.dumps(body, sort_keys=True))
+          PY
 
-          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+          git fetch origin main
+          git reset --hard origin/main
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import urllib.request
+
+          queue_id = "zssh-ftmo-cpu-attribution-proof"
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10) as response:
               live = json.load(response)
 
           def find(value):
@@ -78,24 +96,43 @@ jobs:
 
           item = find(live)
           if not item:
-              raise RuntimeError(f"{queue_id} not found in live SQLite queue")
+              raise SystemExit(f"{queue_id} not found in live SQLite queue")
           if str(item.get("priority") or "").upper() != "P0":
-              raise RuntimeError(f"{queue_id} priority is not P0: {item.get('priority')}")
+              raise SystemExit(f"{queue_id} priority is not P0: {item.get('priority')}")
           if str(item.get("project_id") or "").lower() != "zssh":
-              raise RuntimeError(f"{queue_id} is attached to wrong project: {item.get('project_id')}")
+              raise SystemExit(f"{queue_id} is attached to wrong project: {item.get('project_id')}")
 
-          print(
-              "FTMO_CPU_ZSSH_QUEUE_GREEN",
-              json.dumps(
-                  {
-                      "queue_id": item.get("queue_id"),
-                      "project_id": item.get("project_id"),
-                      "priority": item.get("priority"),
-                      "status": item.get("status"),
-                      "eligible": item.get("eligible"),
-                      "worker_slot": item.get("worker_slot"),
-                  },
-                  sort_keys=True,
-              ),
-          )
+          receipt = {
+              "schema_version": 1,
+              "scope": "ftmo-cpu-attribution-zssh-queue",
+              "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+              "workflow_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "workflow_source_sha": os.environ.get("GITHUB_SHA"),
+              "receipt_base_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True
+              ).strip(),
+              "queue": {
+                  "queue_id": item.get("queue_id"),
+                  "project_id": item.get("project_id"),
+                  "priority": item.get("priority"),
+                  "status": item.get("status"),
+                  "eligible": item.get("eligible"),
+                  "worker_slot": item.get("worker_slot"),
+                  "updated_at": item.get("updated_at"),
+              },
+          }
+          print("FTMO_CPU_ZSSH_QUEUE_GREEN", json.dumps(receipt, sort_keys=True))
+          target = Path("artifacts/ops/ftmo-cpu-zssh-queue-receipt.json")
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
           PY
+
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add artifacts/ops/ftmo-cpu-zssh-queue-receipt.json
+          if git diff --cached --quiet; then
+            echo "Queue receipt unchanged"
+          else
+            git commit -m "Record FTMO zSSH queue receipt"
+            git push origin HEAD:main
+          fi
