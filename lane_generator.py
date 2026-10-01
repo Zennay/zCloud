@@ -242,7 +242,8 @@ def _lane_scope(project_id, lane_id, item=None):
 def _lane_score(text, lane):
     score = 0
     for keyword in lane["keywords"]:
-        if keyword in text:
+        pattern = r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])"
+        if re.search(pattern, text):
             score += 3 if " " in keyword or "-" in keyword else 1
     return score
 
@@ -280,10 +281,10 @@ def _queue_order(item):
 def generate_execution_lanes(project, backlog, claims=()):
     """Return deterministic, non-overlapping lanes for one project's live backlog.
 
-    Active queue work occupies its lane first. Queued work is considered globally
-    by queue priority and admitted only when both its generated lane scope and its
-    explicit conflict_scope are disjoint from active claims and scopes already
-    reserved by another lane.
+    Active queue work occupies its lane first. Queued candidates are then admitted
+    by queue priority only when both their task-claim scope and every already
+    occupied execution-lane scope are non-overlapping. This prevents two different
+    derived lanes from writing the same explicit file/capability concurrently.
     """
 
     project_id = str(project.get("id") or "").strip().lower()
@@ -312,99 +313,74 @@ def generate_execution_lanes(project, backlog, claims=()):
                 "scope": scope,
             })
 
-    state = {
-        lane["id"]: {
-            "chosen": None,
-            "blocked_by": [],
-            "pending": sorted(
-                [
-                    item for item in classified
-                    if item["lane_id"] == lane["id"]
-                    and str(item.get("status") or "queued").lower() == "queued"
-                ],
-                key=_queue_order,
-            ),
-        }
-        for lane in lane_defs
-    }
-    reserved = []
+    lane_items = {}
+    for lane_def in lane_defs:
+        lane_id = lane_def["id"]
+        lane_items[lane_id] = sorted(
+            [item for item in classified if item["lane_id"] == lane_id],
+            key=_queue_order,
+        )
 
-    # Existing active work is authoritative. Reserve it before admitting any new
-    # queue item so a restart/reallocation cannot schedule an overlapping writer.
-    active_items = sorted(
+    chosen_by_lane = {}
+    blocked_by_lane = {lane_def["id"]: [] for lane_def in lane_defs}
+    occupied_scopes = []
+
+    # Existing active work is authoritative: preserve it and reserve its write
+    # scope before considering any new queued work.
+    for lane_def in lane_defs:
+        lane_id = lane_def["id"]
+        active = [
+            item for item in lane_items[lane_id]
+            if str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        ]
+        if active:
+            chosen = active[0]
+            chosen_by_lane[lane_id] = chosen
+            occupied_scopes.append({
+                "queue_id": str(chosen.get("queue_id") or ""),
+                "lane_id": lane_id,
+                "scope": chosen["scope"],
+            })
+
+    queued = sorted(
         [
             item for item in classified
-            if str(item.get("status") or "").lower() in ACTIVE_STATUSES
+            if str(item.get("status") or "queued").lower() == "queued"
+            and item["lane_id"] not in chosen_by_lane
         ],
         key=_queue_order,
     )
-    for item in active_items:
-        lane_state = state[item["lane_id"]]
-        if lane_state["chosen"] is not None:
-            lane_state["blocked_by"].append({
-                "queue_id": str(item.get("queue_id") or ""),
-                "lane_id": item["lane_id"],
-                "overlap": item["scope"],
-                "reason": "duplicate_active_lane",
-            })
+    for candidate in queued:
+        lane_id = candidate["lane_id"]
+        if lane_id in chosen_by_lane:
             continue
-        lane_state["chosen"] = item
-        for other in reserved:
-            overlap = scopes_overlap(item["scope"], other["scope"])
-            if overlap["capabilities"] or overlap["files"]:
-                lane_state["blocked_by"].append({
-                    "queue_id": other["queue_id"],
-                    "lane_id": other["lane_id"],
-                    "overlap": overlap,
-                    "reason": "preexisting_active_scope_conflict",
-                })
-        reserved.append({
-            "queue_id": str(item.get("queue_id") or ""),
-            "lane_id": item["lane_id"],
-            "scope": item["scope"],
-        })
 
-    # Consider the head candidate from every free lane together. This preserves
-    # queue priority across lane types rather than letting profile ordering win.
-    while True:
-        heads = []
-        for lane_id, lane_state in state.items():
-            if lane_state["chosen"] is None and lane_state["pending"]:
-                heads.append((lane_state["pending"][0], lane_id))
-        if not heads:
-            break
-        candidate, lane_id = min(heads, key=lambda pair: _queue_order(pair[0]))
-        lane_state = state[lane_id]
-        lane_state["pending"].pop(0)
         conflicts = []
-
         for claim in active_claims:
             overlap = scopes_overlap(candidate["scope"], claim["scope"])
             if overlap["capabilities"] or overlap["files"]:
                 conflicts.append({
+                    "kind": "claim",
                     "claim_key": claim["claim_key"],
                     "owner_id": claim["owner_id"],
                     "worker_id": claim["worker_id"],
                     "overlap": overlap,
-                    "reason": "task_claim_scope_conflict",
                 })
-
-        for other in reserved:
-            overlap = scopes_overlap(candidate["scope"], other["scope"])
+        for occupied in occupied_scopes:
+            overlap = scopes_overlap(candidate["scope"], occupied["scope"])
             if overlap["capabilities"] or overlap["files"]:
                 conflicts.append({
-                    "queue_id": other["queue_id"],
-                    "lane_id": other["lane_id"],
+                    "kind": "queue",
+                    "queue_id": occupied["queue_id"],
+                    "lane_id": occupied["lane_id"],
                     "overlap": overlap,
-                    "reason": "queue_scope_conflict",
                 })
-
         if conflicts:
-            lane_state["blocked_by"].extend(conflicts)
+            blocked_by_lane[lane_id].extend(conflicts)
             continue
 
-        lane_state["chosen"] = candidate
-        reserved.append({
+        chosen_by_lane[lane_id] = candidate
+        occupied_scopes.append({
             "queue_id": str(candidate.get("queue_id") or ""),
             "lane_id": lane_id,
             "scope": candidate["scope"],
@@ -413,9 +389,8 @@ def generate_execution_lanes(project, backlog, claims=()):
     results = []
     for lane_def in lane_defs:
         lane_id = lane_def["id"]
-        lane_state = state[lane_id]
-        chosen = lane_state["chosen"]
-        blocked_by = lane_state["blocked_by"]
+        chosen = chosen_by_lane.get(lane_id)
+        blocked_by = blocked_by_lane[lane_id]
         scope = _lane_scope(project_id, lane_id, chosen or {})
         results.append({
             "project_id": project_id,
