@@ -191,6 +191,22 @@ jobs:
           print(f"PRODUCTION_DEPLOY_STATUS=pending sha={sha}")
           PY
 
+      - name: Suspend external self-heal during guarded deploy
+        id: self_heal_guard
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sentinel="/home/ubuntu/zennay-cloud/.disable-self-heal"
+          if [[ -e "$sentinel" ]]; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "SELF_HEAL_GUARD=preexisting"
+          else
+            touch "$sentinel"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            echo "SELF_HEAL_GUARD=created"
+          fi
+
       - name: Recover zCloud health before guarded promotion
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
@@ -198,6 +214,13 @@ jobs:
           set -euo pipefail
           service="zennay-cloud.service"
           url="http://127.0.0.1:8765/api/status"
+          lock_file="/run/zcloud-self-heal.lock"
+
+          # Wait for any already-running self-heal pass to finish, then own
+          # recovery exclusively. New self-heal passes see the sentinel created
+          # by the previous step and exit without touching the service.
+          exec 9>"$lock_file"
+          flock -w 30 9
 
           healthy() {
             sudo -n systemctl is-active --quiet "$service" &&
@@ -224,22 +247,6 @@ jobs:
           sudo -n journalctl -u "$service" -n 120 --no-pager || true
           echo "ZCLOUD_PREDEPLOY_HEALTH=failed"
           exit 1
-
-      - name: Suspend external self-heal during guarded deploy
-        id: self_heal_guard
-        if: steps.prewrite.outputs.deploy == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sentinel="/home/ubuntu/zennay-cloud/.disable-self-heal"
-          if [[ -e "$sentinel" ]]; then
-            echo "created=false" >> "$GITHUB_OUTPUT"
-            echo "SELF_HEAL_GUARD=preexisting"
-          else
-            touch "$sentinel"
-            echo "created=true" >> "$GITHUB_OUTPUT"
-            echo "SELF_HEAL_GUARD=created"
-          fi
 
       - name: Quarantine stale non-runtime userscript backups before guarded promotion
         if: steps.prewrite.outputs.deploy == 'true'

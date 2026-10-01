@@ -56,7 +56,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         recover = "Recover zCloud health before guarded promotion"
         suspend = "Suspend external self-heal during guarded deploy"
         promote = "Promote backend and autonomy policy"
-        block = text[text.index(recover):text.index(suspend)]
+        quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
+        block = text[text.index(recover):text.index(quarantine)]
         self.assertIn('service="zennay-cloud.service"', block)
         self.assertIn('url="http://127.0.0.1:8765/api/status"', block)
         self.assertIn('sudo -n systemctl restart "$service"', block)
@@ -64,7 +65,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("for _ in $(seq 1 20)", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=recovered", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=failed", block)
-        self.assertLess(text.index(recover), text.index(suspend))
+        self.assertIn('lock_file="/run/zcloud-self-heal.lock"', block)
+        self.assertIn('flock -w 30 9', block)
+        self.assertLess(text.index(suspend), text.index(recover))
         self.assertLess(text.index(recover), text.index(promote))
 
     def test_deploy_quarantines_non_runtime_userscript_backups_before_prechange(self):
