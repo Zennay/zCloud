@@ -75,6 +75,12 @@ jobs:
           sudo -n systemctl disable --now "$SERVICE" || true
           sudo -n systemctl enable --now "$SERVICE"
 
+          # FTMO is the portfolio's primary useful-compute consumer on this
+          # six-vCPU host. Keep HaxLab bounded to one CPU so it cannot reclaim
+          # four cores while FTMO research is runnable.
+          sudo -n systemctl set-property haxlab-autonomy.service CPUQuota=100% CPUWeight=100
+          systemctl show haxlab-autonomy.service -p ActiveState -p CPUWeight -p CPUQuotaPerSecUSec --no-pager
+
           # Recover the dedicated FTMO Actions runner from a different self-hosted
           # VPS runner. Never restart ourselves if this workflow happened to land
           # on the FTMO runner after it came back online.
@@ -106,6 +112,16 @@ jobs:
           "$ROOT/.venv/bin/python" -m prop_trading_ai.cli.v1_cpu_attribution \
             --sample-seconds 8 \
             --output "/tmp/ftmo-recovery-cpu-attribution.json"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          receipt = json.loads(Path("/tmp/ftmo-recovery-cpu-attribution.json").read_text(encoding="utf-8"))
+          attr = receipt["attribution"]
+          print("FTMO_CPU_ATTRIBUTION", json.dumps(attr, sort_keys=True))
+          if not attr.get("ftmo_primary_attributed_compute"):
+              raise SystemExit("FTMO is not the primary attributed compute consumer")
+          PY
           systemctl show "$SERVICE" -p NRestarts -p MainPID -p ActiveState -p SubState --no-pager
           "$ROOT/.venv/bin/python" - <<'PY'
           import json
