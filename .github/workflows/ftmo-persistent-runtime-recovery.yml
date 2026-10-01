@@ -144,8 +144,8 @@ jobs:
           then
             systemctl status "$SERVICE" --no-pager --full || true
             journalctl -u "$SERVICE" -n 120 --no-pager || true
-            if [[ -f "$ROOT/.scratch/autonomy/status.json" ]]; then
-              python3 - <<'PY'
+            if sudo -n -u ftmo-runner test -f "$ROOT/.scratch/autonomy/status.json"; then
+              sudo -n -u ftmo-runner "$ROOT/.venv/bin/python" - <<'PY'
           import json
           from pathlib import Path
           root=Path("/opt/ftmo-autonomous")
