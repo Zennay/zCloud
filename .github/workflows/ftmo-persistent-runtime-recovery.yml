@@ -25,6 +25,7 @@ jobs:
           set -euo pipefail
           ROOT=/opt/ftmo-autonomous
           SERVICE=ftmo-autonomous-marathon.service
+          RUNNER_SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
 
           test -d "$ROOT"
           test -x "$ROOT/.venv/bin/python"
@@ -50,11 +51,14 @@ jobs:
           Environment=FTMO_PYTHON=/opt/ftmo-autonomous/.venv/bin/python
           Environment=FTMO_AUTONOMOUS_CLOUD_BUDGET_USD=0.00
           Environment=FTMO_ALLOW_PAID_AWS=
+          Environment=FTMO_RESEARCH_MAX_WORKERS=5
+          Environment=FTMO_RESEARCH_RESERVE_CPUS=1
           ExecStart=/bin/bash /opt/ftmo-autonomous/scripts/run-autonomous-marathon.sh /opt/ftmo-autonomous
           Restart=always
           RestartSec=3s
           Nice=0
-          CPUWeight=900
+          CPUWeight=10000
+          CPUQuota=500%
           NoNewPrivileges=true
           PrivateTmp=true
           ProtectSystem=full
@@ -68,13 +72,29 @@ jobs:
           fi
           sudo -n systemctl daemon-reload
           sudo -n systemctl disable --now ftmo-autonomous.timer || true
+          sudo -n systemctl disable --now "$SERVICE" || true
           sudo -n systemctl enable --now "$SERVICE"
+
+          # Recover the dedicated FTMO Actions runner from a different self-hosted
+          # VPS runner. Never restart ourselves if this workflow happened to land
+          # on the FTMO runner after it came back online.
+          if [[ "${RUNNER_NAME:-}" != *ftmo* ]]; then
+            if ! sudo -n systemctl restart "$RUNNER_SERVICE"; then
+              sudo -n systemctl disable --now "$RUNNER_SERVICE" || true
+              sudo -n systemctl enable --now "$RUNNER_SERVICE"
+            fi
+          fi
 
           sleep 6
           systemctl is-enabled "$SERVICE"
           systemctl is-active "$SERVICE"
-          systemctl show "$SERVICE" -p ActiveState -p SubState -p NRestarts -p MainPID -p User --no-pager
+          systemctl show "$SERVICE" -p ActiveState -p SubState -p NRestarts -p MainPID -p User -p CPUWeight -p CPUQuotaPerSecUSec -p Environment --no-pager
+          systemctl is-active "$RUNNER_SERVICE"
+          systemctl show "$RUNNER_SERVICE" -p ActiveState -p SubState -p MainPID --no-pager
 
+          "$ROOT/.venv/bin/python" -m prop_trading_ai.cli.v1_cpu_attribution \
+            --sample-seconds 8 \
+            --output "$ROOT/.scratch/autonomy/recovery-cpu-attribution.json"
           "$ROOT/.venv/bin/python" - <<'PY'
           import json
           from pathlib import Path
