@@ -306,5 +306,130 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertGreaterEqual(audit["ready"], 6)
 
 
+    def test_lane_generator_uses_project_type_and_is_deterministic(self):
+        first = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue worker lane allocator",
+            "P1",
+            "Implement deterministic scheduler allocation with regression tests.",
+        )
+        second = server.portfolio_queue_enqueue(
+            "cloud",
+            "Fix duplicate queue claim dispatch",
+            "P1",
+            "Implement claim-safe worker dispatch and tests.",
+        )
+        third = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement dashboard mobile worker cards",
+            "P1",
+            "Update dashboard UI and mobile worker controls with tests.",
+        )
+
+        plan_a = server.portfolio_worker_lanes("cloud")
+        plan_b = server.portfolio_worker_lanes("cloud")
+
+        self.assertEqual(plan_a, plan_b)
+        by_id = {item["queue_id"]: item for item in plan_a}
+        self.assertEqual("control-plane", by_id[first["queue_id"]]["project_type"])
+        self.assertEqual("cloud:orchestration", by_id[first["queue_id"]]["lane_id"])
+        self.assertIsNotNone(by_id[second["queue_id"]]["blocked_by"])
+        self.assertEqual("cloud:dashboard-ui", by_id[third["queue_id"]]["lane_id"])
+        self.assertIsNone(by_id[third["queue_id"]]["blocked_by"])
+
+    def test_allocator_skips_duplicate_lane_and_uses_non_overlapping_backlog(self):
+        first = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue allocator",
+            "P1",
+            "Implement worker queue scheduling.",
+        )
+        duplicate = server.portfolio_queue_enqueue(
+            "cloud",
+            "Fix queue worker allocation",
+            "P1",
+            "Implement claim-aware worker queue allocation.",
+        )
+        safe = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement dashboard mobile controls",
+            "P1",
+            "Update dashboard UI controls.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(2, len(selected))
+        selected_ids = {item["queue_id"] for item in selected}
+        self.assertIn(first["queue_id"], selected_ids)
+        self.assertIn(safe["queue_id"], selected_ids)
+        self.assertNotIn(duplicate["queue_id"], selected_ids)
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[duplicate["queue_id"]]["status"])
+        self.assertIsNone(rows[duplicate["queue_id"]]["worker_slot"])
+        self.assertEqual(
+            {"cloud:orchestration", "cloud:dashboard-ui"},
+            {item["lane"]["lane_id"] for item in selected},
+        )
+
+    def test_allocator_respects_active_task_claim_file_scope(self):
+        blocked = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement explicit server scope",
+            "P1",
+            "Implement server queue changes.",
+            metadata={"conflict_scope": {"capabilities": [], "files": ["server.py"]}},
+        )
+        safe = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement explicit frontend scope",
+            "P1",
+            "Implement dashboard frontend changes.",
+            metadata={"conflict_scope": {"capabilities": [], "files": ["public/"]}},
+        )
+        acquired = server.task_claim_acquire(
+            "cloud",
+            "task:server-owner",
+            "owner-a",
+            "cloud::w9",
+            120,
+            {"conflict_scope": {"capabilities": [], "files": ["server.py"]}},
+        )
+        self.assertTrue(acquired["acquired"])
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([safe["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[blocked["queue_id"]]["status"])
+        self.assertEqual("claimed", rows[safe["queue_id"]]["status"])
+
+    def test_unknown_active_claim_scope_blocks_parallel_project_lane(self):
+        blocked = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement dashboard worker controls",
+            "P1",
+            "Implement dashboard UI controls with tests.",
+        )
+        acquired = server.task_claim_acquire(
+            "cloud",
+            "task:legacy-unknown",
+            "owner-a",
+            "cloud::w9",
+            120,
+            {},
+        )
+        self.assertTrue(acquired["acquired"])
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([], selected)
+        row = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}[blocked["queue_id"]]
+        self.assertEqual("queued", row["status"])
+        plan = server.portfolio_worker_lanes("cloud")
+        self.assertEqual("unknown_claim_scope", plan[0]["blocked_by"]["reason"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
