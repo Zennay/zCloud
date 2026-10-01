@@ -1022,6 +1022,7 @@ def promote(
     config_validator: Path = DEFAULT_CONFIG_VALIDATOR,
     runtime_extension: Path = DEFAULT_RUNTIME_EXTENSION,
     reload_helper: Path = DEFAULT_RELOAD_HELPER,
+    prechange_allow_changes: list[str] | tuple[str, ...] = (),
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
     dry_run: bool = False,
@@ -1031,6 +1032,27 @@ def promote(
     root = root.resolve()
     state = state.resolve()
     normalized = [validate_relpath(rel) for rel in paths]
+    explicit_prechange_drift = list(dict.fromkeys(
+        validate_relpath(str(rel)) for rel in prechange_allow_changes
+    ))
+    unsupported_prechange_drift = [
+        rel for rel in explicit_prechange_drift
+        if rel not in PRECHANGE_REPLACEABLE_DRIFT
+    ]
+    if unsupported_prechange_drift:
+        raise PromotionError(
+            "unsupported explicit pre-change drift allowance: "
+            + ",".join(unsupported_prechange_drift)
+        )
+    missing_prechange_candidates = [
+        rel for rel in explicit_prechange_drift
+        if not (candidate / rel).is_file()
+    ]
+    if missing_prechange_candidates:
+        raise PromotionError(
+            "explicit pre-change drift path missing from candidate: "
+            + ",".join(missing_prechange_candidates)
+        )
     candidate_hashes = validate_candidate(candidate, root, normalized)
     syntax_check(candidate, normalized)
     feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
@@ -1070,10 +1092,13 @@ def promote(
     )
 
     with promotion_lock(state):
-        allowed_prechange_drift = [
-            rel for rel in normalized
-            if rel in PRECHANGE_REPLACEABLE_DRIFT
-        ]
+        allowed_prechange_drift = list(dict.fromkeys([
+            *[
+                rel for rel in normalized
+                if rel in PRECHANGE_REPLACEABLE_DRIFT
+            ],
+            *explicit_prechange_drift,
+        ]))
         trusted_ancestor_drift = [
             rel for rel in normalized
             if rel in PRECHANGE_TRUSTED_ANCESTOR_DRIFT
@@ -1298,6 +1323,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-validator", type=Path, default=DEFAULT_CONFIG_VALIDATOR)
     parser.add_argument("--runtime-extension", type=Path, default=DEFAULT_RUNTIME_EXTENSION)
     parser.add_argument("--reload-helper", type=Path, default=DEFAULT_RELOAD_HELPER)
+    parser.add_argument(
+        "--preserve-prechange-drift",
+        action="append",
+        dest="prechange_allow_changes",
+        help=(
+            "Temporarily preserve an explicitly allowlisted managed drift path "
+            "that a later guarded transaction in the same deploy will reconcile."
+        ),
+    )
     parser.add_argument("--require-worker-read-model", action="store_true")
     parser.add_argument("--require-incidents", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1315,6 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
             config_validator=args.config_validator,
             runtime_extension=args.runtime_extension,
             reload_helper=args.reload_helper,
+            prechange_allow_changes=args.prechange_allow_changes or (),
             require_worker_read_model=args.require_worker_read_model,
             require_incidents=args.require_incidents,
             dry_run=args.dry_run,
