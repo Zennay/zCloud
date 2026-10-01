@@ -1,5 +1,5 @@
 name: Queue zSSH HaxLab Candidate-B runtime probe
-# trigger: candidate-b-runtime-probe-v2
+# trigger: candidate-b-runtime-probe-watch-v3
 
 on:
   push:
@@ -14,48 +14,22 @@ permissions:
 jobs:
   enqueue:
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
-      - name: Enqueue read-only Candidate-B runtime probe
+      - name: Ensure probe is queued and watch live SQLite result
         shell: bash
         run: |
           python3 - <<'PY'
           import json
+          import time
           import urllib.request
 
           base = "http://127.0.0.1:8765"
           queue_id = "zssh-haxlab-candidate-b-runtime-probe-20261001"
-          payload = {
-              "action": "enqueue",
-              "queue_id": queue_id,
-              "project_id": "zssh",
-              "title": "Inspect active HaxLab Candidate-B training progress",
-              "priority": "P1",
-              "completion_criteria": (
-                  "Read-only VPS evidence is recorded for Candidate-B workflow_run_id 36259774109 "
-                  "job 110291358917: verify whether the training process is alive, elapsed/runtime "
-                  "progress and recent non-secret /tmp/haxlab-candidate-b.log progress; identify a "
-                  "concrete process/runtime blocker if stalled. Do not kill, restart, deploy or "
-                  "modify HaxLab runtime."
-              ),
-              "source_url": "https://github.com/Zennay/Haxlab/issues/15",
-              "parent_queue_id": "haxlab-candidate-b-champion-evidence-gate",
-          }
 
-          req = urllib.request.Request(
-              base + "/api/portfolio-queue",
-              data=json.dumps(payload).encode(),
-              method="POST",
-              headers={"Content-Type": "application/json"},
-          )
-          with urllib.request.urlopen(req, timeout=10) as response:
-              result = json.load(response)
-              if response.status != 200:
-                  raise RuntimeError(f"enqueue failed: HTTP {response.status}")
-          print("QUEUE_ENQUEUE_RESPONSE", json.dumps(result, sort_keys=True))
-
-          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
-              live = json.load(response)
+          def load_queue():
+              with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+                  return json.load(response)
 
           def find(value):
               if isinstance(value, dict):
@@ -72,14 +46,67 @@ jobs:
                           return found
               return None
 
-          item = find(live)
+          item = find(load_queue())
           if not item:
-              raise RuntimeError(f"{queue_id} not found in live SQLite queue")
-          print("ZSSH_HAXLAB_PROBE_QUEUED", json.dumps({
-              "queue_id": item.get("queue_id"),
-              "project_id": item.get("project_id"),
-              "priority": item.get("priority"),
-              "status": item.get("status"),
-              "worker_slot": item.get("worker_slot"),
-          }, sort_keys=True))
+              payload = {
+                  "action": "enqueue",
+                  "queue_id": queue_id,
+                  "project_id": "zssh",
+                  "title": "Inspect active HaxLab Candidate-B training progress",
+                  "priority": "P1",
+                  "completion_criteria": (
+                      "Read-only VPS evidence is recorded for Candidate-B workflow_run_id 36259774109 "
+                      "job 110291358917: verify whether the training process is alive, elapsed/runtime "
+                      "progress and recent non-secret /tmp/haxlab-candidate-b.log progress; identify a "
+                      "concrete process/runtime blocker if stalled. Do not kill, restart, deploy or "
+                      "modify HaxLab runtime."
+                  ),
+                  "source_url": "https://github.com/Zennay/Haxlab/issues/15",
+                  "parent_queue_id": "haxlab-candidate-b-champion-evidence-gate",
+              }
+              req = urllib.request.Request(
+                  base + "/api/portfolio-queue",
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=10) as response:
+                  result = json.load(response)
+                  if response.status != 200:
+                      raise RuntimeError(f"enqueue failed: HTTP {response.status}")
+              print("QUEUE_ENQUEUE_RESPONSE", json.dumps(result, sort_keys=True))
+              item = find(load_queue())
+
+          if not item:
+              raise RuntimeError(f"{queue_id} missing after enqueue check")
+
+          print("ZSSH_PROBE_INITIAL", json.dumps(item, sort_keys=True))
+
+          terminal = {"done", "completed", "blocked", "failed", "cancelled"}
+          last = None
+          for _ in range(60):
+              item = find(load_queue())
+              if not item:
+                  raise RuntimeError(f"{queue_id} disappeared from live SQLite queue")
+              snapshot = {
+                  "queue_id": item.get("queue_id"),
+                  "project_id": item.get("project_id"),
+                  "priority": item.get("priority"),
+                  "status": item.get("status"),
+                  "worker_slot": item.get("worker_slot"),
+                  "attempts": item.get("attempts"),
+                  "evidence": item.get("evidence"),
+                  "blocker": item.get("blocker"),
+                  "updated_at": item.get("updated_at"),
+              }
+              encoded = json.dumps(snapshot, sort_keys=True)
+              if encoded != last:
+                  print("ZSSH_PROBE_STATE", encoded)
+                  last = encoded
+              if str(item.get("status") or "").lower() in terminal:
+                  print("ZSSH_PROBE_TERMINAL", encoded)
+                  break
+              time.sleep(5)
+          else:
+              print("ZSSH_PROBE_WATCH_TIMEOUT", last)
           PY
