@@ -66,6 +66,7 @@ jobs:
           import os
           import signal
           import subprocess
+          from pathlib import Path
 
           legacy_disable = os.path.expanduser(
               "~/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
@@ -105,23 +106,42 @@ jobs:
                   text=True, capture_output=True, check=False,
               )
               pids = [int(x) for x in proc.stdout.split() if x.isdigit()]
-              if not pids:
-                  raise SystemExit("Violentmonkey-only Firefox process not found")
-
-              primary = pids[0]
-              env_raw = open(f"/proc/{primary}/environ", "rb").read().split(b"\0")
+              primary = pids[0] if pids else None
               prior_env = {}
-              for item in env_raw:
-                  if b"=" not in item:
-                      continue
-                  key, value = item.split(b"=", 1)
-                  key = key.decode("utf-8", "replace")
-                  if key in {
-                      "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY",
-                      "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
-                      "HOME", "USER", "LOGNAME",
-                  }:
-                      prior_env[key] = value.decode("utf-8", "replace")
+              if primary:
+                  try:
+                      env_raw = open(f"/proc/{primary}/environ", "rb").read().split(b"\0")
+                  except OSError:
+                      env_raw = []
+                  for item in env_raw:
+                      if b"=" not in item:
+                          continue
+                      key, value = item.split(b"=", 1)
+                      key = key.decode("utf-8", "replace")
+                      if key in {
+                          "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY",
+                          "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+                          "HOME", "USER", "LOGNAME",
+                      }:
+                          prior_env[key] = value.decode("utf-8", "replace")
+
+              # When Firefox is already gone, recover session variables from the
+              # user systemd manager and the live X sockets instead of aborting.
+              if not prior_env:
+                  proc_env = subprocess.run(
+                      ["systemctl", "--user", "show-environment"],
+                      text=True, capture_output=True, check=False,
+                  )
+                  for line in proc_env.stdout.splitlines():
+                      if "=" not in line:
+                          continue
+                      key, value = line.split("=", 1)
+                      if key in {
+                          "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY",
+                          "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+                          "HOME", "USER", "LOGNAME",
+                      }:
+                          prior_env[key] = value
 
               for pid in pids:
                   try:
@@ -151,7 +171,15 @@ jobs:
               launch_env = os.environ.copy()
               launch_env.pop("RUNNER_TRACKING_ID", None)
               launch_env.update(prior_env)
-              launch_env.setdefault("DISPLAY", ":0")
+              if not launch_env.get("DISPLAY"):
+                  x_sockets = sorted(
+                      Path("/tmp/.X11-unix").glob("X*"),
+                      key=lambda p: (p.name != "X10", p.name),
+                  ) if Path("/tmp/.X11-unix").exists() else []
+                  launch_env["DISPLAY"] = (
+                      ":" + x_sockets[0].name[1:] + ".0"
+                      if x_sockets else ":10.0"
+                  )
               launch_env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
               launch_env.setdefault(
                   "DBUS_SESSION_BUS_ADDRESS",
