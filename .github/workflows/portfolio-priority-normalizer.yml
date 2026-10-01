@@ -34,6 +34,10 @@ jobs:
               "ftmo","P0","Keep FTMO autonomous progression healthy and self-recovering",
               "Do not manually act as the normal generation loop. FTMO research progression belongs to the persistent self-hosted runtime. Only intervene when that runtime cannot self-advance: fix the concrete code/config/service/data-gate cause, preserve provider provenance and sealed outcome boundaries, then prove the persistent runtime resumes autonomous safe progression with deterministic workflow/runtime evidence.",
               "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
+            "supa-supermarket-html-scrapers":(
+              "supa","P1","Build supermarket HTML snapshot scrapers and selector extraction",
+              "Build real supermarket web scrapers from captured source HTML, not invented selectors. Select the first two target supermarkets for the M1 data-feasibility lane; download representative real public product/search/offer pages and store sanitized/versioned HTML fixtures with source URL and captured-at provenance; inspect those fixtures to derive resilient selectors or embedded-data extraction paths for product identity, name, price, unit/pack size, offer mechanics and availability; implement source-specific adapters/scrapers against the captured HTML; add parser regression tests using the real snapshots plus explicit failure/staleness handling. Re-fetch live pages through the VPS execution lane to prove at least one end-to-end extraction per target source when legally/technically accessible. Do not fabricate HTML or selectors and do not bypass authentication, anti-bot controls, paywalls or terms restrictions.",
+              "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3"),
             "haxlab-closed-loop-arena-v2-implementation":(
               "haxlab","P3","Build the next Closed-Loop Evaluation Arena v2 implementation increment",
               "Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 with deterministic tests. HaxLab is a background lane and must not outrank FTMO or other revenue-oriented work.",
