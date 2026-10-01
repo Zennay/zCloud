@@ -211,16 +211,25 @@ jobs:
                           data = path.read_bytes()
                       except OSError:
                           continue
-                      low = data.lower()
-                      if (
-                          b"zcloud dynamic worker" in low
-                          or b"zcloud-worker" in low
-                          or b"zcloud_worker" in low
-                          or b"violentmonkey-primary-runner" in low
-                      ):
+                      markers = (
+                          "zcloud dynamic worker",
+                          "zcloud-worker",
+                          "zcloud_worker",
+                          "violentmonkey-primary-runner",
+                          "zcloud.local",
+                      )
+                      matched_encodings = []
+                      for encoding in ("utf-8", "utf-16le", "utf-16be"):
+                          haystack = data.lower()
+                          for marker in markers:
+                              encoded = marker.encode(encoding).lower()
+                              if encoded in haystack:
+                                  matched_encodings.append(encoding + ":" + marker)
+                      if matched_encodings:
                           hits.append({
                               "path": str(path.relative_to(profile_path)),
                               "size": size,
+                              "matches": sorted(set(matched_encodings)),
                           })
                       if len(hits) >= 30:
                           break
