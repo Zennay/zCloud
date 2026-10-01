@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib
 from contextlib import contextmanager, closing
 import enhancements
-from lane_generator import generate_execution_lanes
+from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -1944,6 +1944,56 @@ def _portfolio_lane_metadata(row,lane):
     }
     return json.dumps(metadata,ensure_ascii=False,separators=(',',':'))
 
+def _portfolio_requeue_conflicting_claimed_lanes_locked(connection,ts):
+    """Release only unstarted claimed rows whose derived write lane already conflicts."""
+    rows=connection.execute(
+        """SELECT * FROM portfolio_queue
+           WHERE eligible=1 AND status='claimed' AND worker_slot IS NOT NULL
+           ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                    claimed_at,created_at,queue_id"""
+    ).fetchall()
+    accepted=[]
+    released=[]
+    for row in rows:
+        project_id=str(row['project_id'] or '')
+        project=PROJECT_INDEX.get(project_id) or {}
+        if not project:
+            continue
+        lane=classify_backlog_item(project,dict(row))
+        conflict=None
+        for other in accepted:
+            if other['project_id']!=project_id:
+                continue
+            overlap=scopes_overlap(lane['scope'],other['scope'])
+            if lane['lane_id']==other['lane_id'] or overlap['capabilities'] or overlap['files']:
+                conflict={
+                    'queue_id':other['queue_id'],
+                    'lane_id':other['lane_id'],
+                    'overlap':overlap,
+                }
+                break
+        if conflict:
+            connection.execute(
+                """UPDATE portfolio_queue
+                   SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                   WHERE queue_id=? AND status='claimed'""",
+                (ts,row['queue_id']),
+            )
+            released.append({
+                'queue_id':str(row['queue_id']),
+                'project_id':project_id,
+                'lane_id':lane['lane_id'],
+                'conflict':conflict,
+            })
+            continue
+        accepted.append({
+            'queue_id':str(row['queue_id']),
+            'project_id':project_id,
+            'lane_id':lane['lane_id'],
+            'scope':lane['scope'],
+        })
+    return released
+
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
     title_text=str(title or '').strip().lower()
     criteria=str(completion_criteria or '').strip().lower()
@@ -2246,6 +2296,7 @@ def portfolio_queue_allocate():
                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                      WHERE eligible=1 AND status IN ('claimed','running','verifying')
                        AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
+        _portfolio_requeue_conflicting_claimed_lanes_locked(c,ts)
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
