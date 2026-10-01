@@ -14,6 +14,7 @@ class WorkerWatchdogDecisionTests(unittest.TestCase):
         values = {
             "stalled_seconds": 0,
             "activity_age_seconds": 999999,
+            "prompt_sent_age_seconds": 0,
             "runtime_state": "live",
             "generating": False,
             "progress_age_seconds": None,
@@ -42,6 +43,23 @@ class WorkerWatchdogDecisionTests(unittest.TestCase):
             "new_chat",
             self.decision(stalled_seconds=watchdog.RESTART_AFTER_SECONDS),
         )
+
+    def test_refreshes_chat_when_last_real_prompt_is_too_old(self):
+        self.assertEqual(
+            "new_chat",
+            self.decision(
+                stalled_seconds=watchdog.PUSH_AFTER_SECONDS,
+                activity_age_seconds=10,
+                prompt_sent_age_seconds=watchdog.PROMPT_STALE_REFRESH_SECONDS,
+            ),
+        )
+
+    def test_recent_prompt_prevents_prompt_stale_refresh(self):
+        self.assertIsNone(self.decision(
+            stalled_seconds=watchdog.PUSH_AFTER_SECONDS,
+            activity_age_seconds=10,
+            prompt_sent_age_seconds=30,
+        ))
 
     def test_offline_worker_is_restarted_earlier(self):
         self.assertEqual(
