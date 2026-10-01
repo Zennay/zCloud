@@ -20,6 +20,10 @@ DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
     "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
 ))
+DEFAULT_FIREFOX_LEGACY_DISABLE = Path(os.environ.get(
+    "ZCLOUD_FIREFOX_LEGACY_DISABLE",
+    str(Path.home() / ".config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"),
+))
 REQUIRED_TABLES = {
     "runner_targets",
     "runner_workers",
@@ -191,6 +195,7 @@ def evaluate(
     zcloud_service: bool,
     firefox_service: bool,
     source_runtime_match: bool,
+    legacy_violentmonkey_only: bool = False,
 ) -> dict:
     checks: list[dict] = []
 
@@ -202,9 +207,17 @@ def evaluate(
     add("webservice_errors", not (status.get("errors") or []), status.get("errors") or [])
 
     firefox = status.get("chatgpt_firefox") or {}
-    firefox_runtime_ok = firefox.get("active") is True or firefox.get("state") == "active"
-    add("firefox_service", firefox_service, firefox_service)
-    add("firefox_runtime", firefox_runtime_ok, firefox)
+    firefox_runtime_active = firefox.get("active") is True or firefox.get("state") == "active"
+    firefox_service_ok = firefox_service or legacy_violentmonkey_only
+    firefox_runtime_ok = firefox_runtime_active or legacy_violentmonkey_only
+    add("firefox_service", firefox_service_ok, {
+        "active": firefox_service,
+        "legacy_violentmonkey_only": legacy_violentmonkey_only,
+    })
+    add("firefox_runtime", firefox_runtime_ok, {
+        "runtime": firefox,
+        "legacy_violentmonkey_only": legacy_violentmonkey_only,
+    })
     add("firefox_source_runtime_match", source_runtime_match, source_runtime_match)
 
     add("project_state_store", store.get("ok") is True, {
@@ -295,12 +308,22 @@ def evaluate(
     }
 
 
+def legacy_violentmonkey_only(path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    lowered = text.lower()
+    return "violentmonkey only" in lowered and "execcondition=/bin/false" in lowered
+
+
 def live_health(
     *,
     root: Path = DEFAULT_ROOT,
     db_path: Path = DEFAULT_DB,
     base_url: str = DEFAULT_BASE_URL,
     runtime_extension: Path = DEFAULT_RUNTIME_EXTENSION,
+    legacy_disable_path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE,
     max_pending_age_seconds: int = 300,
 ) -> dict:
     transport_errors = []
@@ -332,6 +355,7 @@ def live_health(
         zcloud_service=service_active("zennay-cloud.service"),
         firefox_service=service_active("chatgpt-firefox.service", user=True),
         source_runtime_match=source_runtime_match,
+        legacy_violentmonkey_only=legacy_violentmonkey_only(legacy_disable_path),
     )
     result["store"] = store
     if transport_errors:

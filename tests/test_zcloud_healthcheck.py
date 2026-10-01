@@ -113,6 +113,7 @@ class ZCloudHealthcheckTests(unittest.TestCase):
             zcloud_service=kwargs.get("zcloud_service", True),
             firefox_service=kwargs.get("firefox_service", True),
             source_runtime_match=kwargs.get("source_runtime_match", True),
+            legacy_violentmonkey_only=kwargs.get("legacy_violentmonkey_only", False),
         )
 
     def test_green_health_contract(self):
@@ -178,6 +179,32 @@ class ZCloudHealthcheckTests(unittest.TestCase):
             source_runtime_match=True,
         )
         self.assertFalse(result["ok"])
+
+    def test_violentmonkey_only_mode_accepts_intentionally_inactive_firefox(self):
+        status, targets = self.sample()
+        status["chatgpt_firefox"] = {
+            "active": False,
+            "state": "inactive",
+            "main_pid": 0,
+        }
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=False,
+            source_runtime_match=True,
+            legacy_violentmonkey_only=True,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual("healthy", result["summary"]["firefox_automation"])
+
+    def test_legacy_marker_requires_both_violentmonkey_and_execcondition(self):
+        marker = Path(self.tmp.name) / "10-legacy-disabled.conf"
+        marker.write_text("# Violentmonkey only\nExecCondition=/bin/false\n", encoding="utf-8")
+        self.assertTrue(health.legacy_violentmonkey_only(marker))
+        marker.write_text("# Violentmonkey only\n", encoding="utf-8")
+        self.assertFalse(health.legacy_violentmonkey_only(marker))
 
     def test_webservice_and_firefox_fail_independently(self):
         result = self.evaluate(zcloud_service=False)
