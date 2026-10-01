@@ -26,12 +26,23 @@ jobs:
           clean: true
           fetch-depth: 1
 
-      - name: Ensure the Firefox runner service is live
+      - name: Ensure the Firefox runner runtime is live
         shell: bash
         run: |
           set -euo pipefail
           export XDG_RUNTIME_DIR=/run/user/1000
           export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+          # Do not recycle a healthy standalone userscript browser on every
+          # production deploy. That destroys active worker tabs and can also
+          # fail intentionally when the legacy systemd Firefox unit is disabled.
+          if pgrep -u "$(id -u)" -f '/snap/firefox/.*/usr/lib/firefox/firefox' >/dev/null; then
+            echo "FIREFOX_RUNTIME=existing-standalone"
+            pgrep -af 'firefox|web-ext' || true
+            exit 0
+          fi
+
+          echo "FIREFOX_RUNTIME=missing; attempting user-service recovery"
           systemctl --user restart chatgpt-firefox.service
           systemctl --user is-active --quiet chatgpt-firefox.service
           systemctl --user --no-pager --full status chatgpt-firefox.service || true
