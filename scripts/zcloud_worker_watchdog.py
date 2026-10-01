@@ -203,6 +203,48 @@ def material_signal(
     return signal
 
 
+def clear_stale_pending_commands(
+    db_path: Path,
+    *,
+    project_id: str,
+    now: datetime,
+    min_age_seconds: int = OFFLINE_RESTART_AFTER_SECONDS,
+) -> list[int]:
+    """Fail stale pending browser commands so a fresh recovery command can be accepted."""
+    if not db_path.exists():
+        return []
+    cleared: list[int] = []
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            rows = conn.execute(
+                "SELECT id,created_at FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id",
+                (project_id,),
+            ).fetchall()
+            for row in rows:
+                created = parse_time(row["created_at"])
+                if created is None or (now - created).total_seconds() >= min_age_seconds:
+                    cleared.append(int(row["id"]))
+            if cleared:
+                placeholders = ",".join("?" for _ in cleared)
+                conn.execute(
+                    f"UPDATE runner_commands SET status='failed',updated_at=?,result=? WHERE id IN ({placeholders})",
+                    (
+                        now.isoformat(),
+                        "worker-progress-watchdog superseded stale pending command",
+                        *cleared,
+                    ),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    return cleared
+
+
 def material_fingerprint(signal: dict[str, Any]) -> str:
     material = {
         "queue_id": signal.get("queue_id"),
@@ -384,9 +426,15 @@ def run_once(
         action_result: dict[str, Any] | None = None
         if action:
             worker_state["last_attempt_at"] = now.isoformat()
+            cleared_pending: list[int] = []
             if dry_run:
-                action_result = {"ok": True, "dry_run": True, "action": action}
+                action_result = {"ok": True, "dry_run": True, "action": action, "cleared_pending": []}
             else:
+                cleared_pending = clear_stale_pending_commands(
+                    db_path,
+                    project_id=key,
+                    now=now,
+                )
                 status_code, payload = api_call(
                     base_url,
                     "POST",
@@ -399,6 +447,7 @@ def run_once(
                     "http_status": status_code,
                     "action": action,
                     "response": payload,
+                    "cleared_pending": cleared_pending,
                 }
                 if accepted:
                     worker_state["last_action"] = action
