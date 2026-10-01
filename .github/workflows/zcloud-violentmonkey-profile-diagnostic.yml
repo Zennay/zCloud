@@ -151,10 +151,85 @@ jobs:
                           found.add(p)
               open_profile_paths[str(pid)] = sorted(found)
 
+          runtime_storage = []
+          for profile in profiles:
+              profile_path = Path(profile["path"])
+              if not profile.get("prefs_exists"):
+                  continue
+
+              uuid_map = {}
+              prefs = profile_path / "prefs.js"
+              try:
+                  prefs_text = prefs.read_text(encoding="utf-8", errors="replace")
+                  match = re.search(
+                      r'user_pref\("extensions\\.webextensions\\.uuids",\s*"(.*)"\);',
+                      prefs_text,
+                  )
+                  if match:
+                      encoded = bytes(match.group(1), "utf-8").decode("unicode_escape")
+                      uuid_map = json.loads(encoded)
+              except Exception:
+                  uuid_map = {}
+
+              vm_uuid = str(uuid_map.get("{aecec67f-0d10-4fa7-b7c7-609a2db280cf}") or "")
+              candidates = []
+              if vm_uuid:
+                  compact = vm_uuid.strip("{}")
+                  storage = profile_path / "storage" / "default"
+                  if storage.exists():
+                      candidates.extend(sorted(storage.glob(f"moz-extension+++{compact}*")))
+                  bed = profile_path / "browser-extension-data" / "{aecec67f-0d10-4fa7-b7c7-609a2db280cf}"
+                  if bed.exists():
+                      candidates.append(bed)
+
+              hits = []
+              scanned = 0
+              for root in candidates:
+                  if not root.exists():
+                      continue
+                  for path in root.rglob("*"):
+                      if not path.is_file():
+                          continue
+                      try:
+                          size = path.stat().st_size
+                      except OSError:
+                          continue
+                      if size > 32 * 1024 * 1024:
+                          continue
+                      scanned += 1
+                      try:
+                          data = path.read_bytes()
+                      except OSError:
+                          continue
+                      low = data.lower()
+                      if (
+                          b"zcloud dynamic worker" in low
+                          or b"zcloud-worker" in low
+                          or b"zcloud_worker" in low
+                          or b"violentmonkey-primary-runner" in low
+                      ):
+                          hits.append({
+                              "path": str(path.relative_to(profile_path)),
+                              "size": size,
+                          })
+                      if len(hits) >= 30:
+                          break
+                  if len(hits) >= 30:
+                      break
+
+              runtime_storage.append({
+                  "profile": str(profile_path),
+                  "violentmonkey_internal_uuid": vm_uuid,
+                  "candidate_roots": [str(x.relative_to(profile_path)) for x in candidates],
+                  "scanned_files": scanned,
+                  "zcloud_hits": hits,
+              })
+
           result = {
               "main_firefox": main_pids,
               "open_profile_paths": open_profile_paths,
               "profiles": profiles,
+              "violentmonkey_runtime_storage": runtime_storage,
           }
           print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
           PY
