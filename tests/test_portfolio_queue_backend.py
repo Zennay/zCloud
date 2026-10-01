@@ -305,6 +305,98 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertNotIn("ulab", projects)
         self.assertGreaterEqual(audit["ready"], 6)
 
+    def test_allocator_assigns_distinct_ftmo_lanes_and_persists_metadata(self):
+        server.MAX_CHATGPT_WORKERS = 3
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
+        server.DYNAMIC_CHATGPT_WORKERS = 3
+        server.portfolio_queue_enqueue(
+            "ftmo",
+            "Implement next generation candidate",
+            "P1",
+            "Implement the next candidate and deterministic backtest evidence.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo",
+            "Run frozen walk-forward validation",
+            "P1",
+            "Implement the validation harness and run deterministic walk-forward tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo",
+            "Repair provider data provenance",
+            "P1",
+            "Implement provider provenance safeguards and deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(3, len(selected))
+        self.assertEqual({"ftmo"}, {item["project_id"] for item in selected})
+        lanes = {item["execution_lane"]["lane_id"] for item in selected}
+        self.assertEqual({"critical-path", "qa-validation", "data-provenance"}, lanes)
+        for item in selected:
+            self.assertTrue(item["execution_lane"]["scope"]["capabilities"])
+
+    def test_allocator_skips_lane_blocked_by_active_task_claim(self):
+        blocked = server.portfolio_queue_enqueue(
+            "ftmo",
+            "Repair provider data provenance",
+            "P0",
+            "Implement provider provenance safeguards and deterministic tests.",
+        )
+        fallback = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler guard",
+            "P1",
+            "Implement allocator safeguards with deterministic tests.",
+        )
+        claim = server.task_claim_acquire(
+            "ftmo",
+            "provider:data-repair",
+            "other-owner",
+            "ftmo::w9",
+            120,
+            {
+                "conflict_scope": {
+                    "capabilities": ["ftmo-data-provenance"],
+                    "files": [],
+                }
+            },
+        )
+        self.assertTrue(claim["acquired"])
+
+        selected = server.portfolio_queue_allocate()
+        selected_ids = {item["queue_id"] for item in selected}
+
+        self.assertNotIn(blocked["queue_id"], selected_ids)
+        self.assertIn(fallback["queue_id"], selected_ids)
+        lanes = server.portfolio_execution_lanes("ftmo")
+        data_lane = next(lane for lane in lanes if lane["lane_id"] == "data-provenance")
+        self.assertEqual("blocked", data_lane["status"])
+        self.assertEqual("provider:data-repair", data_lane["blocked_by"][0]["claim_key"])
+
+    def test_worker_prompt_contains_persisted_execution_lane(self):
+        server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement automatic queue lanes",
+            "P1",
+            "Implement queue lane scheduling with deterministic regression tests.",
+        )
+        item = server.portfolio_queue_allocate()[0]
+
+        prompt = server.project_worker_prompt(
+            "cloud",
+            "zCloud",
+            "",
+            1,
+            1,
+            item,
+        )
+
+        self.assertIn("lane=control-plane", prompt)
+        self.assertIn("zcloud-queue", prompt)
+        self.assertIn("Blijf binnen deze execution lane", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
