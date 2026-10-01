@@ -1,0 +1,109 @@
+name: Reactivate zCloud workers now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/reactivate-workers-now.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reactivate:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Recover browser runtime and start allocated workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+          for dependency in chatgpt-display.service chatgpt-openbox.service; do
+            systemctl --user reset-failed "$dependency" || true
+            if ! systemctl --user is-active --quiet "$dependency"; then
+              systemctl --user start "$dependency"
+            fi
+            systemctl --user is-active --quiet "$dependency"
+          done
+
+          systemctl --user reset-failed chatgpt-firefox.service || true
+          systemctl --user restart chatgpt-firefox.service || systemctl --user start chatgpt-firefox.service
+          for _ in $(seq 1 20); do
+            if systemctl --user is-active --quiet chatgpt-firefox.service; then
+              break
+            fi
+            sleep 2
+          done
+          systemctl --user is-active --quiet chatgpt-firefox.service
+
+          python3 - <<'PY'
+          import json, time, urllib.request, urllib.error
+          BASE="http://127.0.0.1:8765"
+
+          def call(method,path,payload=None):
+              body=None
+              headers={"User-Agent":"zcloud-reactivate-workers-now/1"}
+              if payload is not None:
+                  body=json.dumps(payload).encode()
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
+              with urllib.request.urlopen(req,timeout=15) as r:
+                  return json.load(r)
+
+          settings=call("GET","/api/dynamic-workers").get("dynamic_workers") or {}
+          chat=int(settings.get("chatgpt_count") or 0)
+          claude=int(settings.get("claude_count") or 0)
+          if chat+claude == 0:
+              updated=call("POST","/api/dynamic-workers",{"chatgpt_count":2,"claude_count":1})
+              settings=updated.get("dynamic_workers") or {}
+              print("WORKER_POOL_ENABLED",json.dumps(settings,sort_keys=True))
+          else:
+              print("WORKER_POOL_ALREADY_CONFIGURED",json.dumps(settings,sort_keys=True))
+
+          targets=call("GET","/api/runner-targets")
+          allocation=(targets.get("global_allocation") or {}).get("workers") or []
+          if not allocation:
+              raise SystemExit("no allocated queue workers after enabling pool")
+
+          starts=[]
+          for item in allocation:
+              key=str(item.get("worker_key") or "").strip()
+              if not key:
+                  project=str(item.get("project_id") or "").strip()
+                  slot=int(item.get("worker_slot") or 1)
+                  key=f"{project}::w{slot}"
+              result=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
+              starts.append({"worker":key,"result":result})
+              if not result.get("ok"):
+                  raise SystemExit(f"start rejected for {key}: {result}")
+          print("WORKER_STARTS",json.dumps(starts,sort_keys=True))
+
+          final=None
+          for _ in range(12):
+              time.sleep(5)
+              final=call("GET","/api/runner-targets")
+              projects=final.get("projects") or {}
+              active=[]
+              for item in allocation:
+                  key=str(item.get("worker_key") or "").strip()
+                  if not key:
+                      project=str(item.get("project_id") or "").strip()
+                      slot=int(item.get("worker_slot") or 1)
+                      key=f"{project}::w{slot}"
+                  base=key.split("::w",1)[0]
+                  if bool((projects.get(base) or {}).get("active")):
+                      active.append(key)
+              if len(active) == len(allocation):
+                  print("WORKERS_ACTIVE",json.dumps({
+                      "active_workers":active,
+                      "allocation":allocation,
+                      "dynamic_workers":final.get("dynamic_workers"),
+                  },sort_keys=True))
+                  break
+          else:
+              raise SystemExit("allocated workers did not all become active")
+          PY
