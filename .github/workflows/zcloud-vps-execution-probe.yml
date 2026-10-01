@@ -10,9 +10,11 @@ on:
     paths:
       - vps-execution-policy.json
       - scripts/zcloud_vps_execution_probe.sh
+      - scripts/zcloud_vps_runner_guard.py
       - scripts/zcloud_vps_deploylane_coordination.py
       - scripts/zcloud_transactional_promote.py
       - tests/test_transactional_promote.py
+      - tests/test_vps_runner_guard.py
       - server.py
       - .github/workflows/zcloud-vps-deploy.yml
       - .github/workflows/zcloud-vps-execution-probe.yml
@@ -36,6 +38,13 @@ jobs:
           persist-credentials: false
           clean: true
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Enforce permanent zCloud VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zcloud-vps-runner-guard.json"
 
       - name: Acquire cloud deploylane coordination claim
         id: claim
@@ -80,3 +89,4 @@ jobs:
           path: |
             ${{ runner.temp }}/zcloud-deploylane-claim.jsonl
             ${{ runner.temp }}/zcloud-vps-execution-probe.log
+            ${{ runner.temp }}/zcloud-vps-runner-guard.json
