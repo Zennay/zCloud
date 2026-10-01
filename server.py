@@ -2129,6 +2129,10 @@ def portfolio_queue_allocate():
     ts=ts_dt.isoformat()
     lease_until=(ts_dt+timedelta(seconds=PORTFOLIO_QUEUE_LEASE_SECONDS)).isoformat()
     selected=[]
+    # Queue items preempted during this allocation pass must stay queued until
+    # the next scheduler tick. Re-claiming them immediately into another slot
+    # races the browser/worker mapping that is still being recycled.
+    preempted=set()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         c.execute("""UPDATE portfolio_queue
@@ -2149,6 +2153,7 @@ def portfolio_queue_allocate():
                     c.execute("""UPDATE portfolio_queue
                                  SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                                  WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
+                    preempted.add(str(row['queue_id']))
                     row=None
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
@@ -2160,6 +2165,7 @@ def portfolio_queue_allocate():
                                     WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
                                     ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                                              created_at, queue_id LIMIT 80""").fetchall()
+            candidates=[candidate for candidate in candidates if str(candidate['queue_id']) not in preempted]
             if not candidates:
                 continue
             used_projects={str(item.get('project_id') or '') for item in selected}
