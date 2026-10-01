@@ -70,16 +70,6 @@
     "source_url": "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"
   },
   {
-    "queue_id": "ftmo-useful-compute-cpu-attribution",
-    "project_id": "ftmo",
-    "title": "Make FTMO the primary useful-compute consumer and prove CPU attribution",
-    "priority": "P0",
-    "status": "queued",
-    "eligible": true,
-    "completion_criteria": "Use the existing FTMO autonomous service/controller path to prove whether current VPS CPU is useful FTMO research compute versus HaxLab or unattributed/control-plane work. If FTMO is not receiving useful compute, make a safe runtime/config change through the Claude/VPS execution lane that restores FTMO throughput without weakening research gates; persist cgroup/host-share attribution plus an advanced FTMO controller/runtime receipt. Diagnosis alone is not completion.",
-    "source_url": "https://app.notion.com/p/3e49e19ac95581fcb8c7fd06a3d98fc7"
-  },
-  {
     "queue_id": "raiseai-gateway-e2e-automation",
     "project_id": "raiseai",
     "title": "Make Raise AI gateway deployment and live smoke verification repeatable",
