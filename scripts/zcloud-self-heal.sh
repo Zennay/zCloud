@@ -90,6 +90,40 @@ heal_user_unit() {
   fi
 }
 
+heal_zcloud_actions_runner() {
+  local runner_name="${ZCLOUD_ACTIONS_RUNNER_NAME:-zcloud-vps-1}"
+  local runner_user="${ZCLOUD_ACTIONS_RUNNER_USER:-ubuntu}"
+  local -a units=()
+  mapfile -t units < <(
+    systemctl list-unit-files --type=service --no-legend 'actions.runner.*' 2>/dev/null \
+      | awk '{print $1}' \
+      | grep -F "${runner_name}" || true
+  )
+
+  if [[ "${#units[@]}" -eq 0 ]]; then
+    logger -t zcloud-runner-heal "no Actions runner unit matched ${runner_name}; leaving runtime unchanged"
+    return 0
+  fi
+  if [[ "${#units[@]}" -ne 1 ]]; then
+    logger -t zcloud-runner-heal "ambiguous Actions runner units for ${runner_name}: ${units[*]}"
+    return 0
+  fi
+
+  local unit="${units[0]}"
+  runtime_disabled "${unit}" && return 0
+  if systemctl is-active --quiet "${unit}"; then
+    return 0
+  fi
+  if pgrep -u "${runner_user}" -f '/home/ubuntu/actions-runner-zcloud/.*/Runner\.Worker|/home/ubuntu/actions-runner-zcloud/bin/Runner\.Worker' >/dev/null; then
+    logger -t zcloud-runner-heal "Actions Runner.Worker is active; preserving ${unit}"
+    return 0
+  fi
+
+  logger -t zcloud-runner-heal "starting inactive zCloud Actions runner ${unit}"
+  systemctl reset-failed "${unit}" || true
+  systemctl start "${unit}"
+}
+
 heal_project_runtimes() {
   mkdir -p "${RUNTIME_DISABLE_DIR}"
 
@@ -128,5 +162,6 @@ heal_worker_progress() {
 }
 
 heal_zcloud
+heal_zcloud_actions_runner
 heal_project_runtimes
 heal_worker_progress
