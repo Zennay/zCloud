@@ -181,6 +181,40 @@ jobs:
 
           print(json.dumps(report,sort_keys=True,indent=2))
           PY
+          echo "=== DEPLOY DRIFT SEMANTIC DIFF ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          import difflib, json
+
+          root=Path("/home/ubuntu/zennay-cloud")
+          repo=Path.cwd()
+
+          live_server=(root/"server.py").read_text(encoding="utf-8",errors="replace").splitlines()
+          candidate_server=(repo/"server.py").read_text(encoding="utf-8",errors="replace").splitlines()
+          diff=list(difflib.unified_diff(
+              candidate_server,live_server,
+              fromfile="candidate/server.py",tofile="live/server.py",
+              lineterm="",
+          ))
+          print("SERVER_DIFF_LINES",len(diff))
+          for line in diff[:500]:
+              print(line)
+
+          live_policy=json.loads((root/"resource-policy.json").read_text(encoding="utf-8"))
+          candidate_policy=json.loads((repo/"resource-policy.json").read_text(encoding="utf-8"))
+          keys=sorted(set(live_policy)|set(candidate_policy))
+          delta=[]
+          for project in keys:
+              old=candidate_policy.get(project) or {}
+              new=live_policy.get(project) or {}
+              fields={}
+              for key in sorted(set(old)|set(new)):
+                  if old.get(key)!=new.get(key):
+                      fields[key]={"candidate":old.get(key),"live":new.get(key)}
+              if fields:
+                  delta.append({"project":project,"fields":fields})
+          print("RESOURCE_POLICY_DELTA",json.dumps(delta,sort_keys=True))
+          PY
           echo "=== FIREFOX JOURNAL TAIL ==="
           journalctl --user -u chatgpt-firefox.service -n 80 --no-pager
           echo "=== PROCESSES ==="
