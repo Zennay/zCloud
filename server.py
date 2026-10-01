@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib
 from contextlib import contextmanager, closing
 import enhancements
+from lane_generator import generate_execution_lanes
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -136,9 +137,15 @@ def project_runner_prompt(project_id, name):
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
     item=queue_item or {}
+    lane=item.get('execution_lane') if isinstance(item.get('execution_lane'),dict) else {}
+    lane_scope=lane.get('scope') if isinstance(lane.get('scope'),dict) else {}
+    lane_caps=','.join(str(value) for value in (lane_scope.get('capabilities') or [])) or 'n/a'
+    lane_files=','.join(str(value) for value in (lane_scope.get('files') or [])) or 'n/a'
     assignment=(
         f'VPS_QUEUE_ASSIGNMENT id={item.get("queue_id")}; project={item.get("project_id")}; priority={item.get("priority")}; '
+        f'lane={lane.get("lane_id") or "unassigned"}; lane_capabilities={lane_caps}; lane_files={lane_files}; '
         f'task={item.get("title")}; completion={item.get("completion_criteria")}; source={item.get("source_url") or "n/a"}. '
+        'Blijf binnen deze execution lane; verbreed write-scope alleen na een nieuwe conflict/claim-check. '
         if item else
         'VPS_QUEUE_ASSIGNMENT none. '
     )
@@ -1834,12 +1841,108 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
+def _portfolio_queue_metadata(row):
+    if not row:
+        return {}
+    if isinstance(row,dict) and isinstance(row.get('metadata'),dict):
+        return dict(row.get('metadata') or {})
+    try:
+        raw=row.get('metadata_json') if isinstance(row,dict) else row['metadata_json']
+    except Exception:
+        raw=None
+    try:
+        value=json.loads(raw or '{}')
+    except Exception:
+        value={}
+    return value if isinstance(value,dict) else {}
+
 def _portfolio_queue_row(row):
     if not row:
         return None
     item=dict(row)
     item['eligible']=bool(item.get('eligible'))
+    metadata=_portfolio_queue_metadata(item)
+    item['metadata']=metadata
+    item.pop('metadata_json',None)
+    item['execution_lane']=metadata.get('execution_lane') if isinstance(metadata.get('execution_lane'),dict) else None
     return item
+
+def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
+    ts=ts or now()
+    params=[]
+    project_clause=''
+    ids=sorted({str(value or '').strip().lower() for value in (project_ids or []) if str(value or '').strip()})
+    if ids:
+        project_clause=' AND project_id IN ('+','.join('?' for _ in ids)+')'
+        params.extend(ids)
+    backlog=connection.execute(
+        """SELECT * FROM portfolio_queue
+           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""" + project_clause +
+        """ ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                    created_at,queue_id""",
+        params,
+    ).fetchall()
+    claim_params=[ts]
+    claim_clause=''
+    if ids:
+        claim_clause=' AND project_id IN ('+','.join('?' for _ in ids)+')'
+        claim_params.extend(ids)
+    claim_rows=connection.execute(
+        'SELECT * FROM task_claims WHERE lease_until>?' + claim_clause + ' ORDER BY project_id,acquired_at,claim_key',
+        claim_params,
+    ).fetchall()
+    claims_by_project={}
+    for row in claim_rows:
+        claims_by_project.setdefault(str(row['project_id']),[]).append(_claim_payload(row))
+    backlog_by_project={}
+    for row in backlog:
+        backlog_by_project.setdefault(str(row['project_id']),[]).append(dict(row))
+    target_ids=ids or sorted(backlog_by_project)
+    lanes=[]
+    for project_id in target_ids:
+        project=PROJECT_INDEX.get(project_id) or {}
+        if not project or str(project.get('queue_mode') or '').lower()=='human-gated':
+            continue
+        lanes.extend(generate_execution_lanes(
+            project,
+            backlog_by_project.get(project_id,[]),
+            claims_by_project.get(project_id,[]),
+        ))
+    return lanes
+
+def portfolio_execution_lanes(project_id=None):
+    ids=[str(project_id).strip().lower()] if project_id else None
+    with connect() as c:
+        return _portfolio_lane_snapshot_locked(c,ids,now())
+
+def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
+    rows=connection.execute(
+        """SELECT * FROM portfolio_queue
+           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+           ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                    created_at,queue_id LIMIT 80"""
+    ).fetchall()
+    preempted={str(value) for value in (preempted or set())}
+    rows=[row for row in rows if str(row['queue_id']) not in preempted]
+    if not rows:
+        return []
+    project_ids={str(row['project_id']) for row in rows}
+    lane_map={
+        str(lane.get('queue_id')):lane
+        for lane in _portfolio_lane_snapshot_locked(connection,project_ids,ts)
+        if lane.get('queue_id') and lane.get('status')=='queued'
+    }
+    return [(row,lane_map[str(row['queue_id'])]) for row in rows if str(row['queue_id']) in lane_map]
+
+def _portfolio_lane_metadata(row,lane):
+    metadata=_portfolio_queue_metadata(dict(row))
+    metadata['execution_lane']={
+        'project_id':str(lane.get('project_id') or row['project_id']),
+        'profile':str(lane.get('profile') or ''),
+        'lane_id':str(lane.get('lane_id') or ''),
+        'scope':lane.get('scope') if isinstance(lane.get('scope'),dict) else {'capabilities':[],'files':[]},
+    }
+    return json.dumps(metadata,ensure_ascii=False,separators=(',',':'))
 
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
     title_text=str(title or '').strip().lower()
@@ -2148,44 +2251,40 @@ def portfolio_queue_allocate():
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                                AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+            lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
             if row and str(row['status']) == 'claimed':
-                higher=c.execute("""SELECT * FROM portfolio_queue
-                                    WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-                                    ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                                             created_at, queue_id LIMIT 1""").fetchone()
+                higher=lane_candidates[0][0] if lane_candidates else None
                 if higher and _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority']):
                     c.execute("""UPDATE portfolio_queue
                                  SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                                  WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
                     preempted.add(str(row['queue_id']))
                     row=None
+                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
-            candidates=c.execute("""SELECT * FROM portfolio_queue
-                                    WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-                                    ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                                             created_at, queue_id LIMIT 80""").fetchall()
-            candidates=[candidate for candidate in candidates if str(candidate['queue_id']) not in preempted]
-            if not candidates:
+            if not lane_candidates:
                 continue
             used_projects={str(item.get('project_id') or '') for item in selected}
-            row=min(
-                candidates,
-                key=lambda candidate: (
-                    _portfolio_priority_rank(candidate['priority']),
-                    1 if str(candidate['project_id']) in used_projects else 0,
-                    str(candidate['created_at'] or ''),
-                    str(candidate['queue_id'] or ''),
+            row,lane=min(
+                lane_candidates,
+                key=lambda pair: (
+                    _portfolio_priority_rank(pair[0]['priority']),
+                    1 if str(pair[0]['project_id']) in used_projects else 0,
+                    str(pair[0]['created_at'] or ''),
+                    str(pair[0]['queue_id'] or ''),
                 )
             )
+            lane_metadata=_portfolio_lane_metadata(row,lane)
             c.execute("""UPDATE portfolio_queue
-                         SET status='claimed',worker_slot=?,claimed_at=?,claim_expires=?,updated_at=?,attempts=attempts+1
+                         SET status='claimed',worker_slot=?,claimed_at=?,claim_expires=?,updated_at=?,
+                             attempts=attempts+1,metadata_json=?
                          WHERE queue_id=? AND status='queued' AND eligible=1""",
-                      (slot,ts,lease_until,ts,row['queue_id']))
+                      (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
     return selected
