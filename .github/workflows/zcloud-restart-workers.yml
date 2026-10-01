@@ -59,20 +59,141 @@ jobs:
                       parsed = {"error": raw[:1000]}
                   return int(exc.code), parsed
 
-          firefox_status, firefox = api_call(
-              "POST",
-              "/api/runner-control",
-              {"project_id": "", "action": "restart_firefox"},
+          # The legacy web-ext systemd unit is intentionally disabled in
+          # Violentmonkey-only mode. Recycle the standalone Firefox session
+          # instead so the userscript reinitialises and resumes DB polling.
+          import os
+          import signal
+          import subprocess
+
+          legacy_disable = os.path.expanduser(
+              "~/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
           )
-          if firefox_status >= 300 or not firefox.get("ok"):
-              raise SystemExit(
-                  f"Firefox worker consumer restart failed: HTTP {firefox_status} {firefox}"
+          legacy_vm_only = False
+          try:
+              text = open(legacy_disable, encoding="utf-8").read().lower()
+              legacy_vm_only = (
+                  "violentmonkey only" in text
+                  and "execcondition=/bin/false" in text
               )
-          print(json.dumps({
-              "consumer_restart": "ok",
-              "firefox": firefox.get("status"),
-          }, ensure_ascii=False, sort_keys=True))
-          time.sleep(8)
+          except OSError:
+              pass
+
+          if legacy_vm_only:
+              proc = subprocess.run(
+                  ["pgrep", "-u", str(os.getuid()), "-f",
+                   r"/snap/firefox/.*/usr/lib/firefox/firefox$"],
+                  text=True, capture_output=True, check=False,
+              )
+              pids = [int(x) for x in proc.stdout.split() if x.isdigit()]
+              if not pids:
+                  raise SystemExit("Violentmonkey-only Firefox process not found")
+
+              primary = pids[0]
+              env_raw = open(f"/proc/{primary}/environ", "rb").read().split(b"\0")
+              prior_env = {}
+              for item in env_raw:
+                  if b"=" not in item:
+                      continue
+                  key, value = item.split(b"=", 1)
+                  key = key.decode("utf-8", "replace")
+                  if key in {
+                      "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY",
+                      "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+                      "HOME", "USER", "LOGNAME",
+                  }:
+                      prior_env[key] = value.decode("utf-8", "replace")
+
+              for pid in pids:
+                  try:
+                      os.kill(pid, signal.SIGTERM)
+                  except ProcessLookupError:
+                      pass
+
+              deadline = time.time() + 15
+              while time.time() < deadline:
+                  alive = []
+                  for pid in pids:
+                      try:
+                          os.kill(pid, 0)
+                          alive.append(pid)
+                      except ProcessLookupError:
+                          pass
+                  if not alive:
+                      break
+                  time.sleep(1)
+              else:
+                  for pid in alive:
+                      try:
+                          os.kill(pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+
+              launch_env = os.environ.copy()
+              launch_env.pop("RUNNER_TRACKING_ID", None)
+              launch_env.update(prior_env)
+              launch_env.setdefault("DISPLAY", ":0")
+              launch_env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+              launch_env.setdefault(
+                  "DBUS_SESSION_BUS_ADDRESS",
+                  f"unix:path={launch_env['XDG_RUNTIME_DIR']}/bus",
+              )
+              log_path = "/tmp/zcloud-violentmonkey-firefox-restart.log"
+              with open(log_path, "ab", buffering=0) as log:
+                  subprocess.Popen(
+                      ["/usr/bin/firefox"],
+                      stdin=subprocess.DEVNULL,
+                      stdout=log,
+                      stderr=log,
+                      env=launch_env,
+                      start_new_session=True,
+                      close_fds=True,
+                  )
+
+              new_pid = None
+              deadline = time.time() + 30
+              while time.time() < deadline:
+                  proc = subprocess.run(
+                      ["pgrep", "-u", str(os.getuid()), "-f",
+                       r"/snap/firefox/.*/usr/lib/firefox/firefox$"],
+                      text=True, capture_output=True, check=False,
+                  )
+                  candidates = [
+                      int(x) for x in proc.stdout.split()
+                      if x.isdigit() and int(x) not in pids
+                  ]
+                  if candidates:
+                      new_pid = candidates[0]
+                      break
+                  time.sleep(1)
+              if not new_pid:
+                  raise SystemExit(
+                      "Standalone Violentmonkey Firefox did not restart; "
+                      f"see {log_path}"
+                  )
+              print(json.dumps({
+                  "consumer_restart": "standalone-firefox",
+                  "old_pid": primary,
+                  "new_pid": new_pid,
+                  "display": launch_env.get("DISPLAY"),
+              }, ensure_ascii=False, sort_keys=True))
+              time.sleep(12)
+          else:
+              firefox_status, firefox = api_call(
+                  "POST",
+                  "/api/runner-control",
+                  {"project_id": "", "action": "restart_firefox"},
+              )
+              if firefox_status >= 300 or not firefox.get("ok"):
+                  raise SystemExit(
+                      f"Firefox worker consumer restart failed: "
+                      f"HTTP {firefox_status} {firefox}"
+                  )
+              print(json.dumps({
+                  "consumer_restart": "systemd-firefox",
+                  "firefox": firefox.get("status"),
+              }, ensure_ascii=False, sort_keys=True))
+              time.sleep(8)
 
           with sqlite3.connect(DB, timeout=10) as conn:
               conn.row_factory = sqlite3.Row
