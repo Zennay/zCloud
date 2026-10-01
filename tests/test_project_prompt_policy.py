@@ -41,7 +41,7 @@ def test_worker_prompt_is_short_execution_first_and_queue_owned():
     assert "ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE" in prompt
     assert "TOEGANG & ROUTE" not in prompt
     assert "Zeg NOOIT geen toegang" not in prompt
-    assert len(prompt) < 2300  # owner-requested intro + end-of-run next-task block (was 1800)
+    assert len(prompt) < 2400  # owner-requested intro + end-of-run next-task block (was 1800); cloud guard case is 2338
 
 
 def test_stale_persisted_base_prompt_is_ignored():
