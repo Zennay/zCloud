@@ -79,6 +79,23 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows/haxlab-priority-scoped-live.yml").exists()
         )
 
+    def test_violentmonkey_only_mode_skips_inactive_firefox_extension_promotion(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        block = text[
+            text.index("- name: Promote Violentmonkey worker"):
+            text.index("- name: Promote mobile UI")
+        ]
+        self.assertIn("worker_paths=(--path public/zcloud-worker.user.js)", block)
+        self.assertIn("10-legacy-disabled.conf", block)
+        self.assertIn("Violentmonkey only", block)
+        self.assertIn("ExecCondition=/bin/false", block)
+        self.assertIn("WORKER_RUNTIME_MODE=violentmonkey_only", block)
+        self.assertIn("worker_paths+=(--path firefox-extension/background.js)", block)
+        self.assertIn("\"${worker_paths[@]}\"", block)
+
+    def test_one_time_live_server_migration_is_not_permanent(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        self.assertNotIn("--reconcile-known-live-sha server.py=", text)
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         guard = "Enforce permanent zCloud VPS runner identity"
