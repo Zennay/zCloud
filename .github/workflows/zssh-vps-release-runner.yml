@@ -1,0 +1,95 @@
+name: zSSH VPS release runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-vps-release-runner.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-vps-release-runner
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      ZSSH_RELEASE_SHA: e7be416e439bf9f0f44fee8934724bc4d4e66194
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+    steps:
+      - name: Check out zCloud coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out exact green zSSH revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_RELEASE_SHA }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Verify release source and runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_RELEASE_SHA"
+          test -f zssh-source/oauth.mjs
+          test -f zssh-source/pairing.mjs
+          test -f zssh-source/submission/plugin.template.json
+          echo "ZSSH_RELEASE_SOURCE_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
+
+      - name: Acquire exclusive zSSH deployment claim
+        run: python3 scripts/zssh_release_coordination.py acquire --sha "$ZSSH_RELEASE_SHA"
+
+      - name: Install exact zSSH release and run installer canary
+        env:
+          ZSSH_EXPECTED_SHA: ${{ env.ZSSH_RELEASE_SHA }}
+        run: bash zssh-source/deploy/install-live.sh "$GITHUB_WORKSPACE/zssh-source"
+
+      - name: Verify live release provenance and private compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(readlink -f /home/ubuntu/.local/share/zssh/current)"
+          expected="/home/ubuntu/.local/share/zssh/releases/$ZSSH_RELEASE_SHA"
+          test "$current" = "$expected"
+          systemctl --user is-active --quiet zssh.service
+          curl --fail --silent --show-error http://127.0.0.1:8788/health
+          test -f "$current/oauth.mjs"
+          test -f "$current/pairing.mjs"
+          echo "ZSSH_LIVE_PROVENANCE_GREEN sha=$ZSSH_RELEASE_SHA"
+
+      - name: Verify hosted-client compatibility on live endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source /home/ubuntu/.config/zssh/gateway.env
+          set +a
+          test -n "$ZSSH_API_KEY"
+          test -n "$ZSSH_MCP_CAPABILITY_TOKEN"
+
+          ZSSH_MCP_URL="https://198.244.191.182/mcp" \
+          ZSSH_MCP_API_KEY="$ZSSH_API_KEY" \
+          ZSSH_MCP_CAPABILITY_TOKEN="" \
+          node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
+
+          ZSSH_MCP_URL="https://198.244.191.182/mcp" \
+          ZSSH_MCP_API_KEY="" \
+          ZSSH_MCP_CAPABILITY_TOKEN="$ZSSH_MCP_CAPABILITY_TOKEN" \
+          node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
+
+          echo "ZSSH_HOSTED_CLIENT_CANARIES_GREEN"
+
+      - name: Release deployment claim
+        if: always()
+        run: python3 scripts/zssh_release_coordination.py release
