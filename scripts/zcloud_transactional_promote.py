@@ -681,6 +681,7 @@ def run_prechange(
     *,
     candidate: Path | None = None,
     trusted_ancestor_changes: list[str] | tuple[str, ...] = (),
+    allow_recent_ancestor_drift: bool = False,
     health_retry_seconds: float = 20.0,
     retry_interval: float = 0.5,
 ) -> dict:
@@ -742,7 +743,7 @@ def run_prechange(
                         and sha256_file(live) == sha256_file(desired)
                     )
                     trusted_ancestor = (
-                        rel in trusted_ancestors
+                        (rel in trusted_ancestors or allow_recent_ancestor_drift)
                         and matches_recent_first_parent_ancestor(candidate, rel, live)
                     )
                     if exact_candidate or trusted_ancestor:
@@ -1025,6 +1026,7 @@ def promote(
     runtime_extension: Path = DEFAULT_RUNTIME_EXTENSION,
     reload_helper: Path = DEFAULT_RELOAD_HELPER,
     prechange_allow_changes: list[str] | tuple[str, ...] = (),
+    allow_recent_ancestor_prechange_drift: bool = False,
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
     dry_run: bool = False,
@@ -1112,6 +1114,7 @@ def promote(
             allowed_changes=allowed_prechange_drift,
             candidate=candidate,
             trusted_ancestor_changes=trusted_ancestor_drift,
+            allow_recent_ancestor_drift=allow_recent_ancestor_prechange_drift,
         )
         mapping_before = mapping_snapshot(root / "history.db")
         mapping_sha = str(mapping_before["sha256"])
@@ -1334,6 +1337,16 @@ def main(argv: list[str] | None = None) -> int:
             "that a later guarded transaction in the same deploy will reconcile."
         ),
     )
+    parser.add_argument(
+        "--allow-recent-ancestor-prechange-drift",
+        action="store_true",
+        help=(
+            "Allow the first pre-change guard to reconcile unexpected managed "
+            "files only when their exact live bytes match the current tested "
+            "candidate or a recent first-parent ancestor. Unknown/manual drift "
+            "remains fail-closed."
+        ),
+    )
     parser.add_argument("--require-worker-read-model", action="store_true")
     parser.add_argument("--require-incidents", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1352,6 +1365,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime_extension=args.runtime_extension,
             reload_helper=args.reload_helper,
             prechange_allow_changes=args.prechange_allow_changes or (),
+            allow_recent_ancestor_prechange_drift=args.allow_recent_ancestor_prechange_drift,
             require_worker_read_model=args.require_worker_read_model,
             require_incidents=args.require_incidents,
             dry_run=args.dry_run,

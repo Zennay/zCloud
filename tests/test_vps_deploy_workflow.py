@@ -37,6 +37,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "--preserve-prechange-drift firefox-extension/background.js",
             backend,
         )
+        self.assertIn("--allow-recent-ancestor-prechange-drift", backend)
+        self.assertEqual(
+            1,
+            text.count("--allow-recent-ancestor-prechange-drift"),
+        )
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")

@@ -148,6 +148,7 @@ jobs:
             --path portfolio_queue.seed.json \
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
+            --allow-recent-ancestor-prechange-drift \
             --actor "github-actions-vps-deploy" \
             --json
 
