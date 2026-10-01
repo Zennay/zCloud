@@ -1,0 +1,131 @@
+name: zCloud restart allocated workers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-restart-workers.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-restart-allocated-workers
+  cancel-in-progress: false
+
+jobs:
+  restart:
+    runs-on: self-hosted
+    timeout-minutes: 6
+    steps:
+      - name: Restart browser worker host
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+          systemctl --user restart chatgpt-firefox.service
+          systemctl --user is-active --quiet chatgpt-firefox.service
+
+      - name: Restart dashboard-owned allocated workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+
+          def call(method, path, payload=None):
+              data = None
+              headers = {"User-Agent": "zcloud-restart-workers/1"}
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as response:
+                      return response.status, json.load(response)
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", "replace")
+                  try:
+                      parsed = json.loads(body)
+                  except Exception:
+                      parsed = {"error": body[:1000]}
+                  return exc.code, parsed
+
+          def worker_key(item):
+              key = str(item.get("worker_key") or "").strip()
+              if key:
+                  return key
+              project = str(item.get("project_id") or "").strip()
+              slot = int(item.get("worker_slot") or 1)
+              return f"{project}::w{slot}" if project else ""
+
+          _, targets = call("GET", "/api/runner-targets")
+          allocation = targets.get("global_allocation") or {}
+          selected = allocation.get("workers") or []
+          keys = [worker_key(item) for item in selected]
+          keys = [key for key in keys if key]
+
+          if not keys:
+              print(json.dumps({
+                  "ok": True,
+                  "restarted": [],
+                  "state": "no-allocated-workers",
+                  "dynamic_workers": targets.get("dynamic_workers"),
+              }, ensure_ascii=False, sort_keys=True))
+              raise SystemExit(0)
+
+          accepted = {}
+          for key in keys:
+              status, result = call("POST", "/api/runner-control", {
+                  "project_id": key,
+                  "action": "new_chat",
+              })
+              if status == 429:
+                  time.sleep(31)
+                  status, result = call("POST", "/api/runner-control", {
+                      "project_id": key,
+                      "action": "new_chat",
+                  })
+              if status >= 300 or not result.get("ok"):
+                  raise SystemExit(f"restart rejected for {key}: HTTP {status} {result}")
+              accepted[key] = int(result.get("command_id") or 0)
+
+          deadline = time.time() + 120
+          live = {}
+          while time.time() < deadline:
+              _, status = call("GET", "/api/status")
+              runners = status.get("chatgpt_runners") or {}
+              live = {}
+              for key, command_id in accepted.items():
+                  base = key.split("::w", 1)[0]
+                  workers = (runners.get(base) or {}).get("workers") or []
+                  worker = next((w for w in workers if w.get("worker_id") == key), None)
+                  command = (worker or {}).get("command") or {}
+                  live[key] = bool(
+                      worker
+                      and worker.get("state") == "live"
+                      and int(command.get("id") or 0) == command_id
+                      and str(command.get("status") or "") == "completed"
+                  )
+              if all(live.values()):
+                  break
+              time.sleep(5)
+
+          missing = [key for key, ok in live.items() if not ok]
+          if missing:
+              raise SystemExit("restart verification failed for: " + ", ".join(missing))
+
+          print(json.dumps({
+              "ok": True,
+              "restarted": keys,
+              "command_ids": accepted,
+              "verified_live": live,
+          }, ensure_ascii=False, sort_keys=True))
+          PY
