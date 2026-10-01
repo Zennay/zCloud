@@ -2027,7 +2027,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     next_step=str(project.get('next_step') or '').strip()
     priority_by_project={
         'ftmo':'P0',
-        'zssh':'P0',
+        'zssh':'P1',
         'raiseai':'P1',
         'supa':'P1',
         'cloud':'P2',
@@ -2047,6 +2047,8 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     )
     if next_step:
         criteria += ' Current project next-step hint: ' + next_step
+    if project_id=='ftmo':
+        criteria += ' FTMO priority rule: keep advancing safe preregistered generations continuously; after one gate is proven, continue to the next safe write-capable generation step instead of yielding the lane to lower-priority projects.'
     return portfolio_queue_enqueue(
         project_id,
         f'Implement next {name} roadmap increment',
