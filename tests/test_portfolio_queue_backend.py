@@ -375,6 +375,39 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("blocked", data_lane["status"])
         self.assertEqual("provider:data-repair", data_lane["blocked_by"][0]["claim_key"])
 
+    def test_allocator_does_not_assign_cross_lane_items_with_same_file_scope(self):
+        control = server.portfolio_queue_enqueue(
+            "cloud",
+            "Implement queue scheduler lane allocation",
+            "P1",
+            "Implement queue scheduling with deterministic tests.",
+        )
+        deploy = server.portfolio_queue_enqueue(
+            "cloud",
+            "Harden VPS deploy workflow",
+            "P2",
+            "Implement deployment hardening with deterministic tests.",
+        )
+        scope = '{"conflict_scope":{"capabilities":[],"files":["server.py"]}}'
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET metadata_json=? WHERE queue_id IN (?,?)",
+                (scope, control["queue_id"], deploy["queue_id"]),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([control["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("claimed", rows[control["queue_id"]]["status"])
+        self.assertEqual("queued", rows[deploy["queue_id"]]["status"])
+        self.assertIsNone(rows[deploy["queue_id"]]["worker_slot"])
+        lanes = server.portfolio_execution_lanes("cloud")
+        deploy_lane = next(lane for lane in lanes if lane["lane_id"] == "deploy-ops")
+        self.assertEqual("blocked", deploy_lane["status"])
+        self.assertEqual("queue", deploy_lane["blocked_by"][0]["kind"])
+        self.assertEqual(control["queue_id"], deploy_lane["blocked_by"][0]["queue_id"])
+
     def test_worker_prompt_contains_persisted_execution_lane(self):
         server.portfolio_queue_enqueue(
             "cloud",
