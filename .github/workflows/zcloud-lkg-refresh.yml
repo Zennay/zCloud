@@ -1,0 +1,82 @@
+name: Refresh verified zCloud LKG
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-lkg-refresh.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Checkout latest recovery tooling
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify live production and refresh LKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE=/home/ubuntu/zennay-cloud
+          STATE="$HOME/.local/state/zcloud/recovery"
+          CANARY="$RUNNER_TEMP/zcloud-live-canary.json"
+          PRECHANGE="$RUNNER_TEMP/zcloud-prechange-after-lkg.json"
+
+          python3 "$GITHUB_WORKSPACE/scripts/zcloud_postdeploy_canary.py" \
+            --root "$LIVE" \
+            --db "$LIVE/history.db" \
+            --base-url http://127.0.0.1:8765 \
+            --json > "$CANARY"
+
+          python3 - "$CANARY" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1]))
+          failed=[x for x in data.get("checks",[]) if not x.get("ok")]
+          print("LIVE_CANARY",json.dumps({
+              "ok":data.get("ok"),
+              "failed":failed,
+              "transport_errors":data.get("transport_errors") or [],
+          },sort_keys=True))
+          if not data.get("ok"):
+              raise SystemExit("live canary is not green; refusing LKG refresh")
+          PY
+
+          live_head="$(git -C "$LIVE" rev-parse HEAD 2>/dev/null || echo working-tree)"
+          evidence="POSTDEPLOY_GREEN verified before LKG refresh; live_head=$live_head; queue/API/browser/runtime canary green"
+          python3 "$GITHUB_WORKSPACE/scripts/zcloud_recovery.py" \
+            --root "$LIVE" \
+            --state-dir "$STATE" \
+            capture --evidence "$evidence" > "$RUNNER_TEMP/zcloud-lkg-capture.json"
+
+          python3 "$GITHUB_WORKSPACE/scripts/zcloud_prechange_guard.py" \
+            --root "$LIVE" \
+            --state "$STATE" \
+            --json > "$PRECHANGE"
+
+          python3 - "$RUNNER_TEMP/zcloud-lkg-capture.json" "$PRECHANGE" <<'PY'
+          import json, sys
+          capture=json.load(open(sys.argv[1]))
+          guard=json.load(open(sys.argv[2]))
+          print("LKG_REFRESHED",json.dumps({
+              "snapshot_id":capture.get("snapshot_id"),
+              "created_at":capture.get("created_at"),
+              "evidence":capture.get("evidence"),
+              "git":capture.get("git"),
+          },sort_keys=True))
+          failed=[x for x in guard.get("checks",[]) if not x.get("ok")]
+          print("PRECHANGE_AFTER_LKG",json.dumps({
+              "ok":guard.get("ok"),
+              "failed":failed,
+          },sort_keys=True))
+          if not guard.get("ok"):
+              raise SystemExit("new LKG did not produce a green pre-change guard")
+          PY
