@@ -228,3 +228,6 @@
   .dynamic-worker-counts,.dynamic-worker-provider-grid{grid-template-columns:1fr}
 }
 
+/* Force push button styling */
+.runner-action-danger { background: #d32f2f; color: white; }
+.runner-action-danger:hover { background: #b71c1c; }
