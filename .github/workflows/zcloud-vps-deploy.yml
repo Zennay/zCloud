@@ -46,22 +46,35 @@ jobs:
         run: |
           set -euo pipefail
           resolved="$(git rev-parse HEAD)"
-          current="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          if [[ -z "$current" ]]; then
-            echo "Could not resolve current main SHA" >&2
-            exit 2
-          fi
-          if [[ "$current" != "$resolved" ]]; then
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "MAIN_MOVED_BEFORE_GREEN_CHECK resolved=$resolved current=$current"
-            exit 0
-          fi
-          export RESOLVED_SHA="$resolved"
-          python3 - <<'PY'
+          deadline=$((SECONDS + 180))
+          poll_seconds=8
+
+          while true; do
+            current="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+            if [[ -z "$current" ]]; then
+              echo "Could not resolve current main SHA" >&2
+              exit 2
+            fi
+
+            if [[ "$current" != "$resolved" ]]; then
+              echo "MAIN_MOVED_DURING_GREEN_WAIT resolved=$resolved current=$current"
+              git fetch --no-tags --depth=64 origin main
+              git checkout --detach "$current"
+              resolved="$(git rev-parse HEAD)"
+              if [[ "$resolved" != "$current" ]]; then
+                echo "Failed to check out current main SHA expected=$current actual=$resolved" >&2
+                exit 2
+              fi
+              echo "COALESCED_CURRENT_MAIN sha=$resolved"
+            fi
+
+            export RESOLVED_SHA="$resolved"
+            set +e
+            regression_id="$(python3 - <<'PY'
           import json
           import os
+          import sys
           import urllib.request
-          from pathlib import Path
 
           repo = os.environ["GITHUB_REPOSITORY"]
           sha = os.environ["RESOLVED_SHA"]
@@ -88,22 +101,37 @@ jobs:
               ),
               None,
           )
-          output = Path(os.environ["GITHUB_OUTPUT"])
-          with output.open("a", encoding="utf-8") as handle:
-              if matched is None:
-                  handle.write("deploy=false\n")
-              else:
-                  handle.write("deploy=true\n")
-                  handle.write(f"deploy_sha={sha}\n")
-                  handle.write(f"regression_run_id={int(matched['id'])}\n")
           if matched is None:
-              print(f"CURRENT_MAIN_NOT_GREEN sha={sha}")
-          else:
-              print(
-                  "GREEN_MAIN_CONFIRMED "
-                  f"sha={sha} regression_run_id={matched['id']}"
-              )
+              raise SystemExit(3)
+          print(int(matched["id"]))
           PY
+            )"
+            regression_rc=$?
+            set -e
+
+            if [[ "$regression_rc" -eq 0 ]]; then
+              {
+                echo "deploy=true"
+                echo "deploy_sha=$resolved"
+                echo "regression_run_id=$regression_id"
+              } >> "$GITHUB_OUTPUT"
+              echo "GREEN_MAIN_CONFIRMED sha=$resolved regression_run_id=$regression_id"
+              exit 0
+            fi
+            if [[ "$regression_rc" -ne 3 ]]; then
+              echo "Failed to query exact green regression for sha=$resolved rc=$regression_rc" >&2
+              exit "$regression_rc"
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+              echo "CURRENT_MAIN_NOT_GREEN_TIMEOUT sha=$resolved wait_seconds=180"
+              exit 0
+            fi
+
+            echo "GREEN_WAIT_CURRENT_MAIN sha=$resolved poll_seconds=$poll_seconds"
+            sleep "$poll_seconds"
+          done
 
       - name: Reconfirm green main before VPS writes
         id: prewrite
