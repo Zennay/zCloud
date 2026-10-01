@@ -53,7 +53,7 @@ NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a18
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
 PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
 PORTFOLIO_ATTENTION_NOTION_URL = 'https://app.notion.com/p/3ec9e19ac9558140a2d8d05d5ebbf103'
-PORTFOLIO_QUEUE_LEASE_SECONDS = 1800
+PORTFOLIO_QUEUE_LEASE_SECONDS = 3600
 PORTFOLIO_QUEUE_MIN_READY_PER_WORKER = 3
 PORTFOLIO_AI_COOLDOWN_SECONDS = 120
 WORKER_PREFLIGHT_TTL_SECONDS = 600
@@ -2244,11 +2244,19 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     created=None
     if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
         try:
+            child_criteria=str(next_task.get('completion_criteria') or '').strip()
+            child_criteria += (
+                (' ' if child_criteria else '') +
+                'Queue sizing rule: execute this as a substantial multi-step work package, not an isolated micro-task. '
+                'After each successful implementation step, continue into the next safe adjacent write-capable step in the same '
+                'project area. DONE requires at least three material implementation actions or one clearly large end-to-end change '
+                'spanning multiple files/components, plus automated test/build/run evidence, unless a real human/external gate stops progress.'
+            )
             created=portfolio_queue_enqueue(
                 next_task.get('project_id') or row['project_id'],
                 next_task.get('title'),
                 next_task.get('priority') or 'P2',
-                next_task.get('completion_criteria') or '',
+                child_criteria,
                 next_task.get('source_url') or '',
                 parent_queue_id=queue_id
             )
