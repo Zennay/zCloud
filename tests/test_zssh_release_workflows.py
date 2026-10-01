@@ -4,6 +4,8 @@ import re
 import unittest
 from pathlib import Path
 
+from scripts import zssh_release_coordination as coordination
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -18,6 +20,20 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         text = (ROOT / "scripts/zssh_release_coordination.py").read_text(encoding="utf-8")
         self.assertIn('"vps_profile": "control_plane"', text)
         self.assertIn('get_json(BASE + "/api/status")', text)
+
+    def test_release_only_main_advance_allows_review_evidence_drift(self):
+        self.assertTrue(coordination.release_only_main_advance([
+            ".github/workflows/public-release-gate.yml",
+            "scripts/check-public-release-config.mjs",
+            "docs/openai-plugin-review.md",
+        ]))
+
+    def test_release_only_main_advance_rejects_runtime_drift(self):
+        self.assertFalse(coordination.release_only_main_advance([
+            ".github/workflows/public-release-gate.yml",
+            "server.mjs",
+        ]))
+        self.assertFalse(coordination.release_only_main_advance([]))
 
     def test_vps_release_uses_permanent_runner_guard(self):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
