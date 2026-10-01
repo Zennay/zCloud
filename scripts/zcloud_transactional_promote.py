@@ -730,7 +730,11 @@ def run_prechange(
         if candidate is not None and not source_reconcile_used:
             managed = [item for item in failed if item.get("name") == "managed_source_state"]
             other = [item for item in failed if item.get("name") != "managed_source_state"]
-            if len(managed) == 1 and not other:
+            if len(managed) == 1:
+                # Classify managed source drift independently from transient
+                # service/HTTP failures. Candidate/ancestor byte matching is
+                # fail-closed on its own; requiring every health check to be
+                # green first can deadlock a safe recovery deployment.
                 detail = managed[0].get("detail") or {}
                 unexpected = list(detail.get("unexpected") or [])
                 aligned: list[str] = []
