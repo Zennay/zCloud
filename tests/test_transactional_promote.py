@@ -1129,6 +1129,10 @@ class TransactionalPromotionTests(unittest.TestCase):
             promote.wait_http.__defaults__[0],
         )
 
+    def test_restart_health_uses_lightweight_liveness_not_status_aggregation(self):
+        self.assertEqual("http://127.0.0.1:8765/", promote.HEALTH_URL)
+        self.assertNotIn("/api/status", promote.HEALTH_URL)
+
     def test_health_request_timeout_matches_live_probe_budget(self):
         self.assertEqual(8.0, promote.HEALTH_REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(
