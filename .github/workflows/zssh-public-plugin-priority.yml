@@ -73,7 +73,7 @@ jobs:
           if not item:
               raise RuntimeError(f"{queue_id} not found in live SQLite queue")
           if str(item.get("priority") or "").upper() != "P1":
-              raise RuntimeError(f"{queue_id} priority is not P0: {item.get('priority')}")
+              raise RuntimeError(f"{queue_id} priority is not P1: {item.get('priority')}")
           if str(item.get("project_id") or "").lower() != "zssh":
               raise RuntimeError(f"{queue_id} is attached to wrong project: {item.get('project_id')}")
 
