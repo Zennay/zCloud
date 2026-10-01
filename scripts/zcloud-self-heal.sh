@@ -100,7 +100,7 @@ heal_project_runtimes() {
     haxlab-worker.service \
     haxlab-analyzer.service \
     haxlab-autonomy.timer \
-    ftmo-autonomous.timer
+    ftmo-autonomous-marathon.service
   do
     heal_system_unit "${service}"
   done
