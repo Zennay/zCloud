@@ -214,13 +214,31 @@ jobs:
           set -euo pipefail
           service="zennay-cloud.service"
           url="http://127.0.0.1:8765/api/status"
-          lock_file="/run/zcloud-self-heal.lock"
+          heal_unit="zcloud-self-heal.service"
 
-          # Wait for any already-running self-heal pass to finish, then own
-          # recovery exclusively. New self-heal passes see the sentinel created
-          # by the previous step and exit without touching the service.
-          exec 9>"$lock_file"
-          flock -w 30 9
+          # The sentinel was created in the previous step, so no new self-heal
+          # pass can mutate the service. Wait for an already-running root-owned
+          # oneshot to quiesce through systemd instead of opening its /run lock
+          # from the unprivileged GitHub runner.
+          for _ in $(seq 1 30); do
+            heal_state="$(sudo -n systemctl show "$heal_unit" -p ActiveState --value 2>/dev/null || true)"
+            case "$heal_state" in
+              active|activating|reloading|deactivating)
+                sleep 1
+                ;;
+              *)
+                echo "SELF_HEAL_QUIESCED state=${heal_state:-unknown}"
+                break
+                ;;
+            esac
+          done
+          heal_state="$(sudo -n systemctl show "$heal_unit" -p ActiveState --value 2>/dev/null || true)"
+          case "$heal_state" in
+            active|activating|reloading|deactivating)
+              echo "SELF_HEAL_QUIESCE_TIMEOUT state=$heal_state" >&2
+              exit 1
+              ;;
+          esac
 
           healthy() {
             sudo -n systemctl is-active --quiet "$service" &&
