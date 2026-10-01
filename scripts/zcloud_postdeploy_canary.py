@@ -19,6 +19,19 @@ RUNTIME_EXTENSION = Path(os.environ.get(
     "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
 ))
+LEGACY_FIREFOX_DISABLE_DROPIN = Path(os.environ.get(
+    "ZCLOUD_LEGACY_FIREFOX_DISABLE_DROPIN",
+    str(Path.home() / ".config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"),
+))
+
+
+def legacy_firefox_intentionally_disabled(path: Path = LEGACY_FIREFOX_DISABLE_DROPIN) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    lowered = text.lower()
+    return "execcondition=/bin/false" in lowered and "violentmonkey only" in lowered
 
 
 def sha256_file(path: Path) -> str:
@@ -142,6 +155,7 @@ def evaluate(
     services: dict[str, bool],
     static_assets_ok: bool,
     source_runtime_match: bool,
+    legacy_firefox_disabled: bool = False,
     expected_mapping_sha: str | None = None,
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
@@ -152,14 +166,26 @@ def evaluate(
         checks.append({"name": name, "ok": bool(ok), "detail": detail})
 
     add("zcloud_service", services.get("zcloud") is True, services.get("zcloud"))
-    add("firefox_service", services.get("firefox") is True, services.get("firefox"))
+    firefox_service_active = services.get("firefox") is True
+    add(
+        "firefox_service",
+        firefox_service_active or legacy_firefox_disabled,
+        {
+            "active": firefox_service_active,
+            "legacy_violentmonkey_only": legacy_firefox_disabled,
+        },
+    )
     add("static_assets", static_assets_ok, "app.js + enhancements.js + enhancements.css")
     add("status_errors_empty", not (status.get("errors") or []), status.get("errors") or [])
     firefox = status.get("chatgpt_firefox") or {}
+    firefox_runtime_active = firefox.get("active") is True or firefox.get("state") == "active"
     add(
         "firefox_runtime_active",
-        firefox.get("active") is True or firefox.get("state") == "active",
-        firefox,
+        firefox_runtime_active or legacy_firefox_disabled,
+        {
+            "runtime": firefox,
+            "legacy_violentmonkey_only": legacy_firefox_disabled,
+        },
     )
     projects = targets_payload.get("projects")
     add("runner_targets_available", isinstance(projects, dict), {
@@ -226,7 +252,14 @@ def evaluate(
             mapping.get("sha256") == expected_mapping_sha,
             {"expected": expected_mapping_sha, "actual": mapping.get("sha256")},
         )
-    add("firefox_source_runtime_match", source_runtime_match, source_runtime_match)
+    add(
+        "firefox_source_runtime_match",
+        source_runtime_match or legacy_firefox_disabled,
+        {
+            "match": source_runtime_match,
+            "legacy_violentmonkey_only": legacy_firefox_disabled,
+        },
+    )
 
     runners = status.get("chatgpt_runners") or {}
     if require_worker_read_model:
@@ -276,6 +309,7 @@ def live_canary(
 
     parity = firefox_runtime_parity(root, runtime_extension)
     source_runtime_match = parity["ok"]
+    legacy_firefox_disabled = legacy_firefox_intentionally_disabled()
     static_ok = all(http_ok(base_url + path) for path in (
         "/app.js", "/enhancements.js", "/enhancements.css"
     ))
@@ -289,11 +323,13 @@ def live_canary(
         },
         static_assets_ok=static_ok,
         source_runtime_match=source_runtime_match,
+        legacy_firefox_disabled=legacy_firefox_disabled,
         expected_mapping_sha=expected_mapping_sha,
         require_worker_read_model=require_worker_read_model,
         require_incidents=require_incidents,
     )
     result["firefox_runtime_parity"] = parity
+    result["legacy_firefox_disabled"] = legacy_firefox_disabled
     if errors:
         result["transport_errors"] = errors
         result["ok"] = False
