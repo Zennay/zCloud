@@ -8,6 +8,7 @@ RUNTIME_DISABLE_DIR="${ZCLOUD_RUNTIME_HEAL_DISABLE_DIR:-/home/ubuntu/zennay-clou
 RUNTIME_USER="${ZCLOUD_RUNTIME_USER:-ubuntu}"
 RUNTIME_USER_UID="${ZCLOUD_RUNTIME_USER_UID:-1000}"
 LOCK_FILE="${ZCLOUD_SELF_HEAL_LOCK_FILE:-/run/zcloud-self-heal.lock}"
+WORKER_WATCHDOG="${ZCLOUD_WORKER_WATCHDOG:-/usr/local/sbin/zcloud-worker-watchdog}"
 
 [[ -e "${DISABLE_FILE}" ]] && exit 0
 
@@ -110,5 +111,14 @@ heal_project_runtimes() {
   done
 }
 
+heal_worker_progress() {
+  [[ -x "${WORKER_WATCHDOG}" ]] || return 0
+  if ! "${WORKER_WATCHDOG}" --json; then
+    logger -t zcloud-worker-watchdog "watchdog invocation failed; retrying on next timer tick"
+    return 0
+  fi
+}
+
 heal_zcloud
 heal_project_runtimes
+heal_worker_progress
