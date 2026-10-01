@@ -74,6 +74,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('rm -rf "$live"', text)
         self.assertLess(text.index(quarantine), text.index(promote))
 
+    def test_temporary_haxlab_live_deploy_bridge_is_removed(self):
+        self.assertFalse(
+            (ROOT / ".github/workflows/haxlab-priority-scoped-live.yml").exists()
+        )
+
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         guard = "Enforce permanent zCloud VPS runner identity"
