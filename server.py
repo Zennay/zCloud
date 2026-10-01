@@ -3330,8 +3330,20 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'claims':task_claims(q.get('project',[''])[0] or None),'time':now()})
         if u.path=='/api/runner-commands':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
+            # Browser workers must never be starved by an old pending backlog.
+            # Read a bounded tail of the queue, then restore FIFO order inside
+            # that recent window so fresh push/new_chat recovery commands are
+            # always visible without returning an unbounded command history.
+            try: command_limit=max(10,min(200,int(q.get('limit',['100'])[0])))
+            except Exception: command_limit=100
             with connect() as c:
-                rows=c.execute("SELECT id,project_id,action,created_at FROM runner_commands WHERE status='pending' ORDER BY id LIMIT 10").fetchall()
+                rows=c.execute(
+                    "SELECT id,project_id,action,created_at FROM ("
+                    "SELECT id,project_id,action,created_at FROM runner_commands "
+                    "WHERE status='pending' ORDER BY id DESC LIMIT ?"
+                    ") ORDER BY id",
+                    (command_limit,),
+                ).fetchall()
             return self.reply({'commands':[dict(r) for r in rows]})
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
