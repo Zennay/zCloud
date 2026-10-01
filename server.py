@@ -159,6 +159,7 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         'ZCLOUD_QUEUE_EVIDENCE: <actie + commit/workflow/run/resultaat>\n'
         f'ZCLOUD_WORK_PROJECT: {project_id}\n'
         'ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE'
+        'De browser-worker POST-et automatisch je ZCLOUD_QUEUE_RESULT en evidence naar http://127.0.0.1:8765/api/queue-update.'
     )
 
 RUNNER_DEFAULTS = {
