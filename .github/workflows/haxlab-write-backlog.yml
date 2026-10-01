@@ -97,6 +97,45 @@ jobs:
               })
               print("WRITE_QUEUE_NORMALIZED",json.dumps(result,sort_keys=True))
 
+          # If a legacy synthetic P3 continuation is occupying a global slot
+          # while the canonical HaxLab P1 write lane is waiting, yield that
+          # synthetic item back to the queue. This does not complete/cancel
+          # real project work; it only removes stale fallback work from the
+          # scarce active slots so global priority can take effect.
+          mid=get_queue()
+          waiting_hax_p1=any(
+              x.get("queue_id")=="haxlab-closed-loop-arena-v2-implementation"
+              and x.get("eligible")
+              and str(x.get("status") or "").lower()=="queued"
+              for x in mid.get("items",[])
+          )
+          legacy_titles={
+              "Continue project autonomously with the next concrete implementation step",
+              "Superseded diagnostic/continuation; no longer primary work",
+          }
+          if waiting_hax_p1:
+              for row in mid.get("items",[]):
+                  status=str(row.get("status") or "").lower()
+                  if (
+                      row.get("priority")=="P3"
+                      and status in {"claimed","running","verifying"}
+                      and row.get("worker_slot")
+                      and str(row.get("title") or "") in legacy_titles
+                  ):
+                      result=post({
+                          "action":"result",
+                          "worker_slot":row.get("worker_slot"),
+                          "queue_id":row.get("queue_id"),
+                          "result":"CONTINUE",
+                          "evidence":"Legacy synthetic P3 continuation yielded to queued HaxLab P1 write-first implementation work.",
+                      })
+                      print("LEGACY_P3_YIELDED",json.dumps({
+                          "queue_id":row.get("queue_id"),
+                          "project_id":row.get("project_id"),
+                          "worker_slot":row.get("worker_slot"),
+                          "result":result,
+                      },sort_keys=True))
+
           final=get_queue()
           hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
           print("HAXLAB_ELIGIBLE_FINAL",json.dumps([
