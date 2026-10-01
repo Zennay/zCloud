@@ -27,3 +27,8 @@ wear-os/app/build/
 # Nested project and legacy staging worktrees
 /repos/
 /staging-v2/
+
+# lokaal/gegenereerd, niet committen
+.action-allowed-ips
+*.bak
+*.backup
