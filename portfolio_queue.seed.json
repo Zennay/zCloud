@@ -2,32 +2,122 @@
   {
     "queue_id": "zssh-openai-public-plugin-release",
     "project_id": "zssh",
-    "title": "zSSH publieke ChatGPT-plugin submission-ready maken",
+    "title": "Finish the next zSSH public plugin release increment",
     "priority": "P0",
     "status": "queued",
     "eligible": true,
-    "completion_criteria": "zSSH heeft een production-grade publieke OpenAI-pluginroute met OAuth 2.1, target pairing/revocation, stabiele HTTPS MCP-endpoint, review package en groene end-to-end submission-readiness evidence zonder de bestaande private zSSH-flow te breken.",
-    "source_url": "https://github.com/Zennay/zSSH"
-  },
-  {
-    "queue_id": "raiseai-openrouter-provider-live",
-    "project_id": "raiseai",
-    "title": "OpenRouter-provider live deployen en gateway-response bewijzen",
-    "priority": "P1",
-    "status": "queued",
-    "eligible": true,
-    "completion_criteria": "Live provider deploy is aantoonbaar actief en een echte gateway-response is met reproduceerbare evidence bewezen.",
-    "source_url": "https://app.notion.com/3e99e19ac9558156ab58e00a9ebce5ae"
+    "completion_criteria": "Make a material production-grade code/config/workflow change that advances the self-hosted public OpenAI plugin route: OAuth/pairing/revocation, stable HTTPS MCP, plugin-safe capability boundaries, submission package or end-to-end readiness evidence. Preserve the existing private zSSH flow and never replace self-hosting with a Zennay-operated command relay. Tests or live workflow evidence are required.",
+    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
   },
   {
     "queue_id": "cloud-permanent-vps-first-deploylane",
     "project_id": "cloud",
-    "title": "Permanente VPS-first deploylane zonder tijdelijke HaxLab bridge",
+    "title": "Harden the permanent VPS-first deploy lane",
     "priority": "P1",
     "status": "queued",
     "eligible": true,
-    "completion_criteria": "zCloud heeft een permanente, geteste VPS-first deploylane zonder tijdelijke HaxLab bridge en met groene deploy-evidence.",
-    "source_url": "https://app.notion.com/3e99e19ac95581f4acf5d35099276bed"
+    "completion_criteria": "Implement and validate the next reliability increment for the permanent zCloud VPS-first deploy lane, keeping rollback/LKG/canary protections and avoiding temporary cross-project bridges. Completion requires code/workflow changes plus green automated evidence.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "cloud-auto-lane-generator",
+    "project_id": "cloud",
+    "title": "Implement automatic worker lanes from project type and backlog",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a deterministic lane generator that derives non-overlapping execution lanes from project type, current backlog and claims, with regression tests proving it avoids duplicate/conflicting write scopes.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "cloud-progress-telemetry-adapters",
+    "project_id": "cloud",
+    "title": "Implement evidence-based project telemetry adapters",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement the adapter interface and at least one real project adapter so zCloud can distinguish latest/current/best validated progress using timestamped sources. Add tests and preserve generic fallback for projects without adapters.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "cloud-structured-eventstream",
+    "project_id": "cloud",
+    "title": "Build the central structured worker event stream",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement structured worker/task/validation/resource events with correlation IDs and a central read path for dashboard/debugging. Include migration-safe storage and regression tests.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "cloud-browser-runner-reliability",
+    "project_id": "cloud",
+    "title": "Harden browser worker conversation and duplicate-send reliability",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a concrete browser-runner reliability increment around deterministic conversation identity, reconnect, generation-boundary detection or duplicate-send prevention, with regression tests and no impact on unrelated tabs.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "ftmo-current-generation-safe-gate",
+    "project_id": "ftmo",
+    "title": "Advance FTMO through the next preregistered safe generation gate",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Advance the current FTMO generation by implementing or executing the next allowed preregistered code/config/workflow gate on the self-hosted path. Preserve provider provenance, frozen split, development/walk-forward/final-holdout isolation, zero paid cloud and paper-only safety. Completion requires a material persisted change plus deterministic test/workflow evidence; do not inspect sealed outcomes early.",
+    "source_url": "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"
+  },
+  {
+    "queue_id": "raiseai-gateway-e2e-automation",
+    "project_id": "raiseai",
+    "title": "Make Raise AI gateway deployment and live smoke verification repeatable",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement the next idempotent deploy/restart/live-smoke automation increment for Raise AI so merged gateway code can be proven live without manual shell sequences. Keep secrets server-side and add regression/workflow evidence.",
+    "source_url": "https://app.notion.com/p/3e09e19ac95581709502f992608b8abd"
+  },
+  {
+    "queue_id": "raiseai-smart-home-connector",
+    "project_id": "raiseai",
+    "title": "Implement the next scoped smart-home connector increment",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a bounded, testable connector increment for the smart_home route without exposing broad arbitrary execution. Add authorization/failure-path tests and keep the existing zCloud/current-info/AI routing intact.",
+    "source_url": "https://app.notion.com/p/3e09e19ac95581709502f992608b8abd"
+  },
+  {
+    "queue_id": "supa-production-mobile-foundation",
+    "project_id": "supa",
+    "title": "Build the Supa production mobile UI foundation",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a material mobile-first production UI/state increment in the canonical Supa app, preserving the validated planner-first and budget-first flow. Completion requires code plus automated build/test evidence.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3"
+  },
+  {
+    "queue_id": "supa-planner-state-flow",
+    "project_id": "supa",
+    "title": "Connect the Supa planner flow to real app state",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement typed state and persistence through the planner flow so onboarding/budget/planning decisions survive navigation and can drive downstream grocery/recipe logic. Add tests for the critical state transitions.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3"
+  },
+  {
+    "queue_id": "supa-recipe-offer-engine",
+    "project_id": "supa",
+    "title": "Implement the next recipe and offer engine slice",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a deterministic production slice that converts grocery/offer data into planner-ready recipe or basket choices with explicit savings data, typed boundaries and regression tests.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3"
   },
   {
     "queue_id": "haxlab-closed-loop-arena-v2-implementation",
