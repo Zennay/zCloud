@@ -1847,7 +1847,7 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
     )
     if any(marker in combined for marker in human_only):
         return False
-    non_exec_prefixes=('inspect ','audit ','review ','verify ','check ','monitor ','report ','summarize ','status ')
+    non_exec_prefixes=('inspect ','audit ','review ','verify ','check ','monitor ','report ','summarize ','status ','superseded ')
     execution_markers=(
         'implement','build','fix','change','write','deploy','merge','create','update','refactor',
         'execute','run ','train','generate','migrate','configure','persist','material code',
@@ -2038,7 +2038,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         parent_queue_id=parent_queue_id,
     )
 
-def portfolio_queue_audit():
+def portfolio_queue_audit(refill=True):
     """Keep the execution queue write-only, broad enough, and separate from human gates."""
     removed=[]
     with connect() as c:
@@ -2052,6 +2052,11 @@ def portfolio_queue_audit():
                              claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=? WHERE queue_id=?""",
                           ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
                 removed.append(str(row['queue_id']))
+    if not refill:
+        with connect() as c:
+            ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+            projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+        return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':[],'time':now()}
     # Keep at least one executable item available for every non-human-gated active project.
     with connect() as c:
         rows=c.execute("""SELECT DISTINCT project_id FROM portfolio_queue
@@ -2100,7 +2105,6 @@ def portfolio_queue_health():
     }
 
 def portfolio_queue_allocate():
-    portfolio_queue_audit()
     ts_dt=datetime.now(timezone.utc)
     ts=ts_dt.isoformat()
     lease_until=(ts_dt+timedelta(seconds=PORTFOLIO_QUEUE_LEASE_SECONDS)).isoformat()
@@ -2226,7 +2230,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             created=portfolio_write_continuation(row['project_id'],queue_id)
         except ValueError:
             created=None
-    audit=portfolio_queue_audit()
+    audit=portfolio_queue_audit(refill=False)
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
 
 def portfolio_queue_allocation():
@@ -2400,6 +2404,7 @@ def _autonomy_deactivate_project(project_id,reason):
     return True
 
 def autonomy_scheduler_tick():
+    portfolio_queue_audit()
     portfolio_queue_allocate()
     states=autonomy_states()
     targets=runner_targets()
