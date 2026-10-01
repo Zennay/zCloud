@@ -10,15 +10,14 @@ permissions:
   contents: read
   statuses: write
 
-concurrency:
-  group: zcloud-production-deploy
-  # Never cancel an in-flight production transaction. A queued workflow_run
-  # must prove that its tested SHA is still the current main head before writes.
-  cancel-in-progress: false
-
 jobs:
   deploy:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    if: github.run_attempt == 1 && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    concurrency:
+      group: zcloud-production-deploy
+      # Never cancel an in-flight production transaction. Keeping concurrency
+      # at job scope means skipped deploy reruns cannot evict a fresh pending job.
+      cancel-in-progress: false
     runs-on: self-hosted
     timeout-minutes: 15
     steps:
