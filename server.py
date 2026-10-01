@@ -2553,6 +2553,9 @@ def runner_record(payload):
     if event=='runner-auto-paused':
         event='quality-recovery-requested'
         reason='backend-rejected-automatic-worker-pause'
+    if event=='runner-paused' and reason!='dashboard-pause':
+        event='quality-recovery-requested'
+        reason='backend-rejected-non-dashboard-worker-pause'
     event_provider=str(payload.get('provider') or '').strip().lower()
     if event_provider not in ('chatgpt','claude'):
         event_provider='claude' if re.search(r'https?://(?:www\\.)?(?:claude\\.ai|claude\\.com)/',target,re.I) else 'chatgpt'
