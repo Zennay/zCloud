@@ -2140,6 +2140,16 @@ def portfolio_queue_allocate():
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                                AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+            if row and str(row['status']) == 'claimed':
+                higher=c.execute("""SELECT * FROM portfolio_queue
+                                    WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                                    ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                                             created_at, queue_id LIMIT 1""").fetchone()
+                if higher and _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority']):
+                    c.execute("""UPDATE portfolio_queue
+                                 SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                                 WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
+                    row=None
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
