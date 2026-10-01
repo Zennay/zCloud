@@ -460,6 +460,39 @@ class TransactionalPromotionTests(unittest.TestCase):
             set(promote.PRECHANGE_TRUSTED_ANCESTOR_DRIFT),
         )
 
+    def test_explicit_prechange_drift_rejects_non_replaceable_paths(self):
+        with self.assertRaises(promote.PromotionError):
+            promote.promote(
+                self.candidate,
+                self.root,
+                Path(self.tmp.name) / "state",
+                ["server.py"],
+                prechange_allow_changes=["server.py"],
+            )
+
+    def test_explicit_prechange_drift_requires_candidate_path(self):
+        with self.assertRaises(promote.PromotionError):
+            promote.promote(
+                self.candidate,
+                self.root,
+                Path(self.tmp.name) / "state",
+                ["server.py"],
+                prechange_allow_changes=["public/zcloud-worker.user.js"],
+            )
+
+    def test_explicit_prechange_drift_is_merged_into_guard_allowlist(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "zcloud_transactional_promote.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("*explicit_prechange_drift", source)
+        self.assertIn("--preserve-prechange-drift", source)
+        self.assertIn(
+            "if rel not in PRECHANGE_REPLACEABLE_DRIFT",
+            source,
+        )
+
     def test_prechange_reconciles_only_exact_candidate_aligned_drift(self):
         calls = []
         original_run = promote.run
