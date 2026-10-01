@@ -2,8 +2,10 @@
 """Claim a zSSH runtime release through the local zCloud coordination gate."""
 
 import argparse
+import http.client
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -15,14 +17,42 @@ CLAIM = "m1-live-file-proof-and-standalone-release"
 PROJECT_REF = "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
 HANDOFF_REF = "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8"
 
+_TRANSIENT_HTTP = {502, 503, 504}
 
-def get_json(url):
+
+def _read_error_body(error):
+    try:
+        return error.read().decode("utf-8", "replace")[:1000]
+    except Exception:
+        return ""
+
+
+def get_json(url, *, attempts=3, delay_seconds=1):
+    """GET JSON with narrow retries for transient control-plane failures."""
     request = urllib.request.Request(url, headers={"User-Agent": "zssh-release-runner"})
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.load(response)
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            detail = _read_error_body(error)
+            if error.code not in _TRANSIENT_HTTP or attempt + 1 >= attempts:
+                raise RuntimeError(
+                    f"GET {url} rejected request ({error.code}): {detail}"
+                ) from error
+            last_error = error
+        except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as error:
+            if attempt + 1 >= attempts:
+                raise RuntimeError(
+                    f"GET {url} transport failed after {attempts} attempt(s): {error}"
+                ) from error
+            last_error = error
+        time.sleep(delay_seconds * (attempt + 1))
+    raise RuntimeError(f"GET {url} failed: {last_error}")
 
 
-def post_json(endpoint, payload):
+def post_json(endpoint, payload, *, allow_conflict=False):
     request = urllib.request.Request(
         BASE + endpoint,
         data=json.dumps(payload).encode(),
@@ -33,7 +63,14 @@ def post_json(endpoint, payload):
         with urllib.request.urlopen(request, timeout=15) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", "replace")[:1000]
+        detail = _read_error_body(error)
+        if allow_conflict and error.code == 409:
+            try:
+                parsed = json.loads(detail or "{}")
+            except json.JSONDecodeError:
+                parsed = {}
+            if parsed.get("released") is False:
+                return parsed
         raise RuntimeError(f"zCloud {endpoint} rejected request ({error.code}): {detail}") from error
 
 
@@ -91,10 +128,13 @@ def acquire(expected_sha):
 
 
 def release():
+    # The cleanup step runs with if: always(). If preflight failed before a
+    # claim existed, the API returns 409 {"released": false}; that is a safe,
+    # idempotent cleanup result and must not hide the original failure.
     result = post_json("/api/task-claims", {
         "action": "release", "project_id": PROJECT,
         "claim_key": CLAIM, "owner_id": owner(),
-    })
+    }, allow_conflict=True)
     print(f"ZSSH_RELEASE_CLAIM_RELEASED released={result.get('released', False)}")
 
 
