@@ -1,4 +1,5 @@
 name: Queue zSSH HaxLab Candidate-B runtime probe
+# trigger: candidate-b-runtime-probe-v2
 
 on:
   push:
