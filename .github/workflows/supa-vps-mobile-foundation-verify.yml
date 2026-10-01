@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/Supa
-          ref: c61615bd2074e36b39800001152496be9692ee24
+          ref: 1bf6742d21260e1c13115a151b60ce8ec1b36835
           path: supa
 
       - name: Set up Node
