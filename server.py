@@ -2039,11 +2039,15 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
             sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
         parent_queue_id=f'auto-refill-{project_id}-{sequence}'
     criteria=(
-        f'Read the current {name} HQ/handoff and execute the highest-value safe unblocked write-capable roadmap step. '
-        'Completion requires at least one material code/config/workflow/experiment/runtime state change plus automated '
-        'test/build/run evidence. Read-only inspection, audit, status, checklist, documentation-only or evidence collection '
-        'alone cannot complete this item. If a narrow evidence gate is already resolved, continue within this assignment '
-        'to the next safe write-capable roadmap step instead of stopping.'
+        f'Read the current {name} HQ/handoff and execute a substantial multi-step work package, not a single micro-task. '
+        'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
+        'then complete as many adjacent write-capable steps as can be safely finished in the same lane before yielding. '
+        'Completion requires at least three material implementation actions across code/config/workflows/experiments/runtime state '
+        'OR one clearly large end-to-end implementation that spans multiple files/components, plus automated test/build/run evidence. '
+        'A single tiny edit, one config tweak, one commit, read-only inspection, audit, status, checklist, documentation-only work, '
+        'or evidence collection alone cannot complete this item. After every successful sub-step, immediately continue to the next '
+        'safe adjacent roadmap step within the same assignment. Only return DONE when the work package is genuinely exhausted, '
+        'a meaningful milestone is proven green, or further progress requires a real human/external gate.'
     )
     if next_step:
         criteria += ' Current project next-step hint: ' + next_step
@@ -2051,7 +2055,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         criteria += ' FTMO priority rule: keep advancing safe preregistered generations continuously; after one gate is proven, continue to the next safe write-capable generation step instead of yielding the lane to lower-priority projects.'
     return portfolio_queue_enqueue(
         project_id,
-        f'Implement next {name} roadmap increment',
+        f'Execute substantial {name} roadmap work package',
         priority,
         criteria,
         project.get('notion_url') or project.get('handoff_url') or '',
