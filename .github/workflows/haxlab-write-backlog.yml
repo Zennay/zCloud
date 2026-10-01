@@ -136,6 +136,31 @@ jobs:
                           "result":result,
                       },sort_keys=True))
 
+          # Reconcile the existing worker pool without changing its settings so
+          # the freshly freed slot is immediately allocated by global priority.
+          with urllib.request.urlopen(base+"/api/dynamic-workers",timeout=10) as r:
+              settings=json.load(r).get("dynamic_workers") or {}
+          same_settings={
+              key:settings.get(key)
+              for key in (
+                  "chatgpt_count","claude_count",
+                  "chatgpt_cooldown_seconds","claude_cooldown_seconds",
+                  "check_interval_ms","tick_interval_ms",
+                  "heartbeat_interval_ms","generation_start_timeout_ms",
+                  "scheduler_interval_seconds"
+              )
+              if settings.get(key) is not None
+          }
+          req=urllib.request.Request(
+              base+"/api/dynamic-workers",
+              data=json.dumps(same_settings).encode(),
+              method="POST",
+              headers={"Content-Type":"application/json","X-ZCloud-Actor":"haxlab-write-queue-normalizer"},
+          )
+          with urllib.request.urlopen(req,timeout=10) as r:
+              reconciled=json.load(r)
+          print("WORKER_POOL_RECONCILED",json.dumps(reconciled,sort_keys=True))
+
           final=get_queue()
           hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
           print("HAXLAB_ELIGIBLE_FINAL",json.dumps([
