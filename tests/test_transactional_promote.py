@@ -528,6 +528,71 @@ class TransactionalPromotionTests(unittest.TestCase):
             )
         )
 
+    def test_audited_resource_policy_accepts_json_equivalent_bytes(self):
+        state = Path(self.tmp.name) / "semantic-state"
+        snapshot = state / "snapshots" / "lkg-semantic"
+        files = snapshot / "files"
+        files.mkdir(parents=True)
+        (state / "last-known-good.json").write_text(
+            json.dumps({"snapshot_id": "lkg-semantic"}), encoding="utf-8"
+        )
+        (snapshot / "manifest.json").write_text(
+            json.dumps({"snapshot_id": "lkg-semantic", "created_at": "2026-10-01T20:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        (files / "resource-policy.json").write_text(
+            '{"ftmo":{"priority":"turbo"},"supa":{"priority":"high"}}\n',
+            encoding="utf-8",
+        )
+        (self.root / "resource-policy.json").write_text(
+            '{\n  "supa": {"priority": "high"},\n  "ftmo": {"priority": "turbo"}\n}\n',
+            encoding="utf-8",
+        )
+        self.assertTrue(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "resource-policy.json"
+            )
+        )
+
+    def test_audited_resource_policy_rejects_non_priority_semantic_drift(self):
+        state = Path(self.tmp.name) / "semantic-state-other"
+        snapshot = state / "snapshots" / "lkg-other"
+        files = snapshot / "files"
+        files.mkdir(parents=True)
+        (state / "last-known-good.json").write_text(
+            json.dumps({"snapshot_id": "lkg-other"}), encoding="utf-8"
+        )
+        (snapshot / "manifest.json").write_text(
+            json.dumps({"snapshot_id": "lkg-other", "created_at": "2026-10-01T20:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        baseline = {"ftmo": {"priority": "normal", "weight": 1}}
+        current = {"ftmo": {"priority": "turbo", "weight": 99}}
+        (files / "resource-policy.json").write_text(json.dumps(baseline), encoding="utf-8")
+        (self.root / "resource-policy.json").write_text(json.dumps(current), encoding="utf-8")
+        db = self.root / "history.db"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "CREATE TABLE config_audit("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
+                "config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, "
+                "new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+            )
+            conn.execute(
+                "INSERT INTO config_audit(ts,actor,config_key,target,old_value_json,new_value_json,result,detail) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "2026-10-01T21:00:00+00:00", "dashboard@test",
+                    "resource.priority", "ftmo", json.dumps("normal"),
+                    json.dumps("turbo"), "succeeded", "saved",
+                ),
+            )
+        self.assertFalse(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "resource-policy.json"
+            )
+        )
+
     def test_run_prechange_reconciles_only_audited_runtime_config_drift(self):
         calls = []
         original_run = promote.run
