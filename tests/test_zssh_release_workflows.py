@@ -14,6 +14,11 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('!= "P1"', text)
         self.assertNotIn('"priority": "P0"', text)
 
+    def test_release_coordination_uses_control_plane_health_profile(self):
+        text = (ROOT / "scripts/zssh_release_coordination.py").read_text(encoding="utf-8")
+        self.assertIn('"vps_profile": "control_plane"', text)
+        self.assertIn('get_json(BASE + "/api/status")', text)
+
     def test_vps_release_uses_permanent_runner_guard(self):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: self-hosted", text)

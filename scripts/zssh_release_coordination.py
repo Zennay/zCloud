@@ -100,6 +100,7 @@ def acquire(expected_sha):
         "project_id": PROJECT,
         "worker_id": WORKER,
         "owner_id": owner(),
+        "vps_profile": "control_plane",
         "notion": {"checked": True, "project_ref": PROJECT_REF, "handoff_ref": HANDOFF_REF},
         "github": {
             "checked": True, "repo": REPO, "main_sha": actual_sha,
