@@ -1,0 +1,96 @@
+name: Recover zCloud and allocate HaxLab P1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-haxlab-allocation-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Recover control plane and reconcile queue
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "SERVICE_BEFORE=$(systemctl is-active zennay-cloud.service || true)"
+          if ! systemctl is-active --quiet zennay-cloud.service; then
+            sudo -n systemctl restart zennay-cloud.service
+          fi
+
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          base="http://127.0.0.1:8765"
+
+          def get(path):
+              with urllib.request.urlopen(base+path,timeout=8) as r:
+                  return json.load(r)
+
+          def post(path,payload):
+              req=urllib.request.Request(
+                  base+path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={
+                      "Content-Type":"application/json",
+                      "X-ZCloud-Actor":"haxlab-allocation-recovery",
+                  },
+              )
+              with urllib.request.urlopen(req,timeout=10) as r:
+                  return json.load(r)
+
+          last=None
+          for _ in range(30):
+              try:
+                  status=get("/api/status")
+                  if not status.get("errors"):
+                      print("ZCLOUD_RECOVERED",json.dumps({
+                          "time":status.get("time"),
+                          "errors":status.get("errors"),
+                      },sort_keys=True))
+                      break
+                  last=status
+              except Exception as exc:
+                  last=repr(exc)
+              time.sleep(2)
+          else:
+              raise RuntimeError("zCloud API did not recover: "+str(last)[:1000])
+
+          current=get("/api/dynamic-workers").get("dynamic_workers") or {}
+          keys=(
+              "chatgpt_count","claude_count",
+              "chatgpt_cooldown_seconds","claude_cooldown_seconds",
+              "check_interval_ms","tick_interval_ms",
+              "heartbeat_interval_ms","generation_start_timeout_ms",
+              "scheduler_interval_seconds",
+          )
+          same={k:current[k] for k in keys if current.get(k) is not None}
+          reconcile=post("/api/dynamic-workers",same)
+          print("POOL_RECONCILED",json.dumps(reconcile,sort_keys=True))
+
+          queue=get("/api/portfolio-queue?all=1")
+          item=next(
+              (x for x in queue.get("items",[])
+               if x.get("queue_id")=="haxlab-closed-loop-arena-v2-implementation"),
+              None,
+          )
+          if not item:
+              raise RuntimeError("HaxLab Arena v2 P1 item missing")
+          print("HAXLAB_P1_LIVE",json.dumps(item,sort_keys=True))
+          print("ALLOCATION_LIVE",json.dumps(queue.get("allocation"),sort_keys=True))
+          if str(item.get("status") or "").lower() not in {"claimed","running","verifying"}:
+              raise RuntimeError("HaxLab Arena v2 P1 not allocated after reconcile")
+          PY
+
+          echo "SERVICE_AFTER=$(systemctl is-active zennay-cloud.service || true)"
