@@ -1,0 +1,160 @@
+name: zCloud Violentmonkey profile diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-violentmonkey-profile-diagnostic.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-violentmonkey-profile-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          fetch-depth: 1
+
+      - name: Inspect Firefox profile and userscript runtime
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import configparser
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          home = Path.home()
+          roots = [
+              home / "snap/firefox/common/.mozilla/firefox",
+              home / ".mozilla/firefox",
+          ]
+
+          proc = subprocess.run(
+              ["pgrep", "-u", str(os.getuid()), "-f", r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+              text=True, capture_output=True, check=False,
+          )
+          pids = [int(x) for x in proc.stdout.split() if x.isdigit()]
+          main_pids = []
+          for pid in pids:
+              try:
+                  cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+              except OSError:
+                  continue
+              if " -contentproc " not in f" {cmd} " and "/usr/lib/firefox/firefox" in cmd:
+                  main_pids.append({"pid": pid, "cmdline": cmd})
+
+          profiles = []
+          for root in roots:
+              ini = root / "profiles.ini"
+              configured = {}
+              if ini.exists():
+                  parser = configparser.ConfigParser()
+                  parser.read(ini, encoding="utf-8")
+                  for section in parser.sections():
+                      if not section.lower().startswith("profile"):
+                          continue
+                      path = parser.get(section, "Path", fallback="")
+                      is_relative = parser.getboolean(section, "IsRelative", fallback=True)
+                      profile_path = (root / path) if is_relative else Path(path)
+                      configured[str(profile_path.resolve())] = {
+                          "section": section,
+                          "name": parser.get(section, "Name", fallback=""),
+                          "default": parser.get(section, "Default", fallback="0") == "1",
+                      }
+
+              if not root.exists():
+                  continue
+              for profile in sorted(p for p in root.iterdir() if p.is_dir()):
+                  resolved = str(profile.resolve())
+                  extensions = []
+                  ext_json = profile / "extensions.json"
+                  if ext_json.exists():
+                      try:
+                          data = json.loads(ext_json.read_text(encoding="utf-8"))
+                          for addon in data.get("addons") or []:
+                              text = " ".join(str(addon.get(k) or "") for k in ("id","name","path","sourceURI")).lower()
+                              if "violentmonkey" in text or "violent" in text:
+                                  extensions.append({
+                                      "id": addon.get("id"),
+                                      "name": addon.get("name"),
+                                      "active": addon.get("active"),
+                                      "userDisabled": addon.get("userDisabled"),
+                                      "appDisabled": addon.get("appDisabled"),
+                                      "path": addon.get("path"),
+                                  })
+                      except Exception as exc:
+                          extensions.append({"extensions_json_error": str(exc)[:300]})
+
+                  vm_files = []
+                  for pattern in (
+                      "**/*violentmonkey*",
+                      "**/*Violentmonkey*",
+                      "**/storage.js",
+                  ):
+                      for match in profile.glob(pattern):
+                          try:
+                              if match.is_file():
+                                  vm_files.append(str(match.relative_to(profile)))
+                          except OSError:
+                              pass
+                          if len(vm_files) >= 30:
+                              break
+                      if len(vm_files) >= 30:
+                          break
+
+                  lock = any((profile / name).exists() for name in ("parent.lock", ".parentlock", "lock"))
+                  profiles.append({
+                      "path": resolved,
+                      "configured": configured.get(resolved),
+                      "locked_or_active_hint": lock,
+                      "violentmonkey_addons": extensions,
+                      "violentmonkey_related_files": sorted(set(vm_files))[:30],
+                      "prefs_exists": (profile / "prefs.js").exists(),
+                      "times_json_exists": (profile / "times.json").exists(),
+                  })
+
+          # Identify profile paths actually held open by the main Firefox process.
+          open_profile_paths = {}
+          for proc_info in main_pids:
+              pid = proc_info["pid"]
+              found = set()
+              fd_root = Path(f"/proc/{pid}/fd")
+              try:
+                  fds = list(fd_root.iterdir())
+              except OSError:
+                  fds = []
+              for fd in fds[:2048]:
+                  try:
+                      target = Path(os.readlink(fd))
+                  except OSError:
+                      continue
+                  for profile in profiles:
+                      p = profile["path"]
+                      if str(target).startswith(p + "/") or str(target) == p:
+                          found.add(p)
+              open_profile_paths[str(pid)] = sorted(found)
+
+          result = {
+              "main_firefox": main_pids,
+              "open_profile_paths": open_profile_paths,
+              "profiles": profiles,
+          }
+          print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
