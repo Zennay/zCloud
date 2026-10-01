@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
-          fetch-depth: 1
+          fetch-depth: 512
 
       - name: Read live canary and worker state
         shell: bash
@@ -114,6 +114,72 @@ jobs:
               print("served_userscript_sha", hashlib.sha256(text.encode()).hexdigest())
           except Exception as e:
               print("served_userscript_error", repr(e))
+          PY
+          echo "=== DEPLOY DRIFT PROVENANCE ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, sqlite3, subprocess
+          from datetime import datetime
+
+          root=Path("/home/ubuntu/zennay-cloud")
+          repo=Path.cwd()
+          state=Path.home()/".local/state/zcloud/recovery"
+
+          def sha(path):
+              path=Path(path)
+              return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+          def ancestor_match(rel, live_sha):
+              proc=subprocess.run(
+                  ["git","rev-list","--first-parent","--max-count=512","HEAD"],
+                  text=True,capture_output=True,check=False,
+              )
+              for commit in proc.stdout.splitlines():
+                  blob=subprocess.run(
+                      ["git","show",f"{commit}:{rel}"],
+                      capture_output=True,check=False,
+                  )
+                  if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == live_sha:
+                      return commit
+              return None
+
+          report={}
+          for rel in ("server.py","resource-policy.json"):
+              live=root/rel
+              candidate=repo/rel
+              live_sha=sha(live)
+              candidate_sha=sha(candidate)
+              report[rel]={
+                  "live_sha256":live_sha,
+                  "candidate_sha256":candidate_sha,
+                  "equal":bool(live_sha and live_sha == candidate_sha),
+                  "recent_first_parent_match":ancestor_match(rel, live_sha) if live_sha else None,
+              }
+
+          try:
+              pointer=json.loads((state/"last-known-good.json").read_text())
+              manifest=json.loads((state/"snapshots"/pointer["snapshot_id"]/"manifest.json").read_text())
+              report["lkg"]={
+                  "snapshot_id":pointer.get("snapshot_id"),
+                  "created_at":manifest.get("created_at"),
+              }
+          except Exception as exc:
+              report["lkg"]={"error":type(exc).__name__}
+
+          try:
+              conn=sqlite3.connect(root/"history.db",timeout=4)
+              rows=conn.execute(
+                  "SELECT ts,target,new_value_json,result FROM config_audit "
+                  "WHERE config_key='resource.priority' ORDER BY id DESC LIMIT 20"
+              ).fetchall()
+              conn.close()
+              report["resource_priority_audit"]=[
+                  {"ts":r[0],"target":r[1],"new_value_json":r[2],"result":r[3]} for r in rows
+              ]
+          except Exception as exc:
+              report["resource_priority_audit"]={"error":type(exc).__name__}
+
+          print(json.dumps(report,sort_keys=True,indent=2))
           PY
           echo "=== FIREFOX JOURNAL TAIL ==="
           journalctl --user -u chatgpt-firefox.service -n 80 --no-pager
