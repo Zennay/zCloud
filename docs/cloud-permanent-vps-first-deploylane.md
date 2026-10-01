@@ -25,3 +25,9 @@ This document records the contract while the deploy workflow implementation is b
 - Untracked/manual resource-policy drift remains fail-closed.
 - Known non-runtime userscript backup files are moved into the existing zCloud runtime-backup directory before the pre-change guard, never deleted.
 - This keeps dashboard-owned resource priorities persistent without weakening source-drift protection for executable files.
+
+## Bounded green-main coalescing
+- Serialized deploy jobs wait up to 180 seconds for the **current** `main` SHA to receive a successful push regression.
+- If `main` advances during that window, the job fetches and checks out the new current SHA, then restarts the exact-green lookup for that revision.
+- The independent pre-write SHA reconfirmation remains mandatory, so a commit that lands after green resolution still prevents any VPS write.
+- The wait is bounded; if current `main` never becomes green within the window the run exits without production writes.
