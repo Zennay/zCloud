@@ -54,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import http.client
           import json
           import time
           import urllib.error
@@ -67,13 +68,20 @@ jobs:
               if payload is not None:
                   body = json.dumps(payload).encode("utf-8")
                   headers["Content-Type"] = "application/json"
-              request = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
-              try:
-                  with urllib.request.urlopen(request, timeout=15) as response:
-                      return json.load(response)
-              except urllib.error.HTTPError as exc:
-                  detail = exc.read().decode("utf-8", "replace")
-                  raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
+              attempts = 3 if method == "GET" else 1
+              for attempt in range(attempts):
+                  request = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+                  try:
+                      with urllib.request.urlopen(request, timeout=15) as response:
+                          return json.load(response)
+                  except urllib.error.HTTPError as exc:
+                      detail = exc.read().decode("utf-8", "replace")
+                      raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
+                  except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as exc:
+                      if attempt + 1 >= attempts:
+                          raise SystemExit(f"{method} {path} transport failed after {attempts} attempt(s): {exc}") from exc
+                      time.sleep(1)
+              raise AssertionError("unreachable")
 
           def worker_key(item):
               key = str(item.get("worker_key") or "").strip()
