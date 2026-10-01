@@ -211,6 +211,28 @@ jobs:
             echo "NO_STALE_NON_RUNTIME_USERSCRIPT_BACKUPS"
           fi
 
+      - name: Quarantine generated Python bytecode before guarded promotion
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="/home/ubuntu/zennay-cloud/scripts/__pycache__"
+          if [[ ! -d "$live" ]]; then
+            echo "NO_LIVE_PYTHON_BYTECODE_CACHE"
+            exit 0
+          fi
+          quarantine="$HOME/.local/state/zcloud/runtime-backups"
+          mkdir -p "$quarantine"
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          target="$quarantine/scripts-__pycache__.$stamp"
+          suffix=0
+          while [[ -e "$target" ]]; do
+            suffix=$((suffix + 1))
+            target="$quarantine/scripts-__pycache__.$stamp.$suffix"
+          done
+          mv -- "$live" "$target"
+          echo "QUARANTINED_LIVE_PYTHON_BYTECODE=$target"
+
       - name: Ensure Firefox automation service for guarded canaries
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
