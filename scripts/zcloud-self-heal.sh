@@ -105,8 +105,16 @@ heal_project_runtimes() {
     heal_system_unit "${service}"
   done
 
-  # User services owned by the ubuntu runtime account.
-  for service in raise-gateway.service zssh.service; do
+  # User services owned by the ubuntu runtime account. Recover the browser
+  # dependency chain first; otherwise runner commands can remain pending forever
+  # while zCloud itself still looks healthy.
+  for service in \
+    chatgpt-display.service \
+    chatgpt-openbox.service \
+    chatgpt-firefox.service \
+    raise-gateway.service \
+    zssh.service
+  do
     heal_user_unit "${service}"
   done
 }
