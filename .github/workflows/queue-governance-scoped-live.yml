@@ -1,0 +1,184 @@
+name: Scoped queue governance deploy
+
+on:
+  push:
+    branches:
+      - ops/queue-governance-scoped-live-20261001
+    paths:
+      - .github/workflows/queue-governance-scoped-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-queue-governance-scoped-live
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 8
+
+      - name: Verify scoped candidate matches current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=8
+          files=(
+            server.py
+            projects.json
+            portfolio_queue.seed.json
+            public/app.js
+            public/style.css
+          )
+          git diff --exit-code origin/main -- "${files[@]}"
+          python3 -m py_compile server.py
+          python3 -m unittest             tests.test_portfolio_queue_backend             tests.test_mobile_runner_controls
+          node --check public/app.js
+          echo "QUEUE_GOVERNANCE_CANDIDATE_GREEN"
+
+      - name: Promote only queue governance files and verify live
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          service="zennay-cloud.service"
+          sentinel="$root/.disable-self-heal"
+          backup="$HOME/.local/state/zcloud/queue-governance-backups/${GITHUB_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+          files=(
+            server.py
+            projects.json
+            portfolio_queue.seed.json
+            public/app.js
+            public/style.css
+          )
+
+          mkdir -p "$backup"
+          created_sentinel=0
+          if [[ ! -e "$sentinel" ]]; then
+            touch "$sentinel"
+            created_sentinel=1
+          fi
+
+          rollback() {
+            code=$?
+            trap - ERR
+            echo "QUEUE_GOVERNANCE_ROLLBACK code=$code"
+            for f in "${files[@]}"; do
+              if [[ -f "$backup/$f" ]]; then
+                mkdir -p "$root/$(dirname "$f")"
+                cp -a "$backup/$f" "$root/$f"
+              elif [[ -f "$backup/.missing-$f" ]]; then
+                rm -f "$root/$f"
+              fi
+            done
+            sudo -n systemctl restart "$service" || true
+            if [[ "$created_sentinel" == "1" ]]; then rm -f "$sentinel"; fi
+            exit "$code"
+          }
+          trap rollback ERR
+
+          for f in "${files[@]}"; do
+            mkdir -p "$backup/$(dirname "$f")"
+            if [[ -f "$root/$f" ]]; then
+              cp -a "$root/$f" "$backup/$f"
+            else
+              mkdir -p "$backup/$(dirname ".missing-$f")"
+              : > "$backup/.missing-$f"
+            fi
+            mkdir -p "$root/$(dirname "$f")"
+            tmp="$root/$f.queue-governance.$$"
+            cp "$GITHUB_WORKSPACE/$f" "$tmp"
+            if [[ -f "$root/$f" ]]; then
+              chmod --reference="$root/$f" "$tmp"
+            fi
+            mv -f "$tmp" "$root/$f"
+          done
+
+          sudo -n systemctl restart "$service"
+
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          base="http://127.0.0.1:8765"
+
+          def get(path):
+              with urllib.request.urlopen(base+path, timeout=8) as response:
+                  return json.load(response)
+
+          status=None
+          last=None
+          for _ in range(40):
+              try:
+                  status=get("/api/status")
+                  if (
+                      isinstance(status.get("attention_needed"), list)
+                      and isinstance(status.get("portfolio_queue_health"), dict)
+                      and not status.get("errors")
+                  ):
+                      break
+                  last=status
+              except Exception as exc:
+                  last=repr(exc)
+              time.sleep(1)
+          else:
+              raise RuntimeError("new queue-governance API did not become healthy: "+str(last)[:1500])
+
+          attention=get("/api/portfolio-attention")
+          queue=get("/api/portfolio-queue?all=1")
+          items=queue.get("items") or []
+          runnable=[
+              item for item in items
+              if item.get("eligible") and str(item.get("status") or "").lower()
+                 in {"queued","claimed","running","verifying"}
+          ]
+          projects={str(item.get("project_id") or "") for item in runnable}
+          expected={"cloud","ftmo","haxlab","raiseai","supa","zssh"}
+          missing=sorted(expected-projects)
+          if missing:
+              raise RuntimeError("runnable roadmap projects missing: "+",".join(missing))
+          if any(str(item.get("project_id"))=="ulab" for item in runnable):
+              raise RuntimeError("uLab human-gated work leaked into execution queue")
+
+          forbidden_prefixes=(
+              "inspect ","audit ","review ","verify ","check ","monitor ",
+              "report ","summarize ","status ","superseded "
+          )
+          bad=[
+              item.get("queue_id") for item in runnable
+              if str(item.get("title") or "").strip().lower().startswith(forbidden_prefixes)
+          ]
+          if bad:
+              raise RuntimeError("non-executable items still runnable: "+",".join(map(str,bad)))
+
+          attention_items=attention.get("items") or []
+          if not any(
+              item.get("project_id")=="ulab" and item.get("status")=="open"
+              for item in attention_items
+          ):
+              raise RuntimeError("uLab human gate missing from Attention Needed")
+
+          health=status["portfolio_queue_health"]
+          if int(health.get("ready") or 0) < 10:
+              raise RuntimeError("queue is still too small: "+json.dumps(health,sort_keys=True))
+
+          print("QUEUE_GOVERNANCE_LIVE_GREEN",json.dumps({
+              "ready":health.get("ready"),
+              "projects":sorted(projects),
+              "attention_count":len(attention_items),
+              "allocation":queue.get("allocation"),
+              "notion_attention_url":attention.get("notion_url"),
+          },sort_keys=True))
+          PY
+
+          trap - ERR
+          if [[ "$created_sentinel" == "1" ]]; then rm -f "$sentinel"; fi
+          echo "QUEUE_GOVERNANCE_SCOPED_DEPLOY_GREEN"
