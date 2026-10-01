@@ -93,14 +93,15 @@ jobs:
           sudo -n systemctl set-property haxlab-autonomy.service CPUQuota=100% CPUWeight=100
           systemctl show haxlab-autonomy.service -p ActiveState -p CPUWeight -p CPUQuotaPerSecUSec --no-pager
 
-          # Recover the dedicated FTMO Actions runner from a different self-hosted
-          # VPS runner. Never restart ourselves if this workflow happened to land
-          # on the FTMO runner after it came back online.
-          if [[ "${RUNNER_NAME:-}" != *ftmo* ]]; then
-            if ! sudo -n systemctl restart "$RUNNER_SERVICE"; then
-              sudo -n systemctl disable --now "$RUNNER_SERVICE" || true
+          # Recover the dedicated FTMO Actions runner only when it is down.
+          # Restarting an active runner kills in-flight exact-head CI.
+          if [[ "${RUNNER_NAME:-}" != *ftmo* ]] && ! systemctl is-active --quiet "$RUNNER_SERVICE"; then
+            sudo -n systemctl reset-failed "$RUNNER_SERVICE" || true
+            if ! sudo -n systemctl start "$RUNNER_SERVICE"; then
               sudo -n systemctl enable --now "$RUNNER_SERVICE"
             fi
+          else
+            echo "FTMO Actions runner already active or owns this recovery job; leaving it untouched"
           fi
 
           service_state=""
