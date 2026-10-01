@@ -36,6 +36,8 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn(".disable-self-heal", text)
         self.assertIn("flock -n", text)
         self.assertIn("curl -fsS --max-time 8", text)
+        self.assertIn('ZCLOUD_HEALTH_URL:-http://127.0.0.1:8765/', text)
+        self.assertNotIn('ZCLOUD_HEALTH_URL:-http://127.0.0.1:8765/api/status', text)
         self.assertIn('systemctl restart "${SERVICE}"', text)
         self.assertIn("for _ in {1..20}", text)
         self.assertIn(".disable-runtime-heal", text)
