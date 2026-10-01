@@ -216,14 +216,17 @@ jobs:
           url="http://127.0.0.1:8765/api/status"
           lock_file="/run/zcloud-self-heal.lock"
 
-          # Wait for any already-running self-heal pass to finish, then own
-          # recovery exclusively. New self-heal passes see the sentinel created
-          # by the previous step and exit without touching the service.
-          exec 9>"$lock_file"
-          flock -w 30 9
+          # The self-heal timer owns this /run lock as root. Hold the same lock
+          # through sudo instead of trying to open the root-owned file as the
+          # Actions runner user. The recovery body runs under that lock and the
+          # sentinel above prevents a new self-heal pass from racing it.
+          sudo -n flock -w 30 "$lock_file" bash -s <<'ZCLOUD_RECOVERY'
+          set -euo pipefail
+          service="zennay-cloud.service"
+          url="http://127.0.0.1:8765/api/status"
 
           healthy() {
-            sudo -n systemctl is-active --quiet "$service" &&
+            systemctl is-active --quiet "$service" &&
               curl -fsS --max-time 4 "$url" >/dev/null
           }
 
@@ -233,8 +236,8 @@ jobs:
           fi
 
           echo "ZCLOUD_PREDEPLOY_HEALTH=recovering"
-          sudo -n systemctl reset-failed "$service" || true
-          sudo -n systemctl restart "$service"
+          systemctl reset-failed "$service" || true
+          systemctl restart "$service"
           for _ in $(seq 1 20); do
             if healthy; then
               echo "ZCLOUD_PREDEPLOY_HEALTH=recovered"
@@ -243,10 +246,11 @@ jobs:
             sleep 1
           done
 
-          sudo -n systemctl --no-pager --full status "$service" || true
-          sudo -n journalctl -u "$service" -n 120 --no-pager || true
+          systemctl --no-pager --full status "$service" || true
+          journalctl -u "$service" -n 120 --no-pager || true
           echo "ZCLOUD_PREDEPLOY_HEALTH=failed"
           exit 1
+          ZCLOUD_RECOVERY
 
       - name: Quarantine stale non-runtime userscript backups before guarded promotion
         if: steps.prewrite.outputs.deploy == 'true'
