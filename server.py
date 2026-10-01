@@ -2211,6 +2211,8 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         criteria += ' Current project next-step hint: ' + next_step
     if project_id=='ftmo':
         criteria += ' FTMO priority rule: keep advancing safe preregistered generations continuously; after one gate is proven, continue to the next safe write-capable generation step instead of yielding the lane to lower-priority projects.'
+    if project_id=='zssh':
+        criteria += ' zSSH research-first rule: before architectural, security, authentication, permission, public-review, or UX decisions, research current primary sources and record dated source URLs plus the engineering decision in docs/research or an ADR; then implement and test the decision. Research-only is not completion, but coding without research evidence is also not completion. Optimize every continuation toward a ship-ready public plugin: universal HTTPS MCP endpoint, production OAuth, simple connect website, target pairing/revocation, explicit scoped sudo grants, plugin package/review materials, red-team gates, and production submission-readiness evidence.'
     return portfolio_queue_enqueue(
         project_id,
         f'Execute substantial {name} roadmap work package',
