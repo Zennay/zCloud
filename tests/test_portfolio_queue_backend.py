@@ -90,8 +90,8 @@ class VpsPortfolioQueueTests(unittest.TestCase):
 
     def test_done_releases_slot_and_next_item_is_claimed(self):
         first = server.portfolio_queue_enqueue("cloud", "first", "P0", "prove first")
-        second = server.portfolio_queue_enqueue("haxlab", "second", "P1", "prove second")
-        third = server.portfolio_queue_enqueue("raiseai", "third", "P2", "prove third")
+        second = server.portfolio_queue_enqueue("raiseai", "second", "P1", "prove second")
+        third = server.portfolio_queue_enqueue("supa", "third", "P2", "prove third")
         server.portfolio_queue_allocate()
         self.assertEqual(second["queue_id"], server.portfolio_queue_current_for_slot(2)["queue_id"])
 
