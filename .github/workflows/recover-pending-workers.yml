@@ -57,14 +57,13 @@ jobs:
               if not key:
                   base=str(item.get("project_id") or "").strip()
                   key=f"{base}::w{int(item.get('worker_slot') or 1)}"
-              base=key.split("::w",1)[0]
-              project=(targets.get("projects") or {}).get(base) or {}
+              project=(targets.get("projects") or {}).get(key) or {}
               if bool(project.get("active")):
                   continue
               start=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
               time.sleep(2)
               fresh=call("GET","/api/runner-targets")
-              project=(fresh.get("projects") or {}).get(base) or {}
+              project=(fresh.get("projects") or {}).get(key) or {}
               if not bool(project.get("active")):
                   newchat=call("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
                   recovered.append({"worker":key,"start":start,"new_chat":newchat})
@@ -83,8 +82,7 @@ jobs:
                   if not key:
                       base=str(item.get("project_id") or "").strip()
                       key=f"{base}::w{int(item.get('worker_slot') or 1)}"
-                  base=key.split("::w",1)[0]
-                  if bool((projects.get(base) or {}).get("active")):
+                  if bool((projects.get(key) or {}).get("active")):
                       active.append(key)
               print("ACTIVE_CHECK",json.dumps({"active":active,"needed":len(allocation)},sort_keys=True))
               if len(active)==len(allocation):
