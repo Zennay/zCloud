@@ -507,5 +507,17 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIn("Blijf binnen deze execution lane", prompt)
 
 
+    def test_zssh_continuation_is_research_first_and_ship_ready(self):
+        item = server.portfolio_write_continuation("zssh", parent_queue_id="test-zssh-research-first")
+
+        self.assertIsNotNone(item)
+        criteria = item["completion_criteria"]
+        self.assertIn("zSSH research-first rule", criteria)
+        self.assertIn("current primary sources", criteria)
+        self.assertIn("simple connect website", criteria)
+        self.assertIn("scoped sudo grants", criteria)
+        self.assertIn("submission-readiness evidence", criteria)
+
+
 if __name__ == "__main__":
     unittest.main()
