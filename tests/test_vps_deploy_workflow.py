@@ -28,7 +28,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("PREWRITE_MAIN_CONFIRMED", text)
         self.assertIn("steps.freshness.outputs.deploy == 'true'", text)
         self.assertIn("steps.prewrite.outputs.deploy == 'true'", text)
-        self.assertIn("fetch-depth: 64", text)
+        self.assertIn("fetch-depth: 513", text)
         self.assertLess(
             text.index("- name: Promote backend and autonomy policy"),
             text.index("- name: Promote Violentmonkey worker"),
