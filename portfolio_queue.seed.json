@@ -30,13 +30,43 @@
     "source_url": "https://app.notion.com/3e99e19ac95581f4acf5d35099276bed"
   },
   {
-    "queue_id": "haxlab-candidate-b-champion-evidence-gate",
+    "queue_id": "haxlab-closed-loop-arena-v2-implementation",
     "project_id": "haxlab",
-    "title": "Actuele Candidate-B/champion evidence-gate sluiten",
+    "title": "Build the next Closed-Loop Evaluation Arena v2 implementation increment",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 on the current HaxLab implementation branch, with deterministic fixed-seed rollout behavior and green automated tests/workflow evidence. Read-only inspection, status, audit, checklist or documentation-only work does not complete this item.",
+    "source_url": "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"
+  },
+  {
+    "queue_id": "haxlab-multisource-evaluation-suite-v2",
+    "project_id": "haxlab",
+    "title": "Implement the frozen multi-source evaluation suite v2",
     "priority": "P2",
     "status": "queued",
     "eligible": true,
-    "completion_criteria": "Candidate-B/champion gate is met actuele runtime/testevidence gesloten of aantoonbaar geblokkeerd met concrete blocker.",
-    "source_url": "https://app.notion.com/3e99e19ac9558150a811eb4479eb24b9"
+    "completion_criteria": "Implement versioned tooling/config that selects and freezes multiple disjoint replay sources with deterministic seeds, provenance and regression coverage; produce a reproducible evaluation manifest/artifact and green tests. Merely inspecting or describing candidate sources is not completion.",
+    "source_url": "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"
+  },
+  {
+    "queue_id": "haxlab-guard-independence-promotion-gate-v2",
+    "project_id": "haxlab",
+    "title": "Implement guard-independence as a mandatory Arena v2 promotion gate",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Add or complete executable guard-intervention/role-leash/recovery-dependency metrics and fail-closed promotion logic, with regression tests proving a guard-dependent challenger cannot pass. Requires code plus test/workflow evidence; audit-only work does not count.",
+    "source_url": "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"
+  },
+  {
+    "queue_id": "haxlab-rollout-recovery-dataset-v1",
+    "project_id": "haxlab",
+    "title": "Implement versioned rollout/recovery dataset generation",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Implement a deterministic versioned pipeline that persists model-visited failures/recovery states separately from raw human evidence, with provenance, idempotent reruns and automated tests or bounded workflow evidence. Read-only analysis is insufficient.",
+    "source_url": "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"
   }
 ]
