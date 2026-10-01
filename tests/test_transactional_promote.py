@@ -571,6 +571,47 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertEqual(1, len(calls))
         self.assertNotIn("server.py", calls[0])
 
+    def test_ancestor_match_scans_beyond_64_commits_but_stays_bounded(self):
+        live = self.root / "server.py"
+        live.write_text("older-green-server\n")
+        git_dir = self.candidate / ".git"
+        git_dir.mkdir(exist_ok=True)
+
+        calls = []
+        original_run = promote.subprocess.run
+
+        class Result:
+            def __init__(self, returncode=0, stdout="", stdout_bytes=b""):
+                self.returncode = returncode
+                self.stdout = stdout
+                if stdout_bytes:
+                    self.stdout = stdout_bytes
+
+        commits = [f"commit-{i}" for i in range(100)]
+        live_bytes = live.read_bytes()
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if "rev-list" in args:
+                self.assertIn("--max-count=512", args)
+                return Result(stdout="\n".join(commits) + "\n")
+            commit = args[-1].split(":", 1)[0]
+            if commit == commits[-1]:
+                return Result(stdout_bytes=live_bytes)
+            return Result(stdout_bytes=b"different\n")
+
+        promote.subprocess.run = fake_run
+        try:
+            self.assertTrue(
+                promote.matches_recent_first_parent_ancestor(
+                    self.candidate, "server.py", live
+                )
+            )
+        finally:
+            promote.subprocess.run = original_run
+
+        self.assertGreater(len(calls), 64)
+
     def test_prechange_reconciles_selected_recent_ancestor_drift(self):
         calls = []
         original_run = promote.run
