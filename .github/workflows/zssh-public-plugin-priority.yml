@@ -24,71 +24,71 @@ jobs:
 
           base = "http://127.0.0.1:8765"
           tasks = json.loads(r'''[
-  {
-    "queue_id": "zssh-research-openai-plugin-contract",
-    "project_id": "zssh",
-    "title": "Research and codify the current OpenAI plugin submission contract",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Use current primary OpenAI plugin/MCP documentation before changing implementation. Write or update a dated research artifact in Zennay/zSSH covering package format, public review flow, organization verification, api.apps permissions, global-data-residency requirement, universal-vs-template MCP URL rules, OAuth discovery/client identification, tool annotations, UI/CSP expectations, exact reviewer materials, and submission error classes. Record source URLs, uncertainties, and engineering decisions. Then implement at least one machine-enforced validator/build/test change that makes zSSH conform to the researched contract. Completion requires both the research artifact and green automated evidence; research-only or coding-without-research does not count.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-universal-endpoint-architecture",
-    "project_id": "zssh",
-    "title": "Research, decide, and implement the public universal-endpoint architecture",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Research the current OpenAI universal remote-MCP endpoint requirement and template-URL restrictions plus MCP/OAuth security guidance. Compare at least three viable self-hosted zSSH connection models and document an ADR with threat boundaries, data flow, failure modes, privacy implications, and why the selected design keeps command execution on the user's paired target and never stores users' SSH private keys in a central relay. Then implement the next production-grade architecture slice and tests. Completion requires ADR + code/config + deterministic tests.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-connect-website",
-    "project_id": "zssh",
-    "title": "Build the simple zSSH connect website and pairing experience",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Research secure connection/onboarding patterns and the current OpenAI plugin linking requirements, then build a small polished responsive zSSH website for connecting a Linux target. It must clearly show what zSSH does, connection state, target label, OAuth/account state, pairing request/status, local approval instructions, revoke/disconnect, and a safe install/setup path without exposing bearer tokens, SSH keys, or secrets in URLs/logs. Keep the UI visually simple and trustworthy on mobile and desktop. Add CSP/security headers, accessibility basics, failure/loading states, and automated UI/route tests.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-scoped-sudo-grants",
-    "project_id": "zssh",
-    "title": "Research and implement explicit scoped sudo capability grants",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Research least-privilege sudoers patterns, systemd hardening, command argument hazards, and safe privilege delegation for remote agents. Implement an owner-controlled local capability-grant flow so sudo access can be deliberately enabled for specific zSSH capabilities without granting an unrestricted NOPASSWD shell. Include generated/validated sudoers snippets or an equivalent policy boundary, local confirmation, clear effective-permission display, revocation/rollback, audit events, fail-closed defaults, and tests proving ungranted privileged actions fail. Never commit secrets.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-production-oauth",
-    "project_id": "zssh",
-    "title": "Research and finish production OAuth 2.1 for the public plugin",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Re-check current OpenAI MCP OAuth requirements including protected-resource metadata, authorization-server metadata, Authorization Code + PKCE S256, resource propagation, CIMD/DCR/predefined-client options, per-tool securitySchemes, issuer/audience/scope validation, and reviewer-account constraints. Document the selected provider/setup and then implement missing production OAuth pieces, negative-path tests, and deployment configuration without placing credentials in source control.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-plugin-package-review-materials",
-    "project_id": "zssh",
-    "title": "Finish the portable plugin package and reviewer materials",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Verify the latest OpenAI portable Agent Plugins package schema and submission field reference. Make the zSSH submission ZIP machine-valid with root plugin.json and the correct MCP mapping, current branding/legal/support metadata, release notes, onboarding material where useful, and exactly five positive plus three negative MCP review cases with expected tools/behavior. Add validators that reject stale or incomplete review metadata. Prepare a reviewer-safe demo fixture and recording checklist; never place reviewer credentials in the ZIP.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-security-redteam-release",
-    "project_id": "zssh",
-    "title": "Threat-model and red-team the public zSSH release candidate",
-    "priority": "P1",
-    "completion_criteria": "RESEARCH_FIRST. Update a concrete threat model using current MCP/plugin security guidance, then implement adversarial regression coverage for OAuth confusion, cross-user pairing, replay/revocation, path traversal/symlink boundaries, unsafe sudo capability expansion, prompt/tool misuse, secret leakage, rate/abuse behavior, UI origin/CSP issues, and private-profile tools leaking into the public scan. Fix findings and produce green CI evidence; a report without fixes/tests is not completion.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  },
-  {
-    "queue_id": "zssh-openai-public-plugin-release",
-    "project_id": "zssh",
-    "title": "Drive zSSH to a submission-ready public ChatGPT plugin release",
-    "priority": "P1",
-    "completion_criteria": "Treat this as the final ship-ready gate, not a generic incremental task. Re-read current primary OpenAI submission docs, then prove the complete zSSH path: stable public HTTPS MCP endpoint, production OAuth, universal endpoint behavior, connect website, target pairing/revocation, explicit scoped sudo grants, public/private capability separation, privacy/terms/support, current tool metadata scan, five positive and three negative review cases, reviewer fixture, domain challenge support, deterministic plugin ZIP, and production end-to-end probe. Resolve every automatable gap and record exact workflow/run evidence and artifact hashes. If an OpenAI dashboard-only identity/reviewer action remains, surface only that final action after all technical gates are green.",
-    "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
-  }
-]''')
+            {
+              "queue_id": "zssh-research-openai-plugin-contract",
+              "project_id": "zssh",
+              "title": "Research and codify the current OpenAI plugin submission contract",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Use current primary OpenAI plugin/MCP documentation before changing implementation. Write or update a dated research artifact in Zennay/zSSH covering package format, public review flow, organization verification, api.apps permissions, global-data-residency requirement, universal-vs-template MCP URL rules, OAuth discovery/client identification, tool annotations, UI/CSP expectations, exact reviewer materials, and submission error classes. Record source URLs, uncertainties, and engineering decisions. Then implement at least one machine-enforced validator/build/test change that makes zSSH conform to the researched contract. Completion requires both the research artifact and green automated evidence; research-only or coding-without-research does not count.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-universal-endpoint-architecture",
+              "project_id": "zssh",
+              "title": "Research, decide, and implement the public universal-endpoint architecture",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Research the current OpenAI universal remote-MCP endpoint requirement and template-URL restrictions plus MCP/OAuth security guidance. Compare at least three viable self-hosted zSSH connection models and document an ADR with threat boundaries, data flow, failure modes, privacy implications, and why the selected design keeps command execution on the user's paired target and never stores users' SSH private keys in a central relay. Then implement the next production-grade architecture slice and tests. Completion requires ADR + code/config + deterministic tests.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-connect-website",
+              "project_id": "zssh",
+              "title": "Build the simple zSSH connect website and pairing experience",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Research secure connection/onboarding patterns and the current OpenAI plugin linking requirements, then build a small polished responsive zSSH website for connecting a Linux target. It must clearly show what zSSH does, connection state, target label, OAuth/account state, pairing request/status, local approval instructions, revoke/disconnect, and a safe install/setup path without exposing bearer tokens, SSH keys, or secrets in URLs/logs. Keep the UI visually simple and trustworthy on mobile and desktop. Add CSP/security headers, accessibility basics, failure/loading states, and automated UI/route tests.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-scoped-sudo-grants",
+              "project_id": "zssh",
+              "title": "Research and implement explicit scoped sudo capability grants",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Research least-privilege sudoers patterns, systemd hardening, command argument hazards, and safe privilege delegation for remote agents. Implement an owner-controlled local capability-grant flow so sudo access can be deliberately enabled for specific zSSH capabilities without granting an unrestricted NOPASSWD shell. Include generated/validated sudoers snippets or an equivalent policy boundary, local confirmation, clear effective-permission display, revocation/rollback, audit events, fail-closed defaults, and tests proving ungranted privileged actions fail. Never commit secrets.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-production-oauth",
+              "project_id": "zssh",
+              "title": "Research and finish production OAuth 2.1 for the public plugin",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Re-check current OpenAI MCP OAuth requirements including protected-resource metadata, authorization-server metadata, Authorization Code + PKCE S256, resource propagation, CIMD/DCR/predefined-client options, per-tool securitySchemes, issuer/audience/scope validation, and reviewer-account constraints. Document the selected provider/setup and then implement missing production OAuth pieces, negative-path tests, and deployment configuration without placing credentials in source control.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-plugin-package-review-materials",
+              "project_id": "zssh",
+              "title": "Finish the portable plugin package and reviewer materials",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Verify the latest OpenAI portable Agent Plugins package schema and submission field reference. Make the zSSH submission ZIP machine-valid with root plugin.json and the correct MCP mapping, current branding/legal/support metadata, release notes, onboarding material where useful, and exactly five positive plus three negative MCP review cases with expected tools/behavior. Add validators that reject stale or incomplete review metadata. Prepare a reviewer-safe demo fixture and recording checklist; never place reviewer credentials in the ZIP.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-security-redteam-release",
+              "project_id": "zssh",
+              "title": "Threat-model and red-team the public zSSH release candidate",
+              "priority": "P1",
+              "completion_criteria": "RESEARCH_FIRST. Update a concrete threat model using current MCP/plugin security guidance, then implement adversarial regression coverage for OAuth confusion, cross-user pairing, replay/revocation, path traversal/symlink boundaries, unsafe sudo capability expansion, prompt/tool misuse, secret leakage, rate/abuse behavior, UI origin/CSP issues, and private-profile tools leaking into the public scan. Fix findings and produce green CI evidence; a report without fixes/tests is not completion.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            },
+            {
+              "queue_id": "zssh-openai-public-plugin-release",
+              "project_id": "zssh",
+              "title": "Drive zSSH to a submission-ready public ChatGPT plugin release",
+              "priority": "P1",
+              "completion_criteria": "Treat this as the final ship-ready gate, not a generic incremental task. Re-read current primary OpenAI submission docs, then prove the complete zSSH path: stable public HTTPS MCP endpoint, production OAuth, universal endpoint behavior, connect website, target pairing/revocation, explicit scoped sudo grants, public/private capability separation, privacy/terms/support, current tool metadata scan, five positive and three negative review cases, reviewer fixture, domain challenge support, deterministic plugin ZIP, and production end-to-end probe. Resolve every automatable gap and record exact workflow/run evidence and artifact hashes. If an OpenAI dashboard-only identity/reviewer action remains, surface only that final action after all technical gates are green.",
+              "source_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"
+            }
+                    ]''')
 
           for payload in tasks:
               payload = {"action": "enqueue", **payload}
