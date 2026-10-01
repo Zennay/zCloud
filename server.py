@@ -239,8 +239,12 @@ def firefox_runner_status():
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
 @contextmanager
 def connect():
-    c = sqlite3.connect(DB, timeout=4)
+    # Keep API requests resilient when the scheduler/worker allocator briefly
+    # holds SQLite's write lock. WAL helps readers, while busy_timeout gives
+    # concurrent writers a bounded chance to finish instead of surfacing 503s.
+    c = sqlite3.connect(DB, timeout=15)
     c.row_factory = sqlite3.Row
+    c.execute('PRAGMA busy_timeout=15000')
     try:
         yield c
         c.commit()
