@@ -1,0 +1,17 @@
+{
+  "queue": {
+    "eligible": true,
+    "priority": "P0",
+    "project_id": "zssh",
+    "queue_id": "zssh-ftmo-cpu-attribution-proof",
+    "status": "claimed",
+    "updated_at": "2026-10-01T23:37:56.438867+00:00",
+    "worker_slot": 4
+  },
+  "receipt_base_sha": "09277ddd9645b07dec1023fce3eb7e77c8868b56",
+  "schema_version": 1,
+  "scope": "ftmo-cpu-attribution-zssh-queue",
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "36940595883",
+  "workflow_source_sha": "1aa4885326dc2f6706d7c6a1f4fce10c68589502"
+}
