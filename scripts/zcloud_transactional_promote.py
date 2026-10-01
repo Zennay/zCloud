@@ -232,11 +232,23 @@ def audited_runtime_config_drift_matches(
         if not isinstance(baseline, dict) or not isinstance(current, dict):
             return False
 
+        # JSON key order/whitespace is not runtime configuration drift. If
+        # parsing yields the exact same object as the LKG, accepting the
+        # byte-only difference is safer than permanently deadlocking deploys.
+        if baseline == current:
+            return True
+
         changed: list[tuple[str, str]] = []
         for project_id in sorted(set(baseline) | set(current)):
             old_entry = baseline.get(project_id) or {}
             new_entry = current.get(project_id) or {}
             if not isinstance(old_entry, dict) or not isinstance(new_entry, dict):
+                return False
+            # The dashboard contract only owns priority. Any other semantic
+            # delta must remain fail-closed even when a priority audit exists.
+            old_other = {k: v for k, v in old_entry.items() if k != "priority"}
+            new_other = {k: v for k, v in new_entry.items() if k != "priority"}
+            if old_other != new_other:
                 return False
             old_priority = old_entry.get("priority")
             new_priority = new_entry.get("priority")
@@ -246,8 +258,6 @@ def audited_runtime_config_drift_matches(
                 return False
             changed.append((str(project_id), str(new_priority)))
 
-        # A byte-level drift with no semantic priority change is not a legitimate
-        # dashboard mutation and therefore remains fail-closed.
         if not changed:
             return False
 
