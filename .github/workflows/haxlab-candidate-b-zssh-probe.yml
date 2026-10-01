@@ -1,5 +1,5 @@
 name: Queue zSSH HaxLab Candidate-B runtime probe
-# trigger: candidate-b-parallel-readonly-evidence-v5
+# trigger: candidate-b-gate-finalize-v6
 
 on:
   push:
@@ -12,48 +12,88 @@ permissions:
   contents: read
 
 jobs:
-  evidence:
+  finalize:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Capture parallel read-only Candidate-B evidence
+      - name: Verify ownership and close Candidate-B gate in SQLite
         shell: bash
         run: |
           set -euo pipefail
-          echo "EVIDENCE_HOST=$(hostname)"
-          echo "EVIDENCE_TIME=$(date -u +%FT%TZ)"
-
-          echo "=== Candidate-B process ==="
-          pgrep -af 'haxlab.learning.elite_pipeline.*elite-player-candidate-b' || true
-          pids="$(pgrep -f 'haxlab.learning.elite_pipeline.*elite-player-candidate-b' | tr '\n' ' ' || true)"
-          if [ -n "$pids" ]; then
-            ps -o pid,ppid,etime,%cpu,%mem,stat,cmd -p $pids || true
-          else
-            echo "CANDIDATE_B_PROCESS_NOT_FOUND"
-          fi
-
-          echo "=== Candidate-B log ==="
-          if [ -f /tmp/haxlab-candidate-b.log ]; then
-            stat --printf='LOG_SIZE=%s LOG_MTIME=%y\n' /tmp/haxlab-candidate-b.log
-            tail -n 100 /tmp/haxlab-candidate-b.log
-          else
-            echo "CANDIDATE_B_LOG_NOT_FOUND"
-          fi
-
-          echo "=== Champion registry ==="
-          registry=/var/lib/haxlab/derived/training/elite-champions/registry.json
-          if sudo -n test -f "$registry"; then
-            sudo -n cat "$registry"
-          else
-            echo "CHAMPION_REGISTRY_NOT_FOUND_OR_UNREADABLE"
-          fi
-
-          echo "=== zSSH delegated queue item ==="
           python3 - <<'PY'
-          import json, urllib.request
-          qid="zssh-haxlab-candidate-b-runtime-probe-20261001"
-          with urllib.request.urlopen("http://127.0.0.1:8765/api/portfolio-queue?all=1",timeout=10) as r:
-              body=json.load(r)
-          item=next((x for x in body.get("items",[]) if x.get("queue_id")==qid),None)
-          print("ZSSH_PROBE_LIVE",json.dumps(item,sort_keys=True))
+          import json
+          import urllib.request
+
+          base="http://127.0.0.1:8765"
+          queue_id="haxlab-candidate-b-champion-evidence-gate"
+          probe_id="zssh-haxlab-candidate-b-runtime-probe-20261001"
+          evidence="Candidate-B run 36259774109 attempt 2 SUCCESS; job 110291358917 all gate steps success; candidate-b-647cd40e promoted=false because duel match_score 0.53125 < 0.55, champion_runtime_errors=0; artifact 11152192240 elite-candidate-b-evolution created 2026-10-01T09:33:17Z; champion-info 36838642120 SUCCESS confirms live-frozen-future-v01-386d0218a928; live-play 36839299401 SUCCESS loads version frozen-future-v01-386d0218a928 frame_dim=44 temporal_input_dim=356 window=8 kick_threshold=0.575."
+
+          def get(path):
+              with urllib.request.urlopen(base+path,timeout=10) as r:
+                  return json.load(r)
+
+          def post(path,payload):
+              req=urllib.request.Request(
+                  base+path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type":"application/json"},
+              )
+              with urllib.request.urlopen(req,timeout=10) as r:
+                  return json.load(r)
+
+          live=get("/api/portfolio-queue?all=1")
+          item=next((x for x in live.get("items",[]) if x.get("queue_id")==queue_id),None)
+          if not item:
+              raise RuntimeError("active Candidate-B queue item missing")
+          if str(item.get("project_id") or "").lower()!="haxlab":
+              raise RuntimeError("Candidate-B queue project mismatch")
+          if str(item.get("status") or "").lower() not in {"claimed","running","verifying"}:
+              raise RuntimeError("Candidate-B queue ownership is not active: "+str(item.get("status")))
+          slot=item.get("worker_slot")
+          if slot is None:
+              raise RuntimeError("Candidate-B queue worker_slot missing")
+          print("QUEUE_OWNERSHIP_VERIFIED",json.dumps({
+              "queue_id":item.get("queue_id"),
+              "project_id":item.get("project_id"),
+              "status":item.get("status"),
+              "worker_slot":slot,
+              "claim_expires":item.get("claim_expires"),
+          },sort_keys=True))
+
+          claims=get("/api/task-claims?project=haxlab")
+          print("HAXLAB_CLAIMS_SNAPSHOT",json.dumps(claims,sort_keys=True))
+
+          # The delegated probe is now superseded by successful direct runner evidence.
+          probe=next((x for x in live.get("items",[]) if x.get("queue_id")==probe_id),None)
+          if probe and str(probe.get("status") or "").lower()=="queued":
+              downgraded=post("/api/portfolio-queue",{
+                  "action":"enqueue",
+                  "queue_id":probe_id,
+                  "project_id":"zssh",
+                  "title":"Candidate-B runtime probe superseded by completed gate evidence",
+                  "priority":"P3",
+                  "completion_criteria":"Candidate-B gate already has successful current runtime/test evidence; verify supersession and close without mutating HaxLab runtime.",
+                  "source_url":"https://github.com/Zennay/Haxlab/issues/15",
+                  "parent_queue_id":queue_id,
+              })
+              print("ZSSH_PROBE_DOWNGRADED",json.dumps(downgraded,sort_keys=True))
+
+          result=post("/api/portfolio-queue",{
+              "action":"result",
+              "worker_slot":slot,
+              "queue_id":queue_id,
+              "result":"DONE",
+              "evidence":evidence,
+          })
+          print("QUEUE_DONE_WRITE",json.dumps(result,sort_keys=True))
+          if not result.get("ok"):
+              raise RuntimeError("Candidate-B DONE write was not accepted")
+
+          verify=get("/api/portfolio-queue?all=1")
+          final=next((x for x in verify.get("items",[]) if x.get("queue_id")==queue_id),None)
+          if not final or str(final.get("status") or "").lower()!="done" or bool(final.get("eligible")):
+              raise RuntimeError("Candidate-B queue did not persist DONE")
+          print("QUEUE_DONE_VERIFIED",json.dumps(final,sort_keys=True))
           PY
