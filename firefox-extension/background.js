@@ -242,17 +242,16 @@ function runProject(cfg) {
   function promptWithQualityRecovery(basePrompt) {
     const prompt = promptWithReplacementHandoff(basePrompt);
     if (!qualityRetryPending) return prompt;
-    const escalation = qualityRetryCount >= 2
-      ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. " +
-        "Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. " +
-        "Onderzoek de echte fout grondig, kies een ANDERE veilige uitvoeringsroute en maak nu een materiële wijziging of run met bewijs. " +
-        "Sluit NIET opnieuw af met dezelfde recoverable BLOCKED/WAIT_VPS; blijf binnen de bestaande safety-gates en bewijs de uitgevoerde stap. "
-      : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. " +
-        "Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
+    const retryLevel = qualityRetryCount >= 4 ? 3 : qualityRetryCount >= 2 ? 2 : 1;
+    const escalation = retryLevel === 3
+      ? "HERHAALDE KWALITEITSRETRY. Stop met korte/status-only cycli. Neem aantoonbaar meer redeneertijd, onderzoek waarom de eerdere routes niets opleverden, kies een ANDERE veilige uitvoeringsroute en voer meerdere concrete stappen uit totdat er materiële progressie + bewijs is. "
+      : retryLevel === 2
+        ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. Kies zo nodig een ANDERE veilige uitvoeringsroute en bewijs de uitgevoerde stap. "
+        : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
     return prompt + "\n\n" +
-      "ZCLOUD_QUALITY_RETRY: " + escalation +
-      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Een status-only/read-only antwoord telt niet. " +
-      "Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. Probeer de self-hosted runner/queue-route opnieuw wanneer die veilig beschikbaar is. " +
+      "ZCLOUD_QUALITY_RETRY #" + qualityRetryCount + ": " + escalation +
+      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Pauzeer of stop de worker NIET vanwege korte output. " +
+      "Een status-only/read-only antwoord telt niet. Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. " +
       "Sluit pas af nadat je een echte write, run/job, verifier of materiële state-change hebt uitgevoerd en geef concrete ZCLOUD_QUEUE_EVIDENCE.";
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
@@ -635,10 +634,10 @@ function runProject(cfg) {
     window.__ZC_RUNNER_STATUS__ = payload;
     try { browser.runtime.sendMessage({type: "runner-status", payload: payload}).catch(() => {}); } catch (_) {}
   }
-  async function autoPauseForHealth(reason, extra = {}) {
-    // Historical name kept for compatibility: this is no longer an auto-pause.
-    // Weak/null/too-fast cycles escalate the next prompt and return to the VPS
-    // dispatch gate. The only automatic safety net is the per-worker cooldown.
+  async function recoverWeakCycleHealth(reason, extra = {}) {
+    // Weak/null/too-fast cycles NEVER pause a worker. They only escalate the
+    // next prompt and return to the VPS dispatch gate; cooldown remains the
+    // automatic anti-spam safety net.
     await scheduleQualityRetry(reason, {
       nonStoppingRecovery: true,
       weakCycleStreak,
@@ -906,7 +905,7 @@ function runProject(cfg) {
       awaitingGeneration = false;
       weakCycleStreak += 1;
       if (weakCycleStreak >= WEAK_CYCLE_LIMIT) {
-        await autoPauseForHealth("repeated-no-generation", {generationDeadlineMs: 120000});
+        await recoverWeakCycleHealth("repeated-no-generation", {generationDeadlineMs: 120000});
         return;
       }
       const retryScheduled = await scheduleQualityRetry("no-generation-after-send", {
@@ -924,7 +923,7 @@ function runProject(cfg) {
         await reportFinishSignals(text);
         if (quality.weak) {
           if (weakCycleStreak >= WEAK_CYCLE_LIMIT) {
-            await autoPauseForHealth("repeated-short-or-null-result", {
+            await recoverWeakCycleHealth("repeated-short-or-null-result", {
               cycleSeconds: quality.elapsedMs === null ? null : Math.round(quality.elapsedMs / 1000),
               assistantCharacters: (text || "").length,
               nullLike: quality.nullLike,
@@ -946,8 +945,12 @@ function runProject(cfg) {
             queueResultPresent: quality.hasQueueResult,
             queueEvidencePresent: quality.hasQueueEvidence,
             missingQueueEvidence: quality.missingQueueEvidence,
-              recoverableBlocker: quality.recoverableBlocker
+            recoverableBlocker: quality.recoverableBlocker
           });
+        } else if (qualityRetryCount > 0) {
+          qualityRetryPending = false;
+          qualityRetryCount = 0;
+          await syncStatus("quality-retry-cleared", {reason: "valid-generation"});
         }
       }
       if (finishSignalsReported && vpsDispatchOnly) {
