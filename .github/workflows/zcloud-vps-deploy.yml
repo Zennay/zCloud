@@ -215,11 +215,20 @@ jobs:
           service="zennay-cloud.service"
           url="http://127.0.0.1:8765/api/status"
           lock_file="/run/zcloud-self-heal.lock"
+          runner_user="$(id -un)"
+          runner_group="$(id -gn)"
+
+          # The root-owned self-heal timer may create this shared lock first.
+          # Preserve the same inode/lock domain, but make it writable by the
+          # permanent self-hosted runner before opening the shared descriptor.
+          sudo -n touch "$lock_file"
+          sudo -n chown "$runner_user:$runner_group" "$lock_file"
+          sudo -n chmod 0644 "$lock_file"
 
           # Wait for any already-running self-heal pass to finish, then own
           # recovery exclusively. New self-heal passes see the sentinel created
           # by the previous step and exit without touching the service.
-          exec 9>"$lock_file"
+          exec 9<>"$lock_file"
           flock -w 30 9
 
           healthy() {
