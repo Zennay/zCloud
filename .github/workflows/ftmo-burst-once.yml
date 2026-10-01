@@ -1,4 +1,4 @@
-name: FTMO bounded burst once
+name: FTMO VPS useful-compute rescue
 
 on:
   push:
@@ -9,26 +9,224 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ftmo-vps-useful-compute-rescue
+  cancel-in-progress: true
+
 jobs:
-  burst:
+  rescue:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 10
+    env:
+      FTMO_ROOT: /opt/ftmo-autonomous
     steps:
-      - name: Run bounded FTMO autonomous burst
+      - name: Prove and rescue FTMO useful CPU
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== PRE ==="
-          systemctl is-active ftmo-autonomous.timer || true
-          systemctl is-active haxlab-autonomy.timer || true
-          pgrep -af '[h]axlab-train-bc' || true
-          sudo -n systemctl enable --now ftmo-autonomous.timer
-          for i in $(seq 1 12); do
-            echo "=== TICK $i/12 ==="
-            sudo -n systemctl start ftmo-autonomous.service
-            /opt/ftmo-autonomous/.venv/bin/python -c 'import json; from pathlib import Path; p=Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json"); d=json.loads(p.read_text()); r=d.get("research") or {}; c=d.get("research_controller") or {}; g=c.get("generation_loop") or {}; print(json.dumps({"ok":d.get("ok"),"completed_at_utc":d.get("completed_at_utc"),"generation_number":r.get("generation_number"),"generation_id":r.get("generation_id"),"next_stage":r.get("next_stage"),"controller_action":c.get("action"),"loop_action":g.get("action"),"loop_stage":g.get("stage"),"candidates":g.get("candidate_count"),"passes":g.get("pass_count"),"live_trading_allowed":d.get("live_trading_allowed"),"broker_order_submission_allowed":d.get("broker_order_submission_allowed")},sort_keys=True))'
-          done
-          echo "=== POST ==="
-          systemctl is-active ftmo-autonomous.timer
-          pgrep -af '[h]axlab-train-bc' || true
-          ps -eo pid,user,comm,%cpu,%mem,etime --sort=-%cpu | head -n 20
+
+          test -d "$FTMO_ROOT"
+          test -x "$FTMO_ROOT/.venv/bin/python"
+          test -f "$FTMO_ROOT/.scratch/autonomy/status.json"
+
+          # The persistent marathon is the source of FTMO compute. Keep the
+          # legacy timer disabled so it cannot contend for the same tick lock.
+          sudo -n systemctl disable --now ftmo-autonomous.timer || true
+          sudo -n systemctl enable --now ftmo-autonomous-marathon.service
+          systemctl is-active --quiet ftmo-autonomous-marathon.service
+
+          "$FTMO_ROOT/.venv/bin/python" - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+
+          root = Path(os.environ["FTMO_ROOT"])
+          cgroup_root = Path("/sys/fs/cgroup")
+          system_slice = cgroup_root / "system.slice"
+
+          def host_busy_ticks() -> int:
+              parts = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0].split()
+              values = [int(value) for value in parts[1:]]
+              idle = values[3]
+              iowait = values[4] if len(values) > 4 else 0
+              return sum(values) - idle - iowait
+
+          def usage_usec(path: Path) -> int:
+              values = {}
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  key, value = line.split(maxsplit=1)
+                  values[key] = int(value)
+              return values["usage_usec"]
+
+          def units() -> dict[str, int]:
+              result: dict[str, int] = {}
+              if not system_slice.is_dir():
+                  return result
+              for unit in sorted(system_slice.iterdir()):
+                  stat = unit / "cpu.stat"
+                  if unit.is_dir() and unit.name.endswith(".service") and stat.is_file():
+                      try:
+                          result[unit.name] = usage_usec(stat)
+                      except (OSError, KeyError, ValueError):
+                          pass
+              return result
+
+          def bucket(name: str) -> str:
+              lower = name.lower()
+              if "haxlab" in lower:
+                  return "haxlab"
+              if "zcloud" in lower or "actions.runner" in lower or "github" in lower:
+                  return "control_plane"
+              if "ftmo" in lower:
+                  return "ftmo"
+              return "other_systemd"
+
+          def sample(seconds: float = 12.0) -> dict:
+              start_wall = time.monotonic()
+              start_host = host_busy_ticks()
+              start_units = units()
+              time.sleep(seconds)
+              end_wall = time.monotonic()
+              end_host = host_busy_ticks()
+              end_units = units()
+
+              unit_seconds: dict[str, float] = {}
+              for name, end in end_units.items():
+                  start = start_units.get(name)
+                  if start is None or end < start:
+                      continue
+                  delta = (end - start) / 1_000_000.0
+                  if delta > 0:
+                      unit_seconds[name] = delta
+
+              buckets = {"ftmo": 0.0, "haxlab": 0.0, "control_plane": 0.0, "other_systemd": 0.0}
+              for name, seconds_used in unit_seconds.items():
+                  buckets[bucket(name)] += seconds_used
+
+              wall = end_wall - start_wall
+              ticks = int(os.sysconf("SC_CLK_TCK"))
+              cpus = os.cpu_count() or 1
+              host_busy = max(0, end_host - start_host) / ticks
+              attributed = sum(buckets.values())
+              unattributed = max(0.0, host_busy - attributed)
+              competitors = {
+                  "haxlab": buckets["haxlab"],
+                  "control_plane": buckets["control_plane"],
+                  "other_systemd": buckets["other_systemd"],
+                  "unattributed_host": unattributed,
+              }
+              competitor, competitor_seconds = max(competitors.items(), key=lambda item: item[1])
+              top = [
+                  {"unit": name, "cpu_seconds": round(seconds_used, 6), "bucket": bucket(name)}
+                  for name, seconds_used in sorted(unit_seconds.items(), key=lambda item: item[1], reverse=True)[:15]
+              ]
+              return {
+                  "sample_seconds": round(wall, 6),
+                  "logical_cpus": cpus,
+                  "host_busy_cpu_seconds": round(host_busy, 6),
+                  "host_capacity_cpu_seconds": round(wall * cpus, 6),
+                  "bucket_cpu_seconds": {key: round(value, 6) for key, value in buckets.items()},
+                  "unattributed_host_cpu_seconds": round(unattributed, 6),
+                  "ftmo_busy_cpu_share": round(buckets["ftmo"] / host_busy, 6) if host_busy else 0.0,
+                  "ftmo_host_capacity_share": round(buckets["ftmo"] / (wall * cpus), 6) if wall else 0.0,
+                  "primary_competitor_bucket": competitor,
+                  "primary_competitor_cpu_seconds": round(competitor_seconds, 6),
+                  "ftmo_primary_attributed_compute": buckets["ftmo"] > 0 and buckets["ftmo"] > competitor_seconds,
+                  "top_systemd_units": top,
+              }
+
+          def run(*args: str) -> subprocess.CompletedProcess[str]:
+              return subprocess.run(args, text=True, capture_output=True, check=False, timeout=30)
+
+          pre = sample()
+          rescue_applied = not pre["ftmo_primary_attributed_compute"]
+          rescue_actions: list[str] = []
+
+          if rescue_applied:
+              commands = [
+                  ("ftmo-priority", "sudo", "-n", "systemctl", "set-property", "--runtime",
+                   "ftmo-autonomous-marathon.service", "CPUWeight=10000", "CPUQuota=500%"),
+              ]
+              for label, *cmd in commands:
+                  result = run(*cmd)
+                  if result.returncode != 0:
+                      raise SystemExit(f"{label} failed: {result.stderr.strip()}")
+                  rescue_actions.append(label)
+
+              for unit in ("haxlab-worker.service", "haxlab-analyzer.service"):
+                  loaded = run("systemctl", "show", unit, "--property=LoadState", "--value")
+                  if loaded.returncode == 0 and loaded.stdout.strip() == "loaded":
+                      result = run(
+                          "sudo", "-n", "systemctl", "set-property", "--runtime",
+                          unit, "CPUWeight=100", "CPUQuota=100%"
+                      )
+                      if result.returncode != 0:
+                          raise SystemExit(f"haxlab cap failed for {unit}: {result.stderr.strip()}")
+                      rescue_actions.append(f"haxlab-cap:{unit}")
+
+              restarted = run("sudo", "-n", "systemctl", "restart", "ftmo-autonomous-marathon.service")
+              if restarted.returncode != 0:
+                  raise SystemExit(f"FTMO restart failed: {restarted.stderr.strip()}")
+              rescue_actions.append("ftmo-restart")
+              time.sleep(3)
+
+          post = sample()
+
+          status = json.loads((root / ".scratch/autonomy/status.json").read_text(encoding="utf-8"))
+          research = status.get("research") or {}
+          controller = status.get("research_controller") or {}
+          generation_loop = controller.get("generation_loop") or {}
+          service = {
+              "active_state": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=ActiveState", "--value").stdout.strip(),
+              "sub_state": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=SubState", "--value").stdout.strip(),
+              "control_group": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=ControlGroup", "--value").stdout.strip(),
+          }
+
+          receipt = {
+              "schema_version": 1,
+              "scope": "zcloud-ftmo-useful-compute-rescue",
+              "pre_attribution": pre,
+              "rescue_applied": rescue_applied,
+              "rescue_actions": rescue_actions,
+              "post_attribution": post,
+              "service": service,
+              "controller_receipt": {
+                  "completed_at_utc": status.get("completed_at_utc"),
+                  "ok": status.get("ok"),
+                  "generation_number": research.get("generation_number"),
+                  "generation_id": research.get("generation_id"),
+                  "next_stage": research.get("next_stage"),
+                  "controller_action": controller.get("action"),
+                  "controller_compute": controller.get("compute"),
+                  "generation_loop_action": generation_loop.get("action"),
+                  "generation_loop_stage": generation_loop.get("stage"),
+                  "research_outcomes_executed": (controller.get("outcome_execution") or {}).get("research_outcomes_executed"),
+              },
+              "autonomous_cloud_budget_usd": status.get("autonomous_cloud_budget_usd"),
+              "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
+              "live_trading_allowed": status.get("live_trading_allowed"),
+          }
+
+          target = root / ".scratch/autonomy/zcloud-cpu-rescue.json"
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print("FTMO_CPU_RESCUE_RECEIPT=" + json.dumps(receipt, sort_keys=True))
+
+          if receipt["broker_order_submission_allowed"] is not False:
+              raise SystemExit("broker order boundary changed")
+          if receipt["live_trading_allowed"] is not False:
+              raise SystemExit("live trading boundary changed")
+          if service["active_state"] != "active":
+              raise SystemExit(f"FTMO marathon is not active: {service}")
+          if controller.get("compute", {}).get("ok") is not True:
+              raise SystemExit("advanced controller compute receipt is missing")
+          if post["ftmo_primary_attributed_compute"] is not True:
+              raise SystemExit("FTMO is still not the primary measured CPU consumer after safe rescue")
+          PY
+
+          echo "=== FTMO / HAXLAB PROCESS SNAPSHOT ==="
+          ps -eo pid,user,comm,%cpu,%mem,etime --sort=-%cpu | head -n 25
