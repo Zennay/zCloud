@@ -30,6 +30,12 @@ jobs:
           FTMO_WORKTREE=/opt/ftmo-runner/_work/Ftmo/Ftmo
           PROVIDER_SKIP_REL=src/prop_trading_ai/research/autonomous_provider_skip.py
           PROVIDER_SKIP_BLOB=18aaa82648baaf5ced8a059f7d258a93482fecc7
+          RESEARCH_MACHINE_REL=src/prop_trading_ai/research/research_machine.py
+          RESEARCH_MACHINE_BLOB=7b57603dbb68b592a76f57aab9b7d626634124db
+          PROVIDER_REJECT_REL=src/prop_trading_ai/research/provider_reject_transition.py
+          PROVIDER_REJECT_BLOB=cbe7759bee4c6fadce26f1bea2c68de2554d96f0
+          PROVIDER_WINDOW_SKIP_REL=src/prop_trading_ai/research/provider_window_skip.py
+          PROVIDER_WINDOW_SKIP_BLOB=3c1dfc9e1a4c238bcf66bb43381d3d044110206c
 
           test -d "$ROOT"
           test -x "$ROOT/.venv/bin/python"
@@ -39,14 +45,28 @@ jobs:
           id ftmo-runner >/dev/null
           sudo -n chmod 0755 "$ROOT/scripts/run-autonomous-marathon.sh"
 
-          # Bootstrap the one runtime dependency that caused the current
-          # crash-loop. Only copy from the dedicated FTMO checkout when the
-          # file's Git blob exactly matches the audited repository blob.
-          test -f "$FTMO_WORKTREE/$PROVIDER_SKIP_REL"
-          test "$(git hash-object "$FTMO_WORKTREE/$PROVIDER_SKIP_REL")" = "$PROVIDER_SKIP_BLOB"
-          sudo -n install -D -o ftmo-runner -g ftmo-runner -m 0644 \
-            "$FTMO_WORKTREE/$PROVIDER_SKIP_REL" "$ROOT/$PROVIDER_SKIP_REL"
-          test "$(git hash-object "$ROOT/$PROVIDER_SKIP_REL")" = "$PROVIDER_SKIP_BLOB"
+          # Bootstrap the exact audited research-gate evaluator and verifier
+          # dependencies from the dedicated FTMO checkout. This fixes runtime
+          # deploy drift without changing any research permissions or evidence.
+          for spec in \
+            "$PROVIDER_SKIP_REL:$PROVIDER_SKIP_BLOB" \
+            "$RESEARCH_MACHINE_REL:$RESEARCH_MACHINE_BLOB" \
+            "$PROVIDER_REJECT_REL:$PROVIDER_REJECT_BLOB" \
+            "$PROVIDER_WINDOW_SKIP_REL:$PROVIDER_WINDOW_SKIP_BLOB"
+          do
+            rel="${spec%%:*}"
+            expected="${spec##*:}"
+            test -f "$FTMO_WORKTREE/$rel"
+            test "$(git hash-object "$FTMO_WORKTREE/$rel")" = "$expected"
+            sudo -n install -D -o ftmo-runner -g ftmo-runner -m 0644 \
+              "$FTMO_WORKTREE/$rel" "$ROOT/$rel"
+            test "$(git hash-object "$ROOT/$rel")" = "$expected"
+          done
+          sudo -n -u ftmo-runner "$ROOT/.venv/bin/python" -m py_compile \
+            "$ROOT/$PROVIDER_SKIP_REL" \
+            "$ROOT/$RESEARCH_MACHINE_REL" \
+            "$ROOT/$PROVIDER_REJECT_REL" \
+            "$ROOT/$PROVIDER_WINDOW_SKIP_REL"
 
           rendered="$(mktemp)"
           trap 'rm -f "$rendered"' EXIT
@@ -94,15 +114,27 @@ jobs:
           sudo -n systemctl set-property haxlab-autonomy.service CPUQuota=100% CPUWeight=100
           systemctl show haxlab-autonomy.service -p ActiveState -p CPUWeight -p CPUQuotaPerSecUSec --no-pager
 
-          # Recover the dedicated FTMO Actions runner only when it is down.
-          # Restarting an active runner kills in-flight exact-head CI.
-          if [[ "${RUNNER_NAME:-}" != *ftmo* ]] && ! systemctl is-active --quiet "$RUNNER_SERVICE"; then
+          # Recover the dedicated FTMO Actions runner without interrupting work.
+          # An active Runner.Worker means an exact-head job is executing and is
+          # never restarted. An active listener with no worker for two checks is
+          # safe to restart when GitHub jobs are visibly stuck queued.
+          if [[ "${RUNNER_NAME:-}" == *ftmo* ]]; then
+            echo "Recovery job is running on the FTMO runner itself; leaving it untouched"
+          elif ! systemctl is-active --quiet "$RUNNER_SERVICE"; then
             sudo -n systemctl reset-failed "$RUNNER_SERVICE" || true
             if ! sudo -n systemctl start "$RUNNER_SERVICE"; then
               sudo -n systemctl enable --now "$RUNNER_SERVICE"
             fi
+          elif pgrep -u ftmo-runner -f 'Runner\.Worker' >/dev/null; then
+            echo "FTMO Actions Runner.Worker is active; leaving in-flight CI untouched"
           else
-            echo "FTMO Actions runner already active or owns this recovery job; leaving it untouched"
+            sleep 5
+            if pgrep -u ftmo-runner -f 'Runner\.Worker' >/dev/null; then
+              echo "FTMO Actions Runner.Worker appeared during guard window; leaving it untouched"
+            else
+              echo "FTMO Actions runner listener is active but idle/stuck; restarting listener safely"
+              sudo -n systemctl restart "$RUNNER_SERVICE"
+            fi
           fi
 
           service_state=""
