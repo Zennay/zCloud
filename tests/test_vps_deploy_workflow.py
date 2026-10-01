@@ -88,6 +88,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("systemctl --user start chatgpt-firefox.service", text)
         self.assertIn("chatgpt-display.service chatgpt-openbox.service", text)
         self.assertIn('systemctl --user reset-failed "$dependency"', text)
+        self.assertIn("FIREFOX_AUTOMATION_SERVICE=intentionally_disabled_violentmonkey", text)
+        self.assertIn("ExecCondition=/bin/false", text)
         self.assertIn("FIREFOX_AUTOMATION_SERVICE=recovered", text)
         self.assertIn("FIREFOX_AUTOMATION_SERVICE=failed", text)
         self.assertIn("Suspend external self-heal during guarded deploy", text)
