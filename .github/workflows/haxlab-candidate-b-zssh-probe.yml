@@ -1,5 +1,5 @@
 name: Queue zSSH HaxLab Candidate-B runtime probe
-# trigger: candidate-b-runtime-probe-priority-v4
+# trigger: candidate-b-parallel-readonly-evidence-v5
 
 on:
   push:
@@ -12,55 +12,48 @@ permissions:
   contents: read
 
 jobs:
-  enqueue:
+  evidence:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Prioritize delegated probe and verify live allocation
+      - name: Capture parallel read-only Candidate-B evidence
         shell: bash
         run: |
+          set -euo pipefail
+          echo "EVIDENCE_HOST=$(hostname)"
+          echo "EVIDENCE_TIME=$(date -u +%FT%TZ)"
+
+          echo "=== Candidate-B process ==="
+          pgrep -af 'haxlab.learning.elite_pipeline.*elite-player-candidate-b' || true
+          pids="$(pgrep -f 'haxlab.learning.elite_pipeline.*elite-player-candidate-b' | tr '\n' ' ' || true)"
+          if [ -n "$pids" ]; then
+            ps -o pid,ppid,etime,%cpu,%mem,stat,cmd -p $pids || true
+          else
+            echo "CANDIDATE_B_PROCESS_NOT_FOUND"
+          fi
+
+          echo "=== Candidate-B log ==="
+          if [ -f /tmp/haxlab-candidate-b.log ]; then
+            stat --printf='LOG_SIZE=%s LOG_MTIME=%y\n' /tmp/haxlab-candidate-b.log
+            tail -n 100 /tmp/haxlab-candidate-b.log
+          else
+            echo "CANDIDATE_B_LOG_NOT_FOUND"
+          fi
+
+          echo "=== Champion registry ==="
+          registry=/var/lib/haxlab/derived/training/elite-champions/registry.json
+          if sudo -n test -f "$registry"; then
+            sudo -n cat "$registry"
+          else
+            echo "CHAMPION_REGISTRY_NOT_FOUND_OR_UNREADABLE"
+          fi
+
+          echo "=== zSSH delegated queue item ==="
           python3 - <<'PY'
-          import json
-          import urllib.request
-
-          base = "http://127.0.0.1:8765"
-          queue_id = "zssh-haxlab-candidate-b-runtime-probe-20261001"
-          payload = {
-              "action": "enqueue",
-              "queue_id": queue_id,
-              "project_id": "zssh",
-              "title": "Inspect active HaxLab Candidate-B training progress",
-              "priority": "P0",
-              "completion_criteria": (
-                  "Read-only VPS evidence is recorded for Candidate-B workflow_run_id 36259774109 "
-                  "job 110291358917: verify whether the training process is alive, elapsed/runtime "
-                  "progress and recent non-secret /tmp/haxlab-candidate-b.log progress; identify a "
-                  "concrete process/runtime blocker if stalled. Do not kill, restart, deploy or "
-                  "modify HaxLab runtime."
-              ),
-              "source_url": "https://github.com/Zennay/Haxlab/issues/15",
-              "parent_queue_id": "haxlab-candidate-b-champion-evidence-gate",
-          }
-          req = urllib.request.Request(
-              base + "/api/portfolio-queue",
-              data=json.dumps(payload).encode(),
-              method="POST",
-              headers={"Content-Type": "application/json"},
-          )
-          with urllib.request.urlopen(req, timeout=10) as response:
-              result = json.load(response)
-          print("PROBE_PRIORITY_WRITE", json.dumps(result, sort_keys=True))
-
-          # Trigger a normal local runner-target read and record current SQLite allocation.
-          with urllib.request.urlopen(base + "/api/runner-targets", timeout=10) as response:
-              targets = json.load(response)
-          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
-              queue = json.load(response)
-
-          item = next((x for x in queue.get("items", []) if x.get("queue_id") == queue_id), None)
-          if not item:
-              raise RuntimeError("delegated probe missing from live SQLite")
-          print("PROBE_LIVE_ITEM", json.dumps(item, sort_keys=True))
-          print("GLOBAL_ALLOCATION", json.dumps(queue.get("allocation"), sort_keys=True))
-          print("DYNAMIC_WORKERS", json.dumps(targets.get("dynamic_workers"), sort_keys=True))
+          import json, urllib.request
+          qid="zssh-haxlab-candidate-b-runtime-probe-20261001"
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/portfolio-queue?all=1",timeout=10) as r:
+              body=json.load(r)
+          item=next((x for x in body.get("items",[]) if x.get("queue_id")==qid),None)
+          print("ZSSH_PROBE_LIVE",json.dumps(item,sort_keys=True))
           PY
