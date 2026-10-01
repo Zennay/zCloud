@@ -124,7 +124,10 @@ def project_runner_prompt(project_id, name):
     project=PROJECT_INDEX.get(project_id) or {}
     return (
         f'zCloud worker: "{name}" / "{project_id}". '
-        'Werk alleen aan VPS_QUEUE_ASSIGNMENT uit zCloud SQLite. '
+        'Ga verder met de VPS queue assignments uit de SQLite queue (source of truth). '
+        'Notion is alleen documentatie, nooit scheduler of blocker. '
+        'Werk hier intens aan verder: je hebt connectoren met GitHub en Notion. '
+        'Alles wat via SSH/VPS moet lopen zet je in een queue, dan pakt de zSSH-worker dat op. '
         f'HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
         + VPS_EXECUTION_DIRECTIVE
     )
@@ -149,12 +152,12 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     prompt=project_runner_prompt(project_id, name)
     return prompt + assignment + (
         f'Jij bent Worker {slot}/{total}. '
-        'DOEN: voer vóór je antwoord minimaal één echte actie uit: write/commit/PR, workflow/run, test/deploy, queue/state-write of concrete worker-taak. '
-        'Alleen lezen, auditen of status geven telt niet. Faalt een route, probeer direct een andere veilige route. '
-        "CONTINUE alleen na zo'n actie; DONE alleen met geteste completion-evidence. "
-        'WAIT_HUMAN alleen voor een secret, destructieve/brede toestemming of echte externe dependency. Geen secrets in prompts/logs. '
+        'Stop niet na één actie: werk stap voor stap door (code, commits, workflows, tests, deploy) tot de completion bewezen is of je echt geblokkeerd bent. '
+        'Een status- of auditrapport is geen resultaat. Faalt een route, probeer meteen een andere veilige route. '
+        'Gebruik WAIT_HUMAN alleen voor een secret, destructieve toestemming of een echte externe afhankelijkheid. '
         + project_guard +
-        f'OUTPUT exact:\nZCLOUD_QUEUE_ITEM: {queue_id}\n'
+        'Pas helemaal aan het einde, als je klaar bent of echt vastzit, sluit je af met exact (DONE alleen met bewijs, anders CONTINUE):\n'
+        f'ZCLOUD_QUEUE_ITEM: {queue_id}\n'
         'ZCLOUD_QUEUE_RESULT: DONE|CONTINUE\n'
         'ZCLOUD_QUEUE_EVIDENCE: <actie + commit/workflow/run/resultaat>\n'
         f'ZCLOUD_WORK_PROJECT: {project_id}\n'

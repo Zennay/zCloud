@@ -27,13 +27,14 @@ def test_worker_prompt_is_short_execution_first_and_queue_owned():
         "source_url": "https://example.invalid/source",
     }
     prompt = worker_prompt("cloud", item)
-    assert "Werk alleen aan VPS_QUEUE_ASSIGNMENT uit zCloud SQLite" in prompt
+    assert "Ga verder met de VPS queue assignments uit de SQLite queue (source of truth)" in prompt
+    assert "Notion is alleen documentatie, nooit scheduler of blocker" in prompt
     assert "VPS_QUEUE_ASSIGNMENT id=cloud-test" in prompt
-    assert "DOEN: voer vóór je antwoord minimaal één echte actie uit" in prompt
-    assert "Alleen lezen, auditen of status geven telt niet" in prompt
-    assert "probeer direct een andere veilige route" in prompt
-    assert "CONTINUE alleen na zo'n actie" in prompt
-    assert "DONE alleen met geteste completion-evidence" in prompt
+    assert "Stop niet na één actie" in prompt
+    assert "Een status- of auditrapport is geen resultaat" in prompt
+    assert "probeer meteen een andere veilige route" in prompt
+    assert "Pas helemaal aan het einde" in prompt
+    assert "DONE alleen met bewijs, anders CONTINUE" in prompt
     assert "ZCLOUD_QUEUE_ITEM: cloud-test" in prompt
     assert "Worker 1/2." in prompt
     assert "ZCLOUD_QUEUE_RESULT: DONE|CONTINUE" in prompt
@@ -65,8 +66,8 @@ def test_stale_persisted_base_prompt_is_ignored():
 def test_no_assignment_stays_local_and_simple():
     prompt = worker_prompt()
     assert "VPS_QUEUE_ASSIGNMENT none" in prompt
-    assert "Notion is alleen documentatie" not in prompt
-    assert len(prompt) < 1400
+    assert "Notion is alleen documentatie, nooit scheduler of blocker" in prompt
+    assert len(prompt) < 1700  # includes the owner-requested intro; longest case (cloud guard) is ~1620
 
 
 def test_project_specific_guard_is_preserved():
