@@ -1,4 +1,4 @@
-name: Normalize live HaxLab write queue
+name: Normalize live FTMO-first write queue
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Remove stale generic/read-only HaxLab continuations and prioritize write work
+      - name: Apply FTMO-first portfolio priorities without interrupting real work
         shell: bash
         run: |
           set -euo pipefail
@@ -24,15 +24,24 @@ jobs:
           import urllib.request
 
           base="http://127.0.0.1:8765"
-          canonical={
-            "haxlab-closed-loop-arena-v2-implementation":("P1","Build the next Closed-Loop Evaluation Arena v2 implementation increment",
+
+          haxlab={
+            "haxlab-closed-loop-arena-v2-implementation":("P3","Build the next Closed-Loop Evaluation Arena v2 implementation increment",
               "Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 on the current HaxLab implementation branch, with deterministic fixed-seed rollout behavior and green automated tests/workflow evidence. Read-only inspection, status, audit, checklist or documentation-only work does not complete this item."),
-            "haxlab-multisource-evaluation-suite-v2":("P2","Implement the frozen multi-source evaluation suite v2",
-              "Implement versioned tooling/config that selects and freezes multiple disjoint replay sources with deterministic seeds, provenance and regression coverage; produce a reproducible evaluation manifest/artifact and green tests. Merely inspecting or describing candidate sources is not completion."),
-            "haxlab-guard-independence-promotion-gate-v2":("P2","Implement guard-independence as a mandatory Arena v2 promotion gate",
-              "Add or complete executable guard-intervention/role-leash/recovery-dependency metrics and fail-closed promotion logic, with regression tests proving a guard-dependent challenger cannot pass. Requires code plus test/workflow evidence; audit-only work does not count."),
-            "haxlab-rollout-recovery-dataset-v1":("P2","Implement versioned rollout/recovery dataset generation",
-              "Implement a deterministic versioned pipeline that persists model-visited failures/recovery states separately from raw human evidence, with provenance, idempotent reruns and automated tests or bounded workflow evidence. Read-only analysis is insufficient."),
+            "haxlab-multisource-evaluation-suite-v2":("P3","Implement the frozen multi-source evaluation suite v2",
+              "Implement versioned tooling/config that selects and freezes multiple disjoint replay sources with deterministic seeds, provenance and regression coverage; produce a reproducible evaluation manifest/artifact and green tests."),
+            "haxlab-guard-independence-promotion-gate-v2":("P3","Implement guard-independence as a mandatory Arena v2 promotion gate",
+              "Add or complete executable guard-intervention/role-leash/recovery-dependency metrics and fail-closed promotion logic, with regression tests."),
+            "haxlab-rollout-recovery-dataset-v1":("P3","Implement versioned rollout/recovery dataset generation",
+              "Implement a deterministic versioned rollout/recovery dataset pipeline with provenance, idempotent reruns and automated evidence.")
+          }
+          ftmo={
+            "ftmo-gen20-next-safe-autonomous-stage":("P0","Advance FTMO Generation 20 through the next safe autonomous research stage",
+              "Execute the next unblocked Generation-20 zero-cost research stage and persist reproducible controller evidence. Preserve provider/provenance, preregistration, anti-leakage, walk-forward/final-holdout, broker and live-trading gates; read-only status is not completion.",
+              "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
+            "ftmo-useful-compute-cpu-attribution":("P1","Make FTMO the primary useful-compute consumer and prove CPU attribution",
+              "Prove live CPU attribution. If FTMO is not receiving useful compute, make a safe runtime/config change that restores FTMO throughput and persist current cgroup/host-share plus advanced controller evidence; diagnosis alone is not completion.",
+              "https://app.notion.com/p/3e49e19ac95581fcb8c7fd06a3d98fc7")
           }
 
           def get_queue():
@@ -44,67 +53,25 @@ jobs:
               with urllib.request.urlopen(req,timeout=10) as r:
                   return json.load(r)
 
-          live=get_queue()
-          items=live.get("items",[])
-
-          # Retire known generic/read-only leftovers only when they are currently
-          # claimed/running; otherwise leave historical DONE rows untouched and
-          # simply make canonical write lanes outrank them.
-          stale_ids={
-            "haxlab-4d184d6637268d07",
-            "zssh-haxlab-candidate-b-runtime-probe-20261001",
-          }
-          for row in items:
-              qid=row.get("queue_id")
-              if qid not in stale_ids:
-                  continue
-              status=str(row.get("status") or "").lower()
-              slot=row.get("worker_slot")
-              if status in {"claimed","running","verifying"} and slot:
-                  result=post({
-                    "action":"result",
-                    "worker_slot":slot,
-                    "queue_id":qid,
-                    "result":"DONE",
-                    "evidence":"Superseded by completed Candidate-B gate and canonical write-first Arena v2 backlog.",
-                  })
-                  print("STALE_QUEUE_CLOSED",json.dumps(result,sort_keys=True))
-              elif status=="queued":
-                  # Re-enqueue at P3 with an explicit superseded title; this keeps
-                  # history intact but prevents it outranking implementation work.
-                  project=str(row.get("project_id") or "haxlab")
-                  result=post({
-                    "action":"enqueue",
-                    "queue_id":qid,
-                    "project_id":project,
-                    "title":"Superseded diagnostic/continuation; no longer primary work",
-                    "priority":"P3",
-                    "completion_criteria":"This item is superseded by canonical implementation work and must not be chosen while any HaxLab P1/P2 write lane is eligible.",
-                    "source_url":str(row.get("source_url") or ""),
-                    "parent_queue_id":row.get("parent_queue_id"),
-                  })
-                  print("STALE_QUEUE_DEPRIORITIZED",json.dumps(result,sort_keys=True))
-
-          for qid,(priority,title,criteria) in canonical.items():
+          for qid,(priority,title,criteria) in haxlab.items():
               result=post({
-                "action":"enqueue",
-                "queue_id":qid,
-                "project_id":"haxlab",
-                "title":title,
-                "priority":priority,
-                "completion_criteria":criteria,
-                "source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
+                  "action":"enqueue","queue_id":qid,"project_id":"haxlab",
+                  "title":title,"priority":priority,"completion_criteria":criteria,
+                  "source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"
               })
-              print("WRITE_QUEUE_NORMALIZED",json.dumps(result,sort_keys=True))
+              print("HAXLAB_BACKGROUND",json.dumps(result,sort_keys=True))
 
-          # If a legacy synthetic P3 continuation is occupying a global slot
-          # while the canonical HaxLab P1 write lane is waiting, yield that
-          # synthetic item back to the queue. This does not complete/cancel
-          # real project work; it only removes stale fallback work from the
-          # scarce active slots so global priority can take effect.
+          for qid,(priority,title,criteria,source) in ftmo.items():
+              result=post({
+                  "action":"enqueue","queue_id":qid,"project_id":"ftmo",
+                  "title":title,"priority":priority,"completion_criteria":criteria,
+                  "source_url":source
+              })
+              print("FTMO_PRIORITY",json.dumps(result,sort_keys=True))
+
           mid=get_queue()
-          waiting_hax_p1=any(
-              x.get("queue_id")=="haxlab-closed-loop-arena-v2-implementation"
+          waiting_ftmo_p0=any(
+              x.get("queue_id")=="ftmo-gen20-next-safe-autonomous-stage"
               and x.get("eligible")
               and str(x.get("status") or "").lower()=="queued"
               for x in mid.get("items",[])
@@ -113,34 +80,27 @@ jobs:
               "Continue project autonomously with the next concrete implementation step",
               "Superseded diagnostic/continuation; no longer primary work",
           }
-          if waiting_hax_p1:
+          if waiting_ftmo_p0:
               for row in mid.get("items",[]):
-                  status=str(row.get("status") or "").lower()
                   if (
                       row.get("priority")=="P3"
-                      and status in {"claimed","running","verifying"}
+                      and str(row.get("status") or "").lower() in {"claimed","running","verifying"}
                       and row.get("worker_slot")
                       and str(row.get("title") or "") in legacy_titles
                   ):
                       result=post({
-                          "action":"result",
-                          "worker_slot":row.get("worker_slot"),
-                          "queue_id":row.get("queue_id"),
-                          "result":"CONTINUE",
-                          "evidence":"Legacy synthetic P3 continuation yielded to queued HaxLab P1 write-first implementation work.",
+                          "action":"result","worker_slot":row.get("worker_slot"),
+                          "queue_id":row.get("queue_id"),"result":"CONTINUE",
+                          "evidence":"Legacy synthetic P3 continuation yielded to queued FTMO P0 research work."
                       })
-                      print("LEGACY_P3_YIELDED",json.dumps({
-                          "queue_id":row.get("queue_id"),
-                          "project_id":row.get("project_id"),
-                          "worker_slot":row.get("worker_slot"),
-                          "result":result,
-                      },sort_keys=True))
+                      print("LEGACY_P3_YIELDED",json.dumps(result,sort_keys=True))
 
           final=get_queue()
-          hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
-          print("HAXLAB_ELIGIBLE_FINAL",json.dumps([
-              {k:x.get(k) for k in ("queue_id","priority","status","worker_slot","title")}
-              for x in hax
-          ],sort_keys=True))
+          focused=[
+              {k:x.get(k) for k in ("queue_id","project_id","priority","status","worker_slot","title")}
+              for x in final.get("items",[])
+              if x.get("eligible") and x.get("project_id") in {"ftmo","haxlab"}
+          ]
+          print("FTMO_HAXLAB_FINAL",json.dumps(focused,sort_keys=True))
           print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))
           PY
