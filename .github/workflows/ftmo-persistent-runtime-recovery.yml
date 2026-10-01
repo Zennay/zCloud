@@ -132,8 +132,32 @@ jobs:
           attr = receipt["attribution"]
           print("FTMO_CPU_ATTRIBUTION", json.dumps(attr, sort_keys=True))
           if not attr.get("ftmo_primary_attributed_compute"):
-              raise SystemExit("FTMO is not the primary attributed compute consumer")
+              print("FTMO_ATTRIBUTION_NOT_PRIMARY=1")
           PY
+          if ! python3 - <<'PY'
+          import json
+          from pathlib import Path
+          attr = json.loads(Path("/tmp/ftmo-recovery-cpu-attribution.json").read_text(encoding="utf-8"))["attribution"]
+          raise SystemExit(0 if attr.get("ftmo_primary_attributed_compute") else 1)
+          PY
+          then
+            systemctl status "$SERVICE" --no-pager --full || true
+            journalctl -u "$SERVICE" -n 120 --no-pager || true
+            if [[ -f "$ROOT/.scratch/autonomy/status.json" ]]; then
+              python3 - <<'PY'
+          import json
+          from pathlib import Path
+          status=json.loads(Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json").read_text())
+          print("FTMO_LAST_STATUS", json.dumps({
+              "completed_at_utc": status.get("completed_at_utc"),
+              "ok": status.get("ok"),
+              "error": status.get("error"),
+              "research": status.get("research"),
+          }, sort_keys=True))
+          PY
+            fi
+            exit 1
+          fi
           systemctl show "$SERVICE" -p NRestarts -p MainPID -p ActiveState -p SubState --no-pager
           "$ROOT/.venv/bin/python" - <<'PY'
           import json
