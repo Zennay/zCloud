@@ -129,7 +129,7 @@ jobs:
                   continue
               if str(item.get("project_id") or "").lower() != "zssh":
                   wrong.append([expected["queue_id"], "project_id", item.get("project_id")])
-              if str(item.get("priority") or "").upper() != expected["priority"]:
+              if str(item.get("priority") or "").upper() != "P1":
                   wrong.append([expected["queue_id"], "priority", item.get("priority")])
               if "RESEARCH_FIRST" in expected["completion_criteria"] and "RESEARCH_FIRST" not in str(item.get("completion_criteria") or ""):
                   wrong.append([expected["queue_id"], "research_first", False])
