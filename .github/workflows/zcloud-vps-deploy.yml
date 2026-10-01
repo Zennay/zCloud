@@ -147,6 +147,8 @@ jobs:
             --path autonomy-policy.json \
             --path vps-execution-policy.json \
             --path portfolio_queue.seed.json \
+            --preserve-prechange-drift public/zcloud-worker.user.js \
+            --preserve-prechange-drift firefox-extension/background.js \
             --actor "github-actions-vps-deploy" \
             --json
 

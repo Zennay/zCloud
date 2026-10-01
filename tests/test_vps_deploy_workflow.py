@@ -21,6 +21,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.index("- name: Promote backend and autonomy policy"),
             text.index("- name: Promote Violentmonkey worker"),
         )
+        backend = text[
+            text.index("- name: Promote backend and autonomy policy"):
+            text.index("- name: Promote Violentmonkey worker")
+        ]
+        self.assertIn(
+            "--preserve-prechange-drift public/zcloud-worker.user.js",
+            backend,
+        )
+        self.assertIn(
+            "--preserve-prechange-drift firefox-extension/background.js",
+            backend,
+        )
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
