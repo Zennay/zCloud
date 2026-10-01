@@ -1,0 +1,98 @@
+name: Recover FTMO persistent runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-persistent-runtime-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-persistent-runtime-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Install and start bounded FTMO marathon service
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=/opt/ftmo-autonomous
+          SERVICE=ftmo-autonomous-marathon.service
+
+          test -d "$ROOT"
+          test -x "$ROOT/.venv/bin/python"
+          test -f "$ROOT/configs/autonomous_runtime.json"
+          test -x "$ROOT/scripts/run-autonomous-marathon.sh"
+          id ftmo-runner >/dev/null
+
+          rendered="$(mktemp)"
+          trap 'rm -f "$rendered"' EXIT
+          cat >"$rendered" <<'UNIT'
+          [Unit]
+          Description=FTMO continuous autonomous research marathon
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ftmo-runner
+          WorkingDirectory=/opt/ftmo-autonomous
+          Environment=PYTHONUNBUFFERED=1
+          Environment=FTMO_PYTHON=/opt/ftmo-autonomous/.venv/bin/python
+          Environment=FTMO_AUTONOMOUS_CLOUD_BUDGET_USD=0.00
+          Environment=FTMO_ALLOW_PAID_AWS=
+          ExecStart=/bin/bash /opt/ftmo-autonomous/scripts/run-autonomous-marathon.sh /opt/ftmo-autonomous
+          Restart=always
+          RestartSec=3s
+          Nice=0
+          CPUWeight=900
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=full
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          if ! sudo -n cmp -s "$rendered" "/etc/systemd/system/$SERVICE" 2>/dev/null; then
+            sudo -n install -m 0644 "$rendered" "/etc/systemd/system/$SERVICE"
+          fi
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl disable --now ftmo-autonomous.timer || true
+          sudo -n systemctl enable --now "$SERVICE"
+
+          sleep 6
+          systemctl is-enabled "$SERVICE"
+          systemctl is-active "$SERVICE"
+          systemctl show "$SERVICE" -p ActiveState -p SubState -p NRestarts -p MainPID -p User --no-pager
+
+          "$ROOT/.venv/bin/python" - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json")
+          if not path.exists():
+              print("FTMO_STATUS=not-yet-written")
+              raise SystemExit(0)
+          status = json.loads(path.read_text(encoding="utf-8"))
+          assert status.get("live_trading_allowed") is False
+          assert status.get("broker_order_submission_allowed") is False
+          assert str(status.get("autonomous_cloud_budget_usd")) == "0.00"
+          research = status.get("research") or {}
+          print(json.dumps({
+              "FTMO_PERSISTENT_RUNTIME": "active",
+              "completed_at_utc": status.get("completed_at_utc"),
+              "ok": status.get("ok"),
+              "generation_number": research.get("generation_number"),
+              "generation_id": research.get("generation_id"),
+              "next_stage": research.get("next_stage"),
+              "error": status.get("error"),
+          }, sort_keys=True))
+          PY
