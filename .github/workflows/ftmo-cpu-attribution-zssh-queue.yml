@@ -1,0 +1,101 @@
+name: Enqueue FTMO CPU proof on zSSH lane
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ftmo-cpu-attribution-zssh-queue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue and verify FTMO CPU attribution proof
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-cpu-attribution-proof"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Prove FTMO useful CPU attribution on VPS",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba inspect live cgroup and host CPU attribution for "
+                  "ftmo-autonomous-marathon versus HaxLab, control-plane, user.slice, "
+                  "system.slice residual, machine or other top-level work and true "
+                  "host-unattributed CPU. Verify the deployed FTMO runtime contains "
+                  "commit 0acfac83eff1136bdce1bfbde6e52b6905ccf1fc or a descendant "
+                  "with the same top-level attribution logic, and capture a fresh "
+                  "controller/runtime receipt. If FTMO is not the primary useful-compute "
+                  "consumer, make the smallest safe runtime or systemd allocation change "
+                  "needed to restore FTMO throughput, preserving the zero-paid-cloud, "
+                  "paper-only, preregistration, walk-forward and final-holdout boundaries. "
+                  "Return exact cgroup shares, service state, runtime revision and execution evidence."
+              ),
+              "source_url": "https://github.com/Zennay/Ftmo/pull/369",
+          }
+
+          request = urllib.request.Request(
+              base + "/api/portfolio-queue",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              body = json.load(response)
+              if response.status != 200:
+                  raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
+          print("QUEUE_ENQUEUE_RESPONSE", json.dumps(body, sort_keys=True))
+
+          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+              live = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(live)
+          if not item:
+              raise RuntimeError(f"{queue_id} not found in live SQLite queue")
+          if str(item.get("priority") or "").upper() != "P0":
+              raise RuntimeError(f"{queue_id} priority is not P0: {item.get('priority')}")
+          if str(item.get("project_id") or "").lower() != "zssh":
+              raise RuntimeError(f"{queue_id} is attached to wrong project: {item.get('project_id')}")
+
+          print(
+              "FTMO_CPU_ZSSH_QUEUE_GREEN",
+              json.dumps(
+                  {
+                      "queue_id": item.get("queue_id"),
+                      "project_id": item.get("project_id"),
+                      "priority": item.get("priority"),
+                      "status": item.get("status"),
+                      "eligible": item.get("eligible"),
+                      "worker_slot": item.get("worker_slot"),
+                  },
+                  sort_keys=True,
+              ),
+          )
+          PY
