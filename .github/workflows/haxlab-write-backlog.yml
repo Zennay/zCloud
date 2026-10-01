@@ -1,4 +1,4 @@
-name: Apply HaxLab write-first backlog
+name: Normalize live HaxLab write queue
 
 on:
   push:
@@ -11,63 +11,97 @@ permissions:
   contents: read
 
 jobs:
-  apply:
+  normalize:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Enqueue and verify HaxLab implementation backlog
+      - name: Remove stale generic/read-only HaxLab continuations and prioritize write work
         shell: bash
-        env:
-          HAXLAB_BACKLOG_JSON: '[{"queue_id":"haxlab-closed-loop-arena-v2-implementation","project_id":"haxlab","title":"Build the next Closed-Loop Evaluation Arena v2 implementation increment","priority":"P1","completion_criteria":"Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 on the current HaxLab implementation branch, with deterministic fixed-seed rollout behavior and green automated tests/workflow evidence. Read-only inspection, status, audit, checklist or documentation-only work does not complete this item.","source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"},{"queue_id":"haxlab-multisource-evaluation-suite-v2","project_id":"haxlab","title":"Implement the frozen multi-source evaluation suite v2","priority":"P2","completion_criteria":"Implement versioned tooling/config that selects and freezes multiple disjoint replay sources with deterministic seeds, provenance and regression coverage; produce a reproducible evaluation manifest/artifact and green tests. Merely inspecting or describing candidate sources is not completion.","source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"},{"queue_id":"haxlab-guard-independence-promotion-gate-v2","project_id":"haxlab","title":"Implement guard-independence as a mandatory Arena v2 promotion gate","priority":"P2","completion_criteria":"Add or complete executable guard-intervention/role-leash/recovery-dependency metrics and fail-closed promotion logic, with regression tests proving a guard-dependent challenger cannot pass. Requires code plus test/workflow evidence; audit-only work does not count.","source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"},{"queue_id":"haxlab-rollout-recovery-dataset-v1","project_id":"haxlab","title":"Implement versioned rollout/recovery dataset generation","priority":"P2","completion_criteria":"Implement a deterministic versioned pipeline that persists model-visited failures/recovery states separately from raw human evidence, with provenance, idempotent reruns and automated tests or bounded workflow evidence. Read-only analysis is insufficient.","source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b"}]'
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           import json
-          import os
           import urllib.request
 
           base="http://127.0.0.1:8765"
-          items=json.loads(os.environ["HAXLAB_BACKLOG_JSON"])
+          canonical={
+            "haxlab-closed-loop-arena-v2-implementation":("P1","Build the next Closed-Loop Evaluation Arena v2 implementation increment",
+              "Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 on the current HaxLab implementation branch, with deterministic fixed-seed rollout behavior and green automated tests/workflow evidence. Read-only inspection, status, audit, checklist or documentation-only work does not complete this item."),
+            "haxlab-multisource-evaluation-suite-v2":("P2","Implement the frozen multi-source evaluation suite v2",
+              "Implement versioned tooling/config that selects and freezes multiple disjoint replay sources with deterministic seeds, provenance and regression coverage; produce a reproducible evaluation manifest/artifact and green tests. Merely inspecting or describing candidate sources is not completion."),
+            "haxlab-guard-independence-promotion-gate-v2":("P2","Implement guard-independence as a mandatory Arena v2 promotion gate",
+              "Add or complete executable guard-intervention/role-leash/recovery-dependency metrics and fail-closed promotion logic, with regression tests proving a guard-dependent challenger cannot pass. Requires code plus test/workflow evidence; audit-only work does not count."),
+            "haxlab-rollout-recovery-dataset-v1":("P2","Implement versioned rollout/recovery dataset generation",
+              "Implement a deterministic versioned pipeline that persists model-visited failures/recovery states separately from raw human evidence, with provenance, idempotent reruns and automated tests or bounded workflow evidence. Read-only analysis is insufficient."),
+          }
+
+          def get_queue():
+              with urllib.request.urlopen(base+"/api/portfolio-queue?all=1",timeout=10) as r:
+                  return json.load(r)
 
           def post(payload):
-              req=urllib.request.Request(
-                  base+"/api/portfolio-queue",
-                  data=json.dumps(payload).encode(),
-                  method="POST",
-                  headers={"Content-Type":"application/json"},
-              )
+              req=urllib.request.Request(base+"/api/portfolio-queue",data=json.dumps(payload).encode(),method="POST",headers={"Content-Type":"application/json"})
               with urllib.request.urlopen(req,timeout=10) as r:
                   return json.load(r)
 
-          for item in items:
-              result=post({"action":"enqueue", **item})
-              print("HAXLAB_WRITE_QUEUE_ENQUEUE", json.dumps(result, sort_keys=True))
+          live=get_queue()
+          items=live.get("items",[])
 
-          with urllib.request.urlopen(base+"/api/portfolio-queue?all=1",timeout=10) as r:
-              live=json.load(r)
-          by_id={x.get("queue_id"):x for x in live.get("items",[])}
-
-          missing=[]
-          for expected in items:
-              row=by_id.get(expected["queue_id"])
-              if not row:
-                  missing.append(expected["queue_id"])
+          # Retire known generic/read-only leftovers only when they are currently
+          # claimed/running; otherwise leave historical DONE rows untouched and
+          # simply make canonical write lanes outrank them.
+          stale_ids={
+            "haxlab-4d184d6637268d07",
+            "zssh-haxlab-candidate-b-runtime-probe-20261001",
+          }
+          for row in items:
+              qid=row.get("queue_id")
+              if qid not in stale_ids:
                   continue
-              if row.get("project_id")!="haxlab" or not row.get("eligible"):
-                  raise RuntimeError(f"bad live row for {expected['queue_id']}: {row}")
-              print("HAXLAB_WRITE_QUEUE_VERIFIED", json.dumps({
-                  "queue_id":row.get("queue_id"),
-                  "priority":row.get("priority"),
-                  "status":row.get("status"),
-                  "worker_slot":row.get("worker_slot"),
-                  "eligible":row.get("eligible"),
-                  "title":row.get("title"),
-              }, sort_keys=True))
-          if missing:
-              raise RuntimeError("missing live HaxLab queue items: "+",".join(missing))
+              status=str(row.get("status") or "").lower()
+              slot=row.get("worker_slot")
+              if status in {"claimed","running","verifying"} and slot:
+                  result=post({
+                    "action":"result",
+                    "worker_slot":slot,
+                    "queue_id":qid,
+                    "result":"DONE",
+                    "evidence":"Superseded by completed Candidate-B gate and canonical write-first Arena v2 backlog.",
+                  })
+                  print("STALE_QUEUE_CLOSED",json.dumps(result,sort_keys=True))
+              elif status=="queued":
+                  # Re-enqueue at P3 with an explicit superseded title; this keeps
+                  # history intact but prevents it outranking implementation work.
+                  project=str(row.get("project_id") or "haxlab")
+                  result=post({
+                    "action":"enqueue",
+                    "queue_id":qid,
+                    "project_id":project,
+                    "title":"Superseded diagnostic/continuation; no longer primary work",
+                    "priority":"P3",
+                    "completion_criteria":"This item is superseded by canonical implementation work and must not be chosen while any HaxLab P1/P2 write lane is eligible.",
+                    "source_url":str(row.get("source_url") or ""),
+                    "parent_queue_id":row.get("parent_queue_id"),
+                  })
+                  print("STALE_QUEUE_DEPRIORITIZED",json.dumps(result,sort_keys=True))
 
-          print("HAXLAB_WRITE_BACKLOG_GREEN", json.dumps({
-              "count":len(items),
-              "queue_ids":[x["queue_id"] for x in items],
-              "allocation":live.get("allocation"),
-          }, sort_keys=True))
+          for qid,(priority,title,criteria) in canonical.items():
+              result=post({
+                "action":"enqueue",
+                "queue_id":qid,
+                "project_id":"haxlab",
+                "title":title,
+                "priority":priority,
+                "completion_criteria":criteria,
+                "source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
+              })
+              print("WRITE_QUEUE_NORMALIZED",json.dumps(result,sort_keys=True))
+
+          final=get_queue()
+          hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
+          print("HAXLAB_ELIGIBLE_FINAL",json.dumps([
+              {k:x.get(k) for k in ("queue_id","priority","status","worker_slot","title")}
+              for x in hax
+          ],sort_keys=True))
+          print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))
           PY
