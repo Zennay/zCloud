@@ -6,6 +6,11 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zssh-vps-release-runner.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-vps-release-runner.yml
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +22,12 @@ concurrency:
 
 jobs:
   release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: self-hosted
     timeout-minutes: 15
     env:
@@ -24,9 +35,10 @@ jobs:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
-      - name: Check out zCloud coordination
+      - name: Check out trusted zCloud coordination
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
 
       - name: Check out exact green zSSH revision
