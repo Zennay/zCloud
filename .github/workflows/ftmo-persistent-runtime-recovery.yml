@@ -148,13 +148,38 @@ jobs:
               python3 - <<'PY'
           import json
           from pathlib import Path
-          status=json.loads(Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json").read_text())
+          root=Path("/opt/ftmo-autonomous")
+          status=json.loads((root/".scratch/autonomy/status.json").read_text())
           print("FTMO_LAST_STATUS", json.dumps({
               "completed_at_utc": status.get("completed_at_utc"),
               "ok": status.get("ok"),
               "error": status.get("error"),
               "research": status.get("research"),
           }, sort_keys=True))
+          machine=json.loads((root/"configs/research_machine.json").read_text())
+          active=machine.get("active_generation") or {}
+          pred=active.get("predecessor_closure")
+          diag={
+              "generation_number": active.get("generation_number"),
+              "generation_id": active.get("generation_id"),
+              "predecessor_generation_id": active.get("predecessor_generation_id"),
+              "predecessor_closure": pred,
+          }
+          if pred:
+              pred_path=root/pred
+              diag["predecessor_exists"]=pred_path.is_file()
+              if pred_path.is_file():
+                  payload=json.loads(pred_path.read_text())
+                  diag["predecessor_payload"]={
+                      "schema_version": payload.get("schema_version"),
+                      "scope": payload.get("scope"),
+                      "status": payload.get("status"),
+                      "generation_number": payload.get("generation_number"),
+                      "generation_id": payload.get("generation_id"),
+                      "next_generation_number": payload.get("next_generation_number"),
+                      "strategy_outcomes_observed": payload.get("strategy_outcomes_observed"),
+                  }
+          print("FTMO_RESEARCH_MACHINE_DIAG", json.dumps(diag, sort_keys=True))
           PY
             fi
             exit 1
