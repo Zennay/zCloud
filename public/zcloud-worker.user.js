@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.0
+// @version      1.3.1
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -58,6 +58,7 @@
   let finishedAt = 0;
   let awaitingGeneration = false;
   let generationDeadline = 0;
+  let lastThinkingEffortWarningAt = 0;
   let lastProgressAt = Date.now();
   let lastPromptSentAt = 0;
   let lastHandledCommandId = 0;
@@ -289,7 +290,7 @@
       refreshMs: clampTiming(cfg.check_interval_ms ?? cfg.refresh_ms, DEFAULT_TIMING.refreshMs, 1000, 60000),
       tickMs: clampTiming(cfg.tick_interval_ms, DEFAULT_TIMING.tickMs, 250, 10000),
       heartbeatMs: clampTiming(cfg.heartbeat_interval_ms, DEFAULT_TIMING.heartbeatMs, 5000, 300000),
-      generationStartTimeoutMs: clampTiming(cfg.generation_start_timeout_ms, DEFAULT_TIMING.generationStartTimeoutMs, 10000, 600000)
+      generationStartTimeoutMs: clampTiming(cfg.generation_start_timeout_ms, DEFAULT_TIMING.generationStartTimeoutMs, 10000, 120000)
     };
     const changed = Object.keys(next).some(key => next[key] !== timing[key]);
     timing = next;
@@ -881,12 +882,15 @@
         const highReady = await ensureHighThinking();
         if (!highReady) {
           const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-          await status("send-blocked", {
-            reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
-            error: diagnostic,
-            required: REQUIRED_THINKING_EFFORT
-          });
-          return false;
+          // Soft fallback: stuur gewoon, meldt zacht dat High niet beschikbaar is
+          if (!generationActive() && (!lastThinkingEffortWarningAt || Date.now() - lastThinkingEffortWarningAt > 120000)) {
+            await status("thinking-effort-unavailable", {
+              diagnostic: diagnostic,
+              reason: "high-thinking-picker-unavailable"
+            });
+            lastThinkingEffortWarningAt = Date.now();
+          }
+          // Continue anyway - don't block
         }
       }
 
