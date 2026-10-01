@@ -150,6 +150,53 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("queue_scope_conflict", critical_lane["blocked_by"][0]["reason"])
         self.assertEqual(["research/shared.py"], critical_lane["blocked_by"][0]["overlap"]["files"])
 
+    def test_keyword_matching_does_not_treat_ui_as_substring_of_build(self):
+        project = self.project("supa", "product")
+        item = {
+            "queue_id": "supa-build",
+            "project_id": "supa",
+            "title": "Build package",
+            "completion_criteria": "Compile package deterministically.",
+            "priority": "P1",
+            "status": "queued",
+            "created_at": "2026-10-01T00:00:00+00:00",
+            "metadata": {},
+        }
+
+        lane = classify_backlog_item(project, item)
+
+        self.assertEqual("quality-validation", lane["lane_id"])
+
+    def test_cross_lane_explicit_file_collision_admits_only_higher_priority_scope(self):
+        project = self.project("cloud", "platform")
+        shared_scope = {
+            "conflict_scope": {
+                "capabilities": [],
+                "files": ["server.py"],
+            }
+        }
+        backlog = [
+            {
+                **self.item("cloud-control", "Implement queue scheduler lane allocation", "P1", metadata=shared_scope),
+                "project_id": "cloud",
+            },
+            {
+                **self.item("cloud-deploy", "Harden VPS deploy workflow", "P2", metadata=shared_scope),
+                "project_id": "cloud",
+            },
+        ]
+
+        lanes = generate_execution_lanes(project, backlog)
+        control = next(lane for lane in lanes if lane["lane_id"] == "control-plane")
+        deploy = next(lane for lane in lanes if lane["lane_id"] == "deploy-ops")
+
+        self.assertEqual("cloud-control", control["queue_id"])
+        self.assertIsNone(deploy["queue_id"])
+        self.assertEqual("blocked", deploy["status"])
+        self.assertEqual("queue", deploy["blocked_by"][0]["kind"])
+        self.assertEqual("cloud-control", deploy["blocked_by"][0]["queue_id"])
+        self.assertEqual(["server.py"], deploy["blocked_by"][0]["overlap"]["files"])
+
     def test_platform_lane_scopes_are_pairwise_non_overlapping(self):
         project = self.project("cloud", "platform")
         backlog = [
