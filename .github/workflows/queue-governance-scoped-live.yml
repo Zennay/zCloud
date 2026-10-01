@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: zcloud-queue-governance-scoped-live
@@ -20,24 +21,42 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 8
     steps:
-      - name: Check out candidate
+      - name: Check out current main candidate
         uses: actions/checkout@v4
         with:
-          fetch-depth: 8
+          ref: main
+          fetch-depth: 64
 
-      - name: Verify scoped candidate matches current main
+      - name: Require current main regression green
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(git rev-parse HEAD)"
+          remote="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          [[ "$current" == "$remote" ]]
+          export CURRENT_SHA="$current"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          repo=os.environ["GITHUB_REPOSITORY"]
+          sha=os.environ["CURRENT_SHA"]
+          token=os.environ["GH_TOKEN"]
+          req=urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/workflows/zcloud-regression-smoke.yml/runs?branch=main&event=push&status=success&per_page=100",
+              headers={"Authorization":f"Bearer {token}","Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},
+          )
+          with urllib.request.urlopen(req,timeout=15) as r:
+              payload=json.load(r)
+          if not any(x.get("head_sha")==sha and x.get("conclusion")=="success" for x in payload.get("workflow_runs",[])):
+              raise SystemExit(f"current main is not regression-green: {sha}")
+          print("QUEUE_GOVERNANCE_MAIN_GREEN",sha)
+          PY
+
+      - name: Validate queue governance surface
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main --depth=8
-          files=(
-            server.py
-            projects.json
-            portfolio_queue.seed.json
-            public/app.js
-            public/style.css
-          )
-          git diff --exit-code origin/main -- "${files[@]}"
           python3 -m py_compile server.py
           python3 -m unittest             tests.test_portfolio_queue_backend             tests.test_mobile_runner_controls
           node --check public/app.js
@@ -50,7 +69,8 @@ jobs:
           root="/home/ubuntu/zennay-cloud"
           service="zennay-cloud.service"
           sentinel="$root/.disable-self-heal"
-          backup="$HOME/.local/state/zcloud/queue-governance-backups/${GITHUB_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+          candidate_sha="$(git rev-parse HEAD)"
+          backup="$HOME/.local/state/zcloud/queue-governance-backups/${candidate_sha}-$(date -u +%Y%m%dT%H%M%SZ)"
           files=(
             server.py
             projects.json
@@ -58,6 +78,9 @@ jobs:
             public/app.js
             public/style.css
           )
+
+          current_remote="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          [[ "$candidate_sha" == "$current_remote" ]]
 
           mkdir -p "$backup"
           created_sentinel=0
@@ -95,79 +118,65 @@ jobs:
             mkdir -p "$root/$(dirname "$f")"
             tmp="$root/$f.queue-governance.$$"
             cp "$GITHUB_WORKSPACE/$f" "$tmp"
-            if [[ -f "$root/$f" ]]; then
-              chmod --reference="$root/$f" "$tmp"
-            fi
+            if [[ -f "$root/$f" ]]; then chmod --reference="$root/$f" "$tmp"; fi
             mv -f "$tmp" "$root/$f"
           done
+
+          # If another AI moved main, continue only when these five files are unchanged.
+          newest="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ "$newest" != "$candidate_sha" ]]; then
+            git fetch origin "$newest" --depth=1
+            git diff --exit-code "$candidate_sha" "$newest" -- "${files[@]}"
+          fi
 
           sudo -n systemctl restart "$service"
 
           python3 - <<'PY'
-          import json
-          import time
-          import urllib.request
-
+          import json, time, urllib.request
           base="http://127.0.0.1:8765"
-
           def get(path):
-              with urllib.request.urlopen(base+path, timeout=8) as response:
-                  return json.load(response)
+              with urllib.request.urlopen(base+path,timeout=8) as r:
+                  return json.load(r)
 
           status=None
           last=None
           for _ in range(40):
               try:
                   status=get("/api/status")
-                  if (
-                      isinstance(status.get("attention_needed"), list)
-                      and isinstance(status.get("portfolio_queue_health"), dict)
-                      and not status.get("errors")
-                  ):
+                  if isinstance(status.get("attention_needed"),list) and isinstance(status.get("portfolio_queue_health"),dict) and not status.get("errors"):
                       break
                   last=status
               except Exception as exc:
                   last=repr(exc)
               time.sleep(1)
           else:
-              raise RuntimeError("new queue-governance API did not become healthy: "+str(last)[:1500])
+              raise RuntimeError("queue-governance API did not become healthy: "+str(last)[:1200])
 
           attention=get("/api/portfolio-attention")
           queue=get("/api/portfolio-queue?all=1")
-          items=queue.get("items") or []
           runnable=[
-              item for item in items
-              if item.get("eligible") and str(item.get("status") or "").lower()
-                 in {"queued","claimed","running","verifying"}
+              x for x in queue.get("items",[])
+              if x.get("eligible") and str(x.get("status") or "").lower() in {"queued","claimed","running","verifying"}
           ]
-          projects={str(item.get("project_id") or "") for item in runnable}
+          projects={str(x.get("project_id") or "") for x in runnable}
           expected={"cloud","ftmo","haxlab","raiseai","supa","zssh"}
           missing=sorted(expected-projects)
           if missing:
               raise RuntimeError("runnable roadmap projects missing: "+",".join(missing))
-          if any(str(item.get("project_id"))=="ulab" for item in runnable):
+          if any(x.get("project_id")=="ulab" for x in runnable):
               raise RuntimeError("uLab human-gated work leaked into execution queue")
 
-          forbidden_prefixes=(
-              "inspect ","audit ","review ","verify ","check ","monitor ",
-              "report ","summarize ","status ","superseded "
-          )
-          bad=[
-              item.get("queue_id") for item in runnable
-              if str(item.get("title") or "").strip().lower().startswith(forbidden_prefixes)
-          ]
+          forbidden=("inspect ","audit ","review ","verify ","check ","monitor ","report ","summarize ","status ","superseded ")
+          bad=[x.get("queue_id") for x in runnable if str(x.get("title") or "").strip().lower().startswith(forbidden)]
           if bad:
               raise RuntimeError("non-executable items still runnable: "+",".join(map(str,bad)))
 
           attention_items=attention.get("items") or []
-          if not any(
-              item.get("project_id")=="ulab" and item.get("status")=="open"
-              for item in attention_items
-          ):
+          if not any(x.get("project_id")=="ulab" and x.get("status")=="open" for x in attention_items):
               raise RuntimeError("uLab human gate missing from Attention Needed")
 
           health=status["portfolio_queue_health"]
-          if int(health.get("ready") or 0) < 10:
+          if int(health.get("ready") or 0)<10:
               raise RuntimeError("queue is still too small: "+json.dumps(health,sort_keys=True))
 
           print("QUEUE_GOVERNANCE_LIVE_GREEN",json.dumps({
