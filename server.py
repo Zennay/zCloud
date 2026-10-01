@@ -1985,6 +1985,10 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         raise ValueError('title is verplicht')
     if priority not in ('P0','P1','P2','P3'):
         raise ValueError('priority moet P0, P1, P2 of P3 zijn')
+    # HaxLab is explicitly a background/hobby lane. Central enforcement keeps
+    # stale normalizers or old workers from promoting it above revenue-oriented work.
+    if project_id=='haxlab':
+        priority='P3'
     if str((PROJECT_INDEX.get(project_id) or {}).get('queue_mode') or '').lower()=='human-gated':
         raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
     if not _portfolio_queue_execution_capable(title,completion_criteria):
@@ -2015,7 +2019,15 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         return None
     name=str(project.get('name') or project_id or 'project').strip()
     next_step=str(project.get('next_step') or '').strip()
-    priority='P1' if project_id in ('haxlab','ftmo','cloud','zssh') else 'P2'
+    priority_by_project={
+        'ftmo':'P0',
+        'zssh':'P0',
+        'raiseai':'P1',
+        'supa':'P1',
+        'cloud':'P2',
+        'haxlab':'P3',
+    }
+    priority=priority_by_project.get(project_id,'P2')
     if parent_queue_id is None:
         with connect() as c:
             sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
@@ -2149,30 +2161,6 @@ def portfolio_queue_allocate():
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
     return selected
-
-def portfolio_write_continuation(project_id,parent_queue_id=None):
-    project_id=str(project_id or '').strip().lower()
-    project=PROJECT_INDEX.get(project_id) or {}
-    name=str(project.get('name') or project_id or 'project').strip()
-    next_step=str(project.get('next_step') or '').strip()
-    priority='P1' if project_id=='haxlab' else 'P2'
-    criteria=(
-        f'Read the current {name} HQ/handoff and execute the highest-value safe unblocked write-capable roadmap step. '
-        'Completion requires at least one material code/config/workflow/experiment/runtime state change plus automated '
-        'test/build/run evidence. Read-only inspection, audit, status, checklist, documentation-only or evidence collection '
-        'alone cannot complete this item. If a narrow evidence gate is already resolved, continue within this assignment '
-        'to the next safe write-capable roadmap step instead of stopping.'
-    )
-    if next_step:
-        criteria += ' Current project next-step hint: ' + next_step
-    return portfolio_queue_enqueue(
-        project_id,
-        f'Implement next {name} roadmap increment',
-        priority,
-        criteria,
-        project.get('notion_url') or project.get('handoff_url') or '',
-        parent_queue_id=parent_queue_id,
-    )
 
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
