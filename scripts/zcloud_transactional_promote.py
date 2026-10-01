@@ -770,11 +770,12 @@ def run_prechange(
         # A just-finished promotion can leave the local HTTP endpoint in a
         # very short recovery window. Retry only that single health failure;
         # drift, mapping, service and every other guard failure stay fail-closed.
-        http_only = bool(failed) and all(
-            item.get("name") == "zcloud_http" for item in failed
+        transient_health_only = bool(failed) and all(
+            item.get("name") in {"zcloud_http", "firefox_service"}
+            for item in failed
         )
         remaining = deadline - time.monotonic()
-        if http_only and remaining > 0:
+        if transient_health_only and remaining > 0:
             time.sleep(min(retry_interval, remaining))
             continue
 
