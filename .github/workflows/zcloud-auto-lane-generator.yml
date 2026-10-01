@@ -1,0 +1,33 @@
+name: zCloud automatic worker lane regression
+
+on:
+  push:
+    branches: [main, 'worker/**']
+    paths:
+      - server.py
+      - projects.json
+      - tests/test_portfolio_queue_backend.py
+      - tests/test_task_claims.py
+      - .github/workflows/zcloud-auto-lane-generator.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - server.py
+      - projects.json
+      - tests/test_portfolio_queue_backend.py
+      - tests/test_task_claims.py
+      - .github/workflows/zcloud-auto-lane-generator.yml
+  workflow_dispatch:
+
+jobs:
+  lane-regression:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile control plane
+        run: python3 -m py_compile server.py
+      - name: Prove deterministic non-overlapping lane allocation
+        run: |
+          python3 -m unittest -v tests.test_portfolio_queue_backend
+          python3 -m unittest -v tests.test_task_claims
