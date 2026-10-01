@@ -1,0 +1,87 @@
+name: Close HaxLab multisource suite v2 queue item
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/haxlab-multisource-queue-close.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Atomically record completed multisource implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sqlite3
+          from datetime import datetime, timezone
+
+          db="/home/ubuntu/zennay-cloud/history.db"
+          qid="haxlab-multisource-evaluation-suite-v2"
+          evidence=(
+              "Implemented on HaxLab Arena-v2 branch through c51ae3a2dd44825b8616bdbd47ba998768ab44c0; "
+              "workflow_run_id=36849443352 SUCCESS with 11 focused regressions green; "
+              "generated artifact_id=11154484062 multisource-evaluation-suite-v2; "
+              "suite_sha256=96ff84ca6a53f2d20fe437cda063ed1c576676c1f33740c13423160a556a14e4; "
+              "3 disjoint replay sources, 48 frozen scenarios, 96 mirrored matches; "
+              "source frozen manifest remained sha256=541b635e34492e9409c5d0fbe2ffd6303c75a2cd10348aebee9e5df49669a609."
+          )
+          ts=datetime.now(timezone.utc).isoformat()
+
+          conn=sqlite3.connect(db,timeout=10)
+          conn.row_factory=sqlite3.Row
+          try:
+              conn.execute("BEGIN IMMEDIATE")
+              row=conn.execute(
+                  "SELECT queue_id,project_id,priority,status,eligible,worker_slot,claim_expires "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (qid,),
+              ).fetchone()
+              if row is None:
+                  raise SystemExit("queue item missing")
+              before=dict(row)
+              print("MULTISOURCE_QUEUE_BEFORE",before)
+
+              if row["status"]=="done" and not row["eligible"]:
+                  conn.commit()
+                  print("MULTISOURCE_QUEUE_ALREADY_DONE",before)
+              else:
+                  if row["project_id"]!="haxlab":
+                      raise SystemExit("project mismatch")
+                  if row["status"]!="queued" or row["worker_slot"] is not None:
+                      raise SystemExit(
+                          "refusing external completion while queue item is actively claimed: "
+                          + str(before)
+                      )
+                  conn.execute(
+                      """
+                      UPDATE portfolio_queue
+                      SET status='done',eligible=0,evidence=?,blocker='',
+                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                      WHERE queue_id=? AND status='queued' AND worker_slot IS NULL
+                      """,
+                      (evidence,ts,qid),
+                  )
+                  if conn.total_changes != 1:
+                      raise SystemExit("atomic queue completion did not update exactly one row")
+                  conn.commit()
+
+              final=conn.execute(
+                  "SELECT queue_id,project_id,priority,status,eligible,worker_slot,evidence "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (qid,),
+              ).fetchone()
+              final=dict(final)
+              print("MULTISOURCE_QUEUE_DONE",final)
+              if final["status"]!="done" or final["eligible"] or final["worker_slot"] is not None:
+                  raise SystemExit("DONE state did not persist")
+          finally:
+              conn.close()
+          PY
