@@ -173,14 +173,18 @@ jobs:
 
               vm_uuid = str(uuid_map.get("{aecec67f-0d10-4fa7-b7c7-609a2db280cf}") or "")
               candidates = []
-              if vm_uuid:
-                  compact = vm_uuid.strip("{}")
-                  storage = profile_path / "storage" / "default"
-                  if storage.exists():
+              storage = profile_path / "storage" / "default"
+              if storage.exists():
+                  if vm_uuid:
+                      compact = vm_uuid.strip("{}")
                       candidates.extend(sorted(storage.glob(f"moz-extension+++{compact}*")))
-                  bed = profile_path / "browser-extension-data" / "{aecec67f-0d10-4fa7-b7c7-609a2db280cf}"
-                  if bed.exists():
-                      candidates.append(bed)
+                  # Firefox may keep the internal UUID only in startup caches.
+                  # Scan extension origins when the prefs mapping is unavailable.
+                  candidates.extend(sorted(storage.glob("moz-extension+++*")))
+              bed_root = profile_path / "browser-extension-data"
+              if bed_root.exists():
+                  candidates.extend(sorted(p for p in bed_root.iterdir() if p.is_dir()))
+              candidates = list(dict.fromkeys(candidates))
 
               hits = []
               scanned = 0
