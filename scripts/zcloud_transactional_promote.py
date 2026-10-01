@@ -126,6 +126,8 @@ PRECHANGE_REPLACEABLE_DRIFT = frozenset({
 # path in a recent first-parent ancestor of the tested candidate.
 PRECHANGE_TRUSTED_ANCESTOR_DRIFT = frozenset({
     "server.py",
+    "public/zcloud-worker.user.js",
+    "firefox-extension/background.js",
 })
 
 
