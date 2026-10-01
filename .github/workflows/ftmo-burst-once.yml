@@ -157,7 +157,12 @@ jobs:
                       raise SystemExit(f"{label} failed: {result.stderr.strip()}")
                   rescue_actions.append(label)
 
-              for unit in ("haxlab-worker.service", "haxlab-analyzer.service"):
+              for unit in (
+                  "haxlab-autonomy.service",
+                  "haxlab-live-room.service",
+                  "haxlab-worker.service",
+                  "haxlab-analyzer.service",
+              ):
                   loaded = run("systemctl", "show", unit, "--property=LoadState", "--value")
                   if loaded.returncode == 0 and loaded.stdout.strip() == "loaded":
                       result = run(
@@ -215,14 +220,6 @@ jobs:
           target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
           print("FTMO_CPU_RESCUE_RECEIPT=" + json.dumps(receipt, sort_keys=True))
 
-          if receipt["broker_order_submission_allowed"] is not False:
-              raise SystemExit("broker order boundary changed")
-          if receipt["live_trading_allowed"] is not False:
-              raise SystemExit("live trading boundary changed")
-          if service["active_state"] != "active":
-              raise SystemExit(f"FTMO marathon is not active: {service}")
-          if controller.get("compute", {}).get("ok") is not True:
-              raise SystemExit("advanced controller compute receipt is missing")
           PY
 
           echo "=== FTMO / HAXLAB PROCESS SNAPSHOT ==="
@@ -234,6 +231,14 @@ jobs:
           import json
           from pathlib import Path
           receipt = json.loads(Path("/tmp/zcloud-ftmo-cpu-rescue.json").read_text(encoding="utf-8"))
+          if receipt["broker_order_submission_allowed"] is not False:
+              raise SystemExit("broker order boundary changed")
+          if receipt["live_trading_allowed"] is not False:
+              raise SystemExit("live trading boundary changed")
+          if receipt["service"]["active_state"] != "active":
+              raise SystemExit(f"FTMO marathon is not active: {receipt['service']}")
+          if (receipt["controller_receipt"].get("controller_compute") or {}).get("ok") is not True:
+              raise SystemExit("advanced controller compute receipt is missing")
           if receipt["post_attribution"]["ftmo_primary_attributed_compute"] is not True:
               raise SystemExit("FTMO is still not the primary measured CPU consumer after safe rescue")
           PY
