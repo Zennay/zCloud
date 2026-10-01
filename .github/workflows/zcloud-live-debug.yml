@@ -181,6 +181,51 @@ jobs:
 
           print(json.dumps(report,sort_keys=True,indent=2))
           PY
+          echo "=== AUDITED RESOURCE DRIFT DECISION ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, sqlite3
+          import scripts.zcloud_transactional_promote as promote
+
+          root=Path("/home/ubuntu/zennay-cloud")
+          state=Path.home()/".local/state/zcloud/recovery"
+          pointer=json.loads((state/"last-known-good.json").read_text())
+          snapshot=state/"snapshots"/pointer["snapshot_id"]
+          manifest=json.loads((snapshot/"manifest.json").read_text())
+          baseline=json.loads((snapshot/"files"/"resource-policy.json").read_text())
+          live=json.loads((root/"resource-policy.json").read_text())
+          projects=sorted(set(baseline)|set(live))
+          delta=[]
+          with sqlite3.connect(root/"history.db",timeout=4) as conn:
+              for project in projects:
+                  before=baseline.get(project) or {}
+                  after=live.get(project) or {}
+                  if before==after:
+                      continue
+                  row=conn.execute(
+                      "SELECT id,ts,actor,new_value_json,result,detail FROM config_audit "
+                      "WHERE config_key='resource.priority' AND target=? ORDER BY id DESC LIMIT 1",
+                      (project,),
+                  ).fetchone()
+                  delta.append({
+                      "project":project,
+                      "lkg":before,
+                      "live":after,
+                      "latest_priority_audit":(
+                          {"id":row[0],"ts":row[1],"actor":row[2],"new_value_json":row[3],"result":row[4],"detail":row[5]}
+                          if row else None
+                      ),
+                  })
+          print(json.dumps({
+              "lkg_snapshot_id":pointer["snapshot_id"],
+              "lkg_created_at":manifest.get("created_at"),
+              "delta":delta,
+              "matcher_accepts":promote.audited_runtime_config_drift_matches(
+                  root,state,"resource-policy.json"
+              ),
+          },sort_keys=True,indent=2))
+          PY
+
           echo "=== DEPLOY DRIFT SEMANTIC DIFF ==="
           python3 - <<'PY'
           from pathlib import Path
