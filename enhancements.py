@@ -19,6 +19,7 @@ PROJECT_UNITS = {
     ],
     "ftmo": [
         "ftmo-autonomous.service",
+        "ftmo-autonomous-marathon.service",
         "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
     ],
     "cloud": ["zennay-cloud.service"],
