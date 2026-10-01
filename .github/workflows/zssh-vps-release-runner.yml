@@ -6,6 +6,11 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zssh-vps-release-runner.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-vps-release-runner.yml
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +22,12 @@ concurrency:
 
 jobs:
   release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: self-hosted
     timeout-minutes: 15
     env:
@@ -24,11 +35,6 @@ jobs:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
-      - name: Check out zCloud coordination
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
       - name: Check out exact green zSSH revision
         uses: actions/checkout@v4
         with:
@@ -48,18 +54,24 @@ jobs:
           test -f zssh-source/submission/plugin.template.json
           echo "ZSSH_RELEASE_SOURCE_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
 
-      - name: Acquire exclusive zSSH deployment claim
-        run: python3 scripts/zssh_release_coordination.py acquire --sha "$ZSSH_RELEASE_SHA"
-
-      - name: Install exact zSSH release and run installer canary
+      - name: Deploy and verify under exclusive local lock
+        shell: bash
         env:
           ZSSH_EXPECTED_SHA: ${{ env.ZSSH_RELEASE_SHA }}
-        run: bash zssh-source/deploy/install-live.sh "$GITHUB_WORKSPACE/zssh-source"
-
-      - name: Verify live release provenance and private compatibility
-        shell: bash
         run: |
           set -euo pipefail
+          lock_dir="$HOME/.local/state/zssh"
+          lock_file="$lock_dir/deploy.lock"
+          mkdir -p "$lock_dir"
+          exec 9>"$lock_file"
+          if ! flock -w 60 9; then
+            echo "ZSSH_DEPLOY_LOCK_BUSY file=$lock_file" >&2
+            exit 75
+          fi
+          echo "ZSSH_DEPLOY_LOCK_ACQUIRED file=$lock_file"
+
+          bash zssh-source/deploy/install-live.sh "$GITHUB_WORKSPACE/zssh-source"
+
           current="$(readlink -f /home/ubuntu/.local/share/zssh/current)"
           expected="/home/ubuntu/.local/share/zssh/releases/$ZSSH_RELEASE_SHA"
           test "$current" = "$expected"
@@ -67,12 +79,9 @@ jobs:
           curl --fail --silent --show-error http://127.0.0.1:8788/health
           test -f "$current/oauth.mjs"
           test -f "$current/pairing.mjs"
+          test -f "$current/submission/plugin.template.json"
           echo "ZSSH_LIVE_PROVENANCE_GREEN sha=$ZSSH_RELEASE_SHA"
 
-      - name: Verify hosted-client compatibility on live endpoint
-        shell: bash
-        run: |
-          set -euo pipefail
           set -a
           source /home/ubuntu/.config/zssh/gateway.env
           set +a
@@ -90,7 +99,4 @@ jobs:
           node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
 
           echo "ZSSH_HOSTED_CLIENT_CANARIES_GREEN"
-
-      - name: Release deployment claim
-        if: always()
-        run: python3 scripts/zssh_release_coordination.py release
+          echo "ZSSH_DEPLOY_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
