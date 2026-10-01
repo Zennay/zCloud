@@ -198,11 +198,39 @@ jobs:
           set -euo pipefail
           if systemctl --user is-active --quiet chatgpt-firefox.service; then
             echo "FIREFOX_AUTOMATION_SERVICE=already_active"
-          else
-            systemctl --user start chatgpt-firefox.service
-            systemctl --user is-active --quiet chatgpt-firefox.service
-            echo "FIREFOX_AUTOMATION_SERVICE=recovered"
+            exit 0
           fi
+
+          # The Firefox unit explicitly Requires= the display and window-manager
+          # units. Recover those first so a stale dependency cannot block an
+          # otherwise unrelated backend/queue deployment.
+          for dependency in chatgpt-display.service chatgpt-openbox.service; do
+            if ! systemctl --user is-active --quiet "$dependency"; then
+              systemctl --user reset-failed "$dependency" || true
+              systemctl --user start "$dependency"
+            fi
+            systemctl --user is-active --quiet "$dependency"
+          done
+
+          systemctl --user reset-failed chatgpt-firefox.service || true
+          if ! systemctl --user start chatgpt-firefox.service; then
+            systemctl --user --no-pager --full status chatgpt-display.service chatgpt-openbox.service chatgpt-firefox.service || true
+            journalctl --user -u chatgpt-display.service -u chatgpt-openbox.service -u chatgpt-firefox.service -n 120 --no-pager || true
+            exit 1
+          fi
+
+          for _ in $(seq 1 15); do
+            if systemctl --user is-active --quiet chatgpt-firefox.service; then
+              echo "FIREFOX_AUTOMATION_SERVICE=recovered"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          systemctl --user --no-pager --full status chatgpt-display.service chatgpt-openbox.service chatgpt-firefox.service || true
+          journalctl --user -u chatgpt-display.service -u chatgpt-openbox.service -u chatgpt-firefox.service -n 120 --no-pager || true
+          echo "FIREFOX_AUTOMATION_SERVICE=failed"
+          exit 1
 
       - name: Promote backend and autonomy policy
         if: steps.prewrite.outputs.deploy == 'true'
