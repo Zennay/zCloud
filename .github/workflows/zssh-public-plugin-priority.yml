@@ -1,4 +1,4 @@
-name: Apply zSSH public plugin P0 queue priority
+name: Apply zSSH public plugin P1 queue priority
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Enqueue and verify zSSH P0 item in live SQLite
+      - name: Enqueue and verify zSSH P1 item in live SQLite
         shell: bash
         run: |
           python3 - <<'PY'
@@ -29,7 +29,7 @@ jobs:
               "queue_id": queue_id,
               "project_id": "zssh",
               "title": "zSSH publieke ChatGPT-plugin submission-ready maken",
-              "priority": "P0",
+              "priority": "P1",
               "completion_criteria": (
                   "zSSH heeft een production-grade publieke OpenAI-pluginroute met OAuth 2.1, "
                   "target pairing/revocation, stabiele HTTPS MCP-endpoint, review package en "
@@ -72,7 +72,7 @@ jobs:
           item = find(live)
           if not item:
               raise RuntimeError(f"{queue_id} not found in live SQLite queue")
-          if str(item.get("priority") or "").upper() != "P0":
+          if str(item.get("priority") or "").upper() != "P1":
               raise RuntimeError(f"{queue_id} priority is not P0: {item.get('priority')}")
           if str(item.get("project_id") or "").lower() != "zssh":
               raise RuntimeError(f"{queue_id} is attached to wrong project: {item.get('project_id')}")
