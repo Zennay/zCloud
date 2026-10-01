@@ -115,6 +115,41 @@ class LaneGeneratorTests(unittest.TestCase):
 
         self.assertEqual(["research"], overlap["files"])
 
+    def test_cross_lane_explicit_file_collision_admits_only_higher_priority_writer(self):
+        project = self.project("ftmo", "research-validation")
+        critical = self.item(
+            "ftmo-critical-file",
+            "Implement next generation candidate",
+            "P1",
+            metadata={
+                "conflict_scope": {
+                    "capabilities": [],
+                    "files": ["research/shared.py"],
+                }
+            },
+        )
+        validation = self.item(
+            "ftmo-validation-file",
+            "Run frozen walk-forward validation",
+            "P0",
+            metadata={
+                "conflict_scope": {
+                    "capabilities": [],
+                    "files": ["research/shared.py"],
+                }
+            },
+        )
+
+        lanes = generate_execution_lanes(project, [critical, validation])
+        selected = {lane["queue_id"] for lane in lanes if lane["queue_id"]}
+
+        self.assertIn("ftmo-validation-file", selected)
+        self.assertNotIn("ftmo-critical-file", selected)
+        critical_lane = next(lane for lane in lanes if lane["lane_id"] == "critical-path")
+        self.assertEqual("blocked", critical_lane["status"])
+        self.assertEqual("queue_scope_conflict", critical_lane["blocked_by"][0]["reason"])
+        self.assertEqual(["research/shared.py"], critical_lane["blocked_by"][0]["overlap"]["files"])
+
     def test_platform_lane_scopes_are_pairwise_non_overlapping(self):
         project = self.project("cloud", "platform")
         backlog = [
