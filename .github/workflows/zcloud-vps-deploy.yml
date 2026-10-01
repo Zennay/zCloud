@@ -216,11 +216,10 @@ jobs:
           url="http://127.0.0.1:8765/api/status"
           lock_file="/run/zcloud-self-heal.lock"
 
-          # Wait for any already-running self-heal pass to finish, then own
-          # recovery exclusively. New self-heal passes see the sentinel created
-          # by the previous step and exit without touching the service.
-          exec 9>"$lock_file"
-          flock -w 30 9
+          # The self-heal unit runs as root and may leave a root-owned /run lock.
+          # After the sentinel is created, no new self-heal pass can start, so
+          # acquire+release the existing lock as root only to drain an in-flight pass.
+          sudo -n flock -w 30 "$lock_file" true
 
           healthy() {
             sudo -n systemctl is-active --quiet "$service" &&
