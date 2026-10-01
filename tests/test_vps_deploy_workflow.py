@@ -56,7 +56,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         recover = "Recover zCloud health before guarded promotion"
         suspend = "Suspend external self-heal during guarded deploy"
         promote = "Promote backend and autonomy policy"
-        block = text[text.index(recover):text.index(suspend)]
+        quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
+        block = text[text.index(recover):text.index(quarantine)]
         self.assertIn('service="zennay-cloud.service"', block)
         self.assertIn('url="http://127.0.0.1:8765/api/status"', block)
         self.assertIn('sudo -n systemctl restart "$service"', block)
