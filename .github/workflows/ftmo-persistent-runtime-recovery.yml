@@ -85,9 +85,20 @@ jobs:
             fi
           fi
 
-          sleep 6
+          service_state=""
+          for attempt in $(seq 1 30); do
+            service_state="$(systemctl is-active "$SERVICE" || true)"
+            if [[ "$service_state" == "active" ]]; then
+              break
+            fi
+            sleep 2
+          done
           systemctl is-enabled "$SERVICE"
-          systemctl is-active "$SERVICE"
+          if [[ "$service_state" != "active" ]]; then
+            systemctl status "$SERVICE" --no-pager --full || true
+            journalctl -u "$SERVICE" -n 80 --no-pager || true
+            exit 1
+          fi
           systemctl show "$SERVICE" -p ActiveState -p SubState -p NRestarts -p MainPID -p User -p CPUWeight -p CPUQuotaPerSecUSec -p Environment --no-pager
           systemctl is-active "$RUNNER_SERVICE"
           systemctl show "$RUNNER_SERVICE" -p ActiveState -p SubState -p MainPID --no-pager
