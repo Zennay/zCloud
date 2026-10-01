@@ -1,0 +1,115 @@
+name: Prove zCloud workers are generating now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/prove-workers-generating-now.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prove-zcloud-workers-generating-now
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: self-hosted
+    timeout-minutes: 6
+    steps:
+      - name: Force real generation and prove browser consumption
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+
+          def call(method,path,payload=None):
+              body=None
+              headers={"User-Agent":"zcloud-generation-proof/1"}
+              if payload is not None:
+                  body=json.dumps(payload).encode()
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  return json.load(r)
+
+          def worker_rows():
+              return (call("GET","/api/worker-debug").get("workers") or [])
+
+          before=call("GET","/api/worker-debug")
+          targets=call("GET","/api/runner-targets")
+          allocated=(targets.get("global_allocation") or {}).get("workers") or []
+          chatgpt=[
+              str(w.get("worker_key") or "")
+              for w in allocated
+              if str(w.get("provider") or "chatgpt")=="chatgpt"
+          ]
+          if not chatgpt:
+              raise SystemExit("no allocated ChatGPT workers")
+          print("BEFORE",json.dumps(before,sort_keys=True))
+          print("TARGET_CHATGPT_WORKERS",json.dumps(chatgpt))
+
+          started=datetime.now(timezone.utc).isoformat()
+          pushed=call("POST","/api/dynamic-workers/force-push",{})
+          print("FORCE_PUSH",json.dumps(pushed,sort_keys=True))
+
+          def proof():
+              with sqlite3.connect(DB,timeout=5) as conn:
+                  conn.row_factory=sqlite3.Row
+                  out={}
+                  for key in chatgpt:
+                      base,slot_text=key.rsplit("::w",1)
+                      slot=int(slot_text)
+                      sent=conn.execute(
+                          "SELECT ts,event,reason,generating,sending FROM runner_events "
+                          "WHERE project_id=? AND worker_slot=? AND ts>=? "
+                          "AND event IN ('prompt-sent','generation-started','generation-finished') "
+                          "ORDER BY id DESC LIMIT 1",
+                          (base,slot,started),
+                      ).fetchone()
+                      cmd=conn.execute(
+                          "SELECT id,action,status,result,updated_at FROM runner_commands "
+                          "WHERE project_id=? AND created_at>=? ORDER BY id DESC LIMIT 1",
+                          (key,started),
+                      ).fetchone()
+                      out[key]={
+                          "event": dict(sent) if sent else None,
+                          "command": dict(cmd) if cmd else None,
+                      }
+                  return out
+
+          for phase in (1,2):
+              deadline=time.time()+75
+              while time.time()<deadline:
+                  p=proof()
+                  print("PROOF_CHECK",json.dumps(p,sort_keys=True))
+                  if all(v.get("event") is not None for v in p.values()):
+                      print("REAL_GENERATION_PROVEN",json.dumps(p,sort_keys=True))
+                      raise SystemExit(0)
+                  time.sleep(5)
+
+              if phase==1:
+                  # A force-push that is not consumed means the browser/chat
+                  # session is stale. Start a fresh conversation per allocated
+                  # ChatGPT worker rather than declaring active=true as success.
+                  for key in chatgpt:
+                      try:
+                          result=call("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
+                      except Exception as exc:
+                          result={"error":repr(exc)}
+                      print("NEW_CHAT",key,json.dumps(result,sort_keys=True))
+                  started=datetime.now(timezone.utc).isoformat()
+
+          print("FINAL_DEBUG",json.dumps(call("GET","/api/worker-debug"),sort_keys=True))
+          raise SystemExit("allocated ChatGPT workers did not produce fresh prompt/generation events")
+          PY
