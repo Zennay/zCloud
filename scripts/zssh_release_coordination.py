@@ -19,6 +19,62 @@ HANDOFF_REF = "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8"
 
 _TRANSIENT_HTTP = {502, 503, 504}
 
+# A green runtime release may remain valid while another worker advances only
+# review/release evidence around it. Any other path is treated as runtime-
+# relevant and forces the deploy pin to move to a newly validated SHA first.
+_RELEASE_ONLY_EXACT_PATHS = {
+    "release-contract.mjs",
+    "production-submission-probe.mjs",
+    "production-submission-probe-canary.mjs",
+    "scripts/check-public-release-config.mjs",
+    "scripts/build-openai-plugin.py",
+}
+_RELEASE_ONLY_PREFIXES = (
+    ".github/",
+    "docs/",
+    "submission/",
+    "test/",
+)
+
+
+def release_only_main_advance(paths):
+    paths = [str(path or "") for path in paths]
+    return bool(paths) and all(
+        path in _RELEASE_ONLY_EXACT_PATHS
+        or any(path.startswith(prefix) for prefix in _RELEASE_ONLY_PREFIXES)
+        for path in paths
+    )
+
+
+def verify_release_candidate_against_main(github, expected_sha, actual_sha):
+    if actual_sha == expected_sha:
+        return {"mode": "exact-main", "changed_paths": []}
+
+    comparison = get_json(f"{github}/compare/{expected_sha}...{actual_sha}")
+    if comparison.get("status") != "ahead":
+        raise RuntimeError(
+            f"zSSH release candidate is not an ancestor of main: "
+            f"expected {expected_sha}, main {actual_sha}, status {comparison.get('status')}"
+        )
+
+    changed_paths = sorted({
+        str(item.get("filename") or "")
+        for item in comparison.get("files", [])
+        if item.get("filename")
+    })
+    if not release_only_main_advance(changed_paths):
+        raise RuntimeError(
+            "zSSH runtime-capable files changed after the release candidate; "
+            f"repin to a newly green main SHA before deploy: {', '.join(changed_paths) or '<unknown>'}"
+        )
+
+    print(
+        "ZSSH_RELEASE_PIN_REMAINS_VALID "
+        f"release_sha={expected_sha} main_sha={actual_sha} "
+        f"release_only_paths={','.join(changed_paths)}"
+    )
+    return {"mode": "release-only-main-advance", "changed_paths": changed_paths}
+
 
 def _read_error_body(error):
     try:
@@ -88,8 +144,7 @@ def acquire(expected_sha):
     github = "https://api.github.com/repos/" + REPO
     branch = get_json(github + "/branches/main")
     actual_sha = branch["commit"]["sha"]
-    if actual_sha != expected_sha:
-        raise RuntimeError(f"zSSH main changed: expected {expected_sha}, got {actual_sha}")
+    release_freshness = verify_release_candidate_against_main(github, expected_sha, actual_sha)
     prs = get_json(github + "/pulls?state=open&per_page=100")
     branches = get_json(github + "/branches?per_page=100")
 
@@ -104,6 +159,8 @@ def acquire(expected_sha):
         "notion": {"checked": True, "project_ref": PROJECT_REF, "handoff_ref": HANDOFF_REF},
         "github": {
             "checked": True, "repo": REPO, "main_sha": actual_sha,
+            "release_sha": expected_sha,
+            "release_freshness": release_freshness,
             "open_prs": [str(item["number"]) for item in prs],
             "branches": [item["name"] for item in branches],
         },
