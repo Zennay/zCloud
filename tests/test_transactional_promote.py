@@ -668,6 +668,99 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertNotIn("public/zcloud-worker.user.js", calls[0])
         self.assertIn("public/zcloud-worker.user.js", calls[1])
 
+    def test_prechange_opt_in_reconciles_any_recent_repo_ancestor_drift(self):
+        calls = []
+        original_run = promote.run
+        original_matcher = promote.matches_recent_first_parent_ancestor
+        live = self.root / "scripts/zcloud_healthcheck.py"
+        desired = self.candidate / "scripts/zcloud_healthcheck.py"
+        live.parent.mkdir(parents=True, exist_ok=True)
+        desired.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text("older-green-healthcheck\n")
+        desired.write_text("current-green-healthcheck\n")
+
+        class Result:
+            def __init__(self, returncode, stdout):
+                self.returncode = returncode
+                self.stdout = stdout
+
+        responses = [
+            Result(
+                2,
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["scripts/zcloud_healthcheck.py"],"allowed":[],'
+                '"unexpected":["scripts/zcloud_healthcheck.py"]}}]}',
+            ),
+            Result(0, '{"ok":true,"checks":[]}'),
+        ]
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return responses.pop(0)
+
+        promote.run = fake_run
+        promote.matches_recent_first_parent_ancestor = (
+            lambda candidate, rel, live_path: rel == "scripts/zcloud_healthcheck.py"
+        )
+        try:
+            result = promote.run_prechange(
+                Path("/bin/prechange"),
+                self.root,
+                Path(self.tmp.name) / "state",
+                candidate=self.candidate,
+                allow_recent_ancestor_drift=True,
+            )
+        finally:
+            promote.run = original_run
+            promote.matches_recent_first_parent_ancestor = original_matcher
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(calls))
+        self.assertNotIn("scripts/zcloud_healthcheck.py", calls[0])
+        self.assertIn("scripts/zcloud_healthcheck.py", calls[1])
+
+    def test_prechange_opt_in_still_rejects_unknown_managed_drift(self):
+        calls = []
+        original_run = promote.run
+        original_matcher = promote.matches_recent_first_parent_ancestor
+        live = self.root / "scripts/zcloud_healthcheck.py"
+        desired = self.candidate / "scripts/zcloud_healthcheck.py"
+        live.parent.mkdir(parents=True, exist_ok=True)
+        desired.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text("manual-unknown-healthcheck\n")
+        desired.write_text("current-green-healthcheck\n")
+
+        class Result:
+            returncode = 2
+            stdout = (
+                '{"ok":false,"checks":[{"name":"managed_source_state","ok":false,'
+                '"detail":{"changed":["scripts/zcloud_healthcheck.py"],"allowed":[],'
+                '"unexpected":["scripts/zcloud_healthcheck.py"]}}]}'
+            )
+
+        def fake_run(args, check=True):
+            calls.append(args)
+            return Result()
+
+        promote.run = fake_run
+        promote.matches_recent_first_parent_ancestor = (
+            lambda candidate, rel, live_path: False
+        )
+        try:
+            with self.assertRaises(promote.PromotionError):
+                promote.run_prechange(
+                    Path("/bin/prechange"),
+                    self.root,
+                    Path(self.tmp.name) / "state",
+                    candidate=self.candidate,
+                    allow_recent_ancestor_drift=True,
+                )
+        finally:
+            promote.run = original_run
+            promote.matches_recent_first_parent_ancestor = original_matcher
+
+        self.assertEqual(1, len(calls))
+
     def test_prechange_rejects_unproven_ancestor_drift(self):
         calls = []
         original_run = promote.run
