@@ -225,6 +225,8 @@ jobs:
               "rescue_actions": rescue_actions,
               "post_attribution": post,
               "service": service,
+              "runtime_error": status.get("error"),
+              "paper_forward_shadow": status.get("paper_forward_shadow"),
               "controller_receipt": {
                   "completed_at_utc": status.get("completed_at_utc"),
                   "ok": status.get("ok"),
