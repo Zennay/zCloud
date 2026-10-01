@@ -26,6 +26,9 @@ jobs:
           ROOT=/opt/ftmo-autonomous
           SERVICE=ftmo-autonomous-marathon.service
           RUNNER_SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+          FTMO_WORKTREE=/opt/ftmo-runner/_work/Ftmo/Ftmo
+          PROVIDER_SKIP_REL=src/prop_trading_ai/research/autonomous_provider_skip.py
+          PROVIDER_SKIP_BLOB=18aaa82648baaf5ced8a059f7d258a93482fecc7
 
           test -d "$ROOT"
           test -x "$ROOT/.venv/bin/python"
@@ -34,6 +37,15 @@ jobs:
           grep -q 'safe provider gate blocked; keeping marathon alive' "$ROOT/scripts/run-autonomous-marathon.sh"
           id ftmo-runner >/dev/null
           sudo -n chmod 0755 "$ROOT/scripts/run-autonomous-marathon.sh"
+
+          # Bootstrap the one runtime dependency that caused the current
+          # crash-loop. Only copy from the dedicated FTMO checkout when the
+          # file's Git blob exactly matches the audited repository blob.
+          test -f "$FTMO_WORKTREE/$PROVIDER_SKIP_REL"
+          test "$(git hash-object "$FTMO_WORKTREE/$PROVIDER_SKIP_REL")" = "$PROVIDER_SKIP_BLOB"
+          sudo -n install -D -o ftmo-runner -g ftmo-runner -m 0644 \
+            "$FTMO_WORKTREE/$PROVIDER_SKIP_REL" "$ROOT/$PROVIDER_SKIP_REL"
+          test "$(git hash-object "$ROOT/$PROVIDER_SKIP_REL")" = "$PROVIDER_SKIP_BLOB"
 
           rendered="$(mktemp)"
           trap 'rm -f "$rendered"' EXIT
