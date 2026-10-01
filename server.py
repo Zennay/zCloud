@@ -2140,6 +2140,16 @@ def portfolio_queue_allocate():
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                                AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+            if row and str(row['status']) == 'claimed':
+                higher=c.execute("""SELECT * FROM portfolio_queue
+                                    WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                                    ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                                             created_at, queue_id LIMIT 1""").fetchone()
+                if higher and _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority']):
+                    c.execute("""UPDATE portfolio_queue
+                                 SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                                 WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
+                    row=None
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
@@ -2169,6 +2179,19 @@ def portfolio_queue_allocate():
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
     return selected
+
+def portfolio_queue_drop(queue_id,evidence=''):
+    queue_id=str(queue_id or '').strip()
+    if not queue_id:
+        raise ValueError('queue_id is verplicht')
+    ts=now()
+    with connect() as c:
+        cur=c.execute("""UPDATE portfolio_queue
+                         SET status='dropped',eligible=0,evidence=?,blocker=?,
+                             worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                         WHERE queue_id=? AND status NOT IN ('done','dropped')""",
+                      (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
+    return {'dropped':bool(cur.rowcount),'queue_id':queue_id}
 
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
@@ -3132,6 +3155,9 @@ class Handler(BaseHTTPRequestHandler):
                             payload.get('evidence') or '',payload.get('next_task')
                         )
                         return self.reply({'ok':bool(item.get('updated')),'result':item,'time':now()},200 if item.get('updated') else 409)
+                    if action=='drop':
+                        item=portfolio_queue_drop(payload.get('queue_id'),payload.get('evidence') or '')
+                        return self.reply({'ok':True,'result':item,'time':now()})
                     return self.reply({'error':'Ongeldige portfolio-queue actie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)

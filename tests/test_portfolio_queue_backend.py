@@ -47,6 +47,31 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("sqlite", allocation["queue_backend"])
         self.assertEqual(["cloud", "raiseai"], [worker["project_id"] for worker in allocation["workers"]])
 
+    def test_p0_preempts_lower_priority_claim_that_has_not_started(self):
+        lower = server.portfolio_queue_enqueue("cloud", "lower", "P1", "Implement lower-priority change with tests.")
+        server.portfolio_queue_allocate()
+        self.assertEqual(lower["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+
+        higher = server.portfolio_queue_enqueue("ftmo", "urgent recovery", "P0", "Implement FTMO recovery with deterministic tests.")
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(higher["queue_id"], selected[0]["queue_id"])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[lower["queue_id"]]["status"])
+        self.assertIsNone(rows[lower["queue_id"]]["worker_slot"])
+
+    def test_p0_does_not_preempt_running_lower_priority_work(self):
+        lower = server.portfolio_queue_enqueue("cloud", "running lower", "P1", "Implement lower-priority change with tests.")
+        server.portfolio_queue_allocate()
+        with server.connect() as conn:
+            conn.execute("UPDATE portfolio_queue SET status='running' WHERE queue_id=?", (lower["queue_id"],))
+
+        server.portfolio_queue_enqueue("ftmo", "urgent recovery", "P0", "Implement FTMO recovery with deterministic tests.")
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(lower["queue_id"], selected[0]["queue_id"])
+        self.assertEqual("running", selected[0]["status"])
+
     def test_dynamic_worker_limit_reconciles_three_slots_immediately(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
@@ -187,6 +212,26 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual("autonomy-continue", row["event"])
         self.assertEqual("backend-non-stopping-dynamic-worker-policy", row["reason"])
+
+    def test_drop_retires_obsolete_runtime_task_without_continuation(self):
+        item = server.portfolio_queue_enqueue(
+            "ftmo",
+            "legacy runtime throughput task",
+            "P0",
+            "Implement runtime throughput recovery with deterministic tests.",
+        )
+        server.portfolio_queue_allocate()
+
+        result = server.portfolio_queue_drop(
+            item["queue_id"],
+            "Superseded by persistent ftmo-autonomous-marathon.service.",
+        )
+
+        self.assertTrue(result["dropped"])
+        row = {x["queue_id"]: x for x in server.portfolio_queue_items(True)}[item["queue_id"]]
+        self.assertEqual("dropped", row["status"])
+        self.assertFalse(row["eligible"])
+        self.assertIsNone(row["worker_slot"])
 
     def test_continue_requeues_without_notion_dependency(self):
         item = server.portfolio_queue_enqueue("raiseai", "iterate", "P1", "prove next state")
