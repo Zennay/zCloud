@@ -34,10 +34,6 @@ jobs:
               "ftmo","P0","Keep FTMO autonomous progression healthy and self-recovering",
               "Do not manually act as the normal generation loop. FTMO research progression belongs to the persistent self-hosted runtime. Only intervene when that runtime cannot self-advance: fix the concrete code/config/service/data-gate cause, preserve provider provenance and sealed outcome boundaries, then prove the persistent runtime resumes autonomous safe progression with deterministic workflow/runtime evidence.",
               "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
-            "ftmo-useful-compute-cpu-attribution":(
-              "ftmo","P0","Make FTMO the primary useful-compute consumer and prove CPU attribution",
-              "Prove whether current VPS CPU is useful FTMO research compute versus HaxLab or unattributed/control-plane work. If FTMO is not receiving useful compute, make a safe runtime/config change through the Claude/VPS execution lane that restores FTMO throughput; persist cgroup/host-share attribution and an advanced controller receipt. Diagnosis alone is not completion.",
-              "https://app.notion.com/p/3e49e19ac95581fcb8c7fd06a3d98fc7"),
             "haxlab-closed-loop-arena-v2-implementation":(
               "haxlab","P3","Build the next Closed-Loop Evaluation Arena v2 implementation increment",
               "Make a material code/config/workflow change that advances Closed-Loop Evaluation Arena v2 with deterministic tests. HaxLab is a background lane and must not outrank FTMO or other revenue-oriented work.",
