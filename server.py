@@ -3237,6 +3237,42 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('UPDATE runner_commands SET status=?,updated_at=?,result=? WHERE id=?',
                               (status,now(),str(payload.get('result') or '')[:300],command_id))
                 return self.reply({'ok':True})
+            if u.path=='/api/project-state-receipts':
+                if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+                project_id=str(payload.get('project_id') or '').strip().lower()
+                if project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+                with connect() as c:
+                    receipt=project_runtime.record_receipt(
+                        c,project_id,
+                        phase=payload.get('phase') or '',
+                        action=payload.get('action') or '',
+                        commit_sha=payload.get('commit_sha') or '',
+                        ci_status=payload.get('ci_status') or '',
+                        blocker=payload.get('blocker') or '',
+                        next_gate=payload.get('next_gate') or '',
+                        source=payload.get('source') or request_actor(self),
+                        observed_at=payload.get('observed_at') or None,
+                        evidence=payload.get('evidence') if isinstance(payload.get('evidence'),dict) else {},
+                    )
+                return self.reply({'ok':True,'receipt':receipt,'time':now()})
+            if u.path=='/api/resource-governor':
+                if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+                action=str(payload.get('action') or 'acquire').strip().lower()
+                project_id=str(payload.get('project_id') or '').strip().lower()
+                owner_id=str(payload.get('owner_id') or '').strip()
+                if project_id not in PROJECT_INDEX or not owner_id:return self.reply({'error':'project_id en owner_id zijn verplicht'},400)
+                with connect() as c:
+                    if action=='acquire':
+                        result=project_runtime.acquire_resource(
+                            c,project_id,owner_id,
+                            lease_seconds=payload.get('lease_seconds') or 1800,
+                            metadata=payload.get('metadata') if isinstance(payload.get('metadata'),dict) else {},
+                        )
+                    elif action=='release':
+                        result=project_runtime.release_resource(c,project_id,owner_id)
+                    else:
+                        return self.reply({'error':'Ongeldige resource-governor actie'},400)
+                return self.reply({'ok':bool(result.get('acquired') or result.get('released')),'result':result,'time':now()},200 if (result.get('acquired') or result.get('released')) else 409)
             if u.path=='/api/dynamic-workers/force-push':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 return self.reply(dynamic_force_push())
@@ -3463,7 +3499,19 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
                 return self.reply({'ok':True,'feature_flag':result,'time':now()})
-            if u.path=='/api/dynamic-workers':
+            if u.path=='/api/project-state-receipts':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            with connect() as c:
+                receipts=project_runtime.latest_receipts(c)
+            if project_id:
+                return self.reply({'project_id':project_id,'receipt':receipts.get(project_id),'time':now()})
+            return self.reply({'receipts':receipts,'time':now()})
+        if u.path=='/api/resource-governor':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            with connect() as c:
+                return self.reply(project_runtime.resource_status(c))
+        if u.path=='/api/dynamic-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
                 try:
