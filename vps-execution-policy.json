@@ -22,7 +22,8 @@
     "supa",
     "raiseai",
     "ulab",
-    "zssh"
+    "zssh",
+    "whitelab"
   ],
   "capabilities": [
     "local-shell",
