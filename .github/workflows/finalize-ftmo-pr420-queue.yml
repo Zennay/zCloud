@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: finalize-ftmo-pr420-queue
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   finalize:
