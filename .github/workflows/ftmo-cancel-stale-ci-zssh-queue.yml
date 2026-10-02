@@ -124,8 +124,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main
-          git reset --hard origin/main
           test -f artifacts/ops/ftmo-stale-ci-zssh-queue.json
           git config user.name "zcloud-automation"
           git config user.email "zcloud-automation@users.noreply.github.com"
