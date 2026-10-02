@@ -78,6 +78,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          work="$RUNNER_TEMP/zcloud-pr430-exact-receipt"
+          rm -rf "$work"
+          gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git checkout main >/dev/null
           mkdir -p runtime-evidence
           cat > runtime-evidence/ftmo-pr430-exact-head-proof.json <<EOF
           {
@@ -101,7 +106,15 @@ jobs:
           git add runtime-evidence/ftmo-pr430-exact-head-proof.json
           if git diff --cached --quiet; then
             echo "Receipt unchanged"
-          else
-            git commit -m "Record FTMO PR430 exact-head proof"
-            git push origin HEAD:main
+            exit 0
           fi
+          git commit -m "Record FTMO PR430 exact-head proof"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "receipt_push_retry=$attempt"
+            git fetch origin main
+            git rebase origin/main
+          done
+          exit 1
