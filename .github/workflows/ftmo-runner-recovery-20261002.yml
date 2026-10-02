@@ -101,6 +101,16 @@ jobs:
               ["bash","-lc","(sudo -n journalctl -k --since '-60 min' --no-pager 2>/dev/null || journalctl -k --since '-60 min' --no-pager 2>/dev/null || true) | grep -Eai 'out of memory|oom|killed process|memory cgroup' | tail -60"],
               text=True,capture_output=True
           ).stdout.strip().splitlines()
+          workers=subprocess.run(
+              ["bash","-lc","ps -o pid=,lstart=,etime=,cmd= -u ftmo-runner | grep -E 'Runner\\.(Worker|Listener)|runsvc\\.sh' || true"],
+              text=True,capture_output=True
+          ).stdout.strip().splitlines()
+          diag=subprocess.run(
+              ["bash","-lc","latest=$(ls -1t /opt/ftmo-runner/_diag/Runner_*.log 2>/dev/null | head -1); "
+               "if [ -n \"$latest\" ]; then echo DIAG_FILE=$latest; "
+               "grep -Eai 'running job|job request|listening for jobs|assigned|shutdown|signal|session' \"$latest\" | tail -120; fi"],
+              text=True,capture_output=True
+          ).stdout.strip().splitlines()
           receipt={
               "schema_version":1,
               "queue_id":"zssh-ftmo-verify72-runner-recovery-20261002",
@@ -114,6 +124,8 @@ jobs:
               "recovery_action":os.environ.get("RECOVERY_ACTION"),
               "post_state":os.environ.get("POST_STATE"),
               "post_pid":os.environ.get("POST_PID"),
+              "runner_processes":workers,
+              "runner_diag_tail":diag,
               "fresh_oom_evidence":oom,
           }
           target=Path("artifacts/ops/zssh-ftmo-verify72-fallback-recovery.json")
