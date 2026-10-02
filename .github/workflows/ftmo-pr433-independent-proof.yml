@@ -1,16 +1,16 @@
-name: FTMO PR433 independent exact-head proof
+name: FTMO PR440 independent exact-head proof
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr433-independent-proof.yml"
+      - ".github/workflows/ftmo-pr440-independent-proof.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ftmo-pr433-independent-proof
+  group: ftmo-pr440-independent-proof
   cancel-in-progress: true
 
 jobs:
@@ -18,27 +18,27 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 35
     env:
-      TARGET_SHA: ca639c3623a7354fd9254c4f8b565a126f0eab7d
+      TARGET_SHA: 12095b98ce0ae430325c64ef6dd1f4863af3b654
     steps:
       - name: Verify VPS and fetch exact FTMO head
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
-          src="$RUNNER_TEMP/ftmo-pr433-proof"
+          src="$RUNNER_TEMP/ftmo-pr440-proof"
           rm -rf "$src"
           gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
           test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
-          echo "FTMO_PR433_HOST=$(hostname)"
-          echo "FTMO_PR433_EXACT_SHA=$TARGET_SHA"
+          echo "FTMO_PR440_HOST=$(hostname)"
+          echo "FTMO_PR440_EXACT_SHA=$TARGET_SHA"
 
       - name: Install isolated test environment
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr433-proof"
-          venv="$RUNNER_TEMP/ftmo-pr433-venv"
+          src="$RUNNER_TEMP/ftmo-pr440-proof"
+          venv="$RUNNER_TEMP/ftmo-pr440-venv"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
@@ -48,28 +48,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr433-proof"
-          venv="$RUNNER_TEMP/ftmo-pr433-venv"
+          src="$RUNNER_TEMP/ftmo-pr440-proof"
+          venv="$RUNNER_TEMP/ftmo-pr440-venv"
           cd "$src"
           "$venv/bin/python" -m compileall -q             src/prop_trading_ai/ops/autonomous_rollover.py             src/prop_trading_ai/data/market/dukascopy_resume_cache.py             src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py
-          echo "FTMO_PR433_COMPILE_GREEN=1"
+          echo "FTMO_PR440_COMPILE_GREEN=1"
 
       - name: Prove cache semantics and provider boundaries
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr433-proof"
-          venv="$RUNNER_TEMP/ftmo-pr433-venv"
+          src="$RUNNER_TEMP/ftmo-pr440-proof"
+          venv="$RUNNER_TEMP/ftmo-pr440-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q             tests/test_autonomous_provider_retry.py             tests/test_provider_foundation_publication.py             tests/test_zero_cost_workflow_boundary.py
-          echo "FTMO_PR433_TARGETED_GREEN=1"
+          echo "FTMO_PR440_TARGETED_GREEN=1"
 
       - name: Build full-suite plan
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr433-proof"
-          venv="$RUNNER_TEMP/ftmo-pr433-venv"
+          src="$RUNNER_TEMP/ftmo-pr440-proof"
+          venv="$RUNNER_TEMP/ftmo-pr440-venv"
           cd "$src"
           mkdir -p .scratch
           "$venv/bin/python" - <<'PY'
@@ -96,24 +96,24 @@ jobs:
               raise SystemExit("pytest collection failed: " + captured.getvalue()[-2000:])
           if not collector.paths or collector.count <= 0:
               raise SystemExit("pytest collected no tests")
-          Path(".scratch/ci-test-files-pr433.txt").write_text(
+          Path(".scratch/ci-test-files-pr440.txt").write_text(
               "\n".join(collector.paths) + "\n", encoding="utf-8"
           )
-          Path(".scratch/ci-test-count-pr433.txt").write_text(
+          Path(".scratch/ci-test-count-pr440.txt").write_text(
               str(collector.count) + "\n", encoding="utf-8"
           )
-          print(f"FTMO_PR433_COLLECTED_TESTS={collector.count}")
-          print(f"FTMO_PR433_TEST_FILES={len(collector.paths)}")
+          print(f"FTMO_PR440_COLLECTED_TESTS={collector.count}")
+          print(f"FTMO_PR440_TEST_FILES={len(collector.paths)}")
           PY
 
       - name: Run full suite in memory-bounded batches
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr433-proof"
-          venv="$RUNNER_TEMP/ftmo-pr433-venv"
+          src="$RUNNER_TEMP/ftmo-pr440-proof"
+          venv="$RUNNER_TEMP/ftmo-pr440-venv"
           cd "$src"
-          expected_count="$(cat .scratch/ci-test-count-pr433.txt)"
+          expected_count="$(cat .scratch/ci-test-count-pr440.txt)"
           executed_files=0
           while IFS= read -r test_file; do
             [[ -n "$test_file" ]] || continue
@@ -121,11 +121,11 @@ jobs:
             "$venv/bin/python" -m pytest -q "$test_file"
             echo "::endgroup::"
             executed_files=$((executed_files + 1))
-          done < .scratch/ci-test-files-pr433.txt
+          done < .scratch/ci-test-files-pr440.txt
           test "$executed_files" -gt 0
-          echo "FTMO_PR433_FULL_SUITE_COLLECTED_TESTS=$expected_count"
-          echo "FTMO_PR433_FULL_SUITE_EXECUTED_FILES=$executed_files"
-          echo "FTMO_PR433_FULL_SUITE_GREEN=1"
+          echo "FTMO_PR440_FULL_SUITE_COLLECTED_TESTS=$expected_count"
+          echo "FTMO_PR440_FULL_SUITE_EXECUTED_FILES=$executed_files"
+          echo "FTMO_PR440_FULL_SUITE_GREEN=1"
 
       - name: Persist exact-head proof receipt
         if: always()
@@ -134,12 +134,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          receipt="/tmp/ftmo-pr433-proof-${GITHUB_RUN_ID}.json"
+          receipt="/tmp/ftmo-pr440-proof-${GITHUB_RUN_ID}.json"
           python3 - <<'PY' > "$receipt"
           import json, os, socket
           print(json.dumps({
               "project": "ftmo",
-              "pr": 433,
+              "pr": 440,
               "target_sha": os.environ["TARGET_SHA"],
               "workflow_run_id": os.environ["GITHUB_RUN_ID"],
               "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
@@ -158,6 +158,6 @@ jobs:
           }, sort_keys=True))
           PY
           encoded="$(base64 -w0 "$receipt")"
-          path=".zcloud/receipts/ftmo-pr433-exact-proof-${GITHUB_RUN_ID}.json"
-          gh api --method PUT "repos/Zennay/zCloud/contents/$path"             -f message="Record FTMO PR433 exact-head proof run ${GITHUB_RUN_ID}"             -f content="$encoded" >/dev/null
-          echo "FTMO_PR433_RECEIPT_PATH=$path"
+          path=".zcloud/receipts/ftmo-pr440-exact-proof-${GITHUB_RUN_ID}.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$path"             -f message="Record FTMO PR440 exact-head proof run ${GITHUB_RUN_ID}"             -f content="$encoded" >/dev/null
+          echo "FTMO_PR440_RECEIPT_PATH=$path"
