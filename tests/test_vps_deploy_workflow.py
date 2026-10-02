@@ -219,6 +219,22 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.freshness.outputs.deploy_sha", text)
         self.assertNotIn("DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}", text)
 
+    def test_project_catalog_bootstraps_before_backend_schema_validation(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        catalog = text[
+            text.index("- name: Bootstrap validated project catalog"):
+            text.index("- name: Promote backend runtime core")
+        ]
+        self.assertLess(
+            text.index("- name: Bootstrap validated project catalog"),
+            text.index("- name: Promote backend runtime core"),
+        )
+        self.assertIn("--path projects.json", catalog)
+        self.assertIn("--preserve-prechange-drift public/zcloud-worker.user.js", catalog)
+        self.assertIn("--preserve-prechange-drift firefox-extension/background.js", catalog)
+        self.assertEqual(1, catalog.count("scripts/zcloud_transactional_promote.py"))
+        self.assertNotIn("- name: Promote translated project catalog", text)
+
     def test_backend_backlog_is_promoted_in_bounded_transactions(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         core = text[
