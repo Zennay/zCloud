@@ -56,6 +56,11 @@ jobs:
           python3 scripts/zcloud_vps_deploylane_coordination.py acquire \
             | tee "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
 
+      - name: Verify portfolio queue allocator on VPS runner
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_portfolio_queue_backend
+
       - name: Probe shared VPS execution capabilities
         run: |
           set -euo pipefail

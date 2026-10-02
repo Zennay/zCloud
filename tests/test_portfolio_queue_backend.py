@@ -53,6 +53,52 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("sqlite", allocation["queue_backend"])
         self.assertEqual(["cloud", "raiseai"], [worker["project_id"] for worker in allocation["workers"]])
 
+    def test_three_slots_keep_one_slot_for_another_runnable_project(self):
+        server.MAX_CHATGPT_WORKERS = 3
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement strategy generation critical path", "P0",
+            "Implement the next strategy generation step with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Validate walk-forward gate", "P0",
+            "Implement walk-forward validation and deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Harden provider data provenance", "P0",
+            "Implement provider provenance checks with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "zssh", "Implement runner deploy recovery", "P2",
+            "Implement deploy recovery with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(3, len(selected))
+        self.assertEqual(["ftmo", "ftmo", "zssh"], [item["project_id"] for item in selected])
+
+    def test_three_slots_can_all_run_one_project_when_no_alternative_exists(self):
+        server.MAX_CHATGPT_WORKERS = 3
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement strategy generation critical path", "P0",
+            "Implement the next strategy generation step with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Validate walk-forward gate", "P0",
+            "Implement walk-forward validation and deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Harden provider data provenance", "P0",
+            "Implement provider provenance checks with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(3, len(selected))
+        self.assertEqual(["ftmo", "ftmo", "ftmo"], [item["project_id"] for item in selected])
+
     def test_p0_preempts_lower_priority_claim_that_has_not_started(self):
         lower = server.portfolio_queue_enqueue("cloud", "lower", "P1", "Implement lower-priority change with tests.")
         server.portfolio_queue_allocate()
