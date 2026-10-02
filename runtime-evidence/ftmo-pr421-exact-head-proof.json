@@ -1,0 +1,17 @@
+{
+  "project": "ftmo",
+  "proof_scope": [
+    "compile Jetta provider boundary",
+    "Jetta transport and decoder integrity",
+    "autonomous provider retry boundary",
+    "autonomous deploy lockstep",
+    "zero-cost workflow boundary"
+  ],
+  "pull_request": 421,
+  "result": "failure",
+  "runner_required": "vps-bb300bba",
+  "schema_version": 1,
+  "target_sha": "44c28172f2d6db168f0d3271bf859fb43b82e3d5",
+  "workflow_run_attempt": 1,
+  "workflow_run_id": 36996547206
+}
