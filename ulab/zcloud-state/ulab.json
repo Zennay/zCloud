@@ -1,0 +1,16 @@
+{
+  "runner": {"type": "process"},
+  "versions": {
+    "from": [
+      "f6881e7c3e3005d8dd89867932569f6e30477fdc",
+      "fda5d4b6879ba3a70c08f4751db155404d4a229d"
+    ],
+    "to": "db31d0c989729364a00ec3e02ceef1f86281ccf6"
+  },
+  "setup": {"command": "sh ulab/zcloud-state/hook.sh setup"},
+  "upgrade": {"command": "sh ulab/zcloud-state/hook.sh upgrade"},
+  "verify": {"command": "sh ulab/zcloud-state/hook.sh verify"},
+  "policy": {
+    "require_all_paths": true
+  }
+}
