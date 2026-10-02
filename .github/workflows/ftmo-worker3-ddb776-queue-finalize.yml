@@ -219,3 +219,64 @@ jobs:
               raise SystemExit("queue evidence did not persist runtime proof")
           print("ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1")
           PY
+
+
+      - name: Repair auto-refill FTMO continuation hint
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          queue_id = "ftmo-1c523ac7e47c9a6b"
+          parent_id = "ftmo-ddb776eec40af8cf"
+          criteria = (
+              "Read the current FTMO HQ/handoff and execute a substantial multi-step work package, not a single micro-task. "
+              "Generation 10 is terminally closed/rejected and must not be reopened or rerun. "
+              "Current live state is Generation 29 at provider_foundation; continue the highest-value safe unblocked "
+              "provider-foundation and subsequent preregistered generation work while keeping development, walk-forward "
+              "and final holdout strictly sealed until their deterministic gates explicitly open. "
+              "Completion requires at least three material implementation actions across code/config/workflows/experiments/runtime "
+              "state OR one clearly large end-to-end implementation spanning multiple files/components, plus automated "
+              "test/build/run evidence. After each successful sub-step continue to the next safe adjacent write-capable step. "
+              "FTMO priority rule: keep advancing safe preregistered generations continuously; after one gate is proven, "
+              "continue to the next safe write-capable generation step instead of yielding the lane to lower-priority projects."
+          )
+          ts = datetime.now(timezone.utc).isoformat()
+          with sqlite3.connect(db, timeout=10) as c:
+              c.row_factory = sqlite3.Row
+              c.execute("BEGIN IMMEDIATE")
+              row = c.execute(
+                  "SELECT queue_id,project_id,parent_queue_id,status,eligible,worker_slot,completion_criteria "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+              if row is None:
+                  raise SystemExit("auto-refill child missing")
+              before = dict(row)
+              print("FTMO_CHILD_BEFORE=" + json.dumps(before, sort_keys=True))
+              if row["project_id"] != "ftmo" or row["parent_queue_id"] != parent_id:
+                  raise SystemExit("auto-refill child identity mismatch")
+              c.execute(
+                  "UPDATE portfolio_queue SET completion_criteria=?,updated_at=? WHERE queue_id=?",
+                  (criteria, ts, queue_id),
+              )
+              after = c.execute(
+                  "SELECT queue_id,project_id,parent_queue_id,status,eligible,worker_slot,completion_criteria "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+              after = dict(after)
+              print("FTMO_CHILD_AFTER=" + json.dumps(after, sort_keys=True))
+              if "Generation 10 is terminally closed/rejected" not in after["completion_criteria"]:
+                  raise SystemExit("terminal Gen10 guard did not persist")
+              if "Generation 29 at provider_foundation" not in after["completion_criteria"]:
+                  raise SystemExit("current Gen29 hint did not persist")
+              if "Run the frozen walk-forward for the Generation-10 candidate" in after["completion_criteria"]:
+                  raise SystemExit("stale Generation-10 walk-forward hint remains")
+          print("FTMO_CHILD_STALE_HINT_REPAIR_GREEN=1")
+          PY
