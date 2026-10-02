@@ -220,6 +220,20 @@ def evaluate(
     })
     add("firefox_source_runtime_match", source_runtime_match, source_runtime_match)
 
+    memory_guard = (status.get("dynamic_workers") or {}).get("memory_guard") or {}
+    memory_pressure = str(memory_guard.get("pressure") or "unknown").lower()
+    memory_ok = memory_pressure != "critical"
+    add("worker_memory", memory_ok, {
+        "pressure": memory_pressure,
+        "available_mb": memory_guard.get("available_mb"),
+        "headroom_mb": memory_guard.get("headroom_mb"),
+        "effective_headroom_mb": memory_guard.get("effective_headroom_mb"),
+        "new_worker_capacity": memory_guard.get("new_worker_capacity"),
+        "swap_total_mb": memory_guard.get("swap_total_mb"),
+        "swap_free_mb": memory_guard.get("swap_free_mb"),
+        "swap_healthy": memory_guard.get("swap_healthy"),
+    })
+
     add("project_state_store", store.get("ok") is True, {
         "quick_check": store.get("quick_check"),
         "missing_tables": store.get("missing_tables"),
@@ -301,6 +315,9 @@ def evaluate(
             "worker_scheduler": "healthy" if next(
                 x["ok"] for x in checks if x["name"] == "worker_scheduler"
             ) else "problem",
+            "worker_memory": "healthy" if next(
+                x["ok"] for x in checks if x["name"] == "worker_memory"
+            ) else "critical",
             "project_state_store": "healthy" if next(
                 x["ok"] for x in checks if x["name"] == "project_state_store"
             ) else "problem",
