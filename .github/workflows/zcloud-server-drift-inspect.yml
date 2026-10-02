@@ -30,6 +30,17 @@ jobs:
           echo "LIVE_SERVER_SHA256=$(sha256sum "$live" | awk '{print $1}')"
           echo "CANDIDATE_SERVER_SHA256=$(sha256sum "$candidate" | awk '{print $1}')"
           echo "CANDIDATE_COMMIT=$GITHUB_SHA"
+          live_sha="$(sha256sum "$live" | awk '{print $1}')"
+          match=""
+          while read -r commit; do
+            test -n "$commit" || continue
+            blob_sha="$(git show "$commit:server.py" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            if [[ "$blob_sha" == "$live_sha" ]]; then
+              match="$commit"
+              break
+            fi
+          done < <(git log --first-parent --format=%H -- server.py)
+          echo "LIVE_SERVER_MATCHING_FIRST_PARENT_COMMIT=${match:-NONE}"
           echo "DIFF_BEGIN"
           diff -u --label live/server.py --label candidate/server.py "$live" "$candidate" || true
           echo "DIFF_END"
