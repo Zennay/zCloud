@@ -220,7 +220,7 @@ jobs:
           # through sudo instead of trying to open the root-owned file as the
           # Actions runner user. The recovery body runs under that lock and the
           # sentinel above prevents a new self-heal pass from racing it.
-          sudo -n flock -w 30 "$lock_file" bash -s <<'ZCLOUD_RECOVERY'
+          sudo -n flock -w 240 "$lock_file" bash -s <<'ZCLOUD_RECOVERY'
           set -euo pipefail
           service="zennay-cloud.service"
           url="http://127.0.0.1:8765/api/status"
