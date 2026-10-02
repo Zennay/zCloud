@@ -28,8 +28,9 @@ jobs:
           import urllib.request
 
           queue_ids = (
-              "zssh-ftmo-safe-gate-3b512f56",
+              "zssh-ftmo-verify72-runner-recovery-20261002",
               "zssh-ftmo-runner-recovery-20261002",
+              "zssh-ftmo-safe-gate-3b512f56",
           )
           with urllib.request.urlopen(
               "http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10
@@ -96,13 +97,13 @@ jobs:
           echo "FTMO_RUNNER_SERVICE=$SERVICE"
           systemctl show "$SERVICE"             -p ActiveState -p SubState -p MainPID -p NRestarts             -p Result -p ExecMainCode -p ExecMainStatus             -p ActiveEnterTimestamp -p InactiveEnterTimestamp             --no-pager || true
 
-          echo "FTMO_RUNNER_JOURNAL_WINDOW_BEGIN"
-          journalctl -u "$SERVICE"             --since "2026-10-02 01:24:45 UTC"             --until "2026-10-02 01:26:15 UTC"             --no-pager 2>/dev/null             | grep -Eai 'runner|listener|worker|shutdown|signal|stopp|start|kill|oom|memory'             | tail -80 || true
-          echo "FTMO_RUNNER_JOURNAL_WINDOW_END"
+          echo "FTMO_RUNNER_JOURNAL_FRESH_BEGIN"
+          journalctl -u "$SERVICE" --since "-45 min" --no-pager 2>/dev/null             | grep -Eai 'runner|listener|worker|shutdown|signal|stopp|start|kill|oom|memory'             | tail -120 || true
+          echo "FTMO_RUNNER_JOURNAL_FRESH_END"
 
-          echo "FTMO_KERNEL_OOM_WINDOW_BEGIN"
-          (sudo -n journalctl -k             --since "2026-10-02 01:24:45 UTC"             --until "2026-10-02 01:26:15 UTC"             --no-pager 2>/dev/null ||            journalctl -k             --since "2026-10-02 01:24:45 UTC"             --until "2026-10-02 01:26:15 UTC"             --no-pager 2>/dev/null || true)             | grep -Eai 'out of memory|oom|killed process|memory cgroup'             | tail -80 || true
-          echo "FTMO_KERNEL_OOM_WINDOW_END"
+          echo "FTMO_KERNEL_OOM_FRESH_BEGIN"
+          (sudo -n journalctl -k --since "-45 min" --no-pager 2>/dev/null ||             journalctl -k --since "-45 min" --no-pager 2>/dev/null || true)             | grep -Eai 'out of memory|oom|killed process|memory cgroup'             | tail -120 || true
+          echo "FTMO_KERNEL_OOM_FRESH_END"
 
       - name: Recover only the FTMO Actions listener
         shell: bash
