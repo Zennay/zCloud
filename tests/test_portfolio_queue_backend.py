@@ -78,6 +78,31 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(3, len(selected))
         self.assertEqual(["ftmo", "ftmo", "zssh"], [item["project_id"] for item in selected])
 
+    def test_five_slots_reserve_two_slots_for_other_runnable_projects(self):
+        server.MAX_CHATGPT_WORKERS = 5
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 5
+        for index in range(5):
+            server.portfolio_queue_enqueue(
+                "ftmo", f"FTMO critical path {index}", "P0",
+                f"Implement FTMO critical path step {index} with deterministic tests.",
+            )
+        server.portfolio_queue_enqueue(
+            "zssh", "Runner recovery", "P2",
+            "Implement runner recovery with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "supa", "Planner UX implementation", "P2",
+            "Implement planner UX with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(5, len(selected))
+        projects = [item["project_id"] for item in selected]
+        self.assertEqual(3, projects.count("ftmo"))
+        self.assertIn("zssh", projects)
+        self.assertIn("supa", projects)
+
     def test_three_slots_can_all_run_one_project_when_no_alternative_exists(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
