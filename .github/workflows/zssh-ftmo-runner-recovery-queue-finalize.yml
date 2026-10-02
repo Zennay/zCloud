@@ -87,7 +87,11 @@ jobs:
               "broker/live permission, paid-cloud boundary, protected run, or secrets were modified. "
               "Quality retry commit 75f4c5c580923914b08208eb35dc177228148e53 triggered bounded recovery workflow 36993276087; "
               "at handoff it is queued behind the self-hosted zCloud VPS lane, while current same-workflow FTMO run 36993218498 is also queued. "
-              "PR410 evidence comment 5949889304 records the verified runner/OOM/concurrency facts."
+              "PR410 evidence comment 5949889304 records the verified runner/OOM/concurrency facts. "
+              "Fresh bounded recovery workflow 36993276087 completed SUCCESS: service remained active pre/post on MainPID 718454, "
+              "listener and worker were present, action preserve-active-worker, and no fresh OOM evidence was found in the last 45 minutes. "
+              "Runner diagnostics show continuous successful scheduling through 10:07 UTC, including multiple succeeded test jobs and cache-integrity; "
+              "newest autonomous-runtime run 36993878017 is queued while prior run 36993218498 was superseded by the same cancel-in-progress concurrency."
           )
 
           if item["status"] == "queued" and int(item["eligible"] or 0) == 1:
