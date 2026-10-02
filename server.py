@@ -50,6 +50,9 @@ DYNAMIC_WORKER_SETTING_KEYS = {
     'scheduler_interval_seconds':'dynamic_worker_scheduler_interval_seconds',
 }
 AI_SLOT_DIVERSITY_PENALTY = 500
+# Hard per-project AI/code-worker caps. These constrain browser/queue concurrency only;
+# project-owned VPS compute services and backtest CPU parallelism are unaffected.
+PROJECT_AI_WORKER_LIMITS = {'ftmo': 2}
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
 PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
@@ -537,6 +540,9 @@ def init_db():
         if 'worker_count' not in target_columns:
             c.execute('ALTER TABLE runner_targets ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 1')
             c.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='ftmo'")
+        # Keep FTMO's browser/code-worker fan-out bounded even when an older live DB
+        # persisted a larger dashboard value. This does not touch FTMO compute workers.
+        c.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='ftmo' AND worker_count>2")
         c.execute("CREATE TABLE IF NOT EXISTS runner_workers(project_id TEXT NOT NULL, worker_slot INTEGER NOT NULL, conversation_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(project_id,worker_slot))")
         worker_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_workers)').fetchall()}
         if 'desired_state' not in worker_columns:
@@ -1854,6 +1860,21 @@ def _portfolio_project_soft_cap():
     limit=max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))
     return 1 if limit <= 2 else limit - 1
 
+
+def _portfolio_project_hard_cap(project_id):
+    """Return the hard AI/code-worker cap for one project.
+
+    This is intentionally separate from VPS/service compute concurrency. A project
+    without an explicit cap may still consume the whole global AI pool when safe.
+    """
+    limit=max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))
+    configured=PROJECT_AI_WORKER_LIMITS.get(str(project_id or '').strip().lower(), limit)
+    try:
+        configured=int(configured)
+    except Exception:
+        configured=limit
+    return max(1,min(limit,configured))
+
 def _portfolio_queue_metadata(row):
     if not row:
         return {}
@@ -2328,17 +2349,19 @@ def portfolio_queue_allocate():
             if row and str(row['status']) == 'claimed':
                 higher=lane_candidates[0][0] if lane_candidates else None
                 row_project=str(row['project_id'] or '')
+                hard_cap=_portfolio_project_hard_cap(row_project)
                 alternate_project_available=any(
                     str(pair[0]['project_id'] or '') != row_project
                     and used_counts.get(str(pair[0]['project_id'] or ''),0) < soft_cap
                     for pair in lane_candidates
                 )
+                should_enforce_hard_cap=used_counts.get(row_project,0) >= hard_cap
                 should_diversify=used_counts.get(row_project,0) >= soft_cap and alternate_project_available
                 should_preempt_priority=(
                     higher and
                     _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority'])
                 )
-                if should_diversify or should_preempt_priority:
+                if should_enforce_hard_cap or should_diversify or should_preempt_priority:
                     c.execute("""UPDATE portfolio_queue
                                  SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                                  WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
@@ -2351,6 +2374,16 @@ def portfolio_queue_allocate():
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
+            if not lane_candidates:
+                continue
+
+            # Hard caps are project-specific and apply even when no alternative
+            # project is runnable. This prevents FTMO PR/CI churn from consuming
+            # more browser/code-worker slots than the runner can productively serve.
+            lane_candidates=[
+                pair for pair in lane_candidates
+                if used_counts.get(str(pair[0]['project_id'] or ''),0) < _portfolio_project_hard_cap(pair[0]['project_id'])
+            ]
             if not lane_candidates:
                 continue
 
