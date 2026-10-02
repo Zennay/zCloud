@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr435-exact-head-proof.yml"
+      - ".github/workflows/ftmo-pr430-exact-head-proof.yml"
   workflow_dispatch:
 
 permissions:
