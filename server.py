@@ -1846,13 +1846,15 @@ def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
 def _portfolio_project_soft_cap():
-    """Keep at least one global slot available for another runnable project.
+    """Keep portfolio capacity available for other runnable projects.
 
-    The cap is soft: when no other project has eligible work, the busiest project
-    may consume every slot. Running/verifying work is never preempted for diversity.
+    A busy project may use at most half the pool rounded up while alternatives
+    exist (3 of 5, 2 of 3, 1 of 2). The cap is soft: when no other project has
+    eligible work, one project may still consume every slot. Running/verifying
+    work is never preempted for diversity.
     """
     limit=max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))
-    return 1 if limit <= 2 else limit - 1
+    return max(1,(limit+1)//2)
 
 def _portfolio_queue_metadata(row):
     if not row:
