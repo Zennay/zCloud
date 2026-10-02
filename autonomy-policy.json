@@ -68,6 +68,13 @@
       "continue_delay_seconds": 120,
       "dispatch_mode": "vps",
       "min_ai_interval_seconds": 120
+    },
+    "lightup": {
+      "mode": "ai_worker",
+      "auto_start": true,
+      "continue_delay_seconds": 120,
+      "dispatch_mode": "vps",
+      "min_ai_interval_seconds": 120
     }
   }
 }
