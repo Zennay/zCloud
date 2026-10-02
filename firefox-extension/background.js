@@ -16,11 +16,12 @@ const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
 function portfolioAssignmentReady(target) {
-  if (!target || target.active !== true || target.assignment_ready !== true) return false;
+  if (!target || target.assignment_ready !== true) return false;
   const baseProject = String(target.base_project_id || target.project_id || "").split("::w", 1)[0];
   const prompt = String(target.prompt || "");
   if (target.reviewer_mode === true) {
-    return baseProject === "portfolio-review" &&
+    return target.active === true &&
+      baseProject === "portfolio-review" &&
       prompt.includes("Portfolio Bird's-eye Reviewer") &&
       prompt.includes("Senior Team OS");
   }
