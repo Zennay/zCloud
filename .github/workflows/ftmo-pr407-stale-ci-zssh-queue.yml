@@ -1,0 +1,81 @@
+name: Enqueue stale merged-PR407 CI cancellation on zSSH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ftmo-pr407-stale-ci-zssh-queue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enqueue:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue exact merged-PR407 stale CI cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-cancel-merged-pr407-ci-20261002"
+          stale = [36981941923, 36981941937]
+          stale_head = "60fcbbc3562e77013f44830c4db26b69f0167ca1"
+          merged_main = "c7a83dae1cc4248e59b6a02d1ec9e0ac8b6dc56b"
+          current_pr408 = "482ae9782f941e6926d73d81c76f316ffec4c081"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Cancel merged PR407 stale FTMO CI",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba inspect Zennay/Ftmo PR #407 and GitHub Actions runs "
+                  + ", ".join(str(item) for item in stale)
+                  + f". Cancel only those exact run IDs if PR #407 is closed+merged, each run head SHA is {stale_head}, "
+                  "and each run is still queued, pending, or in_progress. They are superseded by merged main "
+                  + merged_main
+                  + ". Never cancel any main-branch run, any run for current PR #408 head "
+                  + current_pr408
+                  + ", PR #406, or any other run. Use existing authorized GitHub credentials without printing secrets. "
+                  "After requesting cancellation, verify both stale runs are terminal/cancelled or already terminal and "
+                  "report statuses of current PR #408 runs 36982734136 and 36982734283. Do not modify FTMO repository "
+                  "files, provider evidence, preregistration, development, walk-forward, final holdout, broker, or live state."
+              ),
+              "source_url": "https://github.com/Zennay/Ftmo/pull/407",
+          }
+
+          def post(path, body):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  result = json.load(response)
+                  if response.status >= 300:
+                      raise RuntimeError(f"{path} failed: HTTP {response.status}")
+                  return result
+
+          queued = post("/api/portfolio-queue", payload)
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("FTMO_PR407_STALE_CI_QUEUE", json.dumps({
+              "queue_id": queue_id,
+              "backend": queued.get("backend"),
+              "queue_status": (queued.get("item") or {}).get("status"),
+              "worker_slot": (queued.get("item") or {}).get("worker_slot"),
+              "stale_run_ids": stale,
+              "protected_main_sha": merged_main,
+              "protected_pr408_sha": current_pr408,
+              "start_ok": start.get("ok"),
+              "push_ok": push.get("ok"),
+          }, sort_keys=True))
+          PY
