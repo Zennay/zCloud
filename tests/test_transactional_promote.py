@@ -82,6 +82,7 @@ class TransactionalPromotionTests(unittest.TestCase):
         )
 
     def test_only_explicit_bootstrap_files_may_be_created(self):
+        self._write(self.candidate, "lane_generator.py", "print('lane')\n")
         self._write(
             self.candidate,
             "autonomy-policy.json",
@@ -98,12 +99,14 @@ class TransactionalPromotionTests(unittest.TestCase):
             self.root,
             [
                 "firefox-extension/recovery.js",
+                "lane_generator.py",
                 "autonomy-policy.json",
                 "portfolio_queue.seed.json",
                 "vps-execution-policy.json",
             ],
         )
         self.assertIn("firefox-extension/recovery.js", result)
+        self.assertIn("lane_generator.py", result)
         self.assertIn("autonomy-policy.json", result)
         self.assertIn("portfolio_queue.seed.json", result)
         self.assertIn("vps-execution-policy.json", result)
