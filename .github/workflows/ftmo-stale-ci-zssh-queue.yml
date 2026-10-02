@@ -30,12 +30,12 @@ jobs:
           import urllib.request
 
           base = "http://127.0.0.1:8765"
-          queue_id = "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker5"
+          queue_id = "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker1-pr443"
           payload = {
               "action": "enqueue",
               "queue_id": queue_id,
               "project_id": "zssh",
-              "title": "Cancel superseded FTMO PR CI blocking current Gen29 gates",
+              "title": "Cancel superseded FTMO CI blocking exact-head PR443 gates",
               "priority": "P0",
               "completion_criteria": (
                   "On vps-bb300bba use authenticated GitHub tooling to inspect Zennay/Ftmo "
@@ -45,15 +45,16 @@ jobs:
                   "Then inspect queued/pending FTMO runs and cancel only runs whose associated "
                   "PR is closed/merged or whose head SHA is no longer the latest head of its "
                   "still-open PR. Never cancel current main runs and never cancel any run tied "
-                  "to the latest head of an open PR. Explicitly preserve merged main commit "
-                  "150ccd1b5deb4388ed1b1c6c29ac7138074ead51 and its runs 37003576188, "
-                  "37003576200 and 37003581840. Record exact cancelled "
+                  "to the latest head of an open PR. Explicitly preserve current FTMO main "
+                  "f761bc3af1e62a16cdc441df7d4585d4a6e32f54, open PR #443 exact head "
+                  "9b78f850e4c8be9cf9d826bfad950f4041ef0441 and its exact-head runs "
+                  "37005325337, 37005325289 and 37005325357. Record exact cancelled "
                   "run IDs, deliberately kept run IDs, before/after queue counts and GitHub "
                   "API results. This is CI queue cleanup only: do not change FTMO code, data, "
                   "preregistration, provider acceptance, walk-forward, holdout, live/broker "
                   "permissions or runtime services."
               ),
-              "source_url": "https://github.com/Zennay/Ftmo/pull/436",
+              "source_url": "https://github.com/Zennay/Ftmo/pull/443",
           }
           def post(path, body):
               request = urllib.request.Request(
@@ -121,7 +122,7 @@ jobs:
           import subprocess
           import urllib.request
 
-          queue_id = "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker5"
+          queue_id = "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker1-pr443"
           with urllib.request.urlopen("http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10) as response:
               live = json.load(response)
 
