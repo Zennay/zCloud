@@ -84,14 +84,19 @@ jobs:
           ZSSH_ALLOWED_ROOTS="$test_root" \
           ZSSH_AUDIT_LOG="$test_root/audit.jsonl" \
           ZSSH_DEV_BEARER_TOKEN="$(openssl rand -hex 32)" \
-          node zssh-source/server.mjs >"$test_root/server.log" 2>&1 &
+          node "/home/ubuntu/.local/share/zssh/current/server.mjs" >"$test_root/server.log" 2>&1 &
           server_pid=$!
 
           for attempt in $(seq 1 30); do
             if curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null; then break; fi
             sleep 1
           done
-          curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null
+          if ! curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null; then
+            echo "ZSSH_PUBLIC_LISTING_SITE_STARTUP_LOG_BEGIN"
+            cat "$test_root/server.log" || true
+            echo "ZSSH_PUBLIC_LISTING_SITE_STARTUP_LOG_END"
+            exit 1
+          fi
 
           for page in / /support /privacy /terms; do
             headers="$test_root/headers-$(echo "$page" | tr '/' '_' | sed 's/^_$/root/').txt"
