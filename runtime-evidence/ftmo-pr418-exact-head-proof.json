@@ -1,0 +1,17 @@
+{
+  "project": "ftmo",
+  "proof_scope": [
+    "compile autonomous_rollover",
+    "provider foundation readiness/publication regressions",
+    "autonomous provider retry compatibility",
+    "zero-cost workflow boundary",
+    "autonomous deploy lockstep"
+  ],
+  "pull_request": 418,
+  "result": "success",
+  "runner_required": "vps-bb300bba",
+  "schema_version": 1,
+  "target_sha": "2df7224bfa93ac73aed15bf714314638b61a1edc",
+  "workflow_run_attempt": 1,
+  "workflow_run_id": 36993801731
+}
