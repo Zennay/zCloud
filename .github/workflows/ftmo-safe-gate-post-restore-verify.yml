@@ -1,0 +1,116 @@
+name: Verify FTMO safe-gate post-restore heartbeat
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-safe-gate-post-restore-verify.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      FTMO_STABLE_ROOT: /opt/ftmo-autonomous
+      EXPECTED_RUNTIME_SHA: 8dd37b5c5007c4092d27cb90830a7f9891b4c424
+      EXPECTED_DEPLOY_RUN_ID: "36973324400"
+    steps:
+      - name: Verify live post-restore autonomous heartbeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+
+          root = Path(os.environ["FTMO_STABLE_ROOT"])
+          expected = os.environ["EXPECTED_RUNTIME_SHA"]
+          deploy_run = os.environ["EXPECTED_DEPLOY_RUN_ID"]
+          status_path = root / ".scratch/autonomy/status.json"
+          deadline = time.monotonic() + 300
+          last = None
+
+          while time.monotonic() < deadline:
+              service = subprocess.run(
+                  ["systemctl", "is-active", "ftmo-autonomous-marathon.service"],
+                  text=True, capture_output=True, check=False
+              ).stdout.strip()
+              if service not in {"active", "activating", "reloading"}:
+                  raise SystemExit(f"marathon service unhealthy: {service!r}")
+              if service != "active":
+                  time.sleep(2)
+                  continue
+              if not status_path.is_file() or status_path.is_symlink():
+                  time.sleep(5)
+                  continue
+              try:
+                  status = json.loads(status_path.read_text(encoding="utf-8"))
+              except (json.JSONDecodeError, OSError):
+                  time.sleep(5)
+                  continue
+
+              research = status.get("research") or {}
+              controller = status.get("research_controller") or {}
+              compute = controller.get("compute") or {}
+              loop = controller.get("generation_loop") or {}
+              outcome = controller.get("outcome_execution") or {}
+              last = {
+                  "runtime_revision": status.get("runtime_revision"),
+                  "deployment_workflow_run_id": status.get("deployment_workflow_run_id"),
+                  "research_cycle_ok": status.get("research_cycle_ok"),
+                  "research_cycle_completed_at_utc": status.get("research_cycle_completed_at_utc"),
+                  "generation_number": research.get("generation_number"),
+                  "generation_id": research.get("generation_id"),
+                  "next_stage": research.get("next_stage"),
+                  "controller_action": controller.get("action"),
+                  "compute_ok": compute.get("ok"),
+                  "generation_loop_enabled": loop.get("enabled"),
+                  "generation_loop_action": loop.get("action"),
+                  "generation_loop_stage": loop.get("stage"),
+                  "live_trading_allowed": status.get("live_trading_allowed"),
+                  "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
+                  "walk_forward_accessed": outcome.get("walk_forward_accessed"),
+                  "final_holdout_accessed": outcome.get("final_holdout_accessed"),
+                  "walk_forward_access_allowed": research.get("walk_forward_access_allowed"),
+                  "final_holdout_access_allowed": research.get("final_holdout_access_allowed"),
+              }
+              if (
+                  status.get("runtime_revision") == expected
+                  and str(status.get("deployment_workflow_run_id")) == deploy_run
+                  and status.get("research_cycle_ok") is True
+              ):
+                  if compute.get("ok") is not True:
+                      raise SystemExit(f"controller compute unhealthy: {controller}")
+                  if loop.get("enabled") is not True:
+                      raise SystemExit(f"generation loop disabled: {loop}")
+                  if status.get("live_trading_allowed") is not False:
+                      raise SystemExit("live trading boundary changed")
+                  if status.get("broker_order_submission_allowed") is not False:
+                      raise SystemExit("broker order boundary changed")
+                  if outcome.get("live_trading_allowed") is not False:
+                      raise SystemExit("controller live trading boundary changed")
+                  if outcome.get("broker_order_submission_allowed") is not False:
+                      raise SystemExit("controller broker boundary changed")
+                  if outcome.get("walk_forward_accessed") is True and research.get("walk_forward_access_allowed") is not True:
+                      raise SystemExit("walk-forward accessed without deterministic gate")
+                  if outcome.get("final_holdout_accessed") is True and research.get("final_holdout_access_allowed") is not True:
+                      raise SystemExit("final holdout accessed without deterministic gate")
+                  completed = status.get("research_cycle_completed_at_utc")
+                  if completed:
+                      dt = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                      if (datetime.now(timezone.utc) - dt).total_seconds() > 900:
+                          raise SystemExit("post-restore heartbeat is stale")
+                  print("FTMO_SAFE_GATE_POST_RESTORE_GREEN", json.dumps(last, sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(5)
+
+          raise SystemExit("post-restore safe heartbeat not observed: " + json.dumps(last, sort_keys=True))
+          PY
