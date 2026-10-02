@@ -19,27 +19,49 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Cancel only superseded FTMO runs
+      - name: Cancel only superseded FTMO branch runs
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
-          protected="36993878017 36993878021 36993884258 36993979548"
-          stale="36947347085 36947148086 36946590871 36946381997 36992787393 36992787409 36992539464 36992539472 36992539529 36992448495 36991580711 36991581022 36991324051 36991324001 36991312190"
-          for run_id in $stale; do
-            case " $protected " in
-              *" $run_id "*) echo "refusing protected run $run_id" >&2; exit 1 ;;
-            esac
-            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .status)"
-            head_sha="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .head_sha)"
-            if [[ "$status" == "queued" || "$status" == "in_progress" || "$status" == "pending" ]]; then
-              gh run cancel "$run_id" --repo Zennay/Ftmo
-              echo "cancelled=$run_id status=$status head=$head_sha"
-            else
-              echo "left=$run_id status=$status head=$head_sha"
-            fi
+          main_sha="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+          printf 'protected_main_sha=%s\n' "$main_sha"
+
+          branches=(
+            "worker5/day-cache-evidence-integrity-v3-20261002"
+            "worker5/day-cache-evidence-integrity-v2-20261002"
+            "worker5/day-cache-temporal-provenance-20261002"
+            "worker3/provider-publication-atomicity-20261002"
+            "worker1/gen29-day-cache-write-validation-20261002"
+            "proof/worker3-pr390-targeted-20261002"
+            "proof/worker3-pr386-targeted-20261002"
+          )
+
+          cancelled=0
+          for branch in "${branches[@]}"; do
+            while IFS=$'\t' read -r run_id status head_sha; do
+              [[ -n "$run_id" ]] || continue
+              if [[ "$head_sha" == "$main_sha" ]]; then
+                echo "refusing current-main run=$run_id branch=$branch" >&2
+                exit 1
+              fi
+              case "$status" in
+                queued|in_progress|pending)
+                  gh run cancel "$run_id" --repo Zennay/Ftmo
+                  echo "cancelled=$run_id branch=$branch status=$status head=$head_sha"
+                  cancelled=$((cancelled + 1))
+                  ;;
+                *)
+                  echo "left=$run_id branch=$branch status=$status head=$head_sha"
+                  ;;
+              esac
+            done < <(
+              gh api --paginate "repos/Zennay/Ftmo/actions/runs?branch=$branch&per_page=100"                 --jq '.workflow_runs[] | [.id,.status,.head_sha] | @tsv'
+            )
           done
-          for run_id in $protected; do
-            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .status)"
-            echo "protected=$run_id status=$status"
+
+          echo "cancelled_count=$cancelled"
+          for run_id in 36994271969 36994272089 36994276808; do
+            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .status 2>/dev/null || true)"
+            [[ -n "$status" ]] && echo "protected_current_main_run=$run_id status=$status"
           done
