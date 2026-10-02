@@ -248,21 +248,32 @@ jobs:
                           raise SystemExit(f"haxlab cap failed for {unit}: {result.stderr.strip()}")
                       rescue_actions.append(f"haxlab-cap:{unit}")
 
-              # If the interactive desktop user slice is the measured dominant
-              # competitor, bound only that slice at runtime. This is reversible
-              # on reboot and preserves system/control-plane services.
+              # If user.slice is consuming more than one CPU on average, cap
+              # only the managed Firefox user-service rather than the whole
+              # interactive session. This is runtime-only and reversible.
               if float(pre.get("user_slice_cpu_seconds") or 0.0) > float(pre.get("sample_seconds") or 1.0):
                   uid = run("id", "-u", "ubuntu").stdout.strip()
                   if not uid.isdigit():
                       raise SystemExit(f"cannot resolve ubuntu uid: {uid!r}")
-                  user_slice = f"user-{uid}.slice"
-                  result = run(
-                      "sudo", "-n", "systemctl", "set-property", "--runtime",
-                      user_slice, "CPUWeight=50", "CPUQuota=100%"
+                  user_env = (
+                      "env",
+                      f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                      f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
                   )
-                  if result.returncode != 0:
-                      raise SystemExit(f"user slice cap failed for {user_slice}: {result.stderr.strip()}")
-                  rescue_actions.append(f"user-slice-cap:{user_slice}:100%")
+                  loaded = run(
+                      "sudo", "-n", "-u", "ubuntu", *user_env,
+                      "systemctl", "--user", "show", "chatgpt-firefox.service",
+                      "--property=LoadState", "--value"
+                  )
+                  if loaded.returncode == 0 and loaded.stdout.strip() == "loaded":
+                      result = run(
+                          "sudo", "-n", "-u", "ubuntu", *user_env,
+                          "systemctl", "--user", "set-property", "--runtime",
+                          "chatgpt-firefox.service", "CPUWeight=50", "CPUQuota=100%"
+                      )
+                      if result.returncode != 0:
+                          raise SystemExit(f"Firefox cap failed: {result.stderr.strip()}")
+                      rescue_actions.append("firefox-cap:chatgpt-firefox.service:100%")
 
               restarted = run("sudo", "-n", "systemctl", "restart", "ftmo-autonomous-marathon.service")
               if restarted.returncode != 0:
