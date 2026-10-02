@@ -3528,7 +3528,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
                 return self.reply({'ok':True,'feature_flag':result,'time':now()})
-        if u.path=='/api/dynamic-workers':
+            if u.path=='/api/dynamic-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
                 try:
