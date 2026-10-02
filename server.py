@@ -2485,6 +2485,35 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             created=portfolio_write_continuation(row['project_id'],queue_id)
         except ValueError:
             created=None
+    # Every material queue transition leaves an evidence-backed state receipt.
+    # Rich CI/deploy paths may later supersede this with a more specific receipt.
+    try:
+        next_gate=(
+            (created or {}).get('title')
+            if isinstance(created,dict)
+            else ''
+        ) or (str(row['title']) if result=='CONTINUE' else '')
+        project=PROJECT_INDEX.get(str(row['project_id'])) or {}
+        receipt_status={'DONE':'success','BLOCKED':'failure','CONTINUE':'in_progress'}[result]
+        with connect() as c:
+            project_runtime.record_receipt(
+                c,
+                str(row['project_id']),
+                phase=str(project.get('phase') or ''),
+                action=f"{row['title']} -> {result}",
+                ci_status=receipt_status,
+                blocker=str(evidence or '') if result=='BLOCKED' else '',
+                next_gate=next_gate or str(project.get('next_step') or ''),
+                source='portfolio_queue:'+queue_id,
+                evidence={
+                    'queue_id':queue_id,
+                    'result':result,
+                    'priority':str(row['priority'] or ''),
+                    'evidence':str(evidence or '')[:3500],
+                },
+            )
+    except Exception:
+        logging.exception('Could not persist project state receipt for %s',queue_id)
     audit=portfolio_queue_audit(refill=False)
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
 
