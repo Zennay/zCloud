@@ -17,7 +17,7 @@ concurrency:
 jobs:
   finalize:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       QUEUE_ID: ftmo-4f501946a6249559
       MERGE_SHA: 2eca20de3cdec21873874d92902c3d954d3d9b9b
@@ -46,7 +46,7 @@ jobs:
               raise SystemExit(f"unexpected exact proof name: {exact.get('name')!r}")
 
           deploy=None
-          for _ in range(120):
+          for _ in range(240):
               deploy=get('Zennay/Ftmo', os.environ['DEPLOY_RUN'])
               if deploy.get('status') == 'completed':
                   break
