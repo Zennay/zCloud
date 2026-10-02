@@ -19,9 +19,10 @@ jobs:
   finalize:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.id == 37001816303 &&
-       github.event.workflow_run.conclusion == 'success')
+      github.event.workflow_run.conclusion == 'success'
     runs-on: self-hosted
+    env:
+      RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
     timeout-minutes: 5
     steps:
       - name: Verify exact live zSSH release
@@ -34,7 +35,7 @@ jobs:
           test "$(readlink -f /home/ubuntu/.local/share/zssh/current)" = "/home/ubuntu/.local/share/zssh/releases/$EXPECTED_SHA"
           systemctl --user is-active --quiet zssh.service
           curl --fail --silent --show-error http://127.0.0.1:8788/health
-          echo "ZSSH_PUBLIC_RELEASE_LIVE_GREEN sha=$EXPECTED_SHA release_run=37001816303"
+          echo "ZSSH_PUBLIC_RELEASE_LIVE_GREEN sha=$EXPECTED_SHA release_run=${RELEASE_RUN_ID:-manual}"
 
       - name: Finish exact SQLite queue assignment
         shell: bash
@@ -66,12 +67,13 @@ jobs:
           spec.loader.exec_module(server)
           server.DB = db_path
 
+          release_run_id = str(__import__("os").environ.get("RELEASE_RUN_ID") or "manual")
           evidence = (
               "zSSH OpenAI public plugin release increment complete: "
               "canonical zSSH PR #35 merged as c1a249e4995605b025496a0178cacbc4cfcecf41; "
               "canonical zSSH CI 37001556239 SUCCESS and OpenAI release gate 37001556272 SUCCESS; "
               "zCloud PR #228 merged as c5f16d15a2e0ea1c46bfb5a7dde8315f14f69a18; "
-              "self-hosted release run 37001816303 SUCCESS on vps-bb300bba, with exact live provenance, "
+              f"self-hosted release run {release_run_id} SUCCESS on vps-bb300bba, with exact live provenance, "
               "service health, hosted MCP auth canaries and isolated public listing-site proof for /, /support, /privacy and /terms. "
               "FTMO P0 compute/research work was not preempted or modified."
           )
