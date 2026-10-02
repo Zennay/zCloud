@@ -33,11 +33,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.prewrite.outputs.deploy == 'true'", text)
         self.assertIn("fetch-depth: 513", text)
         self.assertLess(
-            text.index("- name: Promote backend and autonomy policy"),
+            text.index("- name: Promote backend runtime core"),
             text.index("- name: Promote Violentmonkey worker"),
         )
         backend = text[
-            text.index("- name: Promote backend and autonomy policy"):
+            text.index("- name: Promote backend runtime core"):
             text.index("- name: Promote Violentmonkey worker")
         ]
         self.assertIn(
@@ -63,7 +63,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         recover = "Recover zCloud health before guarded promotion"
         suspend = "Suspend external self-heal during guarded deploy"
-        promote = "Promote backend and autonomy policy"
+        promote = "Promote backend runtime core"
         quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
         block = text[text.index(recover):text.index(quarantine)]
         self.assertIn('service="zennay-cloud.service"', block)
@@ -84,7 +84,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
     def test_deploy_quarantines_non_runtime_userscript_backups_before_prechange(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
-        promote = "Promote backend and autonomy policy"
+        promote = "Promote backend runtime core"
         self.assertIn(quarantine, text)
         self.assertIn('zcloud-worker.user.js.bak-*', text)
         self.assertIn('zcloud-worker.user.js.pre-effort-selector.bak', text)
@@ -96,7 +96,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
     def test_deploy_quarantines_generated_python_bytecode_before_prechange(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         quarantine = "Quarantine generated Python bytecode before guarded promotion"
-        promote = "Promote backend and autonomy policy"
+        promote = "Promote backend runtime core"
         self.assertIn(quarantine, text)
         self.assertIn('/home/ubuntu/zennay-cloud/scripts/__pycache__', text)
         self.assertIn('$HOME/.local/state/zcloud/runtime-backups', text)
@@ -137,7 +137,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn(guard, text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertLess(text.index(guard), text.index("Mark production deploy pending"))
-        self.assertLess(text.index(guard), text.index("Promote backend and autonomy policy"))
+        self.assertLess(text.index(guard), text.index("Promote backend runtime core"))
 
         probe = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
         self.assertIn(guard, probe)
@@ -168,7 +168,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(5, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
             "lane_generator.py",
@@ -218,6 +218,36 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("Publish production deploy result", text)
         self.assertIn("steps.freshness.outputs.deploy_sha", text)
         self.assertNotIn("DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}", text)
+
+    def test_backend_backlog_is_promoted_in_bounded_transactions(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        core = text[
+            text.index("- name: Promote backend runtime core"):
+            text.index("- name: Promote autonomy policies and queue seed")
+        ]
+        policy = text[
+            text.index("- name: Promote autonomy policies and queue seed"):
+            text.index("- name: Promote Violentmonkey worker")
+        ]
+
+        self.assertEqual(1, core.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(1, policy.count("scripts/zcloud_transactional_promote.py"))
+        for path in ("server.py", "lane_generator.py", "scripts/zcloud_recovery.py"):
+            self.assertIn(f"--path {path}", core)
+            self.assertNotIn(f"--path {path}", policy)
+        for path in ("autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
+            self.assertIn(f"--path {path}", policy)
+            self.assertNotIn(f"--path {path}", core)
+        self.assertNotIn("high_blast_radius_promotion", core + policy)
+
+    def test_publish_status_requires_actual_prewrite_confirmation(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        publish = text[text.index("- name: Publish production deploy result"):]
+        self.assertIn(
+            "if: always() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'",
+            publish,
+        )
+        self.assertIn("MAIN_MOVED_BEFORE_VPS_WRITE", text)
 
     def test_execution_probe_claims_cloud_task_on_self_hosted_runner(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
