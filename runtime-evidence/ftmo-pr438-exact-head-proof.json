@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scope": "ftmo-pr438-exact-head-proof",
+  "target_sha": "39c26edf954753a0c6fa766c600d5f45a7f8d296",
+  "workflow_run_id": "37003150049",
+  "workflow_run_attempt": "1",
+  "result": "success",
+  "runner_host": "vps-bb300bba",
+  "tests": [
+    "compileall provider_validation.py",
+    "provider validation filesystem/json/atomic integrity",
+    "research machine safety",
+    "zero-cost workflow boundary",
+    "full exact-head pytest suite"
+  ],
+  "research_stage": "provider_foundation",
+  "generation_10_reopened": false,
+  "development_access_relaxed": false,
+  "walk_forward_access_relaxed": false,
+  "final_holdout_access_relaxed": false,
+  "live_or_broker_access_relaxed": false
+}
