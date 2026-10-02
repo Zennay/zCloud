@@ -361,3 +361,5 @@ jobs:
           if failed_workers:
               raise SystemExit("restart commands failed: " + ", ".join(failed_workers))
           PY
+
+# manual push-all recovery trigger
