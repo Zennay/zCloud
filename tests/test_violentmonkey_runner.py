@@ -52,11 +52,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('"violentmonkey-primary-runner"', userscript)
         self.assertIn('"portfolio-queue-result"', userscript)
         self.assertIn('"awaiting-vps-dispatch"', userscript)
-        self.assertIn("BEWUSTE WORKER-HANDOFF", userscript)
-        self.assertIn("ZCLOUD_QUALITY_RETRY", userscript)
-        self.assertIn("same-assignment-non-stopping-execution-recovery", userscript)
+        self.assertIn("Ga verder met hetzelfde vrije werkgebied", userscript)
         self.assertIn("data-zcloud-violentmonkey-ready", userscript)
-        self.assertIn("DOE HET NU ECHT", userscript)
+        self.assertIn("Werk verder aan het project en voer nu een concrete volgende stap uit", userscript)
         self.assertNotIn("Gebruik High thinking", userscript)
 
     def test_high_thinking_failure_persists_safe_dom_diagnostics(self):

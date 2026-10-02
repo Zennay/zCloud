@@ -566,9 +566,11 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             item,
         )
 
-        self.assertIn("lane=control-plane", prompt)
-        self.assertIn("zcloud-queue", prompt)
-        self.assertIn("Blijf binnen deze execution lane", prompt)
+        self.assertIn("Werkgebied: control-plane.", prompt)
+        self.assertIn("bestaande claims/branches", prompt)
+        self.assertIn("ander vrij onderdeel", prompt)
+        self.assertNotIn("lane=", prompt)
+        self.assertNotIn("VPS_QUEUE_ASSIGNMENT", prompt)
 
 
     def test_zssh_continuation_is_research_first_and_ship_ready(self):

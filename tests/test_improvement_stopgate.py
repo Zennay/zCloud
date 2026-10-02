@@ -252,12 +252,13 @@ class ImprovementStopGateTests(unittest.TestCase):
         self.assertEqual(before["state"], after["state"])
         self.assertEqual(before["clean_reviews"], after["clean_reviews"])
 
-    def test_cloud_prompt_contains_bounded_finish_protocol(self):
+    def test_cloud_prompt_is_project_first_without_finish_protocol_noise(self):
         prompt = server.project_worker_prompt("cloud", "zCloud", "base", 1, 1)
-        self.assertIn("ZCLOUD_ITERATION_COMPLETE", prompt)
-        self.assertIn("ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1", prompt)
-        self.assertIn("ZCLOUD_FINAL_AUDIT: GREEN", prompt)
-        self.assertIn("tiende/harde laatste iteratie", prompt)
+        self.assertTrue(prompt.startswith("Werk verder aan zCloud."))
+        self.assertIn("Kijk in Notion in welke fase het project zit", prompt)
+        self.assertNotIn("ZCLOUD_ITERATION_COMPLETE", prompt)
+        self.assertNotIn("ZCLOUD_FINISH_REVIEW", prompt)
+        self.assertNotIn("ZCLOUD_FINAL_AUDIT", prompt)
 
     def test_resume_resets_gate_without_changing_conversation(self):
         with server.connect() as conn:

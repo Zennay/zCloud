@@ -127,58 +127,30 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
-    project=PROJECT_INDEX.get(project_id) or {}
     return (
-        f'zCloud worker: "{name}" / "{project_id}". '
-        'Ga door met de queue: de SQLite queue van zCloud op de VPS (portfolio_queue, source of truth); jouw assignment staat hieronder. '
-        'Notion is alleen documentatie, nooit scheduler of blocker. '
-        'Werk hier intens aan verder met je connectoren: GitHub (code, PR, Actions) en Notion (HQ, handoff). '
-        'Alles wat via SSH/VPS moet lopen zet je in de queue voor project zssh; de zSSH-worker pakt dat op. '
-        f'HQ: {project.get("notion_url") or "n/a"}. Handoff: {project.get("handoff_url") or "n/a"}. '
-        + VPS_EXECUTION_DIRECTIVE
+        f'Werk verder aan {name}. '
+        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'
     )
+
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
     item=queue_item or {}
     lane=item.get('execution_lane') if isinstance(item.get('execution_lane'),dict) else {}
-    lane_scope=lane.get('scope') if isinstance(lane.get('scope'),dict) else {}
-    lane_caps=','.join(str(value) for value in (lane_scope.get('capabilities') or [])) or 'n/a'
-    lane_files=','.join(str(value) for value in (lane_scope.get('files') or [])) or 'n/a'
-    assignment=(
-        f'VPS_QUEUE_ASSIGNMENT id={item.get("queue_id")}; project={item.get("project_id")}; priority={item.get("priority")}; '
-        f'lane={lane.get("lane_id") or "unassigned"}; lane_capabilities={lane_caps}; lane_files={lane_files}; '
-        f'task={item.get("title")}; completion={item.get("completion_criteria")}; source={item.get("source_url") or "n/a"}. '
-        'Blijf binnen deze execution lane; verbreed write-scope alleen na een nieuwe conflict/claim-check. '
-        if item else
-        'VPS_QUEUE_ASSIGNMENT none. '
-    )
-    queue_id=str(item.get('queue_id') or 'NONE')
-    project_guard=(
-        'FTMO: houd preregistration, walk-forward en final holdout gescheiden. '
-        if project_id == 'ftmo' else
-        'zCloud finish: iteration_count=9 is de tiende/harde laatste iteratie; na implementatie ZCLOUD_ITERATION_COMPLETE; ZCLOUD_FINISH_REVIEW: GREEN_NO_P0P1; ZCLOUD_FINAL_AUDIT: GREEN. '
-        if project_id == 'cloud' else ''
-    )
-    # Always rebuild the canonical base prompt. This intentionally ignores any
-    # stale/oversized prompt persisted in SQLite from older zCloud versions.
-    prompt=project_runner_prompt(project_id, name)
-    return prompt + assignment + (
-        f'Jij bent Worker {slot}/{total}. '
-        'Stop niet na één actie: werk stap voor stap door (code, commits, workflows, tests, deploy) tot de completion bewezen is of je echt geblokkeerd bent. '
-        'Een status- of auditrapport is geen resultaat. Faalt een route, probeer meteen een andere veilige route. '
-        'Gebruik WAIT_HUMAN alleen voor een secret, destructieve toestemming of een echte externe afhankelijkheid. '
-        + project_guard +
-        'Pas helemaal aan het einde, als je klaar bent of echt vastzit, sluit je af met exact dit blok (DONE alleen met bewijs, anders CONTINUE). '
-        'Bij DONE of BLOCKED denk je eerst breder over heel zCloud na (alle projecten, cloud = zCloud zelf): wat moet er nog aan de queue komen? '
-        'Vul dan precies één ZCLOUD_NEXT_TASK in: het belangrijkste, geen duplicaat van wat er al ligt, bij voorkeur een stap die echt iets verandert (geen ; in title/criteria). '
-        'Bij CONTINUE laat je die regel weg:\n'
-        f'ZCLOUD_QUEUE_ITEM: {queue_id}\n'
-        'ZCLOUD_QUEUE_RESULT: DONE|CONTINUE\n'
-        'ZCLOUD_QUEUE_EVIDENCE: <actie + commit/workflow/run/resultaat>\n'
-        f'ZCLOUD_WORK_PROJECT: {project_id}\n'
-        'ZCLOUD_NEXT_TASK: project=<' + '|'.join(sorted(PROJECT_INDEX)) + '>; priority=P1|P2|P3; title=<volgende stap>; criteria=<bewijs dat het klaar is>\n'
-        'ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE'
-    )
+    lane_id=str(lane.get('lane_id') or '').strip()
+    prompt=project_runner_prompt(project_id,name)
+    if lane_id:
+        prompt += (
+            f' Werkgebied: {lane_id}. '
+            'Blijf binnen dit werkgebied en controleer vóór wijzigingen bestaande claims/branches; '
+            'als een andere worker hetzelfde onderdeel al bewerkt, kies een ander vrij onderdeel binnen dit werkgebied.'
+        )
+    else:
+        prompt += (
+            ' Controleer vóór wijzigingen bestaande claims/branches en kies een vrij onderdeel, '
+            'zodat parallelle workers elkaar niet overlappen.'
+        )
+    return prompt
+
 
 RUNNER_DEFAULTS = {
     pid: {
@@ -3127,8 +3099,8 @@ def worker_contract_failures(cfg):
     if not queue_id: problems.append('missing-queue-id')
     if slot < 1: problems.append('bad-global-slot')
     if total < slot: problems.append('bad-global-count')
-    if queue_id and ('VPS_QUEUE_ASSIGNMENT id=' + queue_id) not in prompt: problems.append('prompt-missing-queue-line')
-    if f'Jij bent Worker {slot}/{total}.' not in prompt: problems.append('prompt-missing-worker-line')
+    if not prompt.startswith('Werk verder aan '): problems.append('prompt-missing-project-instruction')
+    if 'Kijk in Notion in welke fase het project zit' not in prompt: problems.append('prompt-missing-notion-phase')
     return problems
 
 def _age_seconds(ts):
