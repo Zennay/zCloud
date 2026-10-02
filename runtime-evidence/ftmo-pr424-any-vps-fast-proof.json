@@ -1,0 +1,9 @@
+{
+  "project": "ftmo",
+  "proof_scope": "compile + Jetta tests + provider retry + zero-cost registry",
+  "pull_request": 424,
+  "result": "success",
+  "runner_required": "vps-bb300bba",
+  "target_sha": "442d904827e7516afa700373850aebcc8ce9ed98",
+  "workflow_run_id": 36997145447
+}
