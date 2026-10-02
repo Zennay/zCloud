@@ -1,0 +1,22 @@
+name: Cancel superseded FTMO PR430 proof concurrency
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cancel-superseded-ftmo-pr430-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr430-exact-head-proof
+  cancel-in-progress: true
+
+jobs:
+  cancel-marker:
+    if: ${{ false }}
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - run: echo "superseded PR430 proof concurrency cancelled"
