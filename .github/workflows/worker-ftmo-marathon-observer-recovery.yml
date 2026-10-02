@@ -1,0 +1,115 @@
+name: Worker FTMO marathon observer recovery
+
+on:
+  push:
+    branches:
+      - worker/ftmo-marathon-observer-recovery-20261002
+    paths:
+      - ".github/workflows/worker-ftmo-marathon-observer-recovery.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-ftmo-marathon-observer-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Recover and prove FTMO observer prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=/opt/ftmo-autonomous
+          SERVICE=ftmo-autonomous-marathon.service
+          PY="$ROOT/.venv/bin/python"
+          STATUS="$ROOT/.scratch/autonomy/status.json"
+          REVISION_MARKER="$ROOT/.scratch/autonomy/deployed-main-sha"
+          RUN_MARKER="$ROOT/.scratch/autonomy/deployed-workflow-run-id"
+
+          echo "runner=$(hostname)"
+          echo "service_before=$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+
+          if ! systemctl is-active --quiet "$SERVICE"; then
+            sudo -n systemctl reset-failed "$SERVICE" || true
+            sudo -n systemctl restart "$SERVICE"
+            for _ in $(seq 1 20); do
+              systemctl is-active --quiet "$SERVICE" && break
+              sleep 1
+            done
+          fi
+
+          service_state="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+          echo "service_after=$service_state"
+          echo "python_executable=$(test -x "$PY" && echo yes || echo no)"
+          echo "runtime_config=$(test -f "$ROOT/configs/autonomous_runtime.json" && echo yes || echo no)"
+          echo "status_exists=$(test -f "$STATUS" && echo yes || echo no)"
+          echo "status_symlink=$(test -L "$STATUS" && echo yes || echo no)"
+          echo "revision_marker_exists=$(test -f "$REVISION_MARKER" && echo yes || echo no)"
+          echo "revision_marker_symlink=$(test -L "$REVISION_MARKER" && echo yes || echo no)"
+          echo "run_marker_exists=$(test -f "$RUN_MARKER" && echo yes || echo no)"
+          echo "run_marker_symlink=$(test -L "$RUN_MARKER" && echo yes || echo no)"
+
+          test "$service_state" = active
+          test -x "$PY"
+          test -f "$ROOT/configs/autonomous_runtime.json"
+          test -f "$STATUS"
+          test ! -L "$STATUS"
+          test -f "$REVISION_MARKER"
+          test ! -L "$REVISION_MARKER"
+          test -f "$RUN_MARKER"
+          test ! -L "$RUN_MARKER"
+
+          "$PY" - <<'PY'
+          from datetime import datetime, timezone
+          import json
+          from pathlib import Path
+
+          root = Path("/opt/ftmo-autonomous")
+          status = json.loads((root / ".scratch/autonomy/status.json").read_text(encoding="utf-8"))
+          revision = (root / ".scratch/autonomy/deployed-main-sha").read_text(encoding="utf-8").strip()
+          run_id = (root / ".scratch/autonomy/deployed-workflow-run-id").read_text(encoding="utf-8").strip()
+          research = status.get("research") or {}
+          controller = status.get("research_controller") or {}
+          loop = controller.get("generation_loop") or {}
+          outcome = controller.get("outcome_execution") or {}
+          completed_raw = status.get("research_cycle_completed_at_utc")
+          age = None
+          if completed_raw:
+              completed = datetime.fromisoformat(completed_raw.replace("Z", "+00:00"))
+              age = (datetime.now(timezone.utc) - completed).total_seconds()
+          assert len(revision) == 40
+          assert run_id.isdigit()
+          assert status.get("runtime_revision") == revision
+          assert str(status.get("deployment_workflow_run_id")) == run_id
+          assert status.get("research_cycle_ok") is True
+          assert status.get("live_trading_allowed") is False
+          assert status.get("broker_order_submission_allowed") is False
+          assert str(status.get("autonomous_cloud_budget_usd")) in {"0", "0.0", "0.00"}
+          assert (controller.get("compute") or {}).get("ok") is True
+          assert loop.get("enabled") is True
+          assert outcome.get("live_trading_allowed") is False
+          assert outcome.get("broker_order_submission_allowed") is False
+          if outcome.get("walk_forward_accessed") is True:
+              assert research.get("walk_forward_access_allowed") is True
+          if outcome.get("final_holdout_accessed") is True:
+              assert research.get("final_holdout_access_allowed") is True
+          print("FTMO_OBSERVER_STATE", json.dumps({
+              "runtime_revision": revision,
+              "deployment_workflow_run_id": run_id,
+              "research_cycle_age_seconds": age,
+              "generation_number": research.get("generation_number"),
+              "generation_id": research.get("generation_id"),
+              "next_stage": research.get("next_stage"),
+              "controller_action": controller.get("action"),
+              "generation_loop_action": loop.get("action"),
+              "walk_forward_accessed": outcome.get("walk_forward_accessed"),
+              "final_holdout_accessed": outcome.get("final_holdout_accessed"),
+              "live_trading_allowed": status.get("live_trading_allowed"),
+              "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
+              "cloud_budget": str(status.get("autonomous_cloud_budget_usd")),
+          }, sort_keys=True))
+          PY
