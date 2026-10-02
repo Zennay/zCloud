@@ -14,7 +14,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f bash /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
+          test -f /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
           test -f /home/ubuntu/zennay-cloud/history.db
           echo "runner=$(hostname)"
           echo "audit_route=Senior Team OS / Portfolio Bird's-eye Review"
@@ -28,7 +28,7 @@ jobs:
           export ZCLOUD_BIRDSEYE_WINDOW_HOURS=12
           export ZCLOUD_BIRDSEYE_MIN_INTERVAL_HOURS=0
           export ZCLOUD_BIRDSEYE_WAIT_TIMEOUT=120
-          /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
+          bash /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
 
       - name: Prove reviewer dispatch state
         shell: bash
