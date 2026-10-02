@@ -1,0 +1,111 @@
+name: FTMO PR444 independent exact-head proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr444-independent-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr444-independent-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: a156246682bd836c071b461f66009e7d620c00b4
+    steps:
+      - name: Verify VPS and fetch exact FTMO head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr444-proof"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR444_HOST=$(hostname)"
+          echo "FTMO_PR444_EXACT_SHA=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr444-proof"
+          venv="$RUNNER_TEMP/ftmo-pr444-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile direct public provider boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr444-proof"
+          venv="$RUNNER_TEMP/ftmo-pr444-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q src/prop_trading_ai/data/market/providers/dukascopy_public.py
+          echo "FTMO_PR444_COMPILE_GREEN=1"
+
+      - name: Prove BI5 transfer framing and compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr444-proof"
+          venv="$RUNNER_TEMP/ftmo-pr444-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q             tests/test_dukascopy_public.py             tests/test_dukascopy_timeout_transport.py             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
+          echo "FTMO_PR444_TARGETED_GREEN=1"
+
+      - name: Prove full-suite collection
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr444-proof"
+          venv="$RUNNER_TEMP/ftmo-pr444-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest --collect-only -q >/tmp/ftmo-pr444-collect.txt
+          test -s /tmp/ftmo-pr444-collect.txt
+          echo "FTMO_PR444_COLLECTION_GREEN=1"
+
+      - name: Persist exact-head proof receipt
+        if: always()
+        env:
+          PROOF_RESULT: ${{ job.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="/tmp/ftmo-pr444-proof-${GITHUB_RUN_ID}.json"
+          python3 - <<'PY' > "$receipt"
+          import json, os, socket
+          print(json.dumps({
+              "project": "ftmo",
+              "pr": 444,
+              "target_sha": os.environ["TARGET_SHA"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_name": os.environ.get("RUNNER_NAME"),
+              "host": socket.gethostname(),
+              "result": os.environ["PROOF_RESULT"],
+              "proof": [
+                  "exact-sha-checkout",
+                  "isolated-install",
+                  "compile",
+                  "dukascopy-public-provider-tests",
+                  "timeout-retry-tests",
+                  "zero-cost-boundary-tests",
+                  "full-suite-collection"
+              ]
+          }, sort_keys=True))
+          PY
+          encoded="$(base64 -w0 "$receipt")"
+          path=".zcloud/receipts/ftmo-pr444-exact-proof-${GITHUB_RUN_ID}.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$path"             -f message="Record FTMO PR444 exact-head proof run ${GITHUB_RUN_ID}"             -f content="$encoded" >/dev/null
+          echo "FTMO_PR444_RECEIPT_PATH=$path"
