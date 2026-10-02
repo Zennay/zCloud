@@ -1,0 +1,28 @@
+{
+  "development_access_relaxed": false,
+  "final_holdout_access_relaxed": false,
+  "generation_10_reopened": false,
+  "live_or_broker_access_relaxed": false,
+  "paid_cloud_budget_relaxed": false,
+  "project": "ftmo",
+  "proof_scope": [
+    "exact SHA checkout",
+    "isolated install",
+    "compile dukascopy_public provider",
+    "full Dukascopy public provider regressions",
+    "timeout/retry transport compatibility",
+    "autonomous provider retry compatibility",
+    "zero-cost workflow boundary",
+    "repository test collection"
+  ],
+  "pull_request": 441,
+  "queue_item": "ftmo-7f9609eabd4ad2c8",
+  "research_stage": "provider_foundation",
+  "result": "success",
+  "runner_host": "vps-bb300bba",
+  "schema_version": 1,
+  "target_sha": "9e99499cfd6ab8ee78841317b147aad54fa5d41f",
+  "walk_forward_access_relaxed": false,
+  "workflow_run_attempt": 1,
+  "workflow_run_id": 37003970627
+}
