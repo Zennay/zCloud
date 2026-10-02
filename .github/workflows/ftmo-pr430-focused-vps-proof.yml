@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr435-focused-vps-proof.yml"
+      - ".github/workflows/ftmo-pr430-focused-vps-proof.yml"
   workflow_dispatch:
 
 permissions:
