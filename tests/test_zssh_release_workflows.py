@@ -45,6 +45,15 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Your Linux target stays yours.", text)
         self.assertIn("/support /privacy /terms", text)
 
+    def test_public_release_finalizer_is_exact_and_success_gated(self):
+        text = (ROOT / ".github/workflows/finalize-zssh-public-release-20261002.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_run:", text)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
+        self.assertIn("zssh-openai-public-plugin-release", text)
+        self.assertIn("c1a249e4995605b025496a0178cacbc4cfcecf41", text)
+        self.assertIn("ZCLOUD_ZSSH_PUBLIC_RELEASE_QUEUE_DONE_GREEN=1", text)
+        self.assertNotIn("portfolio_queue_drop", text)
+
     def test_vps_release_uses_permanent_runner_guard(self):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: self-hosted", text)
