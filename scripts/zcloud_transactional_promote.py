@@ -137,6 +137,8 @@ PRECHANGE_TRUSTED_ANCESTOR_DRIFT = frozenset({
 # source snapshot after a dashboard write. It is reconciled only when SQLite
 # config_audit proves the exact current value was written after that LKG.
 PRECHANGE_AUDITED_RUNTIME_DRIFT = frozenset({
+    "projects.json",
+    "project-layout.json",
     "resource-policy.json",
 })
 RESOURCE_PRIORITY_VALUES = frozenset({"background", "normal", "high", "turbo"})
@@ -241,6 +243,32 @@ def audited_runtime_config_drift_matches(
         if baseline == current:
             return True
 
+        lkg_created_raw = str(manifest.get("created_at") or "")
+        lkg_created = datetime.fromisoformat(lkg_created_raw.replace("Z", "+00:00"))
+        db_path = root / "history.db"
+        if not db_path.is_file():
+            return False
+
+        # Layout and catalog writes are whole-document audited. Accept them only
+        # when the newest successful post-LKG audit contains the exact current
+        # JSON value. This preserves user/dashboard state without trusting
+        # arbitrary manual file drift.
+        if normalized in {"projects.json", "project-layout.json"}:
+            config_key, target = AUDITED_CONFIG_PATHS[normalized]
+            with sqlite3.connect(db_path, timeout=4) as conn:
+                row = conn.execute(
+                    "SELECT ts,new_value_json FROM config_audit "
+                    "WHERE config_key=? AND target=? AND result='succeeded' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (config_key, target),
+                ).fetchone()
+            if not row:
+                return False
+            audited_at = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+            if audited_at <= lkg_created:
+                return False
+            return json.loads(row[1]) == current
+
         changed: list[tuple[str, str]] = []
         for project_id in sorted(set(baseline) | set(current)):
             old_entry = baseline.get(project_id) or {}
@@ -262,12 +290,6 @@ def audited_runtime_config_drift_matches(
             changed.append((str(project_id), str(new_priority)))
 
         if not changed:
-            return False
-
-        lkg_created_raw = str(manifest.get("created_at") or "")
-        lkg_created = datetime.fromisoformat(lkg_created_raw.replace("Z", "+00:00"))
-        db_path = root / "history.db"
-        if not db_path.is_file():
             return False
 
         with sqlite3.connect(db_path, timeout=4) as conn:
@@ -1205,9 +1227,9 @@ def promote(
     for raw_rel, raw_hash in (known_live_hashes or {}).items():
         rel = validate_relpath(str(raw_rel))
         expected = str(raw_hash or "").strip().lower()
-        if rel not in normalized:
+        if not (candidate / rel).is_file():
             raise PromotionError(
-                f"known live hash path is not selected for promotion: {rel}"
+                f"known live hash path is missing from candidate: {rel}"
             )
         if not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise PromotionError(f"invalid known live sha256 for {rel}")
@@ -1514,8 +1536,9 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         metavar="PATH=SHA256",
         help=(
-            "One-time reviewed drift migration. The path must also be selected "
-            "for this promotion and its live bytes must exactly match SHA256."
+            "One-time reviewed drift migration. The candidate must contain the "
+            "path and its live bytes must exactly match SHA256. Unselected paths "
+            "are only temporary pre-change allowances; they are never written."
         ),
     )
     parser.add_argument("--require-worker-read-model", action="store_true")
