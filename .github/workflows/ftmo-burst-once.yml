@@ -29,6 +29,65 @@ jobs:
           test -x "$FTMO_ROOT/.venv/bin/python"
           test -f "$FTMO_ROOT/.scratch/autonomy/status.json"
           test -f "$FTMO_ROOT/.scratch/autonomy/deployed-main-sha"
+
+          overlay_root="$GITHUB_WORKSPACE/ops/ftmo-runtime-overlay/1b85e412703f966a2b92d98cfd45cb0ffc47b51e"
+          deployed_before="$(tr -d '\\r\\n' < "$FTMO_ROOT/.scratch/autonomy/deployed-main-sha")"
+          if [[ "$deployed_before" == "cba3e2747ed9569e6df247625655e64b14137d07" ]]; then
+            sudo -n python3 - "$overlay_root" "$FTMO_ROOT" <<'PY'
+          from pathlib import Path
+          import hashlib
+          import os
+          import shutil
+          import sys
+
+          overlay = Path(sys.argv[1]).resolve()
+          root = Path(sys.argv[2]).resolve()
+          expected_root = Path("/opt/ftmo-autonomous")
+          if root != expected_root:
+              raise SystemExit(f"refusing unexpected FTMO root: {root}")
+          files = (
+              "scripts/run-autonomous-marathon.sh",
+              "src/prop_trading_ai/ops/autonomous_generation_loop.py",
+              "src/prop_trading_ai/ops/autonomous_rollover.py",
+          )
+          for relative in files:
+              source = overlay / relative
+              target = root / relative
+              if source.is_symlink() or not source.is_file():
+                  raise SystemExit(f"overlay source missing or unsafe: {relative}")
+              if target.parent.resolve() != (root / Path(relative).parent).resolve():
+                  raise SystemExit(f"overlay target escaped FTMO root: {relative}")
+              temporary = target.with_name(target.name + ".zcloud-overlay.tmp")
+              shutil.copyfile(source, temporary)
+              temporary.chmod(source.stat().st_mode & 0o777)
+              os.replace(temporary, target)
+              if hashlib.sha256(source.read_bytes()).digest() != hashlib.sha256(target.read_bytes()).digest():
+                  raise SystemExit(f"overlay verification failed: {relative}")
+              print(f"FTMO_OVERLAY_FILE_GREEN={relative}")
+          marker = root / ".scratch/autonomy/deployed-main-sha"
+          temporary_marker = marker.with_name(marker.name + ".zcloud-overlay.tmp")
+          temporary_marker.write_text("1b85e412703f966a2b92d98cfd45cb0ffc47b51e\\n", encoding="utf-8")
+          os.replace(temporary_marker, marker)
+          PY
+            sudo -n "$FTMO_ROOT/.venv/bin/python" -m py_compile \
+              "$FTMO_ROOT/src/prop_trading_ai/ops/autonomous_generation_loop.py" \
+              "$FTMO_ROOT/src/prop_trading_ai/ops/autonomous_rollover.py"
+            sudo -n systemctl restart ftmo-autonomous-marathon.service
+            echo "FTMO_RUNTIME_OVERLAY_PROMOTED=1b85e412703f966a2b92d98cfd45cb0ffc47b51e"
+          elif [[ "$deployed_before" == "1b85e412703f966a2b92d98cfd45cb0ffc47b51e" ]]; then
+            echo "FTMO_RUNTIME_OVERLAY_ALREADY_CURRENT=1b85e412703f966a2b92d98cfd45cb0ffc47b51e"
+          else
+            echo "Refusing FTMO overlay from unexpected deployed revision: $deployed_before" >&2
+            exit 78
+          fi
+
+          for relative in \
+            scripts/run-autonomous-marathon.sh \
+            src/prop_trading_ai/ops/autonomous_generation_loop.py \
+            src/prop_trading_ai/ops/autonomous_rollover.py; do
+            cmp "$overlay_root/$relative" "$FTMO_ROOT/$relative"
+          done
+          test "$(tr -d '\\r\\n' < "$FTMO_ROOT/.scratch/autonomy/deployed-main-sha")" = "1b85e412703f966a2b92d98cfd45cb0ffc47b51e"
           deployed_revision="$(tr -d '\r\n' < "$FTMO_ROOT/.scratch/autonomy/deployed-main-sha")"
           test -n "$deployed_revision"
           echo "FTMO_DEPLOYED_RUNTIME_REVISION=$deployed_revision"
