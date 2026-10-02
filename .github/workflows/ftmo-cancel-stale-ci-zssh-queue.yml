@@ -1,0 +1,57 @@
+name: Enqueue stale FTMO CI cancellation on zSSH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ftmo-cancel-stale-ci-zssh-queue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue exact stale FTMO Actions cancellation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-cancel-stale-ci-20261002"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Cancel stale FTMO CI runs",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba cancel only GitHub Actions runs 36945491297 and "
+                  "36946253651 in Zennay/Ftmo, and only if each is still queued or pending. "
+                  "Do not cancel run 36947540556 or any newer FTMO run. Use existing authorized "
+                  "GitHub credentials already available to the zSSH lane; do not print tokens. "
+                  "After cancellation, verify both stale runs are completed/cancelled and report "
+                  "the status of current exact-head run 36947540556. No repository files, research "
+                  "artifacts, provider evidence, preregistration, walk-forward or final holdout "
+                  "state may be modified."
+              ),
+              "source_url": "https://github.com/Zennay/Ftmo/pull/386",
+          }
+          request = urllib.request.Request(
+              base + "/api/portfolio-queue",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              body = json.load(response)
+              if response.status != 200:
+                  raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
+          print("FTMO_STALE_CI_CANCEL_QUEUE", json.dumps(body, sort_keys=True))
+          PY
