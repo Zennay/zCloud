@@ -440,5 +440,63 @@
     "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8",
     "queue_mode": "execution",
     "lane_profile": "platform"
+  },
+  {
+    "id": "lightup",
+    "name": "LightUp",
+    "eyebrow": "AI-ASSISTED DEFENSIVE SECURITY LAB",
+    "goal": "Build an authorization-first AI security lab that can later coordinate broad adversarial testing against owned or explicitly authorized systems, with evidence, remediation and retest as the output.",
+    "icon": "shield",
+    "accent": "#8bd3a8",
+    "repo": "/home/ubuntu/zennay-cloud/repos/lightup",
+    "repo_ref": "origin/main",
+    "repo_url": "https://github.com/Zennay/Lightup",
+    "notion_url": "https://app.notion.com/p/3ed9e19ac9558117b639f2254fe0e165",
+    "handoff_url": "https://app.notion.com/p/3ed9e19ac955816fab67ef27ab10a44e",
+    "phase": "M0 · Genesis + guardrails · infrastructure only",
+    "status": "active",
+    "priority": "normal",
+    "next_step": "Continue M0 in the standalone Zennay/Lightup repository: complete plan-only orchestration, authorization/scope contracts, lab harness, evidence store and CI; keep active target interaction disabled until explicit activation.",
+    "milestone_revision": "lightup-v1-genesis",
+    "progress_basis": "Infrastructure progress only. Offensive capability is not counted as active until explicit activation and authorized lab validation.",
+    "milestones": [
+      {
+        "title": "M0 · Genesis + guardrails",
+        "done": false,
+        "progress": 70
+      },
+      {
+        "title": "M1 · Safe assessment MVP",
+        "done": false,
+        "progress": 10
+      },
+      {
+        "title": "M2 · Reproducible local lab",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · Findings + remediation workflow",
+        "done": false,
+        "progress": 15
+      },
+      {
+        "title": "M4 · Defensive CI",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M5 · Authorized pentest playbooks",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M6 · Detection + hardening loop",
+        "done": false,
+        "progress": 0
+      }
+    ],
+    "queue_mode": "execution",
+    "lane_profile": "security-lab"
   }
 ]

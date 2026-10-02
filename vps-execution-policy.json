@@ -22,7 +22,8 @@
     "supa",
     "raiseai",
     "ulab",
-    "zssh"
+    "zssh",
+    "lightup"
   ],
   "capabilities": [
     "local-shell",
