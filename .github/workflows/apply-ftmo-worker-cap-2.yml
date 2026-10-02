@@ -1,0 +1,116 @@
+name: Apply FTMO two-worker runtime cap
+
+on:
+  push:
+    branches:
+      - ops/apply-ftmo-worker-cap-2-20261002
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Apply and verify FTMO runtime worker cap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+
+          def call(method, path, payload=None, allow_429=False):
+              body = None
+              headers = {
+                  "User-Agent": "zcloud-ftmo-worker-cap-live-apply/1",
+                  "Content-Type": "application/json",
+                  "X-ZCloud-Actor": "github-actions-ftmo-worker-cap",
+              }
+              if payload is not None:
+                  body = json.dumps(payload).encode("utf-8")
+              request = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(request, timeout=15) as response:
+                      return response.status, json.load(response)
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", "replace")
+                  if allow_429 and exc.code == 429:
+                      return exc.code, {"rate_limited": True, "detail": detail[:300]}
+                  raise SystemExit(f"{method} {path} failed HTTP {exc.code}: {detail[:500]}") from exc
+
+          status, changed = call("POST", "/api/runner-workers", {
+              "project_id": "ftmo",
+              "worker_count": 2,
+          })
+          if status != 200 or not changed.get("ok") or int(changed.get("worker_count") or 0) != 2:
+              raise SystemExit(f"FTMO worker-count update was not accepted: {changed}")
+
+          _, before = call("GET", "/api/runner-targets")
+          excess = []
+          for key, cfg in sorted((before.get("projects") or {}).items()):
+              if str(cfg.get("base_project_id") or "") != "ftmo":
+                  continue
+              slot = int(cfg.get("worker_slot") or 0)
+              if slot > 2 and str(cfg.get("desired_state") or "running") == "running":
+                  excess.append(key)
+
+          drain_results = {}
+          for key in excess:
+              code, result = call("POST", "/api/runner-control", {
+                  "project_id": key,
+                  "action": "drain",
+              }, allow_429=True)
+              drain_results[key] = {"http": code, "result": result}
+
+          time.sleep(2)
+          _, after = call("GET", "/api/runner-targets")
+          _, audit = call(
+              "GET",
+              "/api/config-audit?" + urllib.parse.urlencode({
+                  "key": "runner.worker_count",
+                  "target": "ftmo",
+                  "limit": 5,
+              }),
+          )
+
+          entries = audit.get("items") or []
+          latest = entries[0] if entries else {}
+          if latest.get("target") != "ftmo" or latest.get("new_value") != 2:
+              raise SystemExit(f"FTMO worker-count audit does not prove value 2: {latest}")
+
+          still_running = []
+          ftmo_workers = []
+          for key, cfg in sorted((after.get("projects") or {}).items()):
+              if str(cfg.get("base_project_id") or "") != "ftmo":
+                  continue
+              item = {
+                  "worker": key,
+                  "slot": int(cfg.get("worker_slot") or 0),
+                  "desired_state": str(cfg.get("desired_state") or ""),
+                  "allocated": cfg.get("global_worker_slot") is not None,
+                  "active": bool(cfg.get("active")),
+              }
+              ftmo_workers.append(item)
+              if item["slot"] > 2 and item["desired_state"] == "running":
+                  still_running.append(key)
+
+          if still_running:
+              raise SystemExit(f"FTMO excess workers still runnable: {still_running}")
+
+          print(json.dumps({
+              "ok": True,
+              "worker_count": 2,
+              "audit_result": latest.get("result"),
+              "drain_requested": excess,
+              "drain_results": drain_results,
+              "ftmo_workers": ftmo_workers,
+              "global_worker_limit": after.get("max_workers"),
+          }, sort_keys=True))
+          PY
