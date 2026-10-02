@@ -1,17 +1,17 @@
-name: FTMO PR430 focused VPS proof
+name: FTMO PR435 focused VPS proof
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr430-focused-vps-proof.yml"
+      - ".github/workflows/ftmo-pr435-focused-vps-proof.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: ftmo-pr430-focused-vps-proof
+  group: ftmo-pr435-focused-vps-proof
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      TARGET_SHA: f7d20fecf71f5ba2c04dc984a03a2c864ff0aba3
+      TARGET_SHA: 0c3b81e7afe641ddd78084c4321cd3b4d590b2cb
     steps:
       - name: Verify runner identity
         shell: bash
@@ -28,11 +28,11 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           echo "runner_host=$(hostname)"
 
-      - name: Fetch exact FTMO PR430 head
+      - name: Fetch exact FTMO PR435 head
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr430-focused"
+          src="$RUNNER_TEMP/ftmo-pr435-focused"
           rm -rf "$src"
           gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
@@ -43,8 +43,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr430-focused"
-          venv="$RUNNER_TEMP/ftmo-pr430-focused-venv"
+          src="$RUNNER_TEMP/ftmo-pr435-focused"
+          venv="$RUNNER_TEMP/ftmo-pr435-focused-venv"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
@@ -54,8 +54,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr430-focused"
-          venv="$RUNNER_TEMP/ftmo-pr430-focused-venv"
+          src="$RUNNER_TEMP/ftmo-pr435-focused"
+          venv="$RUNNER_TEMP/ftmo-pr435-focused-venv"
           cd "$src"
           "$venv/bin/python" -m compileall -q src/prop_trading_ai/data/market/providers/dukascopy_public.py
           "$venv/bin/python" -m pytest -q tests/test_dukascopy_public.py -k 'default_fetch'
@@ -69,16 +69,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/zcloud-pr430-focused-receipt"
+          work="$RUNNER_TEMP/zcloud-pr435-focused-receipt"
           rm -rf "$work"
           gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
           cd "$work"
           git checkout main >/dev/null
           mkdir -p runtime-evidence
-          cat > runtime-evidence/ftmo-pr430-focused-vps-proof.json <<EOF
+          cat > runtime-evidence/ftmo-pr435-focused-vps-proof.json <<EOF
           {
             "schema_version": 1,
-            "scope": "ftmo-pr430-focused-vps-proof",
+            "scope": "ftmo-pr435-focused-vps-proof",
             "target_sha": "$TARGET_SHA",
             "workflow_run_id": "$GITHUB_RUN_ID",
             "workflow_run_attempt": "$GITHUB_RUN_ATTEMPT",
@@ -101,12 +101,12 @@ jobs:
           EOF
           git config user.name "zcloud-automation"
           git config user.email "zcloud-automation@users.noreply.github.com"
-          git add runtime-evidence/ftmo-pr430-focused-vps-proof.json
+          git add runtime-evidence/ftmo-pr435-focused-vps-proof.json
           if git diff --cached --quiet; then
             echo "Receipt unchanged"
             exit 0
           fi
-          git commit -m "Record FTMO PR430 focused VPS proof"
+          git commit -m "Record FTMO PR435 focused VPS proof"
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               exit 0
