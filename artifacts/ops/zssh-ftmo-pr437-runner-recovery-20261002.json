@@ -1,0 +1,48 @@
+{
+  "execution_runner": "zcloud-vps-1",
+  "fresh_oom_evidence": [],
+  "host": "vps-bb300bba",
+  "post_pid": "718454",
+  "post_state": "active",
+  "pre_pid": "718454",
+  "pre_state": "active",
+  "protected_runs": [
+    {
+      "conclusion": "success",
+      "head_sha": "2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0",
+      "name": "Dukascopy resume-cache integrity proof",
+      "run_id": 37002559195,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:27:44Z"
+    },
+    {
+      "conclusion": "success",
+      "head_sha": "2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0",
+      "name": "Test suite",
+      "run_id": 37002559068,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:09:05Z"
+    },
+    {
+      "conclusion": "cancelled",
+      "head_sha": "2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0",
+      "name": "Provider foundation publication integrity proof",
+      "run_id": 37002559132,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:32:36Z"
+    }
+  ],
+  "queue_id": "zssh-ftmo-pr437-runner-recovery-20261002",
+  "recovery_action": "preserve-active-worker",
+  "runner_processes": [
+    "718454       1 Fri Oct  2 09:42:57 2026    02:50:25 /bin/bash /opt/ftmo-runner/runsvc.sh",
+    " 718470  718460 Fri Oct  2 09:42:58 2026    02:50:25 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service",
+    " 944396  718470 Fri Oct  2 12:32:59 2026       00:24 /opt/ftmo-runner/bin/Runner.Worker spawnclient 154 157"
+  ],
+  "scheduled_protected_run": 37002559132,
+  "schema_version": 1,
+  "service": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
+  "target_sha": "2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0",
+  "worker_before": "1",
+  "workflow_run_id": "37006447095"
+}
