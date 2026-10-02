@@ -19,7 +19,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     env:
-      TARGET_SHA: 9e99499cfd6ab8ee78841317b147aad54fa5d41f
+      TARGET_SHA: a127d8b25ac7d652df077924cb536daa8a7fd503
       RECEIPT_PATH: runtime-evidence/ftmo-pr441-exact-head-proof.json
     steps:
       - name: Checkout zCloud receipt workspace
