@@ -109,13 +109,13 @@ jobs:
               "all completed successfully. This is terminal same-workflow post-recovery scheduling and runtime evidence."
           )
 
-          if item["status"] == "queued" and int(item["eligible"] or 0) == 1:
-              print("QUEUE_ALREADY_CONTINUED=1")
+          if item["status"] == "done" and int(item["eligible"] or 0) == 0 and item["worker_slot"] is None:
+              print("QUEUE_ALREADY_DONE=1")
           elif item["status"] in {"claimed", "running", "verifying", "in_progress"} and item["worker_slot"] is not None:
               result = server.portfolio_queue_finish(
                   int(item["worker_slot"]),
                   queue_id,
-                  "CONTINUE",
+                  "DONE",
                   evidence,
               )
               print("QUEUE_FINISH_RESULT=" + json.dumps(result, sort_keys=True, default=str))
@@ -124,7 +124,7 @@ jobs:
           else:
               raise SystemExit(
                   "refusing nonstandard queue mutation; "
-                  f"status={item['status']} worker_slot={item['worker_slot']}"
+                  f"status={item['status']} eligible={item['eligible']} worker_slot={item['worker_slot']}"
               )
 
           with sqlite3.connect(db_path) as c:
@@ -136,7 +136,9 @@ jobs:
               ).fetchone()
           final = dict(after) if after else None
           print("QUEUE_AFTER=" + json.dumps(final, sort_keys=True))
-          if not final or final["status"] != "queued" or int(final["eligible"] or 0) != 1 or final["worker_slot"] is not None:
-              raise SystemExit("queue final state is not queued/eligible=1/unclaimed")
-          print("ZCLOUD_SQLITE_QUEUE_CONTINUE_GREEN=1")
+          if not final or final["status"] != "done" or int(final["eligible"] or 0) != 0 or final["worker_slot"] is not None:
+              raise SystemExit("queue final state is not done/eligible=0/unclaimed")
+          print("ZCLOUD_SQLITE_QUEUE_DONE_GREEN=1")
           PY
+
+# verify72 terminal DONE finalizer refresh 2026-10-02T11:16Z
