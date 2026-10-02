@@ -14,6 +14,20 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.original_max_workers = server.MAX_CHATGPT_WORKERS
         self.original_chatgpt_workers = server.DYNAMIC_CHATGPT_WORKERS
         self.original_claude_workers = server.DYNAMIC_CLAUDE_WORKERS
+        self.original_worker_memory_status = server.worker_memory_status
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 16384,
+            "total_mb": 32768,
+            "swap_total_mb": 4096,
+            "swap_free_mb": 4096,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2048,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 8,
+            "pressure": "ok",
+            "healthy_for_new_worker": True,
+            "swap_healthy": True,
+        }
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
         server.MAX_CHATGPT_WORKERS = 2
         server.DYNAMIC_CHATGPT_WORKERS = 2
@@ -30,6 +44,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         server.MAX_CHATGPT_WORKERS = self.original_max_workers
         server.DYNAMIC_CHATGPT_WORKERS = self.original_chatgpt_workers
         server.DYNAMIC_CLAUDE_WORKERS = self.original_claude_workers
+        server.worker_memory_status = self.original_worker_memory_status
         server.DB = self.original_db
         server.PORTFOLIO_QUEUE_SEED_FILE = self.original_seed
         self.tmp.cleanup()
@@ -116,6 +131,36 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(queued_ftmo))
         self.assertIsNone(queued_ftmo[0]["worker_slot"])
+
+    def test_memory_guard_blocks_new_claims_but_preserves_existing_assignment(self):
+        first = server.portfolio_queue_enqueue(
+            "cloud", "first", "P0", "Implement first guarded worker task with tests."
+        )
+        server.portfolio_queue_allocate()
+        self.assertEqual(first["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+
+        server.portfolio_queue_enqueue(
+            "raiseai", "second", "P1", "Implement second guarded worker task with tests."
+        )
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 900,
+            "total_mb": 11000,
+            "swap_total_mb": 0,
+            "swap_free_mb": 0,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2560,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "critical",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(1, len(selected))
+        self.assertEqual(first["queue_id"], selected[0]["queue_id"])
+        self.assertIsNone(server.portfolio_queue_current_for_slot(2))
 
     def test_p0_preempts_lower_priority_claim_that_has_not_started(self):
         lower = server.portfolio_queue_enqueue("cloud", "lower", "P1", "Implement lower-priority change with tests.")
