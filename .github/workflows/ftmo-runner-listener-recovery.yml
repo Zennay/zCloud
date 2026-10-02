@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   recover:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     steps:
       - name: Verify live zSSH recovery assignment
@@ -73,6 +73,23 @@ jobs:
           )
           PY
 
+      - name: Diagnose recorded FTMO runner shutdown
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+
+          echo "FTMO_RUNNER_SERVICE=$SERVICE"
+          systemctl show "$SERVICE"             -p ActiveState -p SubState -p MainPID -p NRestarts             -p Result -p ExecMainCode -p ExecMainStatus             -p ActiveEnterTimestamp -p InactiveEnterTimestamp             --no-pager || true
+
+          echo "FTMO_RUNNER_JOURNAL_WINDOW_BEGIN"
+          journalctl -u "$SERVICE"             --since "2026-10-02 01:24:45 UTC"             --until "2026-10-02 01:26:15 UTC"             --no-pager 2>/dev/null             | grep -Eai 'runner|listener|worker|shutdown|signal|stopp|start|kill|oom|memory'             | tail -80 || true
+          echo "FTMO_RUNNER_JOURNAL_WINDOW_END"
+
+          echo "FTMO_KERNEL_OOM_WINDOW_BEGIN"
+          (sudo -n journalctl -k             --since "2026-10-02 01:24:45 UTC"             --until "2026-10-02 01:26:15 UTC"             --no-pager 2>/dev/null ||            journalctl -k             --since "2026-10-02 01:24:45 UTC"             --until "2026-10-02 01:26:15 UTC"             --no-pager 2>/dev/null || true)             | grep -Eai 'out of memory|oom|killed process|memory cgroup'             | tail -80 || true
+          echo "FTMO_KERNEL_OOM_WINDOW_END"
+
       - name: Recover only the FTMO Actions listener
         shell: bash
         run: |
@@ -83,26 +100,30 @@ jobs:
           pre_state="$(systemctl is-active "$SERVICE" || true)"
           pre_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
           worker_before=0
+          listener_before=0
           if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
             worker_before=1
           fi
-          echo "FTMO_RUNNER_PRE state=$pre_state pid=$pre_pid worker=$worker_before"
+          if [[ "$pre_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pre_pid/cmdline"; then
+            pre_cmdline="$(tr '\0' ' ' < "/proc/$pre_pid/cmdline")"
+            if [[ "$pre_cmdline" == *"Runner.Listener"* || "$pre_cmdline" == *"runsvc.sh"* ]]; then
+              listener_before=1
+            fi
+          fi
+          echo "FTMO_RUNNER_PRE state=$pre_state pid=$pre_pid listener=$listener_before worker=$worker_before"
 
           action=none
           if [[ "$pre_state" != "active" ]]; then
             sudo -n systemctl reset-failed "$SERVICE" || true
             sudo -n systemctl start "$SERVICE"
-            action=start
+            action=start-inactive-listener
           elif [[ "$worker_before" -eq 1 ]]; then
             action=preserve-active-worker
+          elif [[ "$listener_before" -eq 1 ]]; then
+            action=preserve-healthy-listener
           else
-            sleep 5
-            if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
-              action=preserve-worker-appeared
-            else
-              sudo -n systemctl restart "$SERVICE"
-              action=restart-idle-listener
-            fi
+            sudo -n systemctl restart "$SERVICE"
+            action=restart-unhealthy-listener
           fi
 
           post_state=""
@@ -122,5 +143,5 @@ jobs:
           [[ "$post_cmdline" == *"Runner.Listener"* || "$post_cmdline" == *"runsvc.sh"* ]]
 
           echo "FTMO_RUNNER_RECOVERY_ACTION=$action"
-          echo "FTMO_RUNNER_POST state=$post_state pid=$post_pid"
-          systemctl show "$SERVICE" -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
+          echo "FTMO_RUNNER_POST state=$post_state pid=$post_pid listener=1"
+          systemctl show "$SERVICE"             -p ActiveState -p SubState -p MainPID -p NRestarts             -p Result -p ExecMainCode -p ExecMainStatus             --no-pager
