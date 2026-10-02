@@ -81,7 +81,7 @@ jobs:
           token = os.environ["GITHUB_TOKEN"]
           request = urllib.request.Request(
               f"https://api.github.com/repos/{repo}/actions/workflows/zcloud-regression-smoke.yml/runs"
-              "?branch=main&event=push&status=success&per_page=100",
+              "?branch=main&status=success&per_page=100",
               headers={
                   "Authorization": f"Bearer {token}",
                   "Accept": "application/vnd.github+json",
@@ -96,7 +96,7 @@ jobs:
                   run for run in payload.get("workflow_runs", [])
                   if str(run.get("head_sha") or "") == sha
                   and str(run.get("conclusion") or "") == "success"
-                  and str(run.get("event") or "") == "push"
+                  and str(run.get("event") or "") in {"push", "workflow_dispatch"}
                   and str(run.get("head_branch") or "") == "main"
               ),
               None,
