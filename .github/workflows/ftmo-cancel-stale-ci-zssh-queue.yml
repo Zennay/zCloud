@@ -30,7 +30,7 @@ jobs:
           import urllib.request
 
           base = "http://127.0.0.1:8765"
-          queue_id = "zssh-ftmo-cancel-stale-ci-20261002"
+          queue_id = "zssh-ftmo-cancel-stale-pr430-432-ci-20261002"
           payload = {
               "action": "enqueue",
               "queue_id": queue_id,
@@ -38,16 +38,21 @@ jobs:
               "title": "Cancel stale FTMO CI runs",
               "priority": "P0",
               "completion_criteria": (
-                  "On vps-bb300bba cancel only GitHub Actions runs 36945491297 and "
-                  "36946253651 in Zennay/Ftmo, and only if each is still queued or pending. "
-                  "Do not cancel run 36947540556 or any newer FTMO run. Use existing authorized "
-                  "GitHub credentials already available to the zSSH lane; do not print tokens. "
-                  "After cancellation, verify both stale runs are completed/cancelled and report "
-                  "the status of current exact-head run 36947540556. No repository files, research "
-                  "artifacts, provider evidence, preregistration, walk-forward or final holdout "
-                  "state may be modified."
+                  "On vps-bb300bba cancel only GitHub Actions runs "
+                  "37000234497, 37000234650, 37000234499, 37000325165, 37000325166, "
+                  "37000325149, 37000325172 and 37000325179 in Zennay/Ftmo, and only while "
+                  "each run is still queued, pending, or in_progress. The first three belong to "
+                  "superseded PR #430 head 521a34d413de96a57a4785601598e02cc591355a; the latter "
+                  "five belong to closed duplicate PR #432 head f0a372ee08a8e7e6c3af2467604ac3e21495a9d6. "
+                  "Never cancel current PR #430 exact-head runs 37000518099, 37000518102, "
+                  "37000518123, 37000518148 or 37000518171, or any newer FTMO run. Use existing "
+                  "authorized GitHub credentials already available to the zSSH lane; do not print "
+                  "tokens. Verify each requested stale run is completed/cancelled or already terminal, "
+                  "then report the protected exact-head run statuses. Do not modify repository files, "
+                  "provider evidence, research artifacts, preregistration, development, walk-forward, "
+                  "final holdout, broker or live-trading state."
               ),
-              "source_url": "https://github.com/Zennay/Ftmo/pull/386",
+              "source_url": "https://github.com/Zennay/Ftmo/pull/430",
           }
           request = urllib.request.Request(
               base + "/api/portfolio-queue",
@@ -110,8 +115,13 @@ jobs:
               "worker_slot": item.get("worker_slot"),
               "start_ok": start.get("ok"),
               "push_ok": push.get("ok"),
-              "stale_run_ids": [36945491297, 36946253651],
-              "protected_current_run_id": 36947540556,
+              "stale_run_ids": [
+                  37000234497, 37000234650, 37000234499,
+                  37000325165, 37000325166, 37000325149, 37000325172, 37000325179,
+              ],
+              "protected_current_run_ids": [
+                  37000518099, 37000518102, 37000518123, 37000518148, 37000518171,
+              ],
           }
           from pathlib import Path
           target = Path("artifacts/ops/ftmo-stale-ci-zssh-queue.json")
