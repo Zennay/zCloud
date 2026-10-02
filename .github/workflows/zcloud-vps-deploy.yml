@@ -358,6 +358,17 @@ jobs:
           echo "FIREFOX_AUTOMATION_SERVICE=failed"
           exit 1
 
+      - name: Bootstrap validated project catalog
+        if: steps.prewrite.outputs.deploy == 'true'
+        run: |
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path projects.json \
+            --preserve-prechange-drift public/zcloud-worker.user.js \
+            --preserve-prechange-drift firefox-extension/background.js \
+            --actor "github-actions-vps-deploy" \
+            --json
+
       - name: Promote backend runtime core
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
@@ -417,15 +428,6 @@ jobs:
             --path public/style.css \
             --path public/enhancements.js \
             --path public/enhancements.css \
-            --actor "github-actions-vps-deploy" \
-            --json
-
-      - name: Promote translated project catalog
-        if: steps.prewrite.outputs.deploy == 'true'
-        run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path projects.json \
             --actor "github-actions-vps-deploy" \
             --json
 
