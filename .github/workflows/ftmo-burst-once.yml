@@ -7,7 +7,7 @@ on:
       - ".github/workflows/ftmo-burst-once.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ftmo-vps-useful-compute-rescue
@@ -247,6 +247,22 @@ jobs:
                           raise SystemExit(f"haxlab cap failed for {unit}: {result.stderr.strip()}")
                       rescue_actions.append(f"haxlab-cap:{unit}")
 
+              # If the interactive desktop user slice is the measured dominant
+              # competitor, bound only that slice at runtime. This is reversible
+              # on reboot and preserves system/control-plane services.
+              if pre.get("primary_competitor_bucket") == "user_slice":
+                  uid = run("id", "-u", "ubuntu").stdout.strip()
+                  if not uid.isdigit():
+                      raise SystemExit(f"cannot resolve ubuntu uid: {uid!r}")
+                  user_slice = f"user-{uid}.slice"
+                  result = run(
+                      "sudo", "-n", "systemctl", "set-property", "--runtime",
+                      user_slice, "CPUWeight=50", "CPUQuota=100%"
+                  )
+                  if result.returncode != 0:
+                      raise SystemExit(f"user slice cap failed for {user_slice}: {result.stderr.strip()}")
+                  rescue_actions.append(f"user-slice-cap:{user_slice}:100%")
+
               restarted = run("sudo", "-n", "systemctl", "restart", "ftmo-autonomous-marathon.service")
               if restarted.returncode != 0:
                   raise SystemExit(f"FTMO restart failed: {restarted.stderr.strip()}")
@@ -328,3 +344,23 @@ jobs:
           if receipt["post_attribution"]["ftmo_primary_attributed_compute"] is not True:
               raise SystemExit("FTMO is still not the primary measured CPU consumer after safe rescue")
           PY
+
+      - name: Persist sanitized CPU proof receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f /tmp/zcloud-ftmo-cpu-rescue.json
+          git fetch origin main
+          git reset --hard origin/main
+          mkdir -p artifacts/ops
+          cp /tmp/zcloud-ftmo-cpu-rescue.json artifacts/ops/ftmo-vps-cpu-attribution-proof.json
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add artifacts/ops/ftmo-vps-cpu-attribution-proof.json
+          if git diff --cached --quiet; then
+            echo "CPU proof receipt unchanged"
+          else
+            git commit -m "Record FTMO VPS CPU attribution proof"
+            git push origin HEAD:main
+          fi
