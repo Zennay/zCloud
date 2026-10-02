@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   finalize:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 30
     env:
       QUEUE_ID: ftmo-7ee077e0b88278da
