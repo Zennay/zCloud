@@ -68,7 +68,13 @@ jobs:
               if payload is not None:
                   body = json.dumps(payload).encode("utf-8")
                   headers["Content-Type"] = "application/json"
-              attempts = 3 if method == "GET" else 1
+              # /api/status can legitimately return 503 while its monitor starts.
+              # Keep worker activation alive through that bounded warm-up instead
+              # of abandoning already-allocated/queued workers.
+              if method == "GET" and path.startswith("/api/status"):
+                  attempts = 10
+              else:
+                  attempts = 3 if method == "GET" else 1
               for attempt in range(attempts):
                   request = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
                   try:
