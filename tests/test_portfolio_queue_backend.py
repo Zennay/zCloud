@@ -53,6 +53,40 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("sqlite", allocation["queue_backend"])
         self.assertEqual(["cloud", "raiseai"], [worker["project_id"] for worker in allocation["workers"]])
 
+    def test_second_worker_preserves_non_ftmo_portfolio_progress(self):
+        first = server.portfolio_queue_enqueue(
+            "ftmo", "FTMO critical path", "P0",
+            "Implement the next safe FTMO generation step with deterministic tests.",
+        )
+        second_ftmo = server.portfolio_queue_enqueue(
+            "ftmo", "FTMO provider recovery", "P0",
+            "Implement provider recovery with deterministic tests.",
+        )
+        supa = server.portfolio_queue_enqueue(
+            "supa", "Supa planner increment", "P2",
+            "Implement a planner increment with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(first["queue_id"], selected[0]["queue_id"])
+        self.assertEqual(supa["queue_id"], selected[1]["queue_id"])
+        self.assertNotIn(second_ftmo["queue_id"], {item["queue_id"] for item in selected})
+
+    def test_second_worker_falls_back_to_ftmo_when_no_other_project_is_executable(self):
+        first = server.portfolio_queue_enqueue(
+            "ftmo", "FTMO critical path", "P0",
+            "Implement the next safe FTMO generation step with deterministic tests.",
+        )
+        second = server.portfolio_queue_enqueue(
+            "ftmo", "FTMO provider recovery", "P0",
+            "Implement provider recovery with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([first["queue_id"], second["queue_id"]], [item["queue_id"] for item in selected])
+
     def test_p0_preempts_lower_priority_claim_that_has_not_started(self):
         lower = server.portfolio_queue_enqueue("cloud", "lower", "P1", "Implement lower-priority change with tests.")
         server.portfolio_queue_allocate()
