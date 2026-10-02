@@ -28,6 +28,10 @@ DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
 DEFAULT_HEALTH_URL = os.environ.get(
     "ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/"
 )
+DEFAULT_FIREFOX_LEGACY_DISABLE = Path(os.environ.get(
+    "ZCLOUD_LEGACY_FIREFOX_DISABLE_DROPIN",
+    str(Path.home() / ".config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"),
+))
 MANAGED_PATHS = (
     "server.py",
     "lane_generator.py",
@@ -140,6 +144,21 @@ def firefox_runtime_active() -> bool:
         return False
 
 
+def legacy_violentmonkey_only(path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE) -> bool:
+    """Accept only the explicit managed drop-in that disables legacy Firefox.
+
+    In Violentmonkey-only mode the legacy Firefox service is intentionally absent.
+    This is already a supported post-deploy/health state and must not deadlock the
+    pre-change guard. Arbitrary missing/inactive Firefox still fails closed.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    lowered = text.lower()
+    return "violentmonkey only" in lowered and "execcondition=/bin/false" in lowered
+
+
 def http_healthy(url: str, timeout: float = 8.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -155,6 +174,7 @@ def evaluate(
     allowed_changes: set[str] | None = None,
     live_checks: bool = True,
     health_url: str = DEFAULT_HEALTH_URL,
+    legacy_disable_path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE,
 ) -> dict:
     allowed = allowed_changes or set()
     checks: list[dict] = []
@@ -215,8 +235,11 @@ def evaluate(
             },
             {
                 "name": "firefox_service",
-                "ok": firefox_runtime_active(),
-                "detail": "user service or standalone Firefox runtime active",
+                "ok": firefox_runtime_active() or legacy_violentmonkey_only(legacy_disable_path),
+                "detail": {
+                    "runtime_active": firefox_runtime_active(),
+                    "legacy_violentmonkey_only": legacy_violentmonkey_only(legacy_disable_path),
+                },
             },
             {
                 "name": "zcloud_http",
