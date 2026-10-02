@@ -1,10 +1,10 @@
-name: FTMO PR414 exact-head day-cache integrity proof
+name: FTMO PR415 exact-head day-cache integrity proof
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr414-exact-head-proof.yml"
+      - ".github/workflows/ftmo-pr415-exact-head-proof.yml"
   workflow_dispatch:
 
 permissions:
@@ -19,26 +19,26 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
-      TARGET_SHA: 1b2d2bd7c6c1616531b1e159491b1c93a8f08c0c
+      TARGET_SHA: 9c9da2e04fc4b1c15ac313509526fc8d80157289
     steps:
-      - name: Fetch exact FTMO PR414 head
+      - name: Fetch exact FTMO PR415 head
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
-          src="$RUNNER_TEMP/ftmo-pr414-proof"
+          src="$RUNNER_TEMP/ftmo-pr415-proof"
           rm -rf "$src"
           gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
           test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
-          echo "FTMO_PR414_EXACT_SHA=$TARGET_SHA"
+          echo "FTMO_PR415_EXACT_SHA=$TARGET_SHA"
 
       - name: Install isolated test environment
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr414-proof"
-          venv="$RUNNER_TEMP/ftmo-pr414-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr415-proof"
+          venv="$RUNNER_TEMP/ftmo-pr415-proof-venv"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
@@ -48,21 +48,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr414-proof"
-          venv="$RUNNER_TEMP/ftmo-pr414-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr415-proof"
+          venv="$RUNNER_TEMP/ftmo-pr415-proof-venv"
           cd "$src"
           "$venv/bin/python" -m compileall -q \
             src/prop_trading_ai/data/market/dukascopy_resume_cache.py \
             src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py \
             src/prop_trading_ai/data/market/dukascopy_public_ingest.py
-          echo "FTMO_PR414_COMPILE_GREEN=1"
+          echo "FTMO_PR415_COMPILE_GREEN=1"
 
       - name: Prove day-cache filesystem and temporal gates
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr414-proof"
-          venv="$RUNNER_TEMP/ftmo-pr414-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr415-proof"
+          venv="$RUNNER_TEMP/ftmo-pr415-proof-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_group_writable_day_entry \
@@ -72,14 +72,14 @@ jobs:
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_native_snapshot_retrieved_before_cached_bar_close \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_load_rejects_rehashed_impossible_native_retrieval_timing \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_tick_snapshot_retrieved_before_source_hour_completion
-          echo "FTMO_PR414_NEW_GATES_GREEN=1"
+          echo "FTMO_PR415_NEW_GATES_GREEN=1"
 
       - name: Prove relevant provider-foundation and sealed-boundary regressions
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr414-proof"
-          venv="$RUNNER_TEMP/ftmo-pr414-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr415-proof"
+          venv="$RUNNER_TEMP/ftmo-pr415-proof-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q \
             tests/test_dukascopy_jetta_m1.py \
@@ -87,4 +87,4 @@ jobs:
             tests/test_autonomous_provider_retry.py \
             tests/test_zero_cost_workflow_boundary.py \
             tests/test_autonomous_deploy_lockstep.py
-          echo "FTMO_PR414_RELEVANT_SUITE_GREEN=1"
+          echo "FTMO_PR415_RELEVANT_SUITE_GREEN=1"
