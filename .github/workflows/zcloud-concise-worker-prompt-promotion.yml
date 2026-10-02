@@ -1,0 +1,135 @@
+name: Promote concise worker prompts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-concise-worker-prompt-promotion.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Check out exact promotion revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          fetch-depth: 512
+
+      - name: Verify concise prompt source and FTMO AI cap
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "Werk verder aan {name}" server.py
+          grep -Fq "Kijk in Notion in welke fase het project zit" server.py
+          ! grep -Fq "VPS_QUEUE_ASSIGNMENT id=" server.py
+          grep -Fq "PROJECT_AI_WORKER_LIMITS = {'ftmo': 2}" server.py
+          grep -Fq 'prompt.startsWith("Werk verder aan ")' public/zcloud-worker.user.js
+          grep -Fq 'prompt.startsWith("Werk verder aan ")' firefox-extension/background.js
+          echo "CONCISE_WORKER_PROMPT_SOURCE_GREEN=1"
+
+      - name: Enforce VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+
+      - name: Acquire deploylane coordination
+        id: claim
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_deploylane_coordination.py acquire
+
+      - name: Promote backend prompt contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path server.py \
+            --preserve-prechange-drift public/zcloud-worker.user.js \
+            --preserve-prechange-drift firefox-extension/background.js \
+            --allow-recent-ancestor-prechange-drift \
+            --actor "github-actions-concise-worker-prompt" \
+            --json
+
+      - name: Promote browser worker contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path public/zcloud-worker.user.js \
+            --path firefox-extension/background.js \
+            --allow-recent-ancestor-prechange-drift \
+            --actor "github-actions-concise-worker-prompt" \
+            --json
+
+      - name: Prove live concise prompts and parallel FTMO bound
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          def get(path):
+              with urllib.request.urlopen("http://127.0.0.1:8765" + path, timeout=8) as r:
+                  return json.load(r)
+
+          targets = get("/api/runner-targets")
+          projects = targets.get("projects") or {}
+          active_ftmo = []
+          checked = 0
+          for key, cfg in projects.items():
+              if cfg.get("reviewer_mode"):
+                  continue
+              if not cfg.get("active"):
+                  continue
+              prompt = str(cfg.get("prompt") or "")
+              if not prompt.startswith("Werk verder aan "):
+                  raise SystemExit(f"long/legacy prompt still live for {key}: {prompt[:160]!r}")
+              if "Kijk in Notion in welke fase het project zit" not in prompt:
+                  raise SystemExit(f"Notion phase instruction missing for {key}")
+              for forbidden in ("VPS_QUEUE_ASSIGNMENT", "ZCLOUD_QUEUE_RESULT", "Jij bent Worker", "Ga door met de queue"):
+                  if forbidden in prompt:
+                      raise SystemExit(f"legacy prompt marker {forbidden!r} still live for {key}")
+              checked += 1
+              if str(cfg.get("base_project_id") or "").lower() == "ftmo":
+                  active_ftmo.append(key)
+
+          if len(active_ftmo) > 2:
+              raise SystemExit(f"FTMO AI worker cap violated: {active_ftmo}")
+          if checked < 1:
+              raise SystemExit("no active worker prompt available for live verification")
+
+          print("LIVE_CONCISE_WORKER_PROMPTS_GREEN", checked)
+          print("LIVE_FTMO_AI_WORKERS", len(active_ftmo), ",".join(active_ftmo))
+          PY
+          python3 scripts/zcloud_healthcheck.py --json
+
+      - name: Verify deploylane coordination
+        if: steps.claim.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_deploylane_coordination.py verify
+
+      - name: Release deploylane coordination
+        if: always() && steps.claim.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 scripts/zcloud_vps_deploylane_coordination.py release || true
