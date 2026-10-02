@@ -38,6 +38,14 @@ DYNAMIC_WORKER_CHECK_INTERVAL_MS = 5000
 DYNAMIC_WORKER_TICK_INTERVAL_MS = 1500
 DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS = 30000
 DYNAMIC_WORKER_GENERATION_TIMEOUT_MS = 120000
+# Browser workers are memory-heavy (Firefox content processes can exceed multiple GiB).
+# Keep real RAM headroom before claiming *new* worker slots; existing work is left intact.
+WORKER_MEMORY_HEADROOM_MB = max(1536, int(os.environ.get('ZCLOUD_WORKER_MEMORY_HEADROOM_MB', '2048')))
+WORKER_MEMORY_PER_NEW_SLOT_MB = max(512, int(os.environ.get('ZCLOUD_WORKER_MEMORY_PER_NEW_SLOT_MB', '1536')))
+WORKER_MEMORY_WARN_MB = max(1024, int(os.environ.get('ZCLOUD_WORKER_MEMORY_WARN_MB', '2048')))
+WORKER_MEMORY_CRITICAL_MB = max(512, int(os.environ.get('ZCLOUD_WORKER_MEMORY_CRITICAL_MB', '1024')))
+WORKER_SWAP_MIN_TOTAL_MB = max(0, int(os.environ.get('ZCLOUD_WORKER_SWAP_MIN_TOTAL_MB', '1024')))
+WORKER_SWAP_MIN_FREE_MB = max(0, int(os.environ.get('ZCLOUD_WORKER_SWAP_MIN_FREE_MB', '512')))
 DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'
 DYNAMIC_WORKER_SETTING_KEYS = {
     'chatgpt_count':'dynamic_worker_chatgpt_count',
@@ -206,6 +214,54 @@ def firefox_runner_status():
                 'auto_restart':fields.get('Restart') or 'unknown'}
     except Exception as e:
         return {'state':'unknown','active':False,'main_pid':0,'active_since':None,'restarts':0,'auto_restart':'unknown','error':str(e)[:200]}
+def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
+    """Return host RAM/swap admission state for browser workers.
+
+    MemAvailable already accounts for reclaimable cache and current Firefox usage,
+    so new_worker_capacity is intentionally a *new claim* budget for this scheduler
+    pass. Existing claimed/running workers are not preempted by this guard.
+    """
+    values={}
+    try:
+        for line in Path(meminfo_path).read_text(encoding='utf-8').splitlines():
+            if ':' not in line:
+                continue
+            key,raw=line.split(':',1)
+            match=re.search(r'([0-9]+)',raw)
+            if match:
+                values[key.strip()]=int(match.group(1)) // 1024
+    except Exception as exc:
+        return {
+            'available_mb':None,'total_mb':None,'swap_total_mb':None,'swap_free_mb':None,
+            'headroom_mb':WORKER_MEMORY_HEADROOM_MB,'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,
+            'new_worker_capacity':0,'pressure':'unknown','healthy_for_new_worker':False,
+            'swap_healthy':False,'error':str(exc)[:200],
+        }
+    total=max(0,int(values.get('MemTotal') or 0))
+    available=max(0,int(values.get('MemAvailable') or values.get('MemFree') or 0))
+    swap_total=max(0,int(values.get('SwapTotal') or 0))
+    swap_free=max(0,int(values.get('SwapFree') or 0))
+    reserve=WORKER_MEMORY_HEADROOM_MB
+    # Swap is a last-resort shock absorber, not worker capacity. With no useful
+    # swap configured, preserve an extra 512 MiB of real RAM before admitting tabs.
+    swap_healthy=(swap_total >= WORKER_SWAP_MIN_TOTAL_MB and swap_free >= min(WORKER_SWAP_MIN_FREE_MB,swap_total))
+    effective_reserve=reserve + (0 if swap_healthy else 512)
+    capacity=max(0,(available-effective_reserve)//WORKER_MEMORY_PER_NEW_SLOT_MB)
+    if available < WORKER_MEMORY_CRITICAL_MB:
+        pressure='critical'
+    elif available < WORKER_MEMORY_WARN_MB:
+        pressure='warning'
+    elif capacity <= 0:
+        pressure='guarded'
+    else:
+        pressure='ok'
+    return {
+        'available_mb':available,'total_mb':total,'swap_total_mb':swap_total,'swap_free_mb':swap_free,
+        'headroom_mb':reserve,'effective_headroom_mb':effective_reserve,
+        'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,'new_worker_capacity':int(capacity),
+        'pressure':pressure,'healthy_for_new_worker':bool(capacity > 0),'swap_healthy':bool(swap_healthy),
+    }
+
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
 DB_BUSY_TIMEOUT_SECONDS = 15
 DB_BUSY_TIMEOUT_MS = DB_BUSY_TIMEOUT_SECONDS * 1000
@@ -396,7 +452,8 @@ def dynamic_worker_settings():
         'heartbeat_interval_ms':int(DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS),
         'generation_start_timeout_ms':int(DYNAMIC_WORKER_GENERATION_TIMEOUT_MS),
         'scheduler_interval_seconds':int(AUTONOMY_TICK_SECONDS),
-        'policy':'per_worker_rate_limit_only',
+        'memory_guard':worker_memory_status(),
+        'policy':'per_worker_rate_limit_plus_memory_admission',
     }
 
 def set_dynamic_worker_settings(payload,actor='dashboard'):
@@ -2318,6 +2375,11 @@ def portfolio_queue_allocate():
     ts=ts_dt.isoformat()
     lease_until=(ts_dt+timedelta(seconds=PORTFOLIO_QUEUE_LEASE_SECONDS)).isoformat()
     selected=[]
+    memory_guard=worker_memory_status()
+    # Capacity applies only to fresh browser-worker claims in this pass. Existing
+    # claims already contribute to MemAvailable and are deliberately preserved.
+    new_worker_capacity=max(0,int(memory_guard.get('new_worker_capacity') or 0))
+    new_workers_claimed=0
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2369,6 +2431,8 @@ def portfolio_queue_allocate():
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
+            if new_workers_claimed >= new_worker_capacity:
+                continue
             if not lane_candidates:
                 continue
 
@@ -2406,6 +2470,7 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
+            new_workers_claimed += 1
     return selected
 
 def portfolio_queue_drop(queue_id,evidence=''):
@@ -2564,6 +2629,7 @@ def portfolio_queue_allocation():
         },
         'provider_counts':_dynamic_provider_counts(),
         'dispatch_rule':'vps_queue_claim_then_execute',
+        'memory_guard':worker_memory_status(),
     }
 
 def reconcile_dynamic_worker_limit():
