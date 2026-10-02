@@ -58,6 +58,31 @@ jobs:
               raise SystemExit("no allocated active workers to push")
 
           print("ACTIVE_WORKERS=" + json.dumps(active, sort_keys=True))
+          # Supersede recovery-era pending commands first. They are stale control
+          # intents from the browser restart and must not interrupt a worker after
+          # this explicit manual push-all request.
+          with sqlite3.connect(DB, timeout=10) as conn:
+              conn.row_factory = sqlite3.Row
+              conn.execute("PRAGMA busy_timeout=10000")
+              conn.execute("BEGIN IMMEDIATE")
+              ts = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+              superseded = []
+              for item in active:
+                  worker = item["worker"]
+                  rows = conn.execute(
+                      "SELECT id,action FROM runner_commands "
+                      "WHERE project_id=? AND status='pending' ORDER BY id",
+                      (worker,),
+                  ).fetchall()
+                  for row in rows:
+                      superseded.append({"worker": worker, "id": int(row["id"]), "action": str(row["action"])})
+                      conn.execute(
+                          "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                          "WHERE id=? AND status='pending'",
+                          (ts, "manual push-all superseded stale pending control command", int(row["id"])),
+                      )
+          print("SUPERSEDED_PENDING=" + json.dumps(superseded, sort_keys=True))
+
           pushed = call("POST", "/api/dynamic-workers/force-push", {})
           print("FORCE_PUSH=" + json.dumps(pushed, sort_keys=True))
           if not pushed.get("ok"):
@@ -81,7 +106,10 @@ jobs:
               for item in active
           }
           final = {}
-          deadline = time.time() + 70
+          # A push is successfully issued once every allocated worker has a fresh
+          # queued command. Workers already generating may intentionally consume it
+          # only after the current answer finishes, so do not treat pending as failure.
+          deadline = time.time() + 12
           while time.time() < deadline:
               with sqlite3.connect(DB, timeout=5) as conn:
                   conn.row_factory = sqlite3.Row
@@ -99,14 +127,11 @@ jobs:
 
           print("PUSH_COMMANDS=" + json.dumps(final, sort_keys=True, default=str))
           failed = [w for w, v in final.items() if v.get("status") == "failed"]
-          pending = [
-              w for w, v in final.items()
-              if v.get("status") not in ("completed", "failed")
-          ]
+          missing_commands = [w for w, v in final.items() if v.get("status") == "missing"]
           if failed:
-              raise SystemExit("push failed for: " + ", ".join(failed))
-          if pending:
-              raise SystemExit("push remained pending for: " + ", ".join(pending))
+              raise SystemExit("fresh push failed for: " + ", ".join(failed))
+          if missing_commands:
+              raise SystemExit("fresh push command missing for: " + ", ".join(missing_commands))
 
           print("ALL_WORKERS_PUSHED_GREEN=1")
           PY
