@@ -27,30 +27,44 @@ jobs:
           import json
           import urllib.request
 
-          queue_id = "zssh-ftmo-runner-recovery-20261002"
+          queue_ids = (
+              "zssh-ftmo-safe-gate-3b512f56",
+              "zssh-ftmo-runner-recovery-20261002",
+          )
           with urllib.request.urlopen(
               "http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10
           ) as response:
               payload = json.load(response)
 
-          def find(value):
+          def find(value, wanted):
               if isinstance(value, dict):
-                  if value.get("queue_id") == queue_id:
+                  if value.get("queue_id") == wanted:
                       return value
                   for child in value.values():
-                      found = find(child)
+                      found = find(child, wanted)
                       if found:
                           return found
               elif isinstance(value, list):
                   for child in value:
-                      found = find(child)
+                      found = find(child, wanted)
                       if found:
                           return found
               return None
 
-          item = find(payload)
-          if not item:
-              raise SystemExit(f"{queue_id} is absent from live SQLite queue")
+          item = None
+          queue_id = None
+          for candidate in queue_ids:
+              found = find(payload, candidate)
+              if not found:
+                  continue
+              if str(found.get("status") or "").lower() in {"queued", "claimed", "in_progress"}:
+                  item = found
+                  queue_id = candidate
+                  break
+          if not item or not queue_id:
+              raise SystemExit(
+                  "no runnable zSSH FTMO recovery assignment is present in live SQLite queue"
+              )
           if str(item.get("project_id") or "").lower() != "zssh":
               raise SystemExit(f"{queue_id} is not owned by zssh")
           if str(item.get("priority") or "").upper() != "P0":
