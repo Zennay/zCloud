@@ -1,3 +1,4 @@
+# FTMO verify72 zSSH consumer diagnostic trigger 2026-10-02T09:22Z
 name: Debug zCloud worker consumer now
 on:
   push:
