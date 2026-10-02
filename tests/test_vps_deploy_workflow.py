@@ -60,6 +60,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         block = text[text.index(recover):text.index(quarantine)]
         self.assertIn('service="zennay-cloud.service"', block)
         self.assertIn('url="http://127.0.0.1:8765/"', block)
+        self.assertEqual(2, block.count('url="http://127.0.0.1:8765/"'))
+        self.assertNotIn('/api/status', block)
         self.assertIn('systemctl restart "$service"', block)
         self.assertIn("curl -fsS --max-time 4", block)
         self.assertIn("for _ in $(seq 1 20)", block)
