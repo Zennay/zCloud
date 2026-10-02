@@ -1,0 +1,177 @@
+name: FTMO verified superseded CI cleanup Worker2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-verified-superseded-ci-cleanup-worker2-20261002.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-verified-superseded-ci-cleanup-worker2
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Verify and cancel only superseded FTMO runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import time
+
+          REPO = "Zennay/Ftmo"
+          TARGET_RUN = 36996247136
+          TARGET_SHA = "44c28172f2d6db168f0d3271bf859fb43b82e3d5"
+          TARGET_PR = 421
+
+          def gh_json(path):
+              raw = subprocess.check_output(
+                  ["gh", "api", "-H", "X-GitHub-Api-Version: 2022-11-28", path],
+                  text=True,
+                  stderr=subprocess.DEVNULL,
+              )
+              return json.loads(raw)
+
+          def cancel(run_id):
+              subprocess.check_call(
+                  ["gh", "api", "--method", "POST",
+                   "-H", "X-GitHub-Api-Version: 2022-11-28",
+                   f"repos/{REPO}/actions/runs/{run_id}/cancel"],
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+              )
+
+          main_sha = gh_json(f"repos/{REPO}/branches/main")["commit"]["sha"]
+          pulls = gh_json(f"repos/{REPO}/pulls?state=all&per_page=100&sort=updated&direction=desc")
+          open_prs = [pr for pr in pulls if pr.get("state") == "open"]
+          open_head_by_branch = {
+              (pr.get("head") or {}).get("ref"): (pr.get("head") or {}).get("sha")
+              for pr in open_prs
+              if (pr.get("head") or {}).get("ref")
+          }
+          open_head_shas = {sha for sha in open_head_by_branch.values() if sha}
+
+          pr421 = gh_json(f"repos/{REPO}/pulls/{TARGET_PR}")
+          run369 = gh_json(f"repos/{REPO}/actions/runs/{TARGET_RUN}")
+          if pr421.get("state") != "closed":
+              raise SystemExit("PR421 must be closed")
+          if (pr421.get("head") or {}).get("sha") != TARGET_SHA:
+              raise SystemExit("PR421 head SHA mismatch")
+          if run369.get("head_sha") != TARGET_SHA:
+              raise SystemExit("target run head SHA mismatch")
+          if TARGET_SHA == main_sha:
+              raise SystemExit("target run unexpectedly equals current main")
+          if TARGET_SHA in open_head_shas:
+              raise SystemExit("target run unexpectedly equals latest head of an open PR")
+
+          statuses = ("queued", "pending", "in_progress")
+          active = []
+          before = {}
+          for status in statuses:
+              payload = gh_json(f"repos/{REPO}/actions/runs?status={status}&per_page=100")
+              runs = payload.get("workflow_runs") or []
+              before[status] = int(payload.get("total_count") or len(runs))
+              active.extend(runs)
+
+          pulls_by_sha = {}
+          pulls_by_branch = {}
+          for pr in pulls:
+              head = pr.get("head") or {}
+              sha, ref = head.get("sha"), head.get("ref")
+              if sha:
+                  pulls_by_sha.setdefault(sha, []).append(pr)
+              if ref:
+                  pulls_by_branch.setdefault(ref, []).append(pr)
+
+          cancelled = []
+          kept = []
+
+          if run369.get("status") in statuses:
+              cancel(TARGET_RUN)
+              cancelled.append({"id": TARGET_RUN, "reason": "PR421_closed_exact_target"})
+          else:
+              kept.append({"id": TARGET_RUN, "reason": f"already_terminal:{run369.get('status')}:{run369.get('conclusion')}"})
+
+          seen = {TARGET_RUN}
+          for run in sorted(active, key=lambda r: int(r["id"])):
+              rid = int(run["id"])
+              if rid in seen:
+                  continue
+              seen.add(rid)
+              sha = run.get("head_sha")
+              branch = run.get("head_branch")
+              status = run.get("status")
+
+              if sha == main_sha or branch == "main":
+                  kept.append({"id": rid, "status": status, "sha": sha, "branch": branch, "reason": "current_main"})
+                  continue
+              if sha in open_head_shas:
+                  prs = [int(pr["number"]) for pr in pulls_by_sha.get(sha, []) if pr.get("state") == "open"]
+                  kept.append({"id": rid, "status": status, "sha": sha, "branch": branch, "reason": "latest_open_pr_head", "prs": prs})
+                  continue
+
+              latest_open_sha = open_head_by_branch.get(branch)
+              if latest_open_sha and sha != latest_open_sha:
+                  cancel(rid)
+                  cancelled.append({"id": rid, "status": status, "sha": sha, "branch": branch, "reason": "stale_head_of_open_pr", "latest_open_sha": latest_open_sha})
+                  continue
+
+              related = pulls_by_sha.get(sha, []) or pulls_by_branch.get(branch, [])
+              closed = [pr for pr in related if pr.get("state") == "closed"]
+              open_related = [pr for pr in related if pr.get("state") == "open"]
+              if closed and not open_related:
+                  cancel(rid)
+                  cancelled.append({
+                      "id": rid, "status": status, "sha": sha, "branch": branch,
+                      "reason": "closed_or_merged_pr",
+                      "prs": [{"number": int(pr["number"]), "merged": bool(pr.get("merged_at"))} for pr in closed],
+                  })
+                  continue
+
+              kept.append({"id": rid, "status": status, "sha": sha, "branch": branch, "reason": "no_safe_cancel_proof"})
+
+          time.sleep(3)
+          after = {}
+          for status in statuses:
+              payload = gh_json(f"repos/{REPO}/actions/runs?status={status}&per_page=100")
+              after[status] = int(payload.get("total_count") or len(payload.get("workflow_runs") or []))
+
+          final_status = {}
+          for item in cancelled:
+              r = gh_json(f"repos/{REPO}/actions/runs/{item['id']}")
+              final_status[str(item["id"])] = {"status": r.get("status"), "conclusion": r.get("conclusion")}
+
+          result = {
+              "main_sha": main_sha,
+              "open_pr_heads": [
+                  {"number": int(pr["number"]), "head_sha": (pr.get("head") or {}).get("sha"), "head_ref": (pr.get("head") or {}).get("ref")}
+                  for pr in open_prs
+              ],
+              "preflight": {
+                  "pr421_state": pr421.get("state"),
+                  "pr421_head_sha": (pr421.get("head") or {}).get("sha"),
+                  "run369_status": run369.get("status"),
+                  "run369_conclusion": run369.get("conclusion"),
+                  "run369_head_sha": run369.get("head_sha"),
+                  "target_not_main": TARGET_SHA != main_sha,
+                  "target_not_open_pr_latest": TARGET_SHA not in open_head_shas,
+              },
+              "before": before,
+              "cancelled": cancelled,
+              "kept": kept,
+              "after": after,
+              "cancelled_final_status": final_status,
+          }
+          print("FTMO_CI_CLEANUP_RESULT=" + json.dumps(result, sort_keys=True))
+          PY
