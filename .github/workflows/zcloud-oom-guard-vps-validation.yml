@@ -26,13 +26,20 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
           fetch-depth: 1
+
+      - name: Verify validation host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "VALIDATION_HOST=$(hostname)"
 
       - name: Compile OOM recovery paths
         shell: bash
