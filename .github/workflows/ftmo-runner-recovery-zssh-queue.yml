@@ -167,7 +167,7 @@ jobs:
                   "worker_slot": item.get("worker_slot"),
                   "updated_at": item.get("updated_at"),
               },
-              "protected_ftmo_runs": [37003096743, 37003096755],
+              "protected_ftmo_runs": [37003675752, 37003675884],
               "target_exact_head_sha": "683768c80816096057dd8bd52a77f96e44b1b9d5",
           }
           target = Path("artifacts/ops/ftmo-runner-recovery-zssh-queue.json")
