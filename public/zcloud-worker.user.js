@@ -304,8 +304,14 @@
 
   function assignmentReady(candidate) {
     if (!candidate || candidate.active !== true || candidate.assignment_ready !== true) return false;
-    const queueId = String(candidate.queue_item?.queue_id || "").trim();
+    const baseProject = String(candidate.base_project_id || candidate.project_id || "").split("::w", 1)[0];
     const prompt = String(candidate.prompt || "");
+    if (candidate.reviewer_mode === true) {
+      return baseProject === "portfolio-review" &&
+        prompt.includes("Portfolio Bird's-eye Reviewer") &&
+        prompt.includes("Senior Team OS");
+    }
+    const queueId = String(candidate.queue_item?.queue_id || "").trim();
     const slot = Number(candidate.global_worker_slot || 0);
     const total = Number(candidate.global_worker_count || 0);
     return !!queueId &&
@@ -886,8 +892,15 @@
     const problems = [];
     if (candidate.active !== true) problems.push("not-active");
     if (candidate.assignment_ready !== true) problems.push("server-assignment-not-ready");
-    const queueId = String(candidate.queue_item?.queue_id || "").trim();
     const prompt = String(candidate.prompt || "");
+    const baseProject = String(candidate.base_project_id || candidate.project_id || "").split("::w", 1)[0];
+    if (candidate.reviewer_mode === true) {
+      if (baseProject !== "portfolio-review") problems.push("reviewer-wrong-project");
+      if (!prompt.includes("Portfolio Bird's-eye Reviewer")) problems.push("reviewer-prompt-missing-role");
+      if (!prompt.includes("Senior Team OS")) problems.push("reviewer-prompt-missing-policy");
+      return problems.join(",");
+    }
+    const queueId = String(candidate.queue_item?.queue_id || "").trim();
     const slot = Number(candidate.global_worker_slot || 0);
     const total = Number(candidate.global_worker_count || 0);
     if (!queueId) problems.push("missing-queue-id");

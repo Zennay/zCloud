@@ -96,6 +96,46 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertTrue(ex, f"{worker['project_id']}: extension refuses real runner-targets payload")
                 self.assertEqual([], server.worker_contract_failures(worker), worker["project_id"])
 
+    def test_bounded_senior_reviewer_is_valid_without_execution_queue_slot(self):
+        with WorkerEnv():
+            with server.connect() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO runner_targets(project_id,name,conversation_id,prompt,active,worker_count) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (
+                        "portfolio-review",
+                        "Portfolio Birdseye Review",
+                        "",
+                        "Je bent de Portfolio Bird's-eye Reviewer. Gebruik de Senior Team OS-regel Periodic Strategy & Architecture Challenge.",
+                        1,
+                        1,
+                    ),
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)",
+                    ("portfolio-review", 1, ""),
+                )
+
+            reviewer = server.runner_worker_targets()["portfolio-review::w1"]
+            self.assertTrue(reviewer["reviewer_mode"])
+            self.assertTrue(reviewer["active"])
+            self.assertTrue(reviewer["assignment_ready"])
+            self.assertIsNone(reviewer["queue_item"])
+            self.assertIsNone(reviewer["global_worker_slot"])
+            self.assertNotIn("portfolio-review", server.global_worker_allocation()["projects"])
+
+            out = run_validators([reviewer])
+            self.assertTrue(out["userscript"][0], out["diagnostic"][0])
+            self.assertTrue(out["extension"][0])
+            self.assertEqual([], server.worker_contract_failures(reviewer))
+
+            impostor = dict(reviewer, base_project_id="ftmo")
+            bad = run_validators([impostor])
+            self.assertFalse(bad["userscript"][0])
+            self.assertFalse(bad["extension"][0])
+            self.assertIn("reviewer-wrong-project", bad["diagnostic"][0])
+            self.assertIn("reviewer-wrong-project", server.worker_contract_failures(impostor))
+
     def test_prompt_no_longer_promises_a_nonexistent_endpoint(self):
         self.assertNotIn("queue-update", make_case("cloud", 1, 3)["prompt"])
 

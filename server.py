@@ -2720,7 +2720,8 @@ def runner_worker_targets():
                 worker_key=f'{project_id}::w{slot}'
                 global_slot=global_slots.get(worker_key)
                 allocated=global_slot is not None
-                provider_name=dynamic_provider_for_global_slot(global_slot) if allocated else str((row['provider'] if row else 'chatgpt') or 'chatgpt')
+                reviewer_mode=project_id=='portfolio-review'
+                provider_name='chatgpt' if reviewer_mode else (dynamic_provider_for_global_slot(global_slot) if allocated else str((row['provider'] if row else 'chatgpt') or 'chatgpt'))
                 provider_name='claude' if provider_name=='claude' else 'chatgpt'
                 conversation_id=(row['conversation_id'] if row else '') or ''
                 if row and str(row['provider'] or 'chatgpt') != provider_name:
@@ -2729,14 +2730,19 @@ def runner_worker_targets():
                               (provider_name,'',project_id,slot))
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
-                queue_item=portfolio_queue_current_for_slot(global_slot) if allocated else None
+                queue_item=None if reviewer_mode else (portfolio_queue_current_for_slot(global_slot) if allocated else None)
                 assignment_ready=bool(
-                    allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
-                    and int(queue_item.get('worker_slot') or 0)==int(global_slot)
+                    (reviewer_mode and cfg.get('active')) or
+                    (allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
+                     and int(queue_item.get('worker_slot') or 0)==int(global_slot))
                 )
-                active=allocated and desired_state!='paused'
-                worker_name=(f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
-                             if allocated else f"{cfg['name']} · worker {slot}/{count}")
+                active=(bool(cfg.get('active')) if reviewer_mode else allocated) and desired_state!='paused'
+                worker_name=(cfg['name'] if reviewer_mode else
+                             (f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
+                              if allocated else f"{cfg['name']} · worker {slot}/{count}"))
+                rendered_prompt=cfg['prompt'] if reviewer_mode else project_worker_prompt(
+                    project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item
+                )
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'global_worker_slot':global_slot,'global_worker_count':GLOBAL_CHATGPT_WORKER_LIMIT,
@@ -2745,8 +2751,9 @@ def runner_worker_targets():
                     'provider_worker_count':dynamic_provider_count(provider_name) if allocated else count,
                     'name':worker_name,'conversation_id':conversation_id,
                     'url':dynamic_provider_url(provider_name,conversation_id),
-                    'prompt':project_worker_prompt(project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item),
+                    'prompt':rendered_prompt,
                     'queue_item':queue_item,
+                    'reviewer_mode':reviewer_mode,
                     'assignment_ready':assignment_ready,
                     'desired_state':desired_state,'active':active,
                     'auto_continue':active and bool(cfg.get('auto_continue',True)),
@@ -3072,8 +3079,14 @@ def worker_contract_failures(cfg):
     problems = []
     if cfg.get('active') is not True: problems.append('not-active')
     if cfg.get('assignment_ready') is not True: problems.append('server-assignment-not-ready')
-    queue_id = str((cfg.get('queue_item') or {}).get('queue_id') or '').strip()
     prompt = str(cfg.get('prompt') or '')
+    if cfg.get('reviewer_mode') is True:
+        base_project = str(cfg.get('base_project_id') or cfg.get('project_id') or '').split('::w', 1)[0]
+        if base_project != 'portfolio-review': problems.append('reviewer-wrong-project')
+        if "Portfolio Bird's-eye Reviewer" not in prompt: problems.append('reviewer-prompt-missing-role')
+        if 'Senior Team OS' not in prompt: problems.append('reviewer-prompt-missing-policy')
+        return problems
+    queue_id = str((cfg.get('queue_item') or {}).get('queue_id') or '').strip()
     try: slot = int(cfg.get('global_worker_slot') or 0)
     except (TypeError, ValueError): slot = 0
     try: total = int(cfg.get('global_worker_count') or 0)
