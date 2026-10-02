@@ -1,0 +1,86 @@
+name: Enqueue FTMO runner recovery via zSSH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-runner-recovery-enqueue.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Enqueue zSSH FTMO runner recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-runner-recovery-20261002"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Recover FTMO self-hosted runner assignment",
+              "priority": "P0",
+              "completion_criteria": (
+                  "Using the zSSH/VPS shell lane, inspect and safely recover the GitHub Actions "
+                  "self-hosted runner vps-bb300bba-ftmo (label ftmo-research) that last completed "
+                  "run 36941305208 successfully but now leaves current FTMO main runs "
+                  "36944877718 and 36944877789 unassigned (runner_id=0). Do not modify FTMO "
+                  "research state, provider criteria, preregistration, walk-forward, final holdout, "
+                  "broker/live permissions, or secrets. Restore/listen/restart only the runner/service "
+                  "path as needed, then prove at least one current FTMO run is assigned to runner "
+                  "vps-bb300bba-ftmo and record service/workflow evidence."
+              ),
+              "source_url": "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e",
+          }
+
+          req = urllib.request.Request(
+              base + "/api/portfolio-queue",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={
+                  "Content-Type": "application/json",
+                  "X-ZCloud-Actor": "ftmo-runner-recovery-enqueue",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=10) as response:
+              result = json.load(response)
+          print("ENQUEUE_RESULT", json.dumps(result, sort_keys=True))
+
+          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+              queue = json.load(response)
+          matches = [item for item in queue.get("items", []) if item.get("queue_id") == queue_id]
+          if len(matches) != 1:
+              raise SystemExit(f"queue item not uniquely present: {matches!r}")
+          item = matches[0]
+          if item.get("project_id") != "zssh" or item.get("priority") != "P0" or not item.get("eligible"):
+              raise SystemExit(f"bad queue item: {item!r}")
+          print(
+              "QUEUE_ITEM",
+              json.dumps(
+                  {
+                      key: item.get(key)
+                      for key in (
+                          "queue_id",
+                          "project_id",
+                          "priority",
+                          "status",
+                          "eligible",
+                          "worker_slot",
+                          "claim_expires",
+                      )
+                  },
+                  sort_keys=True,
+              ),
+          )
+          print("ALLOCATION", json.dumps(queue.get("allocation"), sort_keys=True))
+          PY
