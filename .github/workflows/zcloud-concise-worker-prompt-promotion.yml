@@ -1,4 +1,5 @@
 name: Promote concise worker prompts
+# retrigger: exact project-first prompt promotion
 
 on:
   push:
