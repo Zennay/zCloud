@@ -16,15 +16,20 @@ const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
 function portfolioAssignmentReady(target) {
-  if (!target) return false;
+  if (!target || target.active !== true || target.assignment_ready !== true) return false;
+  const baseProject = String(target.base_project_id || target.project_id || "").split("::w", 1)[0];
+  const prompt = String(target.prompt || "");
+  if (target.reviewer_mode === true) {
+    return baseProject === "portfolio-review" &&
+      prompt.includes("Portfolio Bird's-eye Reviewer") &&
+      prompt.includes("Senior Team OS");
+  }
   const queueId = String(target.queue_item?.queue_id || "").trim();
   const slot = Number(target.global_worker_slot || 0);
   const total = Number(target.global_worker_count || 0);
-  const prompt = String(target.prompt || "");
   return !!queueId &&
     Number.isInteger(slot) && slot >= 1 &&
     Number.isInteger(total) && total >= slot &&
-    target.assignment_ready === true &&
     prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
     prompt.includes("Jij bent Worker " + slot + "/" + total + ".");
 }
