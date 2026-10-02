@@ -33,8 +33,8 @@ def test_worker_prompt_is_short_project_first_and_not_queue_owned():
     prompt = worker_prompt("cloud", item)
     assert prompt.startswith("Werk verder aan zCloud.")
     assert "Kijk in Notion in welke fase het project zit" in prompt
-    assert "Werkgebied: control-plane." in prompt
-    assert "bestaande claims/branches" in prompt
+    assert "Werkgebied:" not in prompt
+    assert "claims" not in prompt
     assert "VPS_QUEUE_ASSIGNMENT" not in prompt
     assert "ZCLOUD_QUEUE_" not in prompt
     assert "Jij bent Worker" not in prompt
@@ -59,8 +59,9 @@ def test_no_assignment_stays_local_and_simple():
     assert len(prompt) < 400
 
 
-def test_collision_guard_is_generic_not_project_specific_prompt_bloat():
+def test_collision_coordination_is_not_exposed_as_prompt_bloat():
     prompt = worker_prompt("ftmo")
-    assert prompt.startswith("Werk verder aan FTMO.")
-    assert "kies een vrij onderdeel" in prompt
+    assert prompt == server.project_runner_prompt("ftmo", "FTMO")
+    assert "Werkgebied:" not in prompt
+    assert "claims" not in prompt
     assert "preregistration, walk-forward en final holdout" not in prompt

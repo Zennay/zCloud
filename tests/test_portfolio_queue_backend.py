@@ -566,10 +566,10 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             item,
         )
 
-        self.assertIn("Werkgebied: control-plane.", prompt)
-        self.assertIn("bestaande claims/branches", prompt)
-        self.assertIn("ander vrij onderdeel", prompt)
-        self.assertNotIn("lane=", prompt)
+        self.assertEqual("control-plane", item["execution_lane"]["lane_id"])
+        self.assertTrue(item["execution_lane"]["scope"]["capabilities"])
+        self.assertEqual(server.project_runner_prompt("cloud", "zCloud"), prompt)
+        self.assertNotIn("control-plane", prompt)
         self.assertNotIn("VPS_QUEUE_ASSIGNMENT", prompt)
 
 

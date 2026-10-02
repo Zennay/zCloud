@@ -134,22 +134,9 @@ def project_runner_prompt(project_id, name):
 
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
-    item=queue_item or {}
-    lane=item.get('execution_lane') if isinstance(item.get('execution_lane'),dict) else {}
-    lane_id=str(lane.get('lane_id') or '').strip()
-    prompt=project_runner_prompt(project_id,name)
-    if lane_id:
-        prompt += (
-            f' Werkgebied: {lane_id}. '
-            'Blijf binnen dit werkgebied en controleer vóór wijzigingen bestaande claims/branches; '
-            'als een andere worker hetzelfde onderdeel al bewerkt, kies een ander vrij onderdeel binnen dit werkgebied.'
-        )
-    else:
-        prompt += (
-            ' Controleer vóór wijzigingen bestaande claims/branches en kies een vrij onderdeel, '
-            'zodat parallelle workers elkaar niet overlappen.'
-        )
-    return prompt
+    # Queue items, execution lanes and claims are internal coordination only.
+    # The worker itself gets one simple project-first instruction.
+    return project_runner_prompt(project_id, name)
 
 
 RUNNER_DEFAULTS = {

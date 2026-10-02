@@ -41,17 +41,16 @@ class WorkerPromptStyleTests(unittest.TestCase):
         ):
             self.assertNotIn(stale, prompt)
 
-    def test_parallel_workers_get_only_a_short_non_overlap_instruction(self):
+    def test_parallel_coordination_stays_out_of_the_visible_prompt(self):
         prompt = server.project_worker_prompt("ftmo", "FTMO", "", 1, 2, ITEM)
-        self.assertIn("Werkgebied: data-provenance.", prompt)
-        self.assertIn("bestaande claims/branches", prompt)
-        self.assertIn("andere worker", prompt)
-        self.assertIn("ander vrij onderdeel", prompt)
-
-    def test_no_lane_still_requires_free_work(self):
-        prompt = server.project_worker_prompt("supa", "Supa", "", 1, 1, None)
-        self.assertIn("kies een vrij onderdeel", prompt)
+        self.assertEqual(server.project_runner_prompt("ftmo", "FTMO"), prompt)
         self.assertNotIn("Werkgebied:", prompt)
+        self.assertNotIn("claims", prompt)
+        self.assertNotIn("worker", prompt.lower())
+
+    def test_no_lane_uses_the_same_simple_prompt(self):
+        prompt = server.project_worker_prompt("supa", "Supa", "", 1, 1, None)
+        self.assertEqual(server.project_runner_prompt("supa", "Supa"), prompt)
 
     def test_base_prompt_matches_owner_requested_shape(self):
         prompt = server.project_runner_prompt("zssh", "zSSH")
