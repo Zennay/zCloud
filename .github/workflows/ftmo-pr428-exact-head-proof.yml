@@ -12,11 +12,11 @@ permissions:
 
 concurrency:
   group: ftmo-pr428-exact-head-proof
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   proof:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 15
     env:
       TARGET_SHA: 8ec1585fb50e9d4a62cce292d54d4a2dacc922c8
