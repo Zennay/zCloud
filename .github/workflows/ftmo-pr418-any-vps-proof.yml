@@ -19,7 +19,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 18
     env:
-      TARGET_SHA: 68ef4ad4714babf10c195420773bb8e8a72288ac
+      TARGET_SHA: 312a5d78e524dc93586c46bde927efc1cc507334
     steps:
       - name: Fetch exact FTMO head without workspace mutation
         shell: bash
