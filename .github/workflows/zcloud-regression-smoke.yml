@@ -1,6 +1,7 @@
 name: zCloud regression smoke
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [main]
   push:
