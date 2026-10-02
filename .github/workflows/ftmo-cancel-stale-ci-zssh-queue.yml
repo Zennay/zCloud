@@ -54,4 +54,22 @@ jobs:
               if response.status != 200:
                   raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
           print("FTMO_STALE_CI_CANCEL_QUEUE", json.dumps(body, sort_keys=True))
+
+          def post(path, payload):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  result = json.load(response)
+                  if response.status >= 300:
+                      raise RuntimeError(f"{path} failed: HTTP {response.status}")
+              return result
+
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("ZSSH_START", json.dumps(start, sort_keys=True))
+          print("ZSSH_PUSH", json.dumps(push, sort_keys=True))
           PY
