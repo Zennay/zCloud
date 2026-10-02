@@ -280,6 +280,13 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         )
         self.assertIn("MAIN_MOVED_BEFORE_VPS_WRITE", text)
 
+    def test_execution_probe_uploads_sanitized_prechange_evidence(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("Inspect sanitized deploy pre-change evidence", text)
+        self.assertIn("scripts/zcloud_prechange_evidence.py", text)
+        self.assertIn("zcloud-prechange-evidence.json", text)
+        self.assertNotIn("cat /home/ubuntu/zennay-cloud/projects.json", text)
+
     def test_execution_probe_claims_cloud_task_on_self_hosted_runner(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
         self.assertIn("pull_request:", text)
