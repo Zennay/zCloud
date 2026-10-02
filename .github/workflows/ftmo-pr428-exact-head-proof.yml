@@ -1,0 +1,61 @@
+name: FTMO PR428 exact-head proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr428-exact-head-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr428-exact-head-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: 77763e18cf8fe7050785c7c69f39a614bc81f862
+    steps:
+      - name: Verify VPS identity and fetch exact FTMO head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr428-exact-head"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "exact_head_sha=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr428-exact-head"
+          venv="$RUNNER_TEMP/ftmo-pr428-exact-head-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile changed runtime surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr428-exact-head"
+          venv="$RUNNER_TEMP/ftmo-pr428-exact-head-venv"
+          "$venv/bin/python" -m compileall -q "$src/src/prop_trading_ai/ops/autonomous_rollover.py"
+
+      - name: Prove cache progress integrity and sealed boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr428-exact-head"
+          venv="$RUNNER_TEMP/ftmo-pr428-exact-head-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q             tests/test_autonomous_provider_retry.py             tests/test_zero_cost_workflow_boundary.py
