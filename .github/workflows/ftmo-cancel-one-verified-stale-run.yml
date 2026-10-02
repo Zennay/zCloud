@@ -1,4 +1,4 @@
-name: Cancel one verified stale FTMO CI run
+name: Cancel merged FTMO PR408 redundant CI
 
 on:
   push:
@@ -12,71 +12,63 @@ permissions:
 
 jobs:
   cancel:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
-      - name: Cancel closed PR 389 test run only if identity still matches
+      - name: Cancel only tree-identical merged PR408 runs
         shell: bash
         env:
-          TARGET_RUN: "36947322610"
-          TARGET_SHA: "766623ac149add52add9983c18a72c2e903f5eaa"
-          TARGET_PR: "389"
+          TARGET_PR: "408"
+          TARGET_PR_SHA: "eac3d115741a60c9bb9004636d69b34a3ca81ed2"
+          TARGET_MERGE_SHA: "2b8c7c457ba62f724dae89c0765a72b6ce9b90f1"
+          TARGET_RUNS: "36983469402 36983469391"
+          PROTECTED_RUNS: "36983624025 36983623867"
         run: |
           set -euo pipefail
           gh auth status >/dev/null 2>&1
-
           python3 - <<'PY'
-          import json
-          import os
-          import subprocess
+          import json, os, subprocess
 
           def gh_json(path):
-              raw = subprocess.check_output(
-                  ["gh", "api", "-H", "X-GitHub-Api-Version: 2022-11-28", path],
-                  text=True,
-                  stderr=subprocess.DEVNULL,
-              )
-              return json.loads(raw)
+              return json.loads(subprocess.check_output(
+                  ["gh","api","-H","X-GitHub-Api-Version: 2022-11-28",path],
+                  text=True, stderr=subprocess.DEVNULL
+              ))
 
-          run_id = os.environ["TARGET_RUN"]
-          expected_sha = os.environ["TARGET_SHA"]
-          pr_number = os.environ["TARGET_PR"]
-
-          run = gh_json(f"repos/Zennay/Ftmo/actions/runs/{run_id}")
-          pr = gh_json(f"repos/Zennay/Ftmo/pulls/{pr_number}")
-
-          identity = {
-              "run_id": run.get("id"),
-              "status": run.get("status"),
-              "head_sha": run.get("head_sha"),
-              "head_branch": run.get("head_branch"),
-              "pr_number": pr.get("number"),
-              "pr_state": pr.get("state"),
-              "pr_merged": bool(pr.get("merged")),
-          }
-          print("FTMO_STALE_RUN_IDENTITY", json.dumps(identity, sort_keys=True))
-
-          if str(run.get("id")) != run_id:
-              raise SystemExit("run id mismatch")
-          if run.get("head_sha") != expected_sha:
-              raise SystemExit("run SHA mismatch")
-          if int(pr.get("number") or 0) != int(pr_number):
-              raise SystemExit("PR identity mismatch")
-          if pr.get("state") != "closed" or pr.get("merged"):
-              raise SystemExit("PR 389 is not closed-unmerged")
-          if run.get("status") not in {"queued", "pending", "in_progress"}:
-              print("FTMO_STALE_RUN_ALREADY_TERMINAL")
-              raise SystemExit(0)
-
-          subprocess.check_call(
-              [
-                  "gh", "api",
-                  "--method", "POST",
-                  "-H", "X-GitHub-Api-Version: 2022-11-28",
-                  f"repos/Zennay/Ftmo/actions/runs/{run_id}/cancel",
-              ],
-              stdout=subprocess.DEVNULL,
-              stderr=subprocess.DEVNULL,
-          )
-          print("FTMO_STALE_RUN_CANCEL_REQUESTED", run_id)
+          pr=gh_json(f"repos/Zennay/Ftmo/pulls/{os.environ['TARGET_PR']}")
+          pr_sha=os.environ["TARGET_PR_SHA"]
+          merge_sha=os.environ["TARGET_MERGE_SHA"]
+          if pr.get("state")!="closed" or pr.get("merged") is not True:
+              raise SystemExit("PR408 is not merged")
+          if pr.get("head",{}).get("sha")!=pr_sha or pr.get("merge_commit_sha")!=merge_sha:
+              raise SystemExit("PR408 identity moved")
+          pr_commit=gh_json(f"repos/Zennay/Ftmo/git/commits/{pr_sha}")
+          merge_commit=gh_json(f"repos/Zennay/Ftmo/git/commits/{merge_sha}")
+          if pr_commit.get("tree",{}).get("sha") != merge_commit.get("tree",{}).get("sha"):
+              raise SystemExit("merged tree differs from PR head")
+          protected=set(os.environ["PROTECTED_RUNS"].split())
+          results=[]
+          for run_id in os.environ["TARGET_RUNS"].split():
+              if run_id in protected:
+                  raise SystemExit("target overlaps protected run")
+              run=gh_json(f"repos/Zennay/Ftmo/actions/runs/{run_id}")
+              if run.get("head_sha") != pr_sha or run.get("event") != "pull_request":
+                  raise SystemExit(f"run identity mismatch: {run_id}")
+              status=run.get("status")
+              if status in {"queued","pending","in_progress","waiting","requested"}:
+                  subprocess.check_call([
+                      "gh","api","--method","POST",
+                      "-H","X-GitHub-Api-Version: 2022-11-28",
+                      f"repos/Zennay/Ftmo/actions/runs/{run_id}/cancel",
+                  ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  action="cancel_requested"
+              else:
+                  action="already_terminal"
+              results.append({"run_id":run_id,"status":status,"action":action})
+          print("FTMO_PR408_REDUNDANT_CANCEL_GREEN", json.dumps({
+              "tree_sha": pr_commit["tree"]["sha"],
+              "merge_sha": merge_sha,
+              "protected_runs": sorted(protected),
+              "results": results,
+          }, sort_keys=True))
           PY
