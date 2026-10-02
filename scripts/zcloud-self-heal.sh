@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SERVICE="${ZCLOUD_SERVICE:-zennay-cloud.service}"
-URL="${ZCLOUD_HEALTH_URL:-http://127.0.0.1:8765/api/runner-targets}"
+URL="${ZCLOUD_HEALTH_URL:-http://127.0.0.1:8765/}"
 DISABLE_FILE="${ZCLOUD_SELF_HEAL_DISABLE_FILE:-/home/ubuntu/zennay-cloud/.disable-self-heal}"
 RUNTIME_DISABLE_DIR="${ZCLOUD_RUNTIME_HEAL_DISABLE_DIR:-/home/ubuntu/zennay-cloud/.disable-runtime-heal}"
 RUNTIME_USER="${ZCLOUD_RUNTIME_USER:-ubuntu}"
