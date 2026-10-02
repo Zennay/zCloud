@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_worker_watchdog.py"
@@ -99,6 +100,66 @@ class WorkerWatchdogDecisionTests(unittest.TestCase):
             watchdog.material_fingerprint(first),
             watchdog.material_fingerprint(second),
         )
+
+
+class WorkerWatchdogRuntimeRecoveryTests(unittest.TestCase):
+    def test_inactive_firefox_is_recovered_before_stall_timers(self):
+        original_api_call = watchdog.api_call
+        calls = []
+
+        def fake_api_call(base_url, method, path, payload=None):
+            calls.append((method, path, payload))
+            if method == "GET" and path == "/api/runner-targets":
+                return 200, {
+                    "global_allocation": {
+                        "workers": [{
+                            "worker_key": "cloud::w1",
+                            "project_id": "cloud",
+                            "worker_slot": 1,
+                            "queue_id": "q1",
+                        }]
+                    }
+                }
+            if method == "GET" and path == "/api/status":
+                return 200, {
+                    "chatgpt_firefox": {
+                        "active": False,
+                        "state": "inactive",
+                        "runtime_mode": "standalone",
+                    },
+                    "dynamic_workers": {
+                        "memory_guard": {
+                            "pressure": "ok",
+                            "available_mb": 4096,
+                            "swap_healthy": True,
+                        }
+                    },
+                }
+            if method == "POST" and path == "/api/runner-control":
+                return 200, {"ok": True, "status": {"active": True}}
+            raise AssertionError((method, path, payload))
+
+        watchdog.api_call = fake_api_call
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                result = watchdog.run_once(
+                    db_path=Path(tmp) / "history.db",
+                    state_path=Path(tmp) / "state.json",
+                    base_url="http://127.0.0.1:8765",
+                )
+        finally:
+            watchdog.api_call = original_api_call
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual("firefox-runtime-inactive", result["reason"])
+        self.assertEqual("restart_firefox", result["global_action"]["action"])
+        self.assertTrue(result["global_action"]["ok"])
+        self.assertTrue(any(
+            method == "POST"
+            and path == "/api/runner-control"
+            and payload == {"project_id": "", "action": "restart_firefox"}
+            for method, path, payload in calls
+        ))
 
 
 if __name__ == "__main__":
