@@ -1,16 +1,28 @@
 {
-  "protected_current_run_id": 36947540556,
+  "protected_current_run_ids": [
+    37000518099,
+    37000518102,
+    37000518123,
+    37000518148,
+    37000518171
+  ],
   "push_ok": true,
-  "queue_id": "zssh-ftmo-cancel-stale-ci-20261002",
+  "queue_id": "zssh-ftmo-cancel-stale-pr430-432-ci-20261002",
   "queue_priority": "P0",
   "queue_project_id": "zssh",
-  "queue_status": "claimed",
+  "queue_status": "queued",
   "schema_version": 1,
   "scope": "ftmo-stale-ci-zssh-queue",
   "stale_run_ids": [
-    36945491297,
-    36946253651
+    37000234497,
+    37000234650,
+    37000234499,
+    37000325165,
+    37000325166,
+    37000325149,
+    37000325172,
+    37000325179
   ],
   "start_ok": true,
-  "worker_slot": 4
+  "worker_slot": null
 }
