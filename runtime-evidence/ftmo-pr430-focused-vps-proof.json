@@ -3,7 +3,7 @@
   "scope": "ftmo-pr430-focused-vps-proof",
   "target_sha": "f7d20fecf71f5ba2c04dc984a03a2c864ff0aba3",
   "workflow_run_id": "37001222402",
-  "workflow_run_attempt": "1",
+  "workflow_run_attempt": "2",
   "result": "success",
   "runner_host": "vps-bb300bba",
   "tests": [
