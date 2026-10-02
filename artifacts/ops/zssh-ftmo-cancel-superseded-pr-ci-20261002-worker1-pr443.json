@@ -1,0 +1,96 @@
+{
+  "after": {
+    "in_progress": 1,
+    "pending": 0,
+    "queued": 3
+  },
+  "assignment_main_sha": "f761bc3af1e62a16cdc441df7d4585d4a6e32f54",
+  "before": {
+    "in_progress": 1,
+    "pending": 0,
+    "queued": 3
+  },
+  "cancelled": [],
+  "cancelled_final_status": {},
+  "current_main_sha": "ae0398b8038083a78b3dae897379434f029cbc11",
+  "host": "vps-bb300bba",
+  "kept": [
+    {
+      "id": 36996247136,
+      "reason": "already_terminal:completed:failure"
+    },
+    {
+      "branch": "worker/ftmo-checkpoint-zcloud-proof-20261001",
+      "id": 36941649689,
+      "reason": "no_safe_cancel_proof",
+      "sha": "33b56836071836f6f5f561de231472eb7113a355",
+      "status": "queued"
+    },
+    {
+      "branch": "worker2/ftmo-research-heartbeat-zcloud-proof-20261001",
+      "id": 36942167531,
+      "reason": "no_safe_cancel_proof",
+      "sha": "e2d2fb2f5d862f76b94642b5251ae9a46417d7fa",
+      "status": "queued"
+    },
+    {
+      "branch": "main",
+      "id": 37009687244,
+      "reason": "current_main",
+      "sha": "ae0398b8038083a78b3dae897379434f029cbc11",
+      "status": "queued"
+    },
+    {
+      "branch": "main",
+      "id": 37009687404,
+      "reason": "current_main",
+      "sha": "ae0398b8038083a78b3dae897379434f029cbc11",
+      "status": "in_progress"
+    }
+  ],
+  "open_pr_heads": [
+    {
+      "head_ref": "worker2/gen29-provider-validation-filesystem-integrity-main-20261002",
+      "head_sha": "683768c80816096057dd8bd52a77f96e44b1b9d5",
+      "number": 439
+    }
+  ],
+  "preflight": {
+    "pr421_head_sha": "44c28172f2d6db168f0d3271bf859fb43b82e3d5",
+    "pr421_state": "closed",
+    "target_not_current_main": true,
+    "target_not_latest_open_pr_head": true,
+    "target_run_conclusion": "failure",
+    "target_run_head_sha": "44c28172f2d6db168f0d3271bf859fb43b82e3d5",
+    "target_run_status": "completed"
+  },
+  "protected_pr443": {
+    "pr443_merged": false,
+    "pr443_state": "closed"
+  },
+  "protected_pr443_sha": "9b78f850e4c8be9cf9d826bfad950f4041ef0441",
+  "protected_runs": {
+    "37005325289": {
+      "conclusion": "cancelled",
+      "head_branch": "worker1/gen29-cache-progress-semantic-gate-current-20261002",
+      "head_sha": "9b78f850e4c8be9cf9d826bfad950f4041ef0441",
+      "status": "completed"
+    },
+    "37005325337": {
+      "conclusion": "cancelled",
+      "head_branch": "worker1/gen29-cache-progress-semantic-gate-current-20261002",
+      "head_sha": "9b78f850e4c8be9cf9d826bfad950f4041ef0441",
+      "status": "completed"
+    },
+    "37005325357": {
+      "conclusion": "cancelled",
+      "head_branch": "worker1/gen29-cache-progress-semantic-gate-current-20261002",
+      "head_sha": "9b78f850e4c8be9cf9d826bfad950f4041ef0441",
+      "status": "completed"
+    }
+  },
+  "queue_id": "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker1-pr443",
+  "runner_name": "zcloud-vps-1",
+  "schema_version": 1,
+  "workflow_run_id": "37010037425"
+}
