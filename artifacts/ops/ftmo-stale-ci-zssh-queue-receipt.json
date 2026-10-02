@@ -1,0 +1,17 @@
+{
+  "queue": {
+    "eligible": true,
+    "priority": "P0",
+    "project_id": "zssh",
+    "queue_id": "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker5",
+    "status": "queued",
+    "updated_at": "2026-10-02T11:57:41.177325+00:00",
+    "worker_slot": null
+  },
+  "receipt_base_sha": "1a765f3b2ea26f11d1c0a50f8c47645398713684",
+  "schema_version": 1,
+  "scope": "ftmo-stale-ci-zssh-queue",
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "37003070477",
+  "workflow_source_sha": "02bb5a591be8dc7a7c01f8cfd1218bc859d3ec5e"
+}
