@@ -1,0 +1,44 @@
+name: Debug zCloud worker consumer now
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/debug-worker-consumer-now.yml"
+permissions:
+  contents: read
+jobs:
+  debug:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 2
+    steps:
+      - name: Capture live worker consumer state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sqlite3, urllib.request
+          BASE="http://127.0.0.1:8765"
+          def get(path):
+              with urllib.request.urlopen(BASE+path, timeout=10) as r:
+                  return json.load(r)
+          print("WORKER_DEBUG="+json.dumps(get("/api/worker-debug"),sort_keys=True))
+          status=get("/api/status")
+          print("STATUS="+json.dumps({
+              "dynamic_workers":status.get("dynamic_workers"),
+              "chatgpt_firefox":status.get("chatgpt_firefox"),
+              "chatgpt_runners":status.get("chatgpt_runners"),
+              "errors":status.get("errors"),
+          },sort_keys=True))
+          with sqlite3.connect("/home/ubuntu/zennay-cloud/history.db",timeout=5) as c:
+              c.row_factory=sqlite3.Row
+              events=[dict(r) for r in c.execute(
+                  "SELECT id,ts,event,project_id,worker_slot,target,reason,error,generating,sending "
+                  "FROM runner_events ORDER BY id DESC LIMIT 120"
+              ).fetchall()]
+              commands=[dict(r) for r in c.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at,result "
+                  "FROM runner_commands ORDER BY id DESC LIMIT 80"
+              ).fetchall()]
+          print("RECENT_EVENTS="+json.dumps(events,sort_keys=True))
+          print("RECENT_COMMANDS="+json.dumps(commands,sort_keys=True))
+          PY
