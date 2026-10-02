@@ -130,7 +130,17 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0"
         )
         self.assertIn(marker, text)
-        self.assertEqual(1, text.count("--reconcile-known-live-sha server.py="))
+        self.assertEqual(2, text.count("--reconcile-known-live-sha server.py="))
+        catalog = text[
+            text.index("- name: Bootstrap validated project catalog"):
+            text.index("- name: Promote backend runtime core")
+        ]
+        core = text[
+            text.index("- name: Promote backend runtime core"):
+            text.index("- name: Promote autonomy policies and queue seed")
+        ]
+        self.assertIn(marker, catalog)
+        self.assertIn(marker, core)
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         guard = "Enforce permanent zCloud VPS runner identity"
@@ -233,6 +243,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("--preserve-prechange-drift public/zcloud-worker.user.js", catalog)
         self.assertIn("--preserve-prechange-drift firefox-extension/background.js", catalog)
         self.assertIn("--allow-recent-ancestor-prechange-drift", catalog)
+        self.assertIn(
+            "--reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0",
+            catalog,
+        )
         self.assertEqual(1, catalog.count("scripts/zcloud_transactional_promote.py"))
         self.assertNotIn("- name: Promote translated project catalog", text)
 

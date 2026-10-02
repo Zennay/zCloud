@@ -555,6 +555,88 @@ class TransactionalPromotionTests(unittest.TestCase):
             )
         )
 
+    def test_audited_layout_and_catalog_drift_require_exact_post_lkg_audit(self):
+        state = Path(self.tmp.name) / "audited-config-state"
+        snapshot = state / "snapshots" / "lkg-config"
+        files = snapshot / "files"
+        files.mkdir(parents=True)
+        (state / "last-known-good.json").write_text(
+            json.dumps({"snapshot_id": "lkg-config"}), encoding="utf-8"
+        )
+        (snapshot / "manifest.json").write_text(
+            json.dumps({
+                "snapshot_id": "lkg-config",
+                "created_at": "2026-10-01T20:00:00+00:00",
+            }),
+            encoding="utf-8",
+        )
+
+        baseline_layout = {"order": ["cloud", "ftmo"], "archived": []}
+        current_layout = {"order": ["ftmo", "cloud"], "archived": ["cloud"]}
+        baseline_projects = [{"id": "cloud", "name": "zCloud"}]
+        current_projects = [
+            {"id": "cloud", "name": "zCloud"},
+            {"id": "ftmo", "name": "FTMO"},
+        ]
+        (files / "project-layout.json").write_text(
+            json.dumps(baseline_layout), encoding="utf-8"
+        )
+        (files / "projects.json").write_text(
+            json.dumps(baseline_projects), encoding="utf-8"
+        )
+        (self.root / "project-layout.json").write_text(
+            json.dumps(current_layout), encoding="utf-8"
+        )
+        (self.root / "projects.json").write_text(
+            json.dumps(current_projects), encoding="utf-8"
+        )
+
+        db = self.root / "history.db"
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "CREATE TABLE config_audit("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
+                "config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, "
+                "new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+            )
+            conn.executemany(
+                "INSERT INTO config_audit(ts,actor,config_key,target,old_value_json,new_value_json,result,detail) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        "2026-10-01T21:00:00+00:00", "dashboard@test",
+                        "project.layout", "portfolio", json.dumps(baseline_layout),
+                        json.dumps(current_layout), "succeeded", "saved",
+                    ),
+                    (
+                        "2026-10-01T21:01:00+00:00", "github-actions-vps-deploy",
+                        "project.catalog", "portfolio", json.dumps(baseline_projects),
+                        json.dumps(current_projects), "succeeded", "guarded promotion",
+                    ),
+                ],
+            )
+
+        self.assertTrue(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "project-layout.json"
+            )
+        )
+        self.assertTrue(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "projects.json"
+            )
+        )
+
+        (self.root / "project-layout.json").write_text(
+            json.dumps({"order": ["cloud", "ftmo"], "archived": ["ftmo"]}),
+            encoding="utf-8",
+        )
+        self.assertFalse(
+            promote.audited_runtime_config_drift_matches(
+                self.root, state, "project-layout.json"
+            )
+        )
+
     def test_audited_resource_policy_accepts_json_equivalent_bytes(self):
         state = Path(self.tmp.name) / "semantic-state"
         snapshot = state / "snapshots" / "lkg-semantic"
@@ -663,7 +745,7 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertEqual(2, len(calls))
         self.assertIn("resource-policy.json", calls[1])
         self.assertEqual(
-            {"resource-policy.json"},
+            {"projects.json", "project-layout.json", "resource-policy.json"},
             set(promote.PRECHANGE_AUDITED_RUNTIME_DRIFT),
         )
 
