@@ -62,7 +62,26 @@ jobs:
               body = json.load(response)
               if response.status != 200:
                   raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
-          print("FTMO_SAFE_GATE_ZSSH_ENQUEUE", json.dumps(body, sort_keys=True))
+          def post(path, body):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  result = json.load(response)
+                  if response.status >= 300:
+                      raise RuntimeError(f"{path} failed: HTTP {response.status}")
+                  return result
+
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("FTMO_SAFE_GATE_ZSSH_ENQUEUE", json.dumps({
+              "queue": body,
+              "start_ok": start.get("ok"),
+              "push_ok": push.get("ok"),
+          }, sort_keys=True))
           PY
 
           git fetch origin main
