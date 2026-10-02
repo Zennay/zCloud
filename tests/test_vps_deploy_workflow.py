@@ -55,7 +55,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('"lane_generator.py"', recovery)
         self.assertIn('"lane_generator.py"', prechange)
         self.assertEqual(
-            1,
+            2,
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
 
