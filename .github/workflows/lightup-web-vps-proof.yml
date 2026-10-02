@@ -1,4 +1,4 @@
-name: LightUp provider and fixture VPS proof
+name: LightUp HTTPS deployment VPS proof
 
 on:
   push:
@@ -31,51 +31,35 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/Lightup
-          ref: 9e93cb7b94a15141c37db05c70fdec286af2d466
+          ref: d4cbde7e0b4825c310e7a156969ca5aa47cde540
           path: lightup-web-proof
           persist-credentials: false
-      - name: Compile and run full offline and lab suite
+      - name: Compile and run full suite
         working-directory: lightup-web-proof
         env:
           PYTHONPATH: src
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "9e93cb7b94a15141c37db05c70fdec286af2d466"
-          python3 --version
-          python3 -m compileall -q src tests
+          test "$(git rev-parse HEAD)" = "d4cbde7e0b4825c310e7a156969ca5aa47cde540"
+          python3 -m compileall -q src tests scripts
           nice -n 10 python3 -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/lightup-web-proof.log"
-      - name: Verify real SDK compatibility without API calls
+      - name: Real Gunicorn runtime smoke
         working-directory: lightup-web-proof
         env:
           PYTHONPATH: src
         shell: bash
         run: |
           set -euo pipefail
-          task_venv=$(mktemp -d "$RUNNER_TEMP/lightup-sdk.XXXXXX")
+          task_venv=$(mktemp -d "$RUNNER_TEMP/lightup-web.XXXXXX")
           trap 'rm -rf "$task_venv"' EXIT
           python3 -m venv "$task_venv"
-          "$task_venv/bin/pip" install --quiet '.[anthropic]'
-          "$task_venv/bin/python" - <<'PY' | tee -a "$RUNNER_TEMP/lightup-web-proof.log"
-          import anthropic
-          from unittest.mock import patch
-          from anthropic.types import Message
-          from lightup.ai.gateway import ModelMessage, ModelRequest, ModelRole
-          from lightup.ai.providers.anthropic_provider import AnthropicProvider
-          response = Message(id="msg_offline", type="message", role="assistant",
-                             model="configured-model", content=[{"type": "text", "text": "verified"}],
-                             stop_reason="end_turn", stop_sequence=None,
-                             usage={"input_tokens": 5, "output_tokens": 2})
-          with patch("socket.socket.connect", side_effect=AssertionError("network forbidden")):
-              provider = AnthropicProvider(api_key="offline-test-key", provider_id="sdk-smoke")
-              with patch.object(provider._client.messages, "create", return_value=response):
-                  result = provider.complete(ModelRequest(
-                      ModelRole.VERIFIER, (ModelMessage("user", "offline test"),), "configured-model"))
-              assert result.content == "verified" and result.provider_id == "sdk-smoke"
-              assert result.input_tokens == 5 and result.output_tokens == 2
-              provider._client.close()
-          print("Real SDK offline smoke OK; SDK version=" + anthropic.__version__)
-          PY
+          "$task_venv/bin/pip" install --quiet '.[web]'
+          "$task_venv/bin/gunicorn" --check-config --config deploy/gunicorn.conf.py \
+            'lightup.webapp.production:create_production_app()' \
+            --env LIGHTUP_PUBLIC_ORIGIN=https://lightup.example.test \
+            --env LIGHTUP_DB="$task_venv/check.db"
+          "$task_venv/bin/python" scripts/smoke_web_deployment.py 2>&1 | tee -a "$RUNNER_TEMP/lightup-web-proof.log"
       - name: Preserve test receipt
         if: always()
         uses: actions/upload-artifact@v4
