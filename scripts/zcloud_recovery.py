@@ -25,7 +25,7 @@ DEFAULT_ROOT = Path(os.environ.get("ZCLOUD_ROOT", "/home/ubuntu/zennay-cloud"))
 DEFAULT_STATE = Path(os.environ.get("ZCLOUD_RECOVERY_DIR", str(Path.home() / ".local/state/zcloud/recovery")))
 SERVICE = os.environ.get("ZCLOUD_SERVICE", "zennay-cloud.service")
 BROWSER_SERVICE = os.environ.get("ZCLOUD_BROWSER_SERVICE", "chatgpt-firefox.service")
-HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/runner-targets")
+HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/")
 # Keep rollback verification on the same bounded budget as production startup.
 # The live unit advertises TimeoutStartUSec=1min 30s.
 SERVICE_HEALTH_TIMEOUT_SECONDS = float(
