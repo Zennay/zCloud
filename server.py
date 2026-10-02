@@ -46,6 +46,8 @@ WORKER_MEMORY_WARN_MB = max(1024, int(os.environ.get('ZCLOUD_WORKER_MEMORY_WARN_
 WORKER_MEMORY_CRITICAL_MB = max(512, int(os.environ.get('ZCLOUD_WORKER_MEMORY_CRITICAL_MB', '1024')))
 WORKER_SWAP_MIN_TOTAL_MB = max(0, int(os.environ.get('ZCLOUD_WORKER_SWAP_MIN_TOTAL_MB', '1024')))
 WORKER_SWAP_MIN_FREE_MB = max(0, int(os.environ.get('ZCLOUD_WORKER_SWAP_MIN_FREE_MB', '512')))
+WORKER_OOM_RECOVERY_HOLD_SECONDS = max(60, int(os.environ.get('ZCLOUD_WORKER_OOM_RECOVERY_HOLD_SECONDS', '180')))
+WORKER_OOM_RECOVERY_HOLD_KEY = 'worker_oom_recovery_hold_until'
 DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'
 DYNAMIC_WORKER_SETTING_KEYS = {
     'chatgpt_count':'dynamic_worker_chatgpt_count',
@@ -316,8 +318,27 @@ def firefox_runner_status():
 
 def restart_firefox_runtime():
     """Recover either the managed systemd Firefox or the standalone VM runtime."""
+    existing=_standalone_firefox_pids()
+    current=firefox_runner_status()
+    browser_was_dead=not bool(current.get('active'))
+    recovery_guard=None
+    released=[]
+    if browser_was_dead:
+        recovery_guard=worker_memory_status()
+        safe_capacity=max(0,int(recovery_guard.get('new_worker_capacity') or 0))
+        if safe_capacity <= 0:
+            return {
+                **current,
+                'recovery_deferred':'memory-pressure',
+                'memory_guard':recovery_guard,
+                'released_slots':[],
+            }
+        released=_trim_dead_browser_allocations_for_recovery(safe_capacity)
+        _set_worker_recovery_hold()
+        _persist_global_worker_allocation(portfolio_queue_allocation())
+
     if _violentmonkey_only_mode():
-        old_pids=_standalone_firefox_pids()
+        old_pids=existing
         env=_firefox_session_env(old_pids[0] if old_pids else None)
         for pid in old_pids:
             try: os.kill(pid,signal.SIGTERM)
@@ -346,10 +367,15 @@ def restart_firefox_runtime():
             current=_standalone_firefox_pids()
             fresh=[pid for pid in current if pid not in old_pids]
             if fresh or (not old_pids and current):
-                return firefox_runner_status()
+                status=firefox_runner_status()
+                status['memory_guard']=recovery_guard or worker_memory_status()
+                status['released_slots']=released
+                return status
             time.sleep(1)
         status=firefox_runner_status()
         status['recovery_error']='standalone Firefox did not become active before timeout'
+        status['memory_guard']=recovery_guard or worker_memory_status()
+        status['released_slots']=released
         return status
 
     for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
@@ -364,6 +390,8 @@ def restart_firefox_runtime():
     while not status.get('active') and time.time()<deadline:
         time.sleep(1)
         status=firefox_runner_status()
+    status['memory_guard']=recovery_guard or worker_memory_status()
+    status['released_slots']=released
     return status
 
 def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
@@ -413,6 +441,61 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
         'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,'new_worker_capacity':int(capacity),
         'pressure':pressure,'healthy_for_new_worker':bool(capacity > 0),'swap_healthy':bool(swap_healthy),
     }
+
+def _worker_recovery_hold_until():
+    try:
+        with connect() as c:
+            row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(WORKER_OOM_RECOVERY_HOLD_KEY,)).fetchone()
+        if not row or not row['value']:
+            return None
+        until=datetime.fromisoformat(str(row['value']).replace('Z','+00:00')).astimezone(timezone.utc)
+        return until if until > datetime.now(timezone.utc) else None
+    except Exception:
+        return None
+
+def _set_worker_recovery_hold(seconds=WORKER_OOM_RECOVERY_HOLD_SECONDS):
+    until=datetime.now(timezone.utc)+timedelta(seconds=max(60,int(seconds)))
+    try:
+        with connect() as c:
+            c.execute(
+                """INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor""",
+                (WORKER_OOM_RECOVERY_HOLD_KEY,until.isoformat(),now(),'oom-recovery'),
+            )
+    except Exception:
+        logging.exception('Could not persist worker OOM recovery hold')
+    return until
+
+def _trim_dead_browser_allocations_for_recovery(capacity):
+    """Release excess queue slots only after the browser host is already gone."""
+    cap=max(0,min(int(GLOBAL_CHATGPT_WORKER_LIMIT),int(capacity or 0)))
+    ts=now()
+    released=[]
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        rows=c.execute(
+            """SELECT queue_id,worker_slot,project_id FROM portfolio_queue
+               WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                 AND worker_slot IS NOT NULL AND worker_slot>?
+               ORDER BY worker_slot DESC""",
+            (cap,),
+        ).fetchall()
+        released=[dict(row) for row in rows]
+        if released:
+            c.execute(
+                """UPDATE portfolio_queue
+                   SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                   WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                     AND worker_slot IS NOT NULL AND worker_slot>?""",
+                (ts,cap),
+            )
+        c.execute('DELETE FROM ai_global_slots WHERE slot>?',(cap,))
+    if released:
+        logging.warning(
+            'OOM recovery released %s browser slot(s) above safe capacity=%s: %s',
+            len(released),cap,','.join(str(item.get('queue_id')) for item in released),
+        )
+    return released
 
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
 DB_BUSY_TIMEOUT_SECONDS = 15
@@ -2530,7 +2613,10 @@ def portfolio_queue_allocate():
     memory_guard=worker_memory_status()
     # Capacity applies only to fresh browser-worker claims in this pass. Existing
     # claims already contribute to MemAvailable and are deliberately preserved.
-    new_worker_capacity=max(0,int(memory_guard.get('new_worker_capacity') or 0))
+    # After an OOM recovery we briefly hold fresh allocations so Firefox can
+    # settle and MemAvailable reflects the relaunched tabs before scaling again.
+    recovery_hold_until=_worker_recovery_hold_until()
+    new_worker_capacity=0 if recovery_hold_until else max(0,int(memory_guard.get('new_worker_capacity') or 0))
     new_workers_claimed=0
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
@@ -2781,7 +2867,10 @@ def portfolio_queue_allocation():
         },
         'provider_counts':_dynamic_provider_counts(),
         'dispatch_rule':'vps_queue_claim_then_execute',
-        'memory_guard':worker_memory_status(),
+        'memory_guard':{
+            **worker_memory_status(),
+            'recovery_hold_until':(_worker_recovery_hold_until().isoformat() if _worker_recovery_hold_until() else None),
+        },
     }
 
 def reconcile_dynamic_worker_limit():
