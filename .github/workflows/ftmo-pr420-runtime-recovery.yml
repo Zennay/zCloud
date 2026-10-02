@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   recover:
+    if: false
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
