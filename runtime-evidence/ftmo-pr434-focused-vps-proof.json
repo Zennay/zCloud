@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scope": "ftmo-pr434-focused-vps-proof",
+  "target_sha": "2bbc0334ec05de2d66558c5284ef2977c466ca97",
+  "workflow_run_id": "37002262904",
+  "workflow_run_attempt": "1",
+  "result": "success",
+  "runner_host": "vps-bb300bba",
+  "tests": [
+    "compileall autonomous_rollover + resume-cache modules",
+    "test_autonomous_provider_retry.py",
+    "test_dukascopy_tick_resume_cache.py",
+    "test_dukascopy_jetta_m1.py",
+    "zero-cost workflow boundary"
+  ],
+  "research_stage": "provider_foundation",
+  "generation_10_reopened": false,
+  "development_access_relaxed": false,
+  "walk_forward_access_relaxed": false,
+  "final_holdout_access_relaxed": false,
+  "live_or_broker_access_relaxed": false
+}
