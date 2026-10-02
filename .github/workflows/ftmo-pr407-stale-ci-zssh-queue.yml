@@ -80,3 +80,172 @@ jobs:
               "push_ok": push.get("ok"),
           }, sort_keys=True))
           PY
+
+
+  finalize:
+    needs: enqueue
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Verify exact PR407 stale CI completion
+        shell: bash
+        env:
+          EXPECTED_PR407_HEAD: "60fcbbc3562e77013f44830c4db26b69f0167ca1"
+          EXPECTED_MERGED_MAIN: "c7a83dae1cc4248e59b6a02d1ec9e0ac8b6dc56b"
+          PROTECTED_PR408_HEAD: "482ae9782f941e6926d73d81c76f316ffec4c081"
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          test "$(gh api repos/Zennay/Ftmo/pulls/407 --jq '.state')" = "closed"
+          test -n "$(gh api repos/Zennay/Ftmo/pulls/407 --jq '.merged_at // empty')"
+          test "$(gh api repos/Zennay/Ftmo/pulls/407 --jq '.head.sha')" = "$EXPECTED_PR407_HEAD"
+          test "$(gh api repos/Zennay/Ftmo/pulls/407 --jq '.merge_commit_sha')" = "$EXPECTED_MERGED_MAIN"
+
+          pr406_head="$(gh api repos/Zennay/Ftmo/pulls/406 --jq '.head.sha')"
+          test "$EXPECTED_PR407_HEAD" != "$PROTECTED_PR408_HEAD"
+          test "$EXPECTED_PR407_HEAD" != "$pr406_head"
+
+          for id in 36981941923 36981941937; do
+            actual_id="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.id')"
+            sha="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.head_sha')"
+            branch="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.head_branch')"
+            event="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.event')"
+            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.status')"
+            conclusion="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.conclusion // "null"')"
+            test "$actual_id" = "$id"
+            test "$sha" = "$EXPECTED_PR407_HEAD"
+            test "$sha" != "$PROTECTED_PR408_HEAD"
+            test "$sha" != "$pr406_head"
+            test "$branch" != "main"
+            test "$event" = "pull_request"
+            echo "PR407_TARGET_PRE id=$id status=$status conclusion=$conclusion sha=$sha branch=$branch"
+            case "$status" in
+              queued|pending|in_progress)
+                gh api --method POST "repos/Zennay/Ftmo/actions/runs/$id/cancel" >/dev/null
+                echo "PR407_TARGET_ACTION id=$id action=requested_cancel"
+                ;;
+              completed)
+                echo "PR407_TARGET_ACTION id=$id action=already_terminal"
+                ;;
+              *)
+                echo "Refusing unexpected status for $id: $status" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          for id in 36981941923 36981941937; do
+            final_status=""
+            for _ in $(seq 1 30); do
+              final_status="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.status')"
+              if [ "$final_status" = "completed" ]; then
+                break
+              fi
+              sleep 2
+            done
+            test "$final_status" = "completed"
+            final_conclusion="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.conclusion // "null"')"
+            final_sha="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.head_sha')"
+            final_branch="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.head_branch')"
+            test "$final_sha" = "$EXPECTED_PR407_HEAD"
+            test "$final_branch" != "main"
+            echo "PR407_TARGET_FINAL id=$id status=$final_status conclusion=$final_conclusion sha=$final_sha"
+          done
+
+          for id in 36982734136 36982734283; do
+            sha="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.head_sha')"
+            branch="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.head_branch')"
+            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.status')"
+            conclusion="$(gh api "repos/Zennay/Ftmo/actions/runs/$id" --jq '.conclusion // "null"')"
+            test "$sha" = "$PROTECTED_PR408_HEAD"
+            test "$branch" != "main"
+            echo "PR408_PROTECTED id=$id status=$status conclusion=$conclusion sha=$sha"
+          done
+
+          echo "PR407_STALE_CI_VERIFY_GREEN=1"
+
+      - name: Finalize exact SQLite queue assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import importlib.util
+          import json
+          import sqlite3
+          import sys
+          from pathlib import Path
+
+          queue_id = "zssh-ftmo-cancel-merged-pr407-ci-20261002"
+          live_root = Path("/home/ubuntu/zennay-cloud")
+          server_path = live_root / "server.py"
+          db_path = live_root / "history.db"
+          if not server_path.is_file() or not db_path.is_file():
+              raise SystemExit("live zCloud server/history.db missing")
+
+          sys.path.insert(0, str(live_root))
+          spec = importlib.util.spec_from_file_location("zcloud_live_server", server_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("cannot load live zCloud server module")
+          server = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(server)
+          server.DB = db_path
+
+          with sqlite3.connect(db_path) as c:
+              c.row_factory = sqlite3.Row
+              row = c.execute(
+                  "SELECT queue_id,project_id,title,status,eligible,worker_slot,evidence,updated_at "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+
+          if row is None:
+              raise SystemExit("queue item missing")
+          item = dict(row)
+          print("QUEUE_BEFORE=" + json.dumps(item, sort_keys=True))
+          if item["project_id"] != "zssh":
+              raise SystemExit(f"project mismatch: {item['project_id']}")
+
+          evidence = (
+              "On vps-bb300bba, PR #407 verified closed+merged with head "
+              "60fcbbc3562e77013f44830c4db26b69f0167ca1 and merge commit "
+              "c7a83dae1cc4248e59b6a02d1ec9e0ac8b6dc56b. Exact stale runs "
+              "36981941923 and 36981941937 verified non-main PR runs on that SHA and terminal. "
+              "No other run was cancelled. Protected PR #408 runs 36982734136 and 36982734283 "
+              "were inspected only. FTMO repository files and trading/research state were untouched."
+          )
+
+          if item["status"] == "done":
+              print("QUEUE_ALREADY_DONE=1")
+          elif item["status"] in {"claimed", "running", "verifying", "in_progress"} and item["worker_slot"] is not None:
+              result = server.portfolio_queue_finish(
+                  int(item["worker_slot"]),
+                  queue_id,
+                  "DONE",
+                  evidence,
+              )
+              print("QUEUE_FINISH_RESULT=" + json.dumps(result, sort_keys=True, default=str))
+              if not result.get("updated"):
+                  raise SystemExit("portfolio_queue_finish refused active assignment")
+          else:
+              raise SystemExit(
+                  "refusing nonstandard queue mutation; "
+                  f"status={item['status']} worker_slot={item['worker_slot']}"
+              )
+
+          with sqlite3.connect(db_path) as c:
+              c.row_factory = sqlite3.Row
+              after = c.execute(
+                  "SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+          final = dict(after) if after else None
+          print("QUEUE_AFTER=" + json.dumps(final, sort_keys=True))
+          if not final or final["status"] != "done" or int(final["eligible"] or 0) != 0:
+              raise SystemExit("queue final state is not done/eligible=0")
+          print("ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1")
+          PY
