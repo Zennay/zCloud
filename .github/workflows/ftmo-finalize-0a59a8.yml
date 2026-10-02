@@ -1,0 +1,92 @@
+name: Finalize FTMO queue item 0a59a8
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-finalize-0a59a8.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-finalize-0a59a8
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Persist DONE to VPS SQLite queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "ftmo-0a59a8cee22fa709"
+          evidence = (
+              "Generation 10 stale hint not reopened; Generation 29 stayed provider_foundation. "
+              "PR #424 merged as 0d3cdc8a28be2f7c3997892f5e3261a6f5d2a45c after self-hosted "
+              "Jetta transport proof 36997050238 SUCCESS. Follow-on PR #425 added same-path redirect "
+              "and response-framing integrity across code/tests/workflow; exact head "
+              "e9d50b4e5c542af3b740008e3d1a94f52630b5cd proved SUCCESS on vps-bb300bba via "
+              "zCloud run 36997804372, then merged as c37efb605b59b0e7e1ad452616b93dbdba681825. "
+              "Post-merge Test 36998085553 and runtime verify 36998085497 created fail-closed."
+          )
+
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=10) as response:
+                  return json.load(response)
+
+          def post(path, payload):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  return json.load(response)
+
+          live = get("/api/portfolio-queue?all=1")
+          item = next((x for x in live.get("items", []) if x.get("queue_id") == queue_id), None)
+          if not item:
+              raise RuntimeError("FTMO queue item missing")
+          if str(item.get("project_id") or "").lower() != "ftmo":
+              raise RuntimeError("FTMO queue project mismatch")
+          if str(item.get("status") or "").lower() == "done":
+              print("FTMO_QUEUE_ALREADY_DONE", json.dumps(item, sort_keys=True))
+          else:
+              if str(item.get("status") or "").lower() not in {"claimed", "running", "verifying"}:
+                  raise RuntimeError("FTMO queue item is not actively owned: " + str(item.get("status")))
+              slot = item.get("worker_slot")
+              if slot is None:
+                  raise RuntimeError("FTMO queue worker_slot missing")
+              result = post("/api/portfolio-queue", {
+                  "action": "result",
+                  "worker_slot": slot,
+                  "queue_id": queue_id,
+                  "result": "DONE",
+                  "evidence": evidence,
+              })
+              print("FTMO_QUEUE_DONE_WRITE", json.dumps(result, sort_keys=True))
+              if not result.get("ok"):
+                  raise RuntimeError("FTMO DONE write rejected")
+
+          verify = get("/api/portfolio-queue?all=1")
+          final = next((x for x in verify.get("items", []) if x.get("queue_id") == queue_id), None)
+          if not final or str(final.get("status") or "").lower() != "done" or bool(final.get("eligible")):
+              raise RuntimeError("FTMO queue DONE state not persisted")
+          print("FTMO_QUEUE_DONE_VERIFIED", json.dumps({
+              "queue_id": final.get("queue_id"),
+              "status": final.get("status"),
+              "eligible": final.get("eligible"),
+              "worker_slot": final.get("worker_slot"),
+              "evidence": final.get("evidence"),
+          }, sort_keys=True))
+          PY
