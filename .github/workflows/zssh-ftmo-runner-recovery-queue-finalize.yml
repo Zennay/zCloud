@@ -15,13 +15,16 @@ concurrency:
 
 jobs:
   finalize:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Reverify dedicated FTMO Actions listener
         shell: bash
         run: |
           set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test -d /home/ubuntu/zennay-cloud
           SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
           state="$(systemctl is-active "$SERVICE" || true)"
           pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
