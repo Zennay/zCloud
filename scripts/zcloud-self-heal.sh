@@ -76,7 +76,10 @@ user_systemctl() {
 }
 
 legacy_violentmonkey_only() {
-  local marker="${HOME}/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
+  local runtime_home
+  runtime_home="$(getent passwd "${RUNTIME_USER}" 2>/dev/null | cut -d: -f6 || true)"
+  [[ -n "${runtime_home}" ]] || runtime_home="/home/${RUNTIME_USER}"
+  local marker="${runtime_home}/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
   [[ -f "${marker}" ]] &&
     grep -qi 'violentmonkey only' "${marker}" &&
     grep -q 'ExecCondition=/bin/false' "${marker}"
