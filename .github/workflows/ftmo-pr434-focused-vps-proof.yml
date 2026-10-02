@@ -1,25 +1,25 @@
-name: FTMO PR437 focused semantic cache proof
+name: FTMO PR438 exact-head provider validation proof
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr437-focused-vps-proof.yml"
+      - ".github/workflows/ftmo-pr434-focused-vps-proof.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: ftmo-pr437-focused-vps-proof
+  group: ftmo-pr438-exact-head-proof
   cancel-in-progress: false
 
 jobs:
   proof:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
-      TARGET_SHA: 2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0
+      TARGET_SHA: 39c26edf954753a0c6fa766c600d5f45a7f8d296
     steps:
       - name: Verify runner identity
         shell: bash
@@ -28,11 +28,11 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           echo "runner_host=$(hostname)"
 
-      - name: Fetch exact FTMO PR437 head
+      - name: Fetch exact FTMO PR438 head
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr437-focused"
+          src="$RUNNER_TEMP/ftmo-pr438-exact"
           rm -rf "$src"
           gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
@@ -43,28 +43,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr437-focused"
-          venv="$RUNNER_TEMP/ftmo-pr437-focused-venv"
+          src="$RUNNER_TEMP/ftmo-pr438-exact"
+          venv="$RUNNER_TEMP/ftmo-pr438-exact-venv"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
           "$venv/bin/python" -m pip install -q -e "$src"
 
-      - name: Prove semantic cache-progress boundary
+      - name: Prove provider-validation evidence boundary
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr437-focused"
-          venv="$RUNNER_TEMP/ftmo-pr437-focused-venv"
+          src="$RUNNER_TEMP/ftmo-pr438-exact"
+          venv="$RUNNER_TEMP/ftmo-pr438-exact-venv"
           cd "$src"
-          "$venv/bin/python" -m compileall -q \
-            src/prop_trading_ai/ops/autonomous_rollover.py \
-            src/prop_trading_ai/data/market/dukascopy_resume_cache.py \
-            src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py
-          "$venv/bin/python" -m pytest -q tests/test_autonomous_provider_retry.py
+          "$venv/bin/python" -m compileall -q src/prop_trading_ai/research/provider_validation.py
           "$venv/bin/python" -m pytest -q \
-            tests/test_dukascopy_tick_resume_cache.py \
-            tests/test_dukascopy_jetta_m1.py
+            tests/test_provider_validation_json_integrity.py \
+            tests/test_provider_validation.py \
+            tests/test_atomic_preresearch_evidence.py \
+            tests/test_research_machine.py
           "$venv/bin/python" -m pytest -q \
             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner \
             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
@@ -73,8 +71,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr437-focused"
-          venv="$RUNNER_TEMP/ftmo-pr437-focused-venv"
+          src="$RUNNER_TEMP/ftmo-pr438-exact"
+          venv="$RUNNER_TEMP/ftmo-pr438-exact-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q
 
@@ -82,26 +80,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/zcloud-pr437-focused-receipt"
+          work="$RUNNER_TEMP/zcloud-pr438-exact-receipt"
           rm -rf "$work"
           gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
           cd "$work"
           git checkout main >/dev/null
           mkdir -p runtime-evidence
-          cat > runtime-evidence/ftmo-pr437-focused-vps-proof.json <<EOF
+          cat > runtime-evidence/ftmo-pr438-exact-head-proof.json <<EOF
           {
             "schema_version": 1,
-            "scope": "ftmo-pr437-focused-vps-proof",
+            "scope": "ftmo-pr438-exact-head-proof",
             "target_sha": "$TARGET_SHA",
             "workflow_run_id": "$GITHUB_RUN_ID",
             "workflow_run_attempt": "$GITHUB_RUN_ATTEMPT",
             "result": "success",
             "runner_host": "$(hostname)",
             "tests": [
-              "compileall autonomous_rollover + resume-cache modules",
-              "test_autonomous_provider_retry.py",
-              "test_dukascopy_tick_resume_cache.py",
-              "test_dukascopy_jetta_m1.py",
+              "compileall provider_validation.py",
+              "provider validation filesystem/json/atomic integrity",
+              "research machine safety",
               "zero-cost workflow boundary",
               "full exact-head pytest suite"
             ],
@@ -115,12 +112,12 @@ jobs:
           EOF
           git config user.name "zcloud-automation"
           git config user.email "zcloud-automation@users.noreply.github.com"
-          git add runtime-evidence/ftmo-pr437-focused-vps-proof.json
+          git add runtime-evidence/ftmo-pr438-exact-head-proof.json
           if git diff --cached --quiet; then
             echo "Receipt unchanged"
             exit 0
           fi
-          git commit -m "Record FTMO PR437 focused VPS proof"
+          git commit -m "Record FTMO PR438 exact-head proof"
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               exit 0
