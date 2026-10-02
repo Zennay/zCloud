@@ -1,0 +1,16 @@
+{
+  "project": "ftmo",
+  "proof_scope": [
+    "compile Jetta provider",
+    "Jetta chronology regressions",
+    "autonomous deploy preflight lockstep",
+    "autonomous provider retry compatibility"
+  ],
+  "pull_request": 419,
+  "result": "success",
+  "runner_required": "vps-bb300bba",
+  "schema_version": 1,
+  "target_sha": "f92f9c9d7a6538710f779e5cb728366e8d19272d",
+  "workflow_run_attempt": 1,
+  "workflow_run_id": 36994022671
+}
