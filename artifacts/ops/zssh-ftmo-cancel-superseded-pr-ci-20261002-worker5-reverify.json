@@ -1,0 +1,105 @@
+{
+  "after": {
+    "in_progress": 1,
+    "pending": 1,
+    "queued": 5
+  },
+  "before": {
+    "in_progress": 1,
+    "pending": 2,
+    "queued": 5
+  },
+  "cancelled": [
+    {
+      "branch": "worker1/gen29-resume-cache-hardlink-integrity-20261002",
+      "id": 37008581122,
+      "latest_sha": "118e587f02db0030ed267cbd3e1f79f44c814cd3",
+      "pr": 446,
+      "reason": "stale_head_of_open_pr",
+      "sha": "a6f937058118b4a099274d485512e8c9f044fe8b",
+      "status": "queued"
+    }
+  ],
+  "cancelled_final_status": {
+    "37008581122": {
+      "conclusion": null,
+      "head_sha": "a6f937058118b4a099274d485512e8c9f044fe8b",
+      "status": "in_progress"
+    }
+  },
+  "host": "vps-bb300bba",
+  "kept": [
+    {
+      "id": 36996247136,
+      "reason": "already_terminal:completed:failure"
+    },
+    {
+      "branch": "worker/ftmo-checkpoint-zcloud-proof-20261001",
+      "id": 36941649689,
+      "reason": "no_safe_cancel_proof",
+      "sha": "33b56836071836f6f5f561de231472eb7113a355",
+      "status": "queued"
+    },
+    {
+      "branch": "worker2/ftmo-research-heartbeat-zcloud-proof-20261001",
+      "id": 36942167531,
+      "reason": "no_safe_cancel_proof",
+      "sha": "e2d2fb2f5d862f76b94642b5251ae9a46417d7fa",
+      "status": "queued"
+    },
+    {
+      "branch": "main",
+      "id": 37008538183,
+      "reason": "current_main",
+      "sha": "2eca20de3cdec21873874d92902c3d954d3d9b9b",
+      "status": "queued"
+    }
+  ],
+  "main_sha": "d06ab6efe6a5b2e664f570c05ac6de5133df3280",
+  "open_pr_heads": [
+    {
+      "head_ref": "worker1/gen29-resume-cache-hardlink-integrity-20261002",
+      "head_sha": "118e587f02db0030ed267cbd3e1f79f44c814cd3",
+      "number": 446
+    },
+    {
+      "head_ref": "worker2/gen29-provider-validation-filesystem-integrity-main-20261002",
+      "head_sha": "683768c80816096057dd8bd52a77f96e44b1b9d5",
+      "number": 439
+    }
+  ],
+  "preflight": {
+    "pr421_head_sha": "44c28172f2d6db168f0d3271bf859fb43b82e3d5",
+    "pr421_state": "closed",
+    "target_not_current_main": true,
+    "target_not_latest_open_pr_head": true,
+    "target_run_conclusion": "failure",
+    "target_run_head_sha": "44c28172f2d6db168f0d3271bf859fb43b82e3d5",
+    "target_run_status": "completed"
+  },
+  "protected_runs": {
+    "37003576188": {
+      "conclusion": "success",
+      "head_branch": "main",
+      "head_sha": "150ccd1b5deb4388ed1b1c6c29ac7138074ead51",
+      "status": "completed"
+    },
+    "37003576200": {
+      "conclusion": "cancelled",
+      "head_branch": "main",
+      "head_sha": "150ccd1b5deb4388ed1b1c6c29ac7138074ead51",
+      "status": "completed"
+    },
+    "37003581840": {
+      "conclusion": "cancelled",
+      "head_branch": "main",
+      "head_sha": "150ccd1b5deb4388ed1b1c6c29ac7138074ead51",
+      "status": "completed"
+    }
+  },
+  "protected_sha": "150ccd1b5deb4388ed1b1c6c29ac7138074ead51",
+  "queue_id": "zssh-ftmo-cancel-superseded-pr-ci-20261002-worker5",
+  "runner_name": "zcloud-vps-1",
+  "schema_version": 1,
+  "workflow_run_id": "37007942596"
+}
