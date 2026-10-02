@@ -1,0 +1,57 @@
+name: Recover FTMO research Actions runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-runner-recovery-20261002.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-research-runner-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Recover dedicated FTMO research runner safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          service="actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
+
+          if [[ "${RUNNER_NAME:-}" == *ftmo* ]]; then
+            echo "FTMO_RUNNER_RECOVERY=self_runner_noop"
+          elif ! systemctl is-active --quiet "$service"; then
+            echo "FTMO_RUNNER_RECOVERY=starting_inactive_listener"
+            sudo -n systemctl reset-failed "$service" || true
+            if ! sudo -n systemctl start "$service"; then
+              sudo -n systemctl enable --now "$service"
+            fi
+          elif pgrep -u ftmo-runner -f 'Runner\.Worker' >/dev/null; then
+            echo "FTMO_RUNNER_RECOVERY=inflight_worker_preserved"
+          else
+            echo "FTMO_RUNNER_RECOVERY=listener_active_guarding"
+            sleep 5
+            if pgrep -u ftmo-runner -f 'Runner\.Worker' >/dev/null; then
+              echo "FTMO_RUNNER_RECOVERY=worker_appeared_preserved"
+            else
+              echo "FTMO_RUNNER_RECOVERY=restarting_idle_stuck_listener"
+              sudo -n systemctl restart "$service"
+            fi
+          fi
+
+          for attempt in $(seq 1 20); do
+            if systemctl is-active --quiet "$service"; then
+              break
+            fi
+            sleep 2
+          done
+          systemctl is-active "$service"
+          systemctl show "$service" -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
+          echo "FTMO_RUNNER_RECOVERY=green"
