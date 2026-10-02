@@ -2328,8 +2328,23 @@ def portfolio_queue_allocate():
             if not lane_candidates:
                 continue
             used_projects={str(item.get('project_id') or '') for item in selected}
+            # Portfolio fairness: once FTMO already owns a worker, reserve the
+            # next available slot for another executable project when possible.
+            # This changes worker attention only; FTMO keeps its P0 queue and
+            # VPS/compute priority, and a second FTMO lane remains eligible when
+            # no non-FTMO work can safely run.
+            fairness_candidates=lane_candidates
+            if (
+                GLOBAL_CHATGPT_WORKER_LIMIT > 1
+                and 'ftmo' in used_projects
+                and any(str(pair[0]['project_id']) != 'ftmo' for pair in lane_candidates)
+            ):
+                fairness_candidates=[
+                    pair for pair in lane_candidates
+                    if str(pair[0]['project_id']) != 'ftmo'
+                ]
             row,lane=min(
-                lane_candidates,
+                fairness_candidates,
                 key=lambda pair: (
                     _portfolio_priority_rank(pair[0]['priority']),
                     1 if str(pair[0]['project_id']) in used_projects else 0,
