@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
-      TARGET_SHA: d2ab9dcf8be9fa670351878dee8046ce5bca7574
+      TARGET_SHA: bfc459da2c6966c28056ed1b502f3f2dd4da0e95
     steps:
       - name: Fetch exact FTMO PR412 head
         shell: bash
@@ -67,6 +67,8 @@ jobs:
           "$venv/bin/python" -m pytest -q \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_group_writable_day_entry \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_symlink_substitution_for_day_entry \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_dangling_symlink_day_entry \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_dangling_symlink_cache_root \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_native_snapshot_retrieved_before_cached_bar_close \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_load_rejects_rehashed_impossible_native_retrieval_timing \
             tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_tick_snapshot_retrieved_before_source_hour_completion
