@@ -1,0 +1,69 @@
+name: Enqueue Worker5 FTMO runner recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-worker5-runner-recovery-enqueue.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-worker5-runner-recovery-enqueue
+  cancel-in-progress: false
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue exact zSSH runner recovery in SQLite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import importlib.util
+          import json
+          from pathlib import Path
+
+          queue_id = "zssh-ftmo-worker5-runner-recovery-20261002"
+          server_path = Path("/home/ubuntu/zennay-cloud/server.py")
+          spec = importlib.util.spec_from_file_location("zcloud_server", server_path)
+          server = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(server)
+          server.DB = Path("/home/ubuntu/zennay-cloud/history.db")
+          server.init_db()
+
+          with server.connect() as conn:
+              row = conn.execute(
+                  "SELECT id,project_id,title,priority,status,eligible,worker_slot FROM portfolio_queue WHERE id=?",
+                  (queue_id,),
+              ).fetchone()
+          if row is None:
+              result = server.portfolio_queue_enqueue(
+                  "zssh",
+                  "Recover FTMO Actions listener for Worker5 deployment",
+                  "P0",
+                  "On vps-bb300bba recover only the FTMO GitHub Actions listener so queued deploy run 37036478118 for SHA 756e00da4712af0612ac7a4fe2640c3fbd0af058 can execute; preserve active Runner.Worker jobs; prove listener active after recovery.",
+                  "https://github.com/Zennay/Ftmo/actions/runs/37036478118",
+                  None,
+                  queue_id,
+              )
+              print("QUEUE_ENQUEUE_RESULT=" + json.dumps(result, sort_keys=True, default=str))
+          with server.connect() as conn:
+              row = conn.execute(
+                  "SELECT id,project_id,title,priority,status,eligible,worker_slot FROM portfolio_queue WHERE id=?",
+                  (queue_id,),
+              ).fetchone()
+          if row is None:
+              raise SystemExit("recovery queue row missing after enqueue")
+          item = dict(row)
+          if item["project_id"] != "zssh" or item["priority"] != "P0":
+              raise SystemExit("recovery queue row has wrong ownership/priority")
+          if item["status"] not in {"queued","claimed","running","verifying","in_progress","done"}:
+              raise SystemExit("recovery queue row is not runnable or complete")
+          print("FTMO_WORKER5_RECOVERY_QUEUE_GREEN=" + json.dumps(item, sort_keys=True, default=str))
+          PY
