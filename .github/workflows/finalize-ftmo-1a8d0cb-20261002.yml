@@ -1,0 +1,114 @@
+name: Finalize FTMO queue assignment 1a8d0cb
+
+on:
+  push:
+    branches: [ops/finalize-ftmo-1a8d0cb197d8d8cd-20261002]
+    paths:
+      - '.github/workflows/finalize-ftmo-1a8d0cb-20261002.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Verify FTMO evidence and persist SQLite DONE
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          export FTMO_RUN_JSON="$(gh api repos/Zennay/Ftmo/actions/runs/36994271969)"
+          export FTMO_RECEIPT_JSON="$(gh api 'repos/Zennay/Ftmo/contents/artifacts/autonomous_runtime/vps-controller-receipt.json?ref=db6b31c5e15a9a197c4e31247bc191887fc4b546' --jq '.content' | tr -d '\n' | base64 -d)"
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          queue_id = 'ftmo-1a8d0cb197d8d8cd'
+          merge_sha = '5d21bf4762613443e44381bb2ade4d3834946a8b'
+          deploy_run_id = 36994271969
+          exact_head_run_id = 36994022671
+          receipt_commit = 'db6b31c5e15a9a197c4e31247bc191887fc4b546'
+          run = json.loads(os.environ['FTMO_RUN_JSON'])
+          receipt = json.loads(os.environ['FTMO_RECEIPT_JSON'])
+
+          if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+              raise RuntimeError(f'FTMO deploy run not green: {run.get("status")}/{run.get("conclusion")}')
+          if run.get('head_sha') != merge_sha:
+              raise RuntimeError(f'FTMO deploy run head mismatch: {run.get("head_sha")}')
+          checks = {
+              'runtime_revision': receipt.get('runtime_revision') == merge_sha,
+              'source_main_sha': receipt.get('source_main_sha') == merge_sha,
+              'deployment_workflow_run_id': str(receipt.get('deployment_workflow_run_id')) == str(deploy_run_id),
+              'research_cycle_ok': receipt.get('research_cycle_ok') is True,
+              'generation_number': (receipt.get('research') or {}).get('generation_number') == 29,
+              'next_stage_provider_foundation': (receipt.get('research') or {}).get('next_stage') == 'provider_foundation',
+              'development_sealed': (receipt.get('research') or {}).get('development_access_allowed') is False,
+              'walk_forward_sealed': (receipt.get('research') or {}).get('walk_forward_access_allowed') is False,
+              'final_holdout_sealed': (receipt.get('research') or {}).get('final_holdout_access_allowed') is False,
+              'walk_forward_not_accessed': ((receipt.get('research_controller') or {}).get('outcome_execution') or {}).get('walk_forward_accessed') is False,
+              'final_holdout_not_accessed': ((receipt.get('research_controller') or {}).get('outcome_execution') or {}).get('final_holdout_accessed') is False,
+              'outcomes_not_executed': ((receipt.get('research_controller') or {}).get('outcome_execution') or {}).get('research_outcomes_executed') is False,
+              'live_sealed': receipt.get('live_trading_allowed') is False,
+              'broker_sealed': receipt.get('broker_order_submission_allowed') is False,
+              'zero_cost': receipt.get('autonomous_cloud_budget_usd') == '0.00',
+          }
+          bad = [name for name, ok in checks.items() if not ok]
+          if bad:
+              raise RuntimeError('FTMO receipt evidence failed: ' + ', '.join(bad))
+          print('FTMO_EVIDENCE_VERIFIED', json.dumps(checks, sort_keys=True))
+
+          base = 'http://127.0.0.1:8765'
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=10) as response:
+                  return json.load(response)
+          def post(path, payload):
+              req = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode(),
+                  method='POST',
+                  headers={'Content-Type': 'application/json'},
+              )
+              with urllib.request.urlopen(req, timeout=10) as response:
+                  return json.load(response)
+
+          live = get('/api/portfolio-queue?all=1')
+          item = next((x for x in live.get('items', []) if x.get('queue_id') == queue_id), None)
+          if not item:
+              raise RuntimeError('FTMO queue item missing')
+          if str(item.get('project_id') or '').lower() != 'ftmo':
+              raise RuntimeError('FTMO queue project mismatch')
+          status = str(item.get('status') or '').lower()
+          if status == 'done' and not bool(item.get('eligible')):
+              print('QUEUE_ALREADY_DONE', json.dumps(item, sort_keys=True))
+          else:
+              if status not in {'claimed', 'running', 'verifying'}:
+                  raise RuntimeError('FTMO queue ownership is not active: ' + status)
+              slot = item.get('worker_slot')
+              if slot is None:
+                  raise RuntimeError('FTMO queue worker_slot missing')
+              evidence = (
+                  'PR #419 merged as ' + merge_sha + '; exact-head VPS proof run ' + str(exact_head_run_id) +
+                  ' SUCCESS; autonomous VPS verify/deploy run ' + str(deploy_run_id) +
+                  ' SUCCESS; receipt commit ' + receipt_commit +
+                  ' confirms Gen29 provider_foundation with development/walk-forward/final-holdout/live/broker sealed and cloud budget 0.00.'
+              )
+              result = post('/api/portfolio-queue', {
+                  'action': 'result',
+                  'worker_slot': slot,
+                  'queue_id': queue_id,
+                  'result': 'DONE',
+                  'evidence': evidence,
+              })
+              print('QUEUE_DONE_WRITE', json.dumps(result, sort_keys=True))
+              if not result.get('ok'):
+                  raise RuntimeError('FTMO DONE write was not accepted')
+
+          verify = get('/api/portfolio-queue?all=1')
+          final = next((x for x in verify.get('items', []) if x.get('queue_id') == queue_id), None)
+          if not final or str(final.get('status') or '').lower() != 'done' or bool(final.get('eligible')):
+              raise RuntimeError('FTMO queue did not persist DONE')
+          print('QUEUE_DONE_VERIFIED', json.dumps(final, sort_keys=True))
+          PY
