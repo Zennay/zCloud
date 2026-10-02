@@ -55,7 +55,7 @@ assert.strictEqual(api.ageText(null), "—");
 assert.strictEqual(api.ageText(3600), "60 min ago");
 
 // wiring: overview renders the panel, refresh loads it, click handler + endpoint are hooked up
-const overview = src.slice(src.indexOf("function overview(){"), src.indexOf("\\nfunction aiRunPanel"));
+const overview = src.slice(src.indexOf("function overview(){"), src.indexOf("\nfunction aiRunPanel"));
 assert.ok(overview.includes("${workerDebugPanel()}"));
 assert.ok(overview.includes('data-disclosure="automation-settings"'));
 assert.ok(overview.indexOf('class="project-grid" id="projectGrid"') < overview.indexOf("${workerDebugPanel()}"), "worker diagnostics must stay below primary project actions");
