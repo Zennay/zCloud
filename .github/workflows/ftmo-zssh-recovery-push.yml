@@ -1,0 +1,66 @@
+name: Push zSSH FTMO runner recovery worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-zssh-recovery-push.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Push allocated zSSH recovery worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=10) as response:
+                  return json.load(response)
+
+          def post(path, payload):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={
+                      "Content-Type": "application/json",
+                      "X-ZCloud-Actor": "ftmo-zssh-recovery-push",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  return json.load(response)
+
+          queue = get("/api/portfolio-queue?all=1")
+          item = next(
+              (
+                  row
+                  for row in queue.get("items", [])
+                  if row.get("queue_id") == "zssh-ftmo-runner-recovery-20261002"
+              ),
+              None,
+          )
+          if not item:
+              raise SystemExit("FTMO runner recovery queue item missing")
+          if item.get("project_id") != "zssh" or item.get("priority") != "P0":
+              raise SystemExit(f"unexpected queue assignment: {item!r}")
+
+          result = post(
+              "/api/runner-control",
+              {"project_id": "zssh::w2", "action": "push"},
+          )
+          print("PUSH_RESULT", json.dumps(result, sort_keys=True))
+
+          workers = get("/api/worker-status")
+          print("WORKER_STATUS", json.dumps(workers, sort_keys=True))
+          PY
