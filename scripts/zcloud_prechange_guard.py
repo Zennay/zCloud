@@ -30,6 +30,7 @@ DEFAULT_HEALTH_URL = os.environ.get(
 )
 MANAGED_PATHS = (
     "server.py",
+    "lane_generator.py",
     "enhancements.py",
     "projects.json",
     "project-layout.json",
