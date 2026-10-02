@@ -1,4 +1,4 @@
-name: FTMO Worker1 exact day-cache proof
+name: FTMO Worker1 exact day-cache full proof
 
 on:
   push:
@@ -11,10 +11,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ftmo-worker1-day-cache-proof
+  cancel-in-progress: true
+
 jobs:
   prove:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       FTMO_PROOF_SHA: dab3151a8484ed4e38ef8ab270cf819c42de2cfc
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
@@ -36,12 +40,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "$FTMO_PROOF_SHA"
           echo "FTMO_REPO=$PWD" >> "$GITHUB_ENV"
           echo "FTMO_DEPS=$root/deps" >> "$GITHUB_ENV"
+          echo "FTMO_TMP=$root/tmp" >> "$GITHUB_ENV"
 
-      - name: Install isolated CI dependencies
+      - name: Install isolated CI dependencies and package
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$FTMO_DEPS" "$FTMO_TMP"
           python3 -m pip install --disable-pip-version-check --target "$FTMO_DEPS" -r "$FTMO_REPO/requirements-ci.txt"
+          python3 -m pip install --disable-pip-version-check --target "$FTMO_DEPS" --no-deps "$FTMO_REPO"
 
       - name: Compile reconciled day/hour cache stack
         shell: bash
@@ -53,14 +60,67 @@ jobs:
             "$FTMO_REPO/src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py" \
             "$FTMO_REPO/src/prop_trading_ai/data/market/dukascopy_public_ingest.py"
 
-      - name: Prove cache integrity and sealed zero-cost boundaries
+      - name: Build exact memory-bounded test plan
         shell: bash
         run: |
           set -euo pipefail
           cd "$FTMO_REPO"
           export PYTHONPATH="$FTMO_DEPS:$FTMO_REPO/src"
-          python3 -m pytest -q \
-            tests/test_dukascopy_jetta_m1.py \
-            tests/test_dukascopy_tick_resume_cache.py \
-            tests/test_autonomous_provider_retry.py \
-            tests/test_zero_cost_workflow_boundary.py
+          export TMPDIR="$FTMO_TMP"
+          mkdir -p .scratch
+          python3 - <<'PY'
+          from pathlib import Path
+          import io
+          import contextlib
+          import pytest
+
+          class Collector:
+              paths = None
+              count = None
+
+              def pytest_collection_finish(self, session):
+                  self.count = len(session.items)
+                  self.paths = sorted(
+                      {
+                          Path(str(item.path)).resolve().relative_to(Path.cwd().resolve()).as_posix()
+                          for item in session.items
+                      }
+                  )
+
+          collector = Collector()
+          captured = io.StringIO()
+          with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+              exit_code = pytest.main(["--collect-only", "-q"], plugins=[collector])
+          if exit_code != pytest.ExitCode.OK or collector.paths is None or collector.count is None:
+              raise SystemExit("pytest collection failed: " + captured.getvalue()[-2000:])
+          if not collector.paths or collector.count <= 0:
+              raise SystemExit("pytest collected no tests")
+          Path(".scratch/worker1-test-files.txt").write_text(
+              "\n".join(collector.paths) + "\n", encoding="utf-8"
+          )
+          Path(".scratch/worker1-test-count.txt").write_text(
+              str(collector.count) + "\n", encoding="utf-8"
+          )
+          print(f"collected_tests={collector.count}")
+          print(f"test_files={len(collector.paths)}")
+          PY
+
+      - name: Run exact full unit suite in memory-bounded file batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$FTMO_REPO"
+          export PYTHONPATH="$FTMO_DEPS:$FTMO_REPO/src"
+          export TMPDIR="$FTMO_TMP"
+          expected_count="$(cat .scratch/worker1-test-count.txt)"
+          executed_files=0
+          while IFS= read -r test_file; do
+            [[ -n "$test_file" ]] || continue
+            echo "::group::$test_file"
+            python3 -m pytest -q "$test_file"
+            echo "::endgroup::"
+            executed_files=$((executed_files + 1))
+          done < .scratch/worker1-test-files.txt
+          test "$executed_files" -gt 0
+          echo "planned_collected_tests=$expected_count"
+          echo "executed_test_files=$executed_files"
