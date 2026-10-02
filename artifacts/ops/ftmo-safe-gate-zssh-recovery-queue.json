@@ -6,13 +6,13 @@
     "project_id": "zssh",
     "queue_id": "zssh-ftmo-safe-gate-3b512f56",
     "status": "queued",
-    "updated_at": "2026-10-02T01:08:44.231155+00:00",
+    "updated_at": "2026-10-02T01:13:03.415266+00:00",
     "worker_slot": null
   },
-  "receipt_base_sha": "ccd9d5713ae1cbb88612d946c7c4b3b415f3fb26",
+  "receipt_base_sha": "90526d22d1a6ec9eb53388e2073afa6bb9c52a61",
   "schema_version": 1,
   "scope": "ftmo-safe-gate-zssh-recovery-queue",
   "workflow_run_attempt": "1",
-  "workflow_run_id": "36949499385",
-  "workflow_source_sha": "ccd9d5713ae1cbb88612d946c7c4b3b415f3fb26"
+  "workflow_run_id": "36949615519",
+  "workflow_source_sha": "90526d22d1a6ec9eb53388e2073afa6bb9c52a61"
 }
