@@ -67,3 +67,5 @@ jobs:
               raise SystemExit("recovery queue row is not runnable or complete")
           print("FTMO_WORKER5_RECOVERY_QUEUE_GREEN=" + json.dumps(item, sort_keys=True, default=str))
           PY
+
+# trigger 2026-10-02T16:52Z
