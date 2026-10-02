@@ -1,0 +1,45 @@
+name: FTMO stale CI queue cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-stale-ci-cleanup.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-stale-ci-cleanup
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Cancel only superseded FTMO runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          protected="36993878017 36993878021 36993884258 36993979548"
+          stale="36947347085 36947148086 36946590871 36946381997 36992787393 36992787409 36992539464 36992539472 36992539529 36992448495 36991580711 36991581022 36991324051 36991324001 36991312190"
+          for run_id in $stale; do
+            case " $protected " in
+              *" $run_id "*) echo "refusing protected run $run_id" >&2; exit 1 ;;
+            esac
+            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .status)"
+            head_sha="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .head_sha)"
+            if [[ "$status" == "queued" || "$status" == "in_progress" || "$status" == "pending" ]]; then
+              gh run cancel "$run_id" --repo Zennay/Ftmo
+              echo "cancelled=$run_id status=$status head=$head_sha"
+            else
+              echo "left=$run_id status=$status head=$head_sha"
+            fi
+          done
+          for run_id in $protected; do
+            status="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .status)"
+            echo "protected=$run_id status=$status"
+          done
