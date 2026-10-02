@@ -14,13 +14,13 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      MIXLAB_SHA: f089e0ddfc22347b7ccb08f88c5dfa6ec12663cf
+      MIXLAB_SHA: df182461432e7f6e983f72614d850ce7daec0088
     steps:
       - name: Checkout exact MixLab foundation
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: Zennay/Mixlab
-          ref: f089e0ddfc22347b7ccb08f88c5dfa6ec12663cf
+          ref: df182461432e7f6e983f72614d850ce7daec0088
           path: mixlab-foundation
           persist-credentials: false
       - name: Test and render synthetic proof on one CPU
