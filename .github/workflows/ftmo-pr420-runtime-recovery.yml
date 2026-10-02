@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   recover:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
       TARGET_SHA: fd409196cb6a4d83c258343a3799d27d916c07d6
