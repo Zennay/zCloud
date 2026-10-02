@@ -1,0 +1,72 @@
+name: FTMO PR407 exact-head proof
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ftmo-pr407-exact-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr407-exact-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    env:
+      TARGET_SHA: b3fc717fdf255fba039fed382274b0fa73c7ddff
+    steps:
+      - name: Fetch exact FTMO PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-proof"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR407_EXACT_SHA=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-proof"
+          venv="$RUNNER_TEMP/ftmo-pr407-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile changed provenance module
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-proof"
+          venv="$RUNNER_TEMP/ftmo-pr407-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q             src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py
+          echo "FTMO_PR407_COMPILE_GREEN=1"
+
+      - name: Prove hourly provenance regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-proof"
+          venv="$RUNNER_TEMP/ftmo-pr407-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q tests/test_dukascopy_tick_resume_cache.py
+          echo "FTMO_PR407_TARGETED_TESTS_GREEN=1"
+
+      - name: Prove zero-cost boundary remains sealed
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-proof"
+          venv="$RUNNER_TEMP/ftmo-pr407-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q tests/test_zero_cost_workflow_boundary.py
+          echo "FTMO_PR407_ZERO_COST_BOUNDARY_GREEN=1"
