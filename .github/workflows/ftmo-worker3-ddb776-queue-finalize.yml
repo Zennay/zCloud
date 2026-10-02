@@ -1,0 +1,221 @@
+name: Finalize FTMO Worker 3 ddb776 queue item
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-worker3-ddb776-queue-finalize.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Reverify exact FTMO proof and sealed live runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth status >/dev/null 2>&1
+
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          def gh_json(path):
+              raw = subprocess.check_output(
+                  ["gh", "api", "-H", "X-GitHub-Api-Version: 2022-11-28", path],
+                  text=True,
+                  stderr=subprocess.DEVNULL,
+              )
+              return json.loads(raw)
+
+          exact_test = gh_json("repos/Zennay/Ftmo/actions/runs/36975300672")
+          deploy = gh_json("repos/Zennay/Ftmo/actions/runs/36975762886")
+          pr = gh_json("repos/Zennay/Ftmo/pulls/399")
+
+          if exact_test.get("status") != "completed" or exact_test.get("conclusion") != "success":
+              raise SystemExit(
+                  f"exact-head test proof not green: {exact_test.get('status')}/{exact_test.get('conclusion')}"
+              )
+          if exact_test.get("head_sha") != "b30aff7144e40a1febb09e58757d8cfad58b518c":
+              raise SystemExit(f"exact-head test SHA mismatch: {exact_test.get('head_sha')!r}")
+          if deploy.get("status") != "completed" or deploy.get("conclusion") != "success":
+              raise SystemExit(
+                  f"post-merge runtime verify not green: {deploy.get('status')}/{deploy.get('conclusion')}"
+              )
+          if deploy.get("head_sha") != "762e99765de0d2714c020bdff8c38ce29759862d":
+              raise SystemExit(f"deploy SHA mismatch: {deploy.get('head_sha')!r}")
+          if not pr.get("merged") or pr.get("merge_commit_sha") != "762e99765de0d2714c020bdff8c38ce29759862d":
+              raise SystemExit("PR #399 merge proof mismatch")
+
+          root = Path("/opt/ftmo-autonomous")
+          status_path = root / ".scratch/autonomy/status.json"
+          if not status_path.is_file() or status_path.is_symlink():
+              raise SystemExit("live FTMO status missing or unsafe")
+          status = json.loads(status_path.read_text(encoding="utf-8"))
+          research = status.get("research") or {}
+          controller = status.get("research_controller") or {}
+          compute = controller.get("compute") or {}
+          loop = controller.get("generation_loop") or {}
+          outcome = controller.get("outcome_execution") or {}
+
+          if status.get("runtime_revision") != "762e99765de0d2714c020bdff8c38ce29759862d":
+              raise SystemExit(f"live runtime revision mismatch: {status.get('runtime_revision')!r}")
+          if str(status.get("deployment_workflow_run_id")) != "36975762886":
+              raise SystemExit(
+                  f"live deployment workflow mismatch: {status.get('deployment_workflow_run_id')!r}"
+              )
+          if status.get("research_cycle_ok") is not True:
+              raise SystemExit("live research cycle is not green")
+          if compute.get("ok") is not True or loop.get("enabled") is not True:
+              raise SystemExit("controller compute/generation loop not healthy")
+          if research.get("generation_number") != 29:
+              raise SystemExit(f"unexpected generation: {research.get('generation_number')!r}")
+          if controller.get("stage") != "provider_foundation":
+              raise SystemExit(f"unexpected controller stage: {controller.get('stage')!r}")
+          if status.get("live_trading_allowed") is not False:
+              raise SystemExit("live-trading boundary changed")
+          if status.get("broker_order_submission_allowed") is not False:
+              raise SystemExit("broker-order boundary changed")
+          if outcome.get("research_outcomes_executed") is not False:
+              raise SystemExit("research outcomes were unexpectedly executed")
+          if outcome.get("walk_forward_accessed") is not False:
+              raise SystemExit("walk-forward was unexpectedly accessed")
+          if outcome.get("final_holdout_accessed") is not False:
+              raise SystemExit("final holdout was unexpectedly accessed")
+
+          print("FTMO_WORKER3_DDB776_PROOF_GREEN", json.dumps({
+              "exact_test_run_id": exact_test.get("id"),
+              "exact_test_sha": exact_test.get("head_sha"),
+              "deploy_run_id": deploy.get("id"),
+              "deploy_sha": deploy.get("head_sha"),
+              "merge_sha": pr.get("merge_commit_sha"),
+              "runtime_revision": status.get("runtime_revision"),
+              "generation_number": research.get("generation_number"),
+              "controller_action": controller.get("action"),
+              "walk_forward_accessed": outcome.get("walk_forward_accessed"),
+              "final_holdout_accessed": outcome.get("final_holdout_accessed"),
+              "live_trading_allowed": status.get("live_trading_allowed"),
+              "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
+          }, sort_keys=True))
+          PY
+
+      - name: Finalize exact SQLite queue assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import importlib.util
+          import json
+          import sqlite3
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          queue_id = "ftmo-ddb776eec40af8cf"
+          expected_project = "ftmo"
+          live_root = Path("/home/ubuntu/zennay-cloud")
+          server_path = live_root / "server.py"
+          db_path = live_root / "history.db"
+          if not server_path.is_file() or not db_path.is_file():
+              raise SystemExit("live zCloud server/history.db missing")
+
+          sys.path.insert(0, str(live_root))
+          spec = importlib.util.spec_from_file_location("zcloud_live_server", server_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("cannot load live zCloud server module")
+          server = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(server)
+          server.DB = db_path
+
+          def read_item():
+              with sqlite3.connect(db_path) as c:
+                  c.row_factory = sqlite3.Row
+                  row = c.execute(
+                      "SELECT queue_id,project_id,title,status,eligible,worker_slot,evidence,updated_at "
+                      "FROM portfolio_queue WHERE queue_id=?",
+                      (queue_id,),
+                  ).fetchone()
+              return dict(row) if row else None
+
+          item = read_item()
+          if item is None:
+              raise SystemExit("queue item missing")
+          print("QUEUE_BEFORE=" + json.dumps(item, sort_keys=True))
+          if item["project_id"] != expected_project:
+              raise SystemExit(f"project mismatch: {item['project_id']}")
+
+          evidence = (
+              "Worker 3 Generation-29 provider-foundation liveness package completed. "
+              "PR #399 exact head b30aff7144e40a1febb09e58757d8cfad58b518c passed "
+              "self-hosted full Test suite 36975300672 SUCCESS; squash merge "
+              "762e99765de0d2714c020bdff8c38ce29759862d. Post-merge Verify autonomous VPS runtime "
+              "36975762886 SUCCESS atomically deployed/compiled the resume-cache runtime, observed fresh "
+              "persistent self-advance, persisted receipt commit da7ba16b9bad27b71d0b40c637834700126ca6a3, "
+              "and verified installed code. Live Generation 29 remains outcome-free at provider_foundation "
+              "with walk-forward/final-holdout false, live/broker false, cloud budget 0.00."
+          )
+
+          if item["status"] == "done":
+              print("QUEUE_ALREADY_DONE=1")
+          elif item["status"] in {"claimed", "running", "verifying", "in_progress"} and item["worker_slot"] is not None:
+              result = server.portfolio_queue_finish(
+                  int(item["worker_slot"]),
+                  queue_id,
+                  "DONE",
+                  evidence,
+              )
+              print("QUEUE_FINISH_RESULT=" + json.dumps(result, sort_keys=True, default=str))
+              if not result.get("updated"):
+                  raise SystemExit("portfolio_queue_finish refused active assignment")
+          elif item["status"] == "queued" and item["worker_slot"] is None:
+              ts = datetime.now(timezone.utc).isoformat()
+              with sqlite3.connect(db_path, timeout=10) as c:
+                  c.execute("BEGIN IMMEDIATE")
+                  current = c.execute(
+                      "SELECT status,worker_slot,project_id FROM portfolio_queue WHERE queue_id=?",
+                      (queue_id,),
+                  ).fetchone()
+                  if current is None:
+                      raise SystemExit("queue item disappeared")
+                  if current[2] != expected_project or current[0] != "queued" or current[1] is not None:
+                      raise SystemExit(f"queue item changed during finalize: {current!r}")
+                  cur = c.execute(
+                      """
+                      UPDATE portfolio_queue
+                      SET status='done',eligible=0,evidence=?,blocker='',
+                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                      WHERE queue_id=? AND project_id=? AND status='queued' AND worker_slot IS NULL
+                      """,
+                      (evidence, ts, queue_id, expected_project),
+                  )
+                  if cur.rowcount != 1:
+                      raise SystemExit("atomic queued completion did not update exactly one row")
+              print("QUEUE_UNCLAIMED_DONE=1")
+          else:
+              raise SystemExit(
+                  "refusing nonstandard queue mutation; "
+                  f"status={item['status']} worker_slot={item['worker_slot']}"
+              )
+
+          final = read_item()
+          print("QUEUE_AFTER=" + json.dumps(final, sort_keys=True))
+          if (
+              not final
+              or final["project_id"] != expected_project
+              or final["status"] != "done"
+              or int(final["eligible"] or 0) != 0
+              or final["worker_slot"] is not None
+          ):
+              raise SystemExit("queue final state is not done/eligible=0/unclaimed")
+          if "36975762886" not in str(final.get("evidence") or ""):
+              raise SystemExit("queue evidence did not persist runtime proof")
+          print("ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1")
+          PY
