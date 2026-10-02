@@ -1,0 +1,310 @@
+name: Recover exact FTMO safe-gate runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-exact-safe-gate-runtime-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-ftmo-exact-safe-gate-3b512f56
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 3b512f5631984a46072495727214bb7bf03a02ba
+      FTMO_STABLE_ROOT: /opt/ftmo-autonomous
+      FTMO_DEPLOY_RUN: "36973324400"
+    steps:
+      - name: Verify live zSSH assignment and FTMO lane state
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth status >/dev/null 2>&1
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import urllib.request
+
+          queue_id = "zssh-ftmo-safe-gate-3b512f56"
+          with urllib.request.urlopen(
+              "http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10
+          ) as response:
+              payload = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(payload)
+          if not item:
+              raise SystemExit(f"{queue_id} missing from live SQLite queue")
+          if str(item.get("project_id") or "").lower() != "zssh":
+              raise SystemExit("safe-gate assignment is not owned by zssh")
+          if str(item.get("priority") or "").upper() != "P0":
+              raise SystemExit("safe-gate assignment is not P0")
+          if str(item.get("status") or "").lower() not in {
+              "queued", "claimed", "in_progress", "running", "verifying"
+          }:
+              raise SystemExit(f"safe-gate assignment is not runnable: {item.get('status')!r}")
+
+          raw = subprocess.check_output(
+              ["gh", "api", "repos/Zennay/Ftmo/actions/runs/36973324400"],
+              text=True,
+              stderr=subprocess.DEVNULL,
+          )
+          run = json.loads(raw)
+          if run.get("status") == "in_progress":
+              raise SystemExit(
+                  "newer normal FTMO deploy is already in progress; refusing a concurrent runtime mutation"
+              )
+          print("FTMO_SAFE_GATE_QUEUE_GREEN", json.dumps({
+              "queue_id": queue_id,
+              "status": item.get("status"),
+              "worker_slot": item.get("worker_slot"),
+              "normal_deploy_run": run.get("id"),
+              "normal_deploy_status": run.get("status"),
+          }, sort_keys=True))
+          PY
+
+      - name: Fetch exact audited FTMO revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-safe-gate-exact"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_EXACT_SOURCE_SHA=$TARGET_SHA"
+
+      - name: Capture immutable recovery baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["FTMO_STABLE_ROOT"])
+          status_path = root / ".scratch/autonomy/status.json"
+          status = {}
+          if status_path.is_file() and not status_path.is_symlink():
+              try:
+                  status = json.loads(status_path.read_text(encoding="utf-8"))
+              except (json.JSONDecodeError, OSError):
+                  status = {}
+          research = status.get("research") or {}
+          baseline = {
+              "completed_at_utc": status.get("completed_at_utc"),
+              "runtime_revision": status.get("runtime_revision"),
+              "generation_number": research.get("generation_number"),
+              "generation_id": research.get("generation_id"),
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "ftmo-safe-gate-baseline.json"
+          path.write_text(json.dumps(baseline, sort_keys=True) + "\n", encoding="utf-8")
+          print("FTMO_SAFE_GATE_BASELINE", json.dumps(baseline, sort_keys=True))
+          PY
+
+      - name: Reconcile deterministic runtime only
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-safe-gate-exact"
+          root="$FTMO_STABLE_ROOT"
+          test -d "$root"
+          test ! -L "$root"
+          run_user="$(stat -c %U "$root")"
+          test -n "$run_user"
+
+          files=(
+            configs/autonomous_runtime.json
+            configs/autonomous_research_controller.json
+            configs/research_window_reserve_v6.json
+            src/prop_trading_ai/ops/autonomous_runtime.py
+            src/prop_trading_ai/ops/deterministic_research.py
+            src/prop_trading_ai/ops/autonomous_generation_loop.py
+            src/prop_trading_ai/research/autonomous_provider_skip.py
+            src/prop_trading_ai/research/research_machine.py
+            src/prop_trading_ai/research/readiness.py
+            src/prop_trading_ai/research/provider_reject_transition.py
+            src/prop_trading_ai/research/provider_window_skip.py
+            src/prop_trading_ai/ops/autonomous_rollover.py
+            src/prop_trading_ai/data/market/providers/fxcm_public.py
+            src/prop_trading_ai/data/market/fxcm_ingest.py
+            src/prop_trading_ai/cli/v1_acquire_fxcm_public.py
+            src/prop_trading_ai/cli/v1_autonomous_tick.py
+            scripts/run-autonomous-marathon.sh
+            src/prop_trading_ai/ops/cpu_attribution.py
+            src/prop_trading_ai/cli/v1_cpu_attribution.py
+          )
+          for relative in "${files[@]}"; do
+            test -f "$src/$relative"
+            target="$root/$relative"
+            sudo -n -u "$run_user" mkdir -p "$(dirname "$target")"
+            tmp="$target.zssh-exact.tmp"
+            sudo -n -u "$run_user" cp "$src/$relative" "$tmp"
+            sudo -n -u "$run_user" chmod "$(stat -c %a "$src/$relative")" "$tmp"
+            sudo -n -u "$run_user" mv "$tmp" "$target"
+            cmp "$src/$relative" "$target"
+          done
+
+          rendered="$RUNNER_TEMP/ftmo-autonomous-marathon.service"
+          sed -e "s|__REPO_ROOT__|$root|g" -e "s|__RUN_USER__|$run_user|g"             "$src/deploy/systemd/ftmo-autonomous-marathon.service.in" > "$rendered"
+          if ! cmp -s "$rendered" /etc/systemd/system/ftmo-autonomous-marathon.service; then
+            sudo -n install -m 0644 "$rendered" /etc/systemd/system/ftmo-autonomous-marathon.service
+            sudo -n systemctl daemon-reload
+            echo "FTMO_SAFE_GATE_UNIT_RECONCILED=1"
+          else
+            echo "FTMO_SAFE_GATE_UNIT_RECONCILED=0"
+          fi
+
+          sudo -n -u "$run_user" mkdir -p "$root/.scratch/autonomy"
+          printf '%s\n' "$TARGET_SHA" | sudo -n -u "$run_user" tee "$root/.scratch/autonomy/deployed-main-sha" >/dev/null
+          printf '%s\n' "$GITHUB_RUN_ID" | sudo -n -u "$run_user" tee "$root/.scratch/autonomy/deployed-workflow-run-id" >/dev/null
+          echo "FTMO_SAFE_GATE_RUNTIME_RECONCILED=$TARGET_SHA"
+
+      - name: Restart persistent marathon onto exact runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(systemctl show ftmo-autonomous-marathon.service -p MainPID --value || true)"
+          sudo -n systemctl restart ftmo-autonomous-marathon.service
+          state=""
+          after=""
+          for _ in $(seq 1 60); do
+            state="$(systemctl is-active ftmo-autonomous-marathon.service || true)"
+            after="$(systemctl show ftmo-autonomous-marathon.service -p MainPID --value || true)"
+            if [[ "$state" == "active" && "$after" =~ ^[1-9][0-9]*$ && "$after" != "$before" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$state" = "active"
+          [[ "$after" =~ ^[1-9][0-9]*$ ]]
+          test "$after" != "$before"
+          echo "FTMO_PERSISTENT_MARATHON=active"
+          echo "FTMO_PERSISTENT_MARATHON_PID_HANDOFF=$before->$after"
+
+      - name: Prove fresh autonomous safe heartbeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+
+          root = Path(os.environ["FTMO_STABLE_ROOT"])
+          target = os.environ["TARGET_SHA"]
+          run_id = os.environ["GITHUB_RUN_ID"]
+          baseline = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "ftmo-safe-gate-baseline.json").read_text(encoding="utf-8")
+          )
+          status_path = root / ".scratch/autonomy/status.json"
+          deadline = time.monotonic() + 420
+          last = None
+
+          while time.monotonic() < deadline:
+              service = subprocess.run(
+                  ["systemctl", "is-active", "ftmo-autonomous-marathon.service"],
+                  text=True, capture_output=True, check=False
+              ).stdout.strip()
+              if service not in {"active", "activating", "reloading"}:
+                  raise SystemExit(f"persistent marathon became unhealthy: {service!r}")
+              if service != "active":
+                  time.sleep(2)
+                  continue
+              if not status_path.is_file() or status_path.is_symlink():
+                  time.sleep(5)
+                  continue
+              try:
+                  status = json.loads(status_path.read_text(encoding="utf-8"))
+              except (json.JSONDecodeError, OSError):
+                  time.sleep(5)
+                  continue
+
+              research = status.get("research") or {}
+              controller = status.get("research_controller") or {}
+              compute = controller.get("compute") or {}
+              loop = controller.get("generation_loop") or {}
+              outcome = controller.get("outcome_execution") or {}
+              last = {
+                  "completed_at_utc": status.get("completed_at_utc"),
+                  "research_cycle_completed_at_utc": status.get("research_cycle_completed_at_utc"),
+                  "runtime_revision": status.get("runtime_revision"),
+                  "deployment_workflow_run_id": status.get("deployment_workflow_run_id"),
+                  "research_cycle_ok": status.get("research_cycle_ok"),
+                  "generation_number": research.get("generation_number"),
+                  "generation_id": research.get("generation_id"),
+                  "next_stage": research.get("next_stage"),
+                  "controller_action": controller.get("action"),
+                  "generation_loop_action": loop.get("action"),
+                  "generation_loop_stage": loop.get("stage"),
+                  "compute_ok": compute.get("ok"),
+                  "generation_loop_enabled": loop.get("enabled"),
+                  "live_trading_allowed": status.get("live_trading_allowed"),
+                  "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
+                  "walk_forward_accessed": outcome.get("walk_forward_accessed"),
+                  "final_holdout_accessed": outcome.get("final_holdout_accessed"),
+                  "walk_forward_access_allowed": research.get("walk_forward_access_allowed"),
+                  "final_holdout_access_allowed": research.get("final_holdout_access_allowed"),
+              }
+
+              fresh = (
+                  bool(status.get("research_cycle_completed_at_utc"))
+                  and status.get("completed_at_utc") != baseline.get("completed_at_utc")
+              )
+              exact = (
+                  status.get("runtime_revision") == target
+                  and str(status.get("deployment_workflow_run_id")) == run_id
+              )
+              if fresh and exact and status.get("research_cycle_ok") is True:
+                  if compute.get("ok") is not True:
+                      raise SystemExit(f"controller compute unhealthy: {controller}")
+                  if loop.get("enabled") is not True:
+                      raise SystemExit(f"generation loop disabled: {loop}")
+                  if status.get("live_trading_allowed") is not False:
+                      raise SystemExit("live trading boundary changed")
+                  if status.get("broker_order_submission_allowed") is not False:
+                      raise SystemExit("broker order boundary changed")
+                  if outcome.get("live_trading_allowed") is not False:
+                      raise SystemExit("controller live trading boundary changed")
+                  if outcome.get("broker_order_submission_allowed") is not False:
+                      raise SystemExit("controller broker boundary changed")
+                  if outcome.get("walk_forward_accessed") is True and research.get("walk_forward_access_allowed") is not True:
+                      raise SystemExit("walk-forward accessed without deterministic gate")
+                  if outcome.get("final_holdout_accessed") is True and research.get("final_holdout_access_allowed") is not True:
+                      raise SystemExit("final holdout accessed without deterministic gate")
+                  before_gen = baseline.get("generation_number")
+                  after_gen = research.get("generation_number")
+                  if isinstance(before_gen, int) and isinstance(after_gen, int) and after_gen < before_gen:
+                      raise SystemExit("generation state moved backwards during runtime recovery")
+                  print("FTMO_SAFE_GATE_EXACT_GREEN", json.dumps(last, sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(5)
+
+          raise SystemExit("fresh exact safe heartbeat not observed: " + json.dumps(last, sort_keys=True))
+          PY
