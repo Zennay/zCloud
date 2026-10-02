@@ -1,4 +1,4 @@
-name: Cancel one verified stale FTMO CI run
+name: Cancel verified stale FTMO PR435 CI runs
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ftmo-cancel-one-verified-stale-run
+  group: ftmo-cancel-verified-stale-pr435
   cancel-in-progress: true
 
 jobs:
@@ -19,14 +19,15 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
-      - name: Cancel merged PR 423 stale test run only if identity still matches
+      - name: Cancel only nonterminal runs for merged PR435 exact head
         shell: bash
         env:
-          TARGET_RUN: "36998295127"
-          TARGET_SHA: "d79ede0190ff06fb8927b27b369d9363f706cef0"
-          TARGET_PR: "423"
+          TARGET_SHA: "0c3b81e7afe641ddd78084c4321cd3b4d590b2cb"
+          TARGET_PR: "435"
+          REQUIRED_PROOF_RUN: "37001495182"
         run: |
           set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
           gh auth status >/dev/null 2>&1
 
           python3 - <<'PY'
@@ -42,45 +43,48 @@ jobs:
               )
               return json.loads(raw)
 
-          run_id = os.environ["TARGET_RUN"]
-          expected_sha = os.environ["TARGET_SHA"]
+          target_sha = os.environ["TARGET_SHA"]
           pr_number = os.environ["TARGET_PR"]
+          proof_run_id = os.environ["REQUIRED_PROOF_RUN"]
 
-          run = gh_json(f"repos/Zennay/Ftmo/actions/runs/{run_id}")
           pr = gh_json(f"repos/Zennay/Ftmo/pulls/{pr_number}")
-
-          identity = {
-              "run_id": run.get("id"),
-              "status": run.get("status"),
-              "head_sha": run.get("head_sha"),
-              "head_branch": run.get("head_branch"),
-              "pr_number": pr.get("number"),
-              "pr_state": pr.get("state"),
-              "pr_merged": bool(pr.get("merged")),
-          }
-          print("FTMO_STALE_RUN_IDENTITY", json.dumps(identity, sort_keys=True))
-
-          if str(run.get("id")) != run_id:
-              raise SystemExit("run id mismatch")
-          if run.get("head_sha") != expected_sha:
-              raise SystemExit("run SHA mismatch")
           if int(pr.get("number") or 0) != int(pr_number):
               raise SystemExit("PR identity mismatch")
           if pr.get("state") != "closed" or not pr.get("merged"):
-              raise SystemExit("PR 423 is not closed-merged")
-          if run.get("status") not in {"queued", "pending", "in_progress"}:
-              print("FTMO_STALE_RUN_ALREADY_TERMINAL")
-              raise SystemExit(0)
+              raise SystemExit("PR435 is not closed+merged")
+          if (pr.get("head") or {}).get("sha") != target_sha:
+              raise SystemExit("PR435 head SHA mismatch")
 
-          subprocess.check_call(
-              [
-                  "gh", "api",
-                  "--method", "POST",
-                  "-H", "X-GitHub-Api-Version: 2022-11-28",
-                  f"repos/Zennay/Ftmo/actions/runs/{run_id}/cancel",
-              ],
-              stdout=subprocess.DEVNULL,
-              stderr=subprocess.DEVNULL,
-          )
-          print("FTMO_STALE_RUN_CANCEL_REQUESTED", run_id)
+          proof = gh_json(f"repos/Zennay/zCloud/actions/runs/{proof_run_id}")
+          if (proof.get("status"), proof.get("conclusion")) != ("completed", "success"):
+              raise SystemExit("required exact-head zCloud proof is not green")
+
+          payload = gh_json(f"repos/Zennay/Ftmo/actions/runs?head_sha={target_sha}&per_page=100")
+          candidates = []
+          for run in payload.get("workflow_runs") or []:
+              if run.get("head_sha") != target_sha:
+                  continue
+              if run.get("status") not in {"queued", "pending", "in_progress"}:
+                  continue
+              candidates.append({
+                  "id": int(run["id"]),
+                  "name": run.get("name"),
+                  "status": run.get("status"),
+              })
+
+          print("FTMO_PR435_STALE_CANDIDATES=" + json.dumps(candidates, sort_keys=True))
+          for run in candidates:
+              subprocess.check_call(
+                  [
+                      "gh", "api",
+                      "--method", "POST",
+                      "-H", "X-GitHub-Api-Version: 2022-11-28",
+                      f"repos/Zennay/Ftmo/actions/runs/{run['id']}/cancel",
+                  ],
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+              )
+              print(f"FTMO_PR435_STALE_CANCEL_REQUESTED={run['id']}")
+
+          print(f"FTMO_PR435_STALE_CANCEL_COUNT={len(candidates)}")
           PY
