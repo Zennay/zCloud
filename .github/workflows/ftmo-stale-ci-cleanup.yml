@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   cleanup:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Cancel only superseded FTMO runs
