@@ -1,0 +1,56 @@
+name: uLab zCloud dogfood
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "ulab/zcloud-state/**"
+      - ".github/workflows/ulab-zcloud-dogfood.yml"
+
+jobs:
+  real-project-upgrade:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    steps:
+      - name: Check out zCloud with history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out uLab
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/uLab
+          path: .ulab-tool
+          fetch-depth: 1
+
+      - name: Build uLab on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v go
+          (
+            cd .ulab-tool
+            go build -trimpath -buildvcs=false -o ../.ulab-bin ./cmd/ulab
+          )
+
+      - name: Run real zCloud upgrade matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .ulab/zcloud-dogfood-evidence .ulab/zcloud-dogfood-result.json
+          ./.ulab-bin test             --jobs 1             --config ulab/zcloud-state/ulab.json             --json-out .ulab/zcloud-dogfood-result.json             --evidence-root .ulab/zcloud-dogfood-evidence
+          cat .ulab/zcloud-dogfood-result.json
+
+      - name: Prove persisted evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .ulab/zcloud-dogfood-result.json
+          bundles=$(find .ulab/zcloud-dogfood-evidence -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          test "$bundles" -eq 1
+          bundle=$(find .ulab/zcloud-dogfood-evidence -mindepth 1 -maxdepth 1 -type d | head -n1)
+          test -s "$bundle/result.json"
+          test -s "$bundle/metadata.json"
+          echo "evidence_bundle=$bundle"
+          cat "$bundle/metadata.json"
