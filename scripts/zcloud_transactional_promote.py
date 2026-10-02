@@ -350,6 +350,26 @@ def validate_candidate(candidate: Path, root: Path, paths: list[str]) -> dict[st
     return hashes
 
 
+def promotion_write_paths(
+    candidate: Path,
+    root: Path,
+    paths: list[str],
+    candidate_hashes: dict[str, str] | None = None,
+) -> list[str]:
+    """Return the exact byte-changing subset of an already validated selection."""
+    hashes = candidate_hashes or {
+        validate_relpath(rel): sha256_file(candidate / validate_relpath(rel))
+        for rel in paths
+    }
+    changed: list[str] = []
+    for raw in paths:
+        rel = validate_relpath(raw)
+        target = root / rel
+        if not target.is_file() or sha256_file(target) != hashes[rel]:
+            changed.append(rel)
+    return changed
+
+
 def config_changes(candidate: Path, root: Path, paths: list[str]) -> list[dict]:
     changes = []
     for rel in paths:
@@ -1175,6 +1195,12 @@ def promote(
             + ",".join(missing_prechange_candidates)
         )
     candidate_hashes = validate_candidate(candidate, root, normalized)
+    write_paths = promotion_write_paths(
+        candidate,
+        root,
+        normalized,
+        candidate_hashes,
+    )
     normalized_known_live_hashes: dict[str, str] = {}
     for raw_rel, raw_hash in (known_live_hashes or {}).items():
         rel = validate_relpath(str(raw_rel))
@@ -1187,7 +1213,10 @@ def promote(
             raise PromotionError(f"invalid known live sha256 for {rel}")
         normalized_known_live_hashes[rel] = expected
     syntax_check(candidate, normalized)
-    feature_gate = enforce_blast_radius_gate(root / "history.db", normalized)
+    # Blast radius must describe bytes this transaction will actually write.
+    # Selected byte-identical files remain validated but do not inflate the
+    # high-blast gate or create needless service/runtime churn.
+    feature_gate = enforce_blast_radius_gate(root / "history.db", write_paths)
     pending_config_changes = config_changes(candidate, root, normalized)
     # Validate against the exact candidate revision that this deploy is about to promote.
     # An explicitly supplied validator path remains authoritative for controlled tests.
@@ -1254,6 +1283,7 @@ def promote(
                 "candidate": str(candidate),
                 "paths": normalized,
                 "candidate_hashes": candidate_hashes,
+                "write_paths": write_paths,
                 "config_validation": config_validation,
                 "feature_gate": feature_gate,
                 "config_changes": pending_config_changes,
@@ -1265,7 +1295,7 @@ def promote(
             root,
             state,
             "pre-transactional-promotion: PRECHANGE_GREEN; "
-            f"candidate={candidate.name}; paths={','.join(normalized)}",
+            f"candidate={candidate.name}; paths={','.join(write_paths)}",
             recovery_script=effective_recovery,
         )
         # The LKG capture can take several seconds. Take the immutable runtime
@@ -1277,7 +1307,7 @@ def promote(
         tx_root = state / "promotion-transactions" / tx_id
         log = state / "promotion.log"
         runtime_backups: dict[str, Path | None] = {}
-        created_source_paths = [rel for rel in normalized if not (root / rel).exists()]
+        created_source_paths = [rel for rel in write_paths if not (root / rel).exists()]
         source_promoted = False
         mapping_advances: list[dict] = []
         write_json_line(
@@ -1286,18 +1316,19 @@ def promote(
             transaction_id=tx_id,
             candidate=str(candidate),
             paths=normalized,
+            write_paths=write_paths,
             mapping_sha256=mapping_sha,
             lkg_snapshot=before.get("snapshot_id"),
             feature_gate=feature_gate,
         )
         try:
-            deployed_hashes = transactional_replace(candidate, root, normalized, tx_root)
-            source_promoted = True
-            if needs_service_restart(normalized):
+            deployed_hashes = transactional_replace(candidate, root, write_paths, tx_root)
+            source_promoted = bool(write_paths)
+            if needs_service_restart(write_paths):
                 service_restart()
 
             extension_paths = [
-                rel for rel in normalized if rel.startswith("firefox-extension/")
+                rel for rel in write_paths if rel.startswith("firefox-extension/")
             ]
             if extension_paths:
                 runtime_backups = sync_firefox_runtime(
@@ -1387,6 +1418,7 @@ def promote(
                 "ok": True,
                 "transaction_id": tx_id,
                 "paths": normalized,
+                "write_paths": write_paths,
                 "deployed_hashes": deployed_hashes,
                 "mapping_sha256": mapping_sha,
                 "mapping_advances": mapping_advances,
