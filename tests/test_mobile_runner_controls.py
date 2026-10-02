@@ -10,8 +10,10 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("function mobileRunnerControls", app)
         self.assertIn('data-runner-toggle="', app)
         self.assertIn('data-runner-workers="', app)
-        self.assertIn("${mobileRunnerControls(p)}${runnerControls(p)}", app)
-        self.assertIn("${mobileRunnerControls(p,'detail')}${workerDetailPanel(p)}", app)
+        self.assertIn("${projectPrimaryActions(p)}${projectCardOps(p)}${mobileRunnerControls(p)}", app)
+        self.assertIn("${projectPrimaryActions(p,'detail')}${attentionPanel(p.id)}", app)
+        self.assertIn("${mobileRunnerControls(p,'detail')}<details class=\"overview-advanced project-worker-advanced\"", app)
+        self.assertNotIn("${mobileRunnerControls(p)}${runnerControls(p)}", app)
 
 
     def test_global_dynamic_worker_control_is_mobile_visible(self):
