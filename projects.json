@@ -114,8 +114,8 @@
         "progress": 35
       }
     ],
-    "phase": "Generation 10 candidate · awaiting walk-forward",
-    "next_step": "Run the frozen walk-forward for the Generation-10 candidate; keep development and validation strictly separated.",
+    "phase": "Generation 29 · provider foundation retry/backoff",
+    "next_step": "Keep the persistent ftmo-autonomous-marathon.service as the normal generation executor. Do not manually rerun closed Generation-10 validation. Only intervene on a concrete self-advance failure; preserve provider provenance plus preregistration, development, walk-forward and final-holdout seals, then prove autonomous recovery with deterministic runtime/workflow evidence.",
     "status": "active",
     "priority": "high",
     "repo_url": "https://github.com/Zennay/Ftmo",
