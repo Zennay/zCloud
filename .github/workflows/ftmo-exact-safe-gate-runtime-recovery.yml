@@ -162,9 +162,10 @@ jobs:
             target="$root/$relative"
             sudo -n -u "$run_user" mkdir -p "$(dirname "$target")"
             tmp="$target.zssh-exact.tmp"
-            sudo -n -u "$run_user" cp "$src/$relative" "$tmp"
-            sudo -n -u "$run_user" chmod "$(stat -c %a "$src/$relative")" "$tmp"
-            sudo -n -u "$run_user" mv "$tmp" "$target"
+            sudo -n cp "$src/$relative" "$tmp"
+            sudo -n chmod "$(stat -c %a "$src/$relative")" "$tmp"
+            sudo -n chown "$run_user:$run_user" "$tmp"
+            sudo -n mv "$tmp" "$target"
             cmp "$src/$relative" "$target"
           done
 
