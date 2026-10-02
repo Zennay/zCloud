@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_postdeploy_canary.py"
 SPEC = importlib.util.spec_from_file_location("zcloud_postdeploy_canary", MODULE_PATH)
@@ -53,6 +54,40 @@ class PostdeployCanaryTests(unittest.TestCase):
             source_runtime_match=True,
             **kwargs,
         )
+
+    def test_status_readiness_retries_transient_failure(self):
+        attempts = [
+            RuntimeError("HTTP 503: warming up"),
+            {"errors": [], "dynamic_workers": {"count": 5}},
+        ]
+        ticks = iter([0.0, 0.1])
+        with mock.patch.object(canary, "http_json", side_effect=attempts) as fetch:
+            result = canary.http_json_ready(
+                "http://127.0.0.1:8765/api/status",
+                readiness_seconds=30,
+                retry_interval=0.5,
+                sleep_fn=lambda _: None,
+                monotonic_fn=lambda: next(ticks),
+            )
+        self.assertEqual([], result["errors"])
+        self.assertEqual(2, fetch.call_count)
+
+    def test_status_readiness_persistent_failure_stays_fail_closed(self):
+        ticks = iter([0.0, 31.0])
+        with mock.patch.object(
+            canary,
+            "http_json",
+            side_effect=RuntimeError("HTTP 503: still unavailable"),
+        ) as fetch:
+            with self.assertRaisesRegex(RuntimeError, "still unavailable"):
+                canary.http_json_ready(
+                    "http://127.0.0.1:8765/api/status",
+                    readiness_seconds=30,
+                    retry_interval=0.5,
+                    sleep_fn=lambda _: None,
+                    monotonic_fn=lambda: next(ticks),
+                )
+        self.assertEqual(1, fetch.call_count)
 
     def test_green_baseline(self):
         self.assertTrue(self.evaluate()["ok"])
