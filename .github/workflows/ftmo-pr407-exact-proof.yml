@@ -15,6 +15,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fast-proof:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 60fcbbc3562e77013f44830c4db26b69f0167ca1
+    steps:
+      - name: Verify VPS and fetch exact current PR407 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr407-fast"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR407_FAST_EXACT_SHA=$TARGET_SHA"
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-fast"
+          venv="$RUNNER_TEMP/ftmo-pr407-fast-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+      - name: Compile current provenance stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-fast"
+          venv="$RUNNER_TEMP/ftmo-pr407-fast-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q             src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py             src/prop_trading_ai/data/market/dukascopy_public_ingest.py
+          echo "FTMO_PR407_FAST_COMPILE_GREEN=1"
+      - name: Prove current hourly provenance and sealed boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr407-fast"
+          venv="$RUNNER_TEMP/ftmo-pr407-fast-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q             tests/test_dukascopy_tick_resume_cache.py             tests/test_autonomous_provider_retry.py             tests/test_zero_cost_workflow_boundary.py
+          echo "FTMO_PR407_FAST_TARGETED_GREEN=1"
+
   prove:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
