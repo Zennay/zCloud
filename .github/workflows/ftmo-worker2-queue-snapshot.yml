@@ -64,3 +64,4 @@ jobs:
           path="runtime-evidence/ftmo-${QUEUE_ID}-queue-snapshot-${GITHUB_RUN_ID}.json"
           gh api --method PUT "repos/Zennay/zCloud/contents/$path"             -f message="Record FTMO Worker2 queue snapshot ${GITHUB_RUN_ID}"             -f content="$encoded" >/dev/null
           echo "QUEUE_SNAPSHOT_RECEIPT=$path"
+# trigger: worker2-queue-snapshot
