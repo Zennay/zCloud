@@ -1,5 +1,5 @@
-name: FTMO PR428 exact-head proof
-# trigger: worker3-pr428-proof-v2
+name: FTMO PR429 exact-head proof
+# trigger: worker3-pr429-proof
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      TARGET_SHA: 77763e18cf8fe7050785c7c69f39a614bc81f862
+      TARGET_SHA: 8ec1585fb50e9d4a62cce292d54d4a2dacc922c8
     steps:
       - name: Verify VPS identity and fetch exact FTMO head
         shell: bash
