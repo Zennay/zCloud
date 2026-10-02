@@ -19,43 +19,44 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 8
     steps:
-      - name: Diagnose FTMO marathon restart loop
+      - name: Classify FTMO crash loop without exposing errors
         shell: bash
         run: |
           set -euo pipefail
           ROOT=/opt/ftmo-autonomous
           SERVICE=ftmo-autonomous-marathon.service
           PY="$ROOT/.venv/bin/python"
+          PV="$ROOT/src/prop_trading_ai/research/provider_validation.py"
+          EXPECTED_PV_BLOB=91c2784fda0c316516e018c6e65998db9104eda5
 
-          echo "runner=$(hostname)"
-          systemctl show "$SERVICE"             -p ActiveState -p SubState -p NRestarts -p MainPID             -p ExecMainCode -p ExecMainStatus -p Result             -p ExecMainStartTimestamp -p ExecMainExitTimestamp --no-pager
+          systemctl show "$SERVICE" -p ActiveState -p SubState -p NRestarts -p ExecMainStatus --no-pager
+          if test -f "$PV" && test ! -L "$PV"; then
+            actual="$(git hash-object "$PV")"
+            echo "provider_validation_exists=yes"
+            echo "provider_validation_matches_deployed_revision=$([[ "$actual" == "$EXPECTED_PV_BLOB" ]] && echo yes || echo no)"
+            echo "provider_validation_blob=$actual"
+          else
+            echo "provider_validation_exists=no"
+            echo "provider_validation_matches_deployed_revision=no"
+          fi
 
-          test -x "$PY"
           "$PY" - <<'PY'
           import json
           from pathlib import Path
 
           root = Path("/opt/ftmo-autonomous")
           status = json.loads((root / ".scratch/autonomy/status.json").read_text(encoding="utf-8"))
-          research = status.get("research") or {}
-          controller = status.get("research_controller") or {}
-          print("FTMO_SAFE_STATUS", json.dumps({
-              "ok": status.get("ok"),
-              "research_cycle_ok": status.get("research_cycle_ok"),
-              "error_type": type(status.get("error")).__name__ if status.get("error") is not None else None,
-              "error_present": bool(status.get("error")),
-              "generation_number": research.get("generation_number"),
-              "generation_id": research.get("generation_id"),
-              "next_stage": research.get("next_stage"),
-              "controller_action": controller.get("action"),
-              "runtime_revision": status.get("runtime_revision"),
-              "deployment_workflow_run_id": status.get("deployment_workflow_run_id"),
-              "live_trading_allowed": status.get("live_trading_allowed"),
-              "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
-              "autonomous_cloud_budget_usd": str(status.get("autonomous_cloud_budget_usd")),
-          }, sort_keys=True))
+          error = status.get("error")
+          text = error if isinstance(error, str) else ""
+          classes = {
+              "mentions_provider_validation": "provider_validation" in text,
+              "mentions_missing_file": any(x in text for x in ("No such file", "FileNotFoundError")),
+              "mentions_import_error": any(x in text for x in ("ImportError", "ModuleNotFoundError")),
+              "mentions_provider_unavailable": any(x in text.lower() for x in ("provider unavailable", "dukascop", "fxcm")),
+              "mentions_secondary_validation": "secondary-feed validation did not pass" in text,
+              "mentions_command_failed": "command failed" in text,
+              "mentions_integrity": any(x in text.lower() for x in ("hash", "canonical", "integrity", "validation")),
+          }
+          print("FTMO_ERROR_CLASSES", json.dumps(classes, sort_keys=True))
+          print("FTMO_ERROR_LENGTH", len(text))
           PY
-
-          echo "FTMO_RECENT_SERVICE_EVENTS_BEGIN"
-          journalctl -u "$SERVICE" --since "-12 min" --no-pager -o cat             | grep -E '^(FTMO |Traceback|[A-Za-z].*(Error|Exception):|.*provider.*|.*autonomous.*)'             | tail -n 80             | sed -E 's/([A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)[A-Za-z0-9_]*)=[^[:space:]]+/\1=<redacted>/Ig'             || true
-          echo "FTMO_RECENT_SERVICE_EVENTS_END"
