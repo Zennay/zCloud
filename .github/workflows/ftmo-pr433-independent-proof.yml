@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 35
     env:
-      TARGET_SHA: 8cc5c18ddb3d57f5192be30fa14a4ca19b17368d
+      TARGET_SHA: 9b78f850e4c8be9cf9d826bfad950f4041ef0441
     steps:
       - name: Verify VPS and fetch exact FTMO head
         shell: bash
