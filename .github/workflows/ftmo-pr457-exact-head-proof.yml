@@ -12,7 +12,7 @@ permissions:
 jobs:
   proof:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 18
+    timeout-minutes: 19
     env:
       TARGET_SHA: 16d758c5dad6c2ada93e327c895ca2f57c1a186a
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
