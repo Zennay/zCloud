@@ -35,9 +35,8 @@
   "queue_id": "zssh-ftmo-pr437-runner-recovery-20261002",
   "recovery_action": "preserve-active-worker",
   "runner_processes": [
-    "718454       1 Fri Oct  2 09:42:57 2026    02:50:25 /bin/bash /opt/ftmo-runner/runsvc.sh",
-    " 718470  718460 Fri Oct  2 09:42:58 2026    02:50:25 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service",
-    " 944396  718470 Fri Oct  2 12:32:59 2026       00:24 /opt/ftmo-runner/bin/Runner.Worker spawnclient 154 157"
+    "718454       1 Fri Oct  2 09:42:57 2026    05:26:20 /bin/bash /opt/ftmo-runner/runsvc.sh",
+    " 718470  718460 Fri Oct  2 09:42:58 2026    05:26:20 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service"
   ],
   "scheduled_protected_run": 37002559132,
   "schema_version": 1,
