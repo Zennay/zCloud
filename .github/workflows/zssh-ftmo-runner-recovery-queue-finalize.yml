@@ -99,9 +99,10 @@ jobs:
               "FTMO job 110792623272 is actively executing on the dedicated self-hosted lane with setup, checkout, revision verification, package install, "
               "and test-plan build green; explicit scheduling probe 36991324001 attempt 2 job 110795972032 remains queued behind active work. "
               "This further proves queueing is caused by healthy single-runner throughput plus workflow concurrency, not listener failure. "
-              "Current autonomous-runtime successor 36994271969 verify job 110797282084 is now in_progress on exact runner vps-bb300bba-ftmo; "
-              "checkout, provider secret-isolation proof, Jetta chronology proof, atomic runtime deploy, module compile, and persistent marathon systemd install "
-              "are all successful, with Observe persistent runtime self-advance currently running. This is direct same-workflow post-recovery scheduling evidence."
+              "Current autonomous-runtime successor 36994271969 verify job 110797282084 completed SUCCESS on exact runner vps-bb300bba-ftmo. "
+              "Checkout, provider secret-isolation proof, Jetta chronology proof, atomic runtime deploy, module compile, persistent marathon systemd install, "
+              "Observe persistent runtime self-advance, FTMO cgroup/host CPU attribution, sanitized controller receipt, and installed-service verification "
+              "all completed successfully. This is terminal same-workflow post-recovery scheduling and runtime evidence."
           )
 
           if item["status"] == "queued" and int(item["eligible"] or 0) == 1:
