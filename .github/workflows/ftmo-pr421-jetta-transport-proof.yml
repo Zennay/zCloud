@@ -1,17 +1,17 @@
-name: FTMO PR421 exact-head Jetta transport proof
+name: FTMO PR424 exact-head Jetta transport proof
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr421-jetta-transport-proof.yml"
+      - ".github/workflows/ftmo-pr424-jetta-transport-proof.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: ftmo-pr421-exact-head-jetta-transport-proof
+  group: ftmo-pr424-exact-head-jetta-transport-proof
   cancel-in-progress: false
 
 jobs:
@@ -19,32 +19,32 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 18
     env:
-      TARGET_SHA: 44c28172f2d6db168f0d3271bf859fb43b82e3d5
-      RECEIPT_PATH: runtime-evidence/ftmo-pr421-exact-head-proof.json
+      TARGET_SHA: 442d904827e7516afa700373850aebcc8ce9ed98
+      RECEIPT_PATH: runtime-evidence/ftmo-pr424-exact-head-proof.json
     steps:
       - name: Checkout zCloud receipt workspace
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
 
-      - name: Fetch exact FTMO PR421 head
+      - name: Fetch exact FTMO PR424 head
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
-          src="$RUNNER_TEMP/ftmo-pr421-proof"
+          src="$RUNNER_TEMP/ftmo-pr424-proof"
           rm -rf "$src"
           gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
           test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
-          echo "FTMO_PR421_EXACT_SHA=$TARGET_SHA"
+          echo "FTMO_PR424_EXACT_SHA=$TARGET_SHA"
 
       - name: Install isolated test environment
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr421-proof"
-          venv="$RUNNER_TEMP/ftmo-pr421-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr424-proof"
+          venv="$RUNNER_TEMP/ftmo-pr424-proof-venv"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
@@ -54,36 +54,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr421-proof"
-          venv="$RUNNER_TEMP/ftmo-pr421-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr424-proof"
+          venv="$RUNNER_TEMP/ftmo-pr424-proof-venv"
           cd "$src"
           "$venv/bin/python" -m compileall -q src/prop_trading_ai/data/market/providers/dukascopy_jetta.py
-          echo "FTMO_PR421_COMPILE_GREEN=1"
+          echo "FTMO_PR424_COMPILE_GREEN=1"
 
       - name: Prove Jetta transport and decoder integrity
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr421-proof"
-          venv="$RUNNER_TEMP/ftmo-pr421-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr424-proof"
+          venv="$RUNNER_TEMP/ftmo-pr424-proof-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q \
             tests/test_dukascopy_jetta.py \
             tests/test_dukascopy_jetta_m1.py
-          echo "FTMO_PR421_JETTA_TESTS_GREEN=1"
+          echo "FTMO_PR424_JETTA_TESTS_GREEN=1"
 
       - name: Prove adjacent sealed provider boundaries
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr421-proof"
-          venv="$RUNNER_TEMP/ftmo-pr421-proof-venv"
+          src="$RUNNER_TEMP/ftmo-pr424-proof"
+          venv="$RUNNER_TEMP/ftmo-pr424-proof-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q \
             tests/test_autonomous_provider_retry.py \
             tests/test_autonomous_deploy_lockstep.py \
             tests/test_zero_cost_workflow_boundary.py
-          echo "FTMO_PR421_BOUNDARIES_GREEN=1"
+          echo "FTMO_PR424_BOUNDARIES_GREEN=1"
 
       - name: Record exact-head proof receipt
         if: always()
@@ -104,7 +104,7 @@ jobs:
           payload = {
               "schema_version": 1,
               "project": "ftmo",
-              "pull_request": 421,
+              "pull_request": 424,
               "target_sha": os.environ["TARGET_SHA"],
               "workflow_run_id": int(os.environ["PROOF_RUN_ID"]),
               "workflow_run_attempt": int(os.environ["PROOF_RUN_ATTEMPT"]),
@@ -127,8 +127,8 @@ jobs:
           git config user.email "zcloud-ftmo-proof@users.noreply.github.com"
           git add "$RECEIPT_PATH"
           if git diff --cached --quiet; then
-            echo "FTMO_PR421_RECEIPT_UNCHANGED=1"
+            echo "FTMO_PR424_RECEIPT_UNCHANGED=1"
             exit 0
           fi
-          git commit -m "Record FTMO PR421 exact-head proof receipt"
+          git commit -m "Record FTMO PR424 exact-head proof receipt"
           git push origin HEAD:main
