@@ -160,6 +160,30 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertFalse((self.root / "firefox-extension/recovery.js").exists())
         self.assertEqual("old-server\n", (self.root / "server.py").read_text())
 
+    def test_write_set_excludes_selected_byte_identical_files(self):
+        self._write(self.candidate, "same-a.py", "same\n")
+        self._write(self.root, "same-a.py", "same\n")
+        self._write(self.candidate, "same-b.py", "same\n")
+        self._write(self.root, "same-b.py", "same\n")
+        self._write(self.candidate, "changed.py", "new\n")
+        self._write(self.root, "changed.py", "old\n")
+        self._write(self.candidate, "lane_generator.py", "created\n")
+
+        paths = ["same-a.py", "same-b.py", "changed.py", "lane_generator.py"]
+        hashes = {
+            rel: promote.sha256_file(self.candidate / rel)
+            for rel in paths
+        }
+        self.assertEqual(
+            ["changed.py", "lane_generator.py"],
+            promote.promotion_write_paths(
+                self.candidate,
+                self.root,
+                paths,
+                hashes,
+            ),
+        )
+
     def test_blast_radius_classification_is_conservative_but_keeps_small_changes_free(self):
         low = promote.promotion_blast_radius(["server.py"])
         self.assertFalse(low["high"])
