@@ -55,10 +55,9 @@ jobs:
           trap 'rm -rf "$task_venv"' EXIT
           python3 -m venv "$task_venv"
           "$task_venv/bin/pip" install --quiet '.[web]'
-          "$task_venv/bin/gunicorn" --check-config --config deploy/gunicorn.conf.py \
-            'lightup.webapp.production:create_production_app()' \
-            --env LIGHTUP_PUBLIC_ORIGIN=https://lightup.example.test \
-            --env LIGHTUP_DB="$task_venv/check.db"
+          LIGHTUP_PUBLIC_ORIGIN=https://lightup.example.test LIGHTUP_DB="$task_venv/check.db" \
+            "$task_venv/bin/gunicorn" --check-config --config deploy/gunicorn.conf.py \
+            'lightup.webapp.production:create_production_app()'
           "$task_venv/bin/python" scripts/smoke_web_deployment.py 2>&1 | tee -a "$RUNNER_TEMP/lightup-web-proof.log"
       - name: Preserve test receipt
         if: always()
