@@ -72,6 +72,18 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         status = {
             "errors": [],
             "chatgpt_firefox": {"active": True, "state": "active", "main_pid": 123},
+            "dynamic_workers": {
+                "memory_guard": {
+                    "pressure": "ok",
+                    "available_mb": 6144,
+                    "headroom_mb": 2048,
+                    "effective_headroom_mb": 2048,
+                    "new_worker_capacity": 2,
+                    "swap_total_mb": 4096,
+                    "swap_free_mb": 3072,
+                    "swap_healthy": True,
+                }
+            },
             "chatgpt_runners": {
                 "cloud": {
                     "active": True,
@@ -124,10 +136,34 @@ class ZCloudHealthcheckTests(unittest.TestCase):
                 "webservice": "healthy",
                 "firefox_automation": "healthy",
                 "worker_scheduler": "healthy",
+                "worker_memory": "healthy",
                 "project_state_store": "healthy",
             },
             result["summary"],
         )
+
+    def test_critical_worker_memory_fails_health_contract(self):
+        status, targets = self.sample()
+        status["dynamic_workers"]["memory_guard"].update({
+            "pressure": "critical",
+            "available_mb": 700,
+            "new_worker_capacity": 0,
+            "swap_total_mb": 0,
+            "swap_free_mb": 0,
+            "swap_healthy": False,
+        })
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("critical", result["summary"]["worker_memory"])
+        check = next(x for x in result["checks"] if x["name"] == "worker_memory")
+        self.assertFalse(check["detail"]["swap_healthy"])
 
     def test_store_fails_closed_on_missing_worker_slot(self):
         with sqlite3.connect(self.db) as conn:
