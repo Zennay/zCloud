@@ -116,6 +116,67 @@ class PrechangeGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("public/other.js.bak", result["unexpected_changes"])
 
+    def test_explicit_violentmonkey_only_dropin_satisfies_live_firefox_guard(self):
+        dropin = Path(self.tmp.name) / "10-legacy-disabled.conf"
+        dropin.write_text(
+            "# Violentmonkey only\n[Service]\nExecCondition=/bin/false\n",
+            encoding="utf-8",
+        )
+        original_service_active = guard.service_active
+        original_firefox_runtime_active = guard.firefox_runtime_active
+        original_http_healthy = guard.http_healthy
+        guard.service_active = lambda service, user=False: service == "zennay-cloud.service"
+        guard.firefox_runtime_active = lambda: False
+        guard.http_healthy = lambda url, timeout=8.0: True
+        try:
+            result = guard.evaluate(
+                self.root,
+                self.state,
+                self.runtime,
+                set(),
+                live_checks=True,
+                legacy_disable_path=dropin,
+            )
+        finally:
+            guard.service_active = original_service_active
+            guard.firefox_runtime_active = original_firefox_runtime_active
+            guard.http_healthy = original_http_healthy
+
+        checks = {item["name"]: item for item in result["checks"]}
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(checks["firefox_service"]["ok"])
+        self.assertEqual(
+            {"runtime_active": False, "legacy_violentmonkey_only": True},
+            checks["firefox_service"]["detail"],
+        )
+
+    def test_missing_or_unmanaged_dropin_does_not_bypass_firefox_guard(self):
+        bad_dropin = Path(self.tmp.name) / "bad-disable.conf"
+        bad_dropin.write_text("[Service]\nExecCondition=/bin/false\n", encoding="utf-8")
+        original_service_active = guard.service_active
+        original_firefox_runtime_active = guard.firefox_runtime_active
+        original_http_healthy = guard.http_healthy
+        guard.service_active = lambda service, user=False: service == "zennay-cloud.service"
+        guard.firefox_runtime_active = lambda: False
+        guard.http_healthy = lambda url, timeout=8.0: True
+        try:
+            result = guard.evaluate(
+                self.root,
+                self.state,
+                self.runtime,
+                set(),
+                live_checks=True,
+                legacy_disable_path=bad_dropin,
+            )
+        finally:
+            guard.service_active = original_service_active
+            guard.firefox_runtime_active = original_firefox_runtime_active
+            guard.http_healthy = original_http_healthy
+
+        checks = {item["name"]: item for item in result["checks"]}
+        self.assertFalse(result["ok"])
+        self.assertFalse(checks["firefox_service"]["ok"])
+
     def test_new_managed_file_is_unexpected(self):
         (self.root / "scripts").mkdir()
         (self.root / "scripts/new_deploy.py").write_text("new\n")
