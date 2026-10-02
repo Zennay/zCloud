@@ -13,5 +13,14 @@
   },
   "cloud": {
     "priority": "normal"
+  },
+  "ulab": {
+    "priority": "normal"
+  },
+  "zssh": {
+    "priority": "high"
+  },
+  "lightup": {
+    "priority": "normal"
   }
 }
