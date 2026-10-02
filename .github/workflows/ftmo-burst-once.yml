@@ -28,6 +28,13 @@ jobs:
           test -d "$FTMO_ROOT"
           test -x "$FTMO_ROOT/.venv/bin/python"
           test -f "$FTMO_ROOT/.scratch/autonomy/status.json"
+          test -f "$FTMO_ROOT/.scratch/autonomy/deployed-main-sha"
+          deployed_revision="$(tr -d '\r\n' < "$FTMO_ROOT/.scratch/autonomy/deployed-main-sha")"
+          test -n "$deployed_revision"
+          echo "FTMO_DEPLOYED_RUNTIME_REVISION=$deployed_revision"
+          grep -Fq 'top_level_cgroup_cpu_seconds' "$FTMO_ROOT/src/prop_trading_ai/ops/cpu_attribution.py"
+          grep -Fq 'user_slice_cpu_seconds' "$FTMO_ROOT/src/prop_trading_ai/ops/cpu_attribution.py"
+          grep -Fq 'system_slice_unclassified_cpu_seconds' "$FTMO_ROOT/src/prop_trading_ai/ops/cpu_attribution.py"
 
           # Main 76bcfefd fixed an interpreter fallback that can leave an older
           # stable copy crash-looping while the dedicated FTMO runner is busy.
@@ -105,20 +112,33 @@ jobs:
               lower = name.lower()
               if "haxlab" in lower:
                   return "haxlab"
-              if "zcloud" in lower or "actions.runner" in lower or "github" in lower:
+              if "zcloud" in lower or "zennay-cloud" in lower or "actions.runner" in lower or "github" in lower:
                   return "control_plane"
               if "ftmo" in lower:
                   return "ftmo"
               return "other_systemd"
 
           def sample(seconds: float = 12.0) -> dict:
+              def top_levels() -> dict[str, int]:
+                  result: dict[str, int] = {}
+                  for group in sorted(cgroup_root.iterdir()):
+                      stat = group / "cpu.stat"
+                      if group.is_dir() and stat.is_file():
+                          try:
+                              result[group.name] = usage_usec(stat)
+                          except (OSError, KeyError, ValueError):
+                              pass
+                  return result
+
               start_wall = time.monotonic()
               start_host = host_busy_ticks()
               start_units = units()
+              start_top = top_levels()
               time.sleep(seconds)
               end_wall = time.monotonic()
               end_host = host_busy_ticks()
               end_units = units()
+              end_top = top_levels()
 
               unit_seconds: dict[str, float] = {}
               for name, end in end_units.items():
@@ -133,16 +153,38 @@ jobs:
               for name, seconds_used in unit_seconds.items():
                   buckets[bucket(name)] += seconds_used
 
+              top_delta: dict[str, float] = {}
+              for name, end in end_top.items():
+                  start = start_top.get(name)
+                  if start is None or end < start:
+                      continue
+                  delta = (end - start) / 1_000_000.0
+                  if delta > 0:
+                      top_delta[name] = delta
+
               wall = end_wall - start_wall
               ticks = int(os.sysconf("SC_CLK_TCK"))
               cpus = os.cpu_count() or 1
               host_busy = max(0, end_host - start_host) / ticks
               attributed = sum(buckets.values())
-              unattributed = max(0.0, host_busy - attributed)
+              system_slice_seconds = top_delta.get("system.slice", 0.0)
+              user_slice_seconds = top_delta.get("user.slice", 0.0)
+              machine_slice_seconds = top_delta.get("machine.slice", 0.0)
+              other_top_level_seconds = sum(
+                  value for name, value in top_delta.items()
+                  if name not in {"system.slice", "user.slice", "machine.slice"}
+              )
+              system_slice_unclassified = max(0.0, system_slice_seconds - attributed)
+              top_level_accounted = sum(top_delta.values())
+              unattributed = max(0.0, host_busy - top_level_accounted)
               competitors = {
                   "haxlab": buckets["haxlab"],
                   "control_plane": buckets["control_plane"],
                   "other_systemd": buckets["other_systemd"],
+                  "system_slice_unclassified": system_slice_unclassified,
+                  "user_slice": user_slice_seconds,
+                  "machine_slice": machine_slice_seconds,
+                  "other_top_level": other_top_level_seconds,
                   "unattributed_host": unattributed,
               }
               competitor, competitor_seconds = max(competitors.items(), key=lambda item: item[1])
@@ -156,6 +198,12 @@ jobs:
                   "host_busy_cpu_seconds": round(host_busy, 6),
                   "host_capacity_cpu_seconds": round(wall * cpus, 6),
                   "bucket_cpu_seconds": {key: round(value, 6) for key, value in buckets.items()},
+                  "top_level_cgroup_cpu_seconds": {key: round(value, 6) for key, value in top_delta.items()},
+                  "system_slice_cpu_seconds": round(system_slice_seconds, 6),
+                  "system_slice_unclassified_cpu_seconds": round(system_slice_unclassified, 6),
+                  "user_slice_cpu_seconds": round(user_slice_seconds, 6),
+                  "machine_slice_cpu_seconds": round(machine_slice_seconds, 6),
+                  "other_top_level_cpu_seconds": round(other_top_level_seconds, 6),
                   "unattributed_host_cpu_seconds": round(unattributed, 6),
                   "ftmo_busy_cpu_share": round(buckets["ftmo"] / host_busy, 6) if host_busy else 0.0,
                   "ftmo_host_capacity_share": round(buckets["ftmo"] / (wall * cpus), 6) if wall else 0.0,
@@ -215,11 +263,15 @@ jobs:
               "active_state": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=ActiveState", "--value").stdout.strip(),
               "sub_state": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=SubState", "--value").stdout.strip(),
               "control_group": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=ControlGroup", "--value").stdout.strip(),
+              "cpu_weight": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=CPUWeight", "--value").stdout.strip(),
+              "cpu_quota_per_sec_usec": run("systemctl", "show", "ftmo-autonomous-marathon.service", "--property=CPUQuotaPerSecUSec", "--value").stdout.strip(),
           }
 
           receipt = {
               "schema_version": 1,
               "scope": "zcloud-ftmo-useful-compute-rescue",
+              "required_attribution_ancestor": "0acfac83eff1136bdce1bfbde6e52b6905ccf1fc",
+              "deployed_runtime_revision": (root / ".scratch/autonomy/deployed-main-sha").read_text(encoding="utf-8").strip(),
               "pre_attribution": pre,
               "rescue_applied": rescue_applied,
               "rescue_actions": rescue_actions,
