@@ -2,229 +2,249 @@
   "autonomous_cloud_budget_usd": "0.00",
   "broker_order_submission_allowed": false,
   "controller_receipt": {
-    "completed_at_utc": "2026-10-02T00:18:20.659789Z",
-    "controller_action": null,
-    "controller_compute": null,
+    "completed_at_utc": "2026-10-02T00:24:50.776692Z",
+    "controller_action": "provider_foundation_provider_unavailable_retry_later",
+    "controller_compute": {
+      "bars": 1440,
+      "days": 1,
+      "elapsed_seconds": 0.061178081999969436,
+      "kind": "synthetic_backtest_preflight",
+      "market_outcomes_accessed": false,
+      "ok": true,
+      "output": ".scratch/autonomy/research-controller/benchmark-20261002T002354.883150Z.json",
+      "research_evidence": false,
+      "variants": 4
+    },
+    "fresh_after_restart": true,
     "generation_id": "eurusd-fxcm-g29-chronological-2026-q3-v1-alpha-29",
-    "generation_loop_action": null,
-    "generation_loop_stage": null,
+    "generation_loop_action": "provider_foundation_provider_unavailable_retry_later",
+    "generation_loop_outcomes_executed": false,
+    "generation_loop_stage": "provider_foundation",
     "generation_number": 29,
     "next_stage": "provider_foundation",
-    "ok": false,
-    "research_outcomes_executed": null
+    "ok": true,
+    "research_outcomes_executed": false
   },
-  "deployed_runtime_revision": "1b85e412703f966a2b92d98cfd45cb0ffc47b51e\\n",
+  "deployed_runtime_revision": "1b85e412703f966a2b92d98cfd45cb0ffc47b51e",
   "live_trading_allowed": false,
-  "paper_forward_shadow": null,
+  "paper_forward_shadow": {
+    "action": "idle",
+    "completed_day_count": 5,
+    "due_day": null,
+    "enabled": true,
+    "generation_id": "eurusd-fxcm-q4-2020-v1-alpha-4",
+    "instrument": "EURUSD",
+    "latest_completed_day": "2026-10-01"
+  },
   "post_attribution": {
     "bucket_cpu_seconds": {
-      "control_plane": 12.060192,
+      "control_plane": 12.870116,
       "ftmo": 0.0,
-      "haxlab": 14.017344,
-      "other_systemd": 1.32974
+      "haxlab": 13.372087,
+      "other_systemd": 1.179155
     },
     "ftmo_busy_cpu_share": 0.0,
     "ftmo_host_capacity_share": 0.0,
     "ftmo_primary_attributed_compute": false,
-    "host_busy_cpu_seconds": 51.63,
-    "host_capacity_cpu_seconds": 72.034506,
+    "host_busy_cpu_seconds": 44.73,
+    "host_capacity_cpu_seconds": 72.177186,
     "logical_cpus": 6,
     "machine_slice_cpu_seconds": 0.0,
-    "other_top_level_cpu_seconds": 0.182015,
+    "other_top_level_cpu_seconds": 0.001996,
     "primary_competitor_bucket": "user_slice",
-    "primary_competitor_cpu_seconds": 15.741264,
-    "sample_seconds": 12.005751,
-    "system_slice_cpu_seconds": 35.525072,
-    "system_slice_unclassified_cpu_seconds": 8.117796,
+    "primary_competitor_cpu_seconds": 16.983387,
+    "sample_seconds": 12.029531,
+    "system_slice_cpu_seconds": 27.36778,
+    "system_slice_unclassified_cpu_seconds": 0.0,
     "top_level_cgroup_cpu_seconds": {
-      "init.scope": 0.182015,
-      "system.slice": 35.525072,
-      "user.slice": 15.741264
-    },
-    "top_systemd_units": [
-      {
-        "bucket": "haxlab",
-        "cpu_seconds": 12.000006,
-        "unit": "haxlab-autonomy.service"
-      },
-      {
-        "bucket": "control_plane",
-        "cpu_seconds": 11.975616,
-        "unit": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 1.184939,
-        "unit": "x2goserver.service"
-      },
-      {
-        "bucket": "haxlab",
-        "cpu_seconds": 1.085192,
-        "unit": "haxlab-live-room.service"
-      },
-      {
-        "bucket": "haxlab",
-        "cpu_seconds": 0.623468,
-        "unit": "haxlab-ingest.service"
-      },
-      {
-        "bucket": "haxlab",
-        "cpu_seconds": 0.297407,
-        "unit": "haxlab-analyzer.service"
-      },
-      {
-        "bucket": "control_plane",
-        "cpu_seconds": 0.080653,
-        "unit": "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.056177,
-        "unit": "dbus.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.027018,
-        "unit": "systemd-journald.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.013777,
-        "unit": "containerd.service"
-      },
-      {
-        "bucket": "haxlab",
-        "cpu_seconds": 0.010197,
-        "unit": "haxlab-worker.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.008571,
-        "unit": "xrdp.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.008236,
-        "unit": "polkit.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.007026,
-        "unit": "remote-desktop-commander.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.006356,
-        "unit": "rsyslog.service"
-      }
-    ],
-    "unattributed_host_cpu_seconds": 0.181649,
-    "user_slice_cpu_seconds": 15.741264
-  },
-  "pre_attribution": {
-    "bucket_cpu_seconds": {
-      "control_plane": 13.057329,
-      "ftmo": 0.0,
-      "haxlab": 7.494699,
-      "other_systemd": 1.301986
-    },
-    "ftmo_busy_cpu_share": 0.0,
-    "ftmo_host_capacity_share": 0.0,
-    "ftmo_primary_attributed_compute": false,
-    "host_busy_cpu_seconds": 47.54,
-    "host_capacity_cpu_seconds": 72.180982,
-    "logical_cpus": 6,
-    "machine_slice_cpu_seconds": 0.0,
-    "other_top_level_cpu_seconds": 0.050066,
-    "primary_competitor_bucket": "user_slice",
-    "primary_competitor_cpu_seconds": 24.452927,
-    "sample_seconds": 12.030164,
-    "system_slice_cpu_seconds": 22.49514,
-    "system_slice_unclassified_cpu_seconds": 0.641126,
-    "top_level_cgroup_cpu_seconds": {
-      "init.scope": 0.050066,
-      "system.slice": 22.49514,
-      "user.slice": 24.452927
+      "init.scope": 0.001996,
+      "system.slice": 27.36778,
+      "user.slice": 16.983387
     },
     "top_systemd_units": [
       {
         "bucket": "control_plane",
-        "cpu_seconds": 11.920689,
+        "cpu_seconds": 12.052251,
         "unit": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 5.990347,
+        "cpu_seconds": 12.035313,
         "unit": "haxlab-autonomy.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 1.233213,
+        "cpu_seconds": 1.144485,
         "unit": "x2goserver.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 1.170108,
+        "cpu_seconds": 1.127794,
         "unit": "haxlab-live-room.service"
       },
       {
         "bucket": "control_plane",
-        "cpu_seconds": 0.99527,
+        "cpu_seconds": 0.759606,
         "unit": "zennay-cloud.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 0.318769,
+        "cpu_seconds": 0.198463,
         "unit": "haxlab-analyzer.service"
       },
       {
         "bucket": "control_plane",
-        "cpu_seconds": 0.140325,
+        "cpu_seconds": 0.058203,
         "unit": "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
       },
       {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.021461,
-        "unit": "systemd-journald.service"
-      },
-      {
         "bucket": "haxlab",
-        "cpu_seconds": 0.014128,
+        "cpu_seconds": 0.010024,
         "unit": "haxlab-worker.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.011943,
-        "unit": "dbus.service"
+        "cpu_seconds": 0.008411,
+        "unit": "systemd-journald.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.008575,
+        "cpu_seconds": 0.007982,
         "unit": "xrdp.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.007985,
-        "unit": "containerd.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.005224,
-        "unit": "rsyslog.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.003851,
+        "cpu_seconds": 0.005686,
         "unit": "remote-desktop-commander.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.002797,
-        "unit": "systemd-logind.service"
+        "cpu_seconds": 0.00418,
+        "unit": "containerd.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.002248,
+        "unit": "sddm.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.001773,
+        "unit": "rsyslog.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.00129,
+        "unit": "docker.service"
       }
     ],
-    "unattributed_host_cpu_seconds": 0.541867,
-    "user_slice_cpu_seconds": 24.452927
+    "unattributed_host_cpu_seconds": 0.376837,
+    "user_slice_cpu_seconds": 16.983387
+  },
+  "pre_attribution": {
+    "bucket_cpu_seconds": {
+      "control_plane": 19.465816,
+      "ftmo": 0.0,
+      "haxlab": 7.544354,
+      "other_systemd": 1.346833
+    },
+    "ftmo_busy_cpu_share": 0.0,
+    "ftmo_host_capacity_share": 0.0,
+    "ftmo_primary_attributed_compute": false,
+    "host_busy_cpu_seconds": 55.95,
+    "host_capacity_cpu_seconds": 72.035657,
+    "logical_cpus": 6,
+    "machine_slice_cpu_seconds": 0.0,
+    "other_top_level_cpu_seconds": 0.075443,
+    "primary_competitor_bucket": "user_slice",
+    "primary_competitor_cpu_seconds": 27.475805,
+    "sample_seconds": 12.005943,
+    "system_slice_cpu_seconds": 28.353589,
+    "system_slice_unclassified_cpu_seconds": 0.0,
+    "top_level_cgroup_cpu_seconds": {
+      "init.scope": 0.075443,
+      "system.slice": 28.353589,
+      "user.slice": 27.475805
+    },
+    "top_systemd_units": [
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 10.44918,
+        "unit": "zennay-cloud.service"
+      },
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 8.163783,
+        "unit": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
+      },
+      {
+        "bucket": "haxlab",
+        "cpu_seconds": 6.005459,
+        "unit": "haxlab-autonomy.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 1.278589,
+        "unit": "x2goserver.service"
+      },
+      {
+        "bucket": "haxlab",
+        "cpu_seconds": 1.173648,
+        "unit": "haxlab-live-room.service"
+      },
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 0.527877,
+        "unit": "zcloud-self-heal.service"
+      },
+      {
+        "bucket": "haxlab",
+        "cpu_seconds": 0.356901,
+        "unit": "haxlab-analyzer.service"
+      },
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 0.324118,
+        "unit": "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.026684,
+        "unit": "systemd-journald.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.010821,
+        "unit": "systemd-resolved.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.009647,
+        "unit": "xrdp.service"
+      },
+      {
+        "bucket": "haxlab",
+        "cpu_seconds": 0.007265,
+        "unit": "haxlab-worker.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.006449,
+        "unit": "rsyslog.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.004412,
+        "unit": "containerd.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.003398,
+        "unit": "docker.service"
+      }
+    ],
+    "unattributed_host_cpu_seconds": 0.045163,
+    "user_slice_cpu_seconds": 27.475805
   },
   "required_attribution_ancestor": "0acfac83eff1136bdce1bfbde6e52b6905ccf1fc",
   "rescue_actions": [
@@ -238,14 +258,14 @@
     "ftmo-restart"
   ],
   "rescue_applied": true,
-  "runtime_error": "AutonomousRolloverError: provider foundation failed closed for generation 29: g exception:\n\nTraceback (most recent call last):\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/providers/dukascopy_public.py\", line 192, in _fetch_public_mirrors\n    raw = source(url, timeout_seconds)\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/providers/dukascopy_public.py\", line 168, in _default_fetch\n    raise DukascopyPublicUnavailable(\n    ...<2 lines>...\n    ) from last_error\nprop_trading_ai.data.market.providers.dukascopy_public.DukascopyPublicUnavailable: Dukascopy public feed request failed after 3 attempts for https://datafeed.dukascopy.com/datafeed/EURUSD/2026/09/02/00h_ticks.bi5: timed out\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/cli/v1_acquire_dukascopy_public.py\", line 49, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/cli/v1_acquire_dukascopy_public.py\", line 28, in main\n    folder, manifest, quality, inspection = acquire_dukascopy_public_range(\n                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        args.start,\n        ^^^^^^^^^^^\n    ...<5 lines>...\n        inspection_output=args.inspection_output,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/dukascopy_public_ingest.py\", line 284, in acquire_dukascopy_public_range\n    bid_bars, ask_bars, day_snapshots = _tick_fallback_day(\n                                        ~~~~~~~~~~~~~~~~~~^\n        cursor, symbol=symbol\n        ^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/dukascopy_public_ingest.py\", line 187, in _tick_fallback_day\n    return _bi5_tick_fallback_day(day, symbol=symbol)\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/dukascopy_public_ingest.py\", line 125, in _bi5_tick_fallback_day\n    snapshot = fetch_dukascopy_tick_hour(\n        day,\n    ...<2 lines>...\n        fetcher=fetcher,\n    )\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/providers/dukascopy_public.py\", line 264, in fetch_dukascopy_tick_hour\n    fetched = _fetch_public_mirrors(\n        urls,\n        timeout_seconds=timeout_seconds,\n        fetcher=fetcher,\n    )\n  File \"/opt/ftmo-autonomous/src/prop_trading_ai/data/market/providers/dukascopy_public.py\", line 206, in _fetch_public_mirrors\n    raise DukascopyPublicUnavailable(\n        f\"all available Dukascopy public mirrors failed or were inconclusive: {detail}\"\n    ) from last_error\nprop_trading_ai.data.market.providers.dukascopy_public.DukascopyPublicUnavailable: all available Dukascopy public mirrors failed or were inconclusive: Dukascopy public feed request failed after 3 attempts for https://datafeed.dukascopy.com/datafeed/EURUSD/2026/09/02/00h_ticks.bi5: timed out\n",
+  "runtime_error": null,
   "schema_version": 1,
   "scope": "zcloud-ftmo-useful-compute-rescue",
   "service": {
-    "active_state": "activating",
-    "control_group": "",
+    "active_state": "active",
+    "control_group": "/system.slice/ftmo-autonomous-marathon.service",
     "cpu_quota_per_sec_usec": "5s",
     "cpu_weight": "10000",
-    "sub_state": "auto-restart"
+    "sub_state": "running"
   }
 }
