@@ -2,16 +2,16 @@
   "autonomous_cloud_budget_usd": "0.00",
   "broker_order_submission_allowed": false,
   "controller_receipt": {
-    "completed_at_utc": "2026-10-02T00:24:50.776692Z",
+    "completed_at_utc": "2026-10-02T00:39:07.293971Z",
     "controller_action": "provider_foundation_provider_unavailable_retry_later",
     "controller_compute": {
       "bars": 1440,
       "days": 1,
-      "elapsed_seconds": 0.061178081999969436,
+      "elapsed_seconds": 0.07142351100083033,
       "kind": "synthetic_backtest_preflight",
       "market_outcomes_accessed": false,
       "ok": true,
-      "output": ".scratch/autonomy/research-controller/benchmark-20261002T002354.883150Z.json",
+      "output": ".scratch/autonomy/research-controller/benchmark-20261002T003815.030405Z.json",
       "research_evidence": false,
       "variants": 4
     },
@@ -38,213 +38,213 @@
   },
   "post_attribution": {
     "bucket_cpu_seconds": {
-      "control_plane": 12.870116,
-      "ftmo": 0.0,
-      "haxlab": 13.372087,
-      "other_systemd": 1.179155
+      "control_plane": 1.035826,
+      "ftmo": 0.279916,
+      "haxlab": 14.275913,
+      "other_systemd": 1.217522
     },
-    "ftmo_busy_cpu_share": 0.0,
-    "ftmo_host_capacity_share": 0.0,
+    "ftmo_busy_cpu_share": 0.008221,
+    "ftmo_host_capacity_share": 0.003886,
     "ftmo_primary_attributed_compute": false,
-    "host_busy_cpu_seconds": 44.73,
-    "host_capacity_cpu_seconds": 72.177186,
+    "host_busy_cpu_seconds": 34.05,
+    "host_capacity_cpu_seconds": 72.038612,
     "logical_cpus": 6,
     "machine_slice_cpu_seconds": 0.0,
-    "other_top_level_cpu_seconds": 0.001996,
+    "other_top_level_cpu_seconds": 0.002553,
     "primary_competitor_bucket": "user_slice",
-    "primary_competitor_cpu_seconds": 16.983387,
-    "sample_seconds": 12.029531,
-    "system_slice_cpu_seconds": 27.36778,
-    "system_slice_unclassified_cpu_seconds": 0.0,
+    "primary_competitor_cpu_seconds": 16.859226,
+    "sample_seconds": 12.006435,
+    "system_slice_cpu_seconds": 16.817034,
+    "system_slice_unclassified_cpu_seconds": 0.007857,
     "top_level_cgroup_cpu_seconds": {
-      "init.scope": 0.001996,
-      "system.slice": 27.36778,
-      "user.slice": 16.983387
+      "init.scope": 0.002553,
+      "system.slice": 16.817034,
+      "user.slice": 16.859226
     },
     "top_systemd_units": [
       {
-        "bucket": "control_plane",
-        "cpu_seconds": 12.052251,
-        "unit": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
-      },
-      {
         "bucket": "haxlab",
-        "cpu_seconds": 12.035313,
+        "cpu_seconds": 12.000754,
         "unit": "haxlab-autonomy.service"
       },
       {
-        "bucket": "other_systemd",
-        "cpu_seconds": 1.144485,
-        "unit": "x2goserver.service"
-      },
-      {
         "bucket": "haxlab",
-        "cpu_seconds": 1.127794,
+        "cpu_seconds": 1.354485,
         "unit": "haxlab-live-room.service"
       },
       {
+        "bucket": "other_systemd",
+        "cpu_seconds": 1.162319,
+        "unit": "x2goserver.service"
+      },
+      {
         "bucket": "control_plane",
-        "cpu_seconds": 0.759606,
+        "cpu_seconds": 0.907931,
         "unit": "zennay-cloud.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 0.198463,
-        "unit": "haxlab-analyzer.service"
-      },
-      {
-        "bucket": "control_plane",
-        "cpu_seconds": 0.058203,
-        "unit": "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+        "cpu_seconds": 0.551772,
+        "unit": "haxlab-ingest.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 0.010024,
+        "cpu_seconds": 0.356063,
+        "unit": "haxlab-analyzer.service"
+      },
+      {
+        "bucket": "ftmo",
+        "cpu_seconds": 0.279916,
+        "unit": "ftmo-autonomous-marathon.service"
+      },
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 0.089961,
+        "unit": "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+      },
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 0.036499,
+        "unit": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.015346,
+        "unit": "systemd-journald.service"
+      },
+      {
+        "bucket": "haxlab",
+        "cpu_seconds": 0.012162,
         "unit": "haxlab-worker.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.008411,
-        "unit": "systemd-journald.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.007982,
+        "cpu_seconds": 0.010469,
         "unit": "xrdp.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.005686,
+        "cpu_seconds": 0.00745,
         "unit": "remote-desktop-commander.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.00418,
+        "cpu_seconds": 0.00704,
+        "unit": "systemd-networkd.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.004892,
         "unit": "containerd.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.002248,
-        "unit": "sddm.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.001773,
-        "unit": "rsyslog.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.00129,
-        "unit": "docker.service"
       }
     ],
-    "unattributed_host_cpu_seconds": 0.376837,
-    "user_slice_cpu_seconds": 16.983387
+    "unattributed_host_cpu_seconds": 0.371187,
+    "user_slice_cpu_seconds": 16.859226
   },
   "pre_attribution": {
     "bucket_cpu_seconds": {
-      "control_plane": 19.465816,
+      "control_plane": 5.359106,
       "ftmo": 0.0,
-      "haxlab": 7.544354,
-      "other_systemd": 1.346833
+      "haxlab": 7.653685,
+      "other_systemd": 1.372464
     },
     "ftmo_busy_cpu_share": 0.0,
     "ftmo_host_capacity_share": 0.0,
     "ftmo_primary_attributed_compute": false,
-    "host_busy_cpu_seconds": 55.95,
-    "host_capacity_cpu_seconds": 72.035657,
+    "host_busy_cpu_seconds": 33.62,
+    "host_capacity_cpu_seconds": 72.074047,
     "logical_cpus": 6,
     "machine_slice_cpu_seconds": 0.0,
-    "other_top_level_cpu_seconds": 0.075443,
+    "other_top_level_cpu_seconds": 0.002181,
     "primary_competitor_bucket": "user_slice",
-    "primary_competitor_cpu_seconds": 27.475805,
-    "sample_seconds": 12.005943,
-    "system_slice_cpu_seconds": 28.353589,
+    "primary_competitor_cpu_seconds": 19.10325,
+    "sample_seconds": 12.012341,
+    "system_slice_cpu_seconds": 14.384399,
     "system_slice_unclassified_cpu_seconds": 0.0,
     "top_level_cgroup_cpu_seconds": {
-      "init.scope": 0.075443,
-      "system.slice": 28.353589,
-      "user.slice": 27.475805
+      "init.scope": 0.002181,
+      "system.slice": 14.384399,
+      "user.slice": 19.10325
     },
     "top_systemd_units": [
       {
-        "bucket": "control_plane",
-        "cpu_seconds": 10.44918,
-        "unit": "zennay-cloud.service"
+        "bucket": "haxlab",
+        "cpu_seconds": 5.995802,
+        "unit": "haxlab-autonomy.service"
       },
       {
         "bucket": "control_plane",
-        "cpu_seconds": 8.163783,
+        "cpu_seconds": 4.358454,
         "unit": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 6.005459,
-        "unit": "haxlab-autonomy.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 1.278589,
-        "unit": "x2goserver.service"
-      },
-      {
-        "bucket": "haxlab",
-        "cpu_seconds": 1.173648,
+        "cpu_seconds": 1.315826,
         "unit": "haxlab-live-room.service"
       },
       {
+        "bucket": "other_systemd",
+        "cpu_seconds": 1.204827,
+        "unit": "x2goserver.service"
+      },
+      {
         "bucket": "control_plane",
-        "cpu_seconds": 0.527877,
-        "unit": "zcloud-self-heal.service"
+        "cpu_seconds": 0.848872,
+        "unit": "zennay-cloud.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 0.356901,
+        "cpu_seconds": 0.328219,
         "unit": "haxlab-analyzer.service"
       },
       {
         "bucket": "control_plane",
-        "cpu_seconds": 0.324118,
+        "cpu_seconds": 0.147281,
         "unit": "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.026684,
-        "unit": "systemd-journald.service"
-      },
-      {
-        "bucket": "other_systemd",
-        "cpu_seconds": 0.010821,
+        "cpu_seconds": 0.096096,
         "unit": "systemd-resolved.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.009647,
-        "unit": "xrdp.service"
+        "cpu_seconds": 0.025688,
+        "unit": "containerd.service"
       },
       {
         "bucket": "haxlab",
-        "cpu_seconds": 0.007265,
+        "cpu_seconds": 0.012657,
         "unit": "haxlab-worker.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.006449,
-        "unit": "rsyslog.service"
+        "cpu_seconds": 0.009564,
+        "unit": "systemd-journald.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.004412,
-        "unit": "containerd.service"
+        "cpu_seconds": 0.009492,
+        "unit": "xrdp.service"
       },
       {
         "bucket": "other_systemd",
-        "cpu_seconds": 0.003398,
-        "unit": "docker.service"
+        "cpu_seconds": 0.007836,
+        "unit": "snapd.service"
+      },
+      {
+        "bucket": "other_systemd",
+        "cpu_seconds": 0.005093,
+        "unit": "systemd-networkd.service"
+      },
+      {
+        "bucket": "control_plane",
+        "cpu_seconds": 0.004499,
+        "unit": "actions.runner.Zennay-RaiseAI.vps-bb300bba.service"
       }
     ],
-    "unattributed_host_cpu_seconds": 0.045163,
-    "user_slice_cpu_seconds": 27.475805
+    "unattributed_host_cpu_seconds": 0.13017,
+    "user_slice_cpu_seconds": 19.10325
   },
   "required_attribution_ancestor": "0acfac83eff1136bdce1bfbde6e52b6905ccf1fc",
   "rescue_actions": [
