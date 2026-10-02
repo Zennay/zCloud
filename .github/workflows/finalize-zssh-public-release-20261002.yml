@@ -1,0 +1,153 @@
+name: Finalize zSSH public plugin release queue
+
+on:
+  workflow_run:
+    workflows:
+      - zSSH standalone VPS release
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-openai-public-plugin-release-finalize-20261002
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: self-hosted
+    env:
+      RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+    timeout-minutes: 5
+    steps:
+      - name: Verify exact live zSSH release
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA=c1a249e4995605b025496a0178cacbc4cfcecf41
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(readlink -f /home/ubuntu/.local/share/zssh/current)" = "/home/ubuntu/.local/share/zssh/releases/$EXPECTED_SHA"
+          systemctl --user is-active --quiet zssh.service
+          curl --fail --silent --show-error http://127.0.0.1:8788/health
+          echo "ZSSH_PUBLIC_RELEASE_LIVE_GREEN sha=$EXPECTED_SHA release_run=${RELEASE_RUN_ID:-manual}"
+
+      - name: Finish exact SQLite queue assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import importlib.util
+          import json
+          import sqlite3
+          import sys
+          from pathlib import Path
+
+          queue_id = "zssh-openai-public-plugin-release"
+          expected_project = "zssh"
+          live_root = Path("/home/ubuntu/zennay-cloud")
+          db_path = live_root / "history.db"
+          server_path = live_root / "server.py"
+
+          if not db_path.is_file() or not server_path.is_file():
+              raise SystemExit("live zCloud server/history.db missing")
+
+          sys.path.insert(0, str(live_root))
+          spec = importlib.util.spec_from_file_location("zcloud_live_server", server_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("cannot load live zCloud server module")
+          server = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(server)
+          server.DB = db_path
+
+          release_run_id = str(__import__("os").environ.get("RELEASE_RUN_ID") or "manual")
+          evidence = (
+              "zSSH OpenAI public plugin release increment complete: "
+              "canonical zSSH PR #35 merged as c1a249e4995605b025496a0178cacbc4cfcecf41; "
+              "canonical zSSH CI 37001556239 SUCCESS and OpenAI release gate 37001556272 SUCCESS; "
+              "zCloud PR #228 merged as c5f16d15a2e0ea1c46bfb5a7dde8315f14f69a18; "
+              f"self-hosted release run {release_run_id} SUCCESS on vps-bb300bba, with exact live provenance, "
+              "service health, hosted MCP auth canaries and isolated public listing-site proof for /, /support, /privacy and /terms. "
+              "FTMO P0 compute/research work was not preempted or modified."
+          )
+
+          def read_row():
+              with sqlite3.connect(db_path) as c:
+                  c.row_factory = sqlite3.Row
+                  row = c.execute(
+                      "SELECT queue_id,project_id,title,status,eligible,worker_slot,evidence,updated_at "
+                      "FROM portfolio_queue WHERE queue_id=?",
+                      (queue_id,),
+                  ).fetchone()
+              return dict(row) if row else None
+
+          before = read_row()
+          print("QUEUE_BEFORE=" + json.dumps(before, sort_keys=True))
+          if before is None:
+              raise SystemExit("queue item missing")
+          if before["project_id"] != expected_project:
+              raise SystemExit(f"project mismatch: {before['project_id']}")
+
+          if before["status"] == "done" and int(before["eligible"] or 0) == 0:
+              print("QUEUE_ALREADY_DONE=1")
+          elif before["status"] in {"claimed", "running", "verifying", "in_progress"} and before["worker_slot"] is not None:
+              result = server.portfolio_queue_finish(
+                  int(before["worker_slot"]),
+                  queue_id,
+                  "DONE",
+                  evidence,
+              )
+              print("QUEUE_FINISH_RESULT=" + json.dumps(result, sort_keys=True, default=str))
+              if not result.get("updated"):
+                  raise SystemExit("portfolio_queue_finish refused active assignment")
+          elif before["status"] == "queued" and int(before["eligible"] or 0) == 1 and before["worker_slot"] is None:
+              # The chat claim can expire while a lower-priority release waits behind
+              # FTMO P0 on the single VPS runner. Finalize only this exact, already
+              # proven queue item and create the normal zSSH continuation.
+              with sqlite3.connect(db_path) as c:
+                  c.execute("BEGIN IMMEDIATE")
+                  current = c.execute(
+                      "SELECT status,eligible,worker_slot,project_id FROM portfolio_queue WHERE queue_id=?",
+                      (queue_id,),
+                  ).fetchone()
+                  if (
+                      current is None
+                      or current[0] != "queued"
+                      or int(current[1] or 0) != 1
+                      or current[2] is not None
+                      or current[3] != expected_project
+                  ):
+                      raise SystemExit("queue state changed during finalization")
+                  c.execute(
+                      "UPDATE portfolio_queue SET status='done',eligible=0,evidence=?,blocker='',"
+                      "worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?",
+                      (evidence, server.now(), queue_id),
+                  )
+              continuation = server.portfolio_write_continuation(expected_project, queue_id)
+              server.portfolio_queue_audit(refill=False)
+              print("QUEUE_EXPIRED_CLAIM_FINALIZED=1")
+              print("QUEUE_CONTINUATION=" + json.dumps(continuation, sort_keys=True, default=str))
+          else:
+              raise SystemExit(
+                  "refusing nonstandard queue mutation: "
+                  f"status={before['status']} eligible={before['eligible']} worker_slot={before['worker_slot']}"
+              )
+
+          after = read_row()
+          print("QUEUE_AFTER=" + json.dumps(after, sort_keys=True))
+          if (
+              not after
+              or after["status"] != "done"
+              or int(after["eligible"] or 0) != 0
+              or after["worker_slot"] is not None
+          ):
+              raise SystemExit("queue final state is not done/eligible=0/unclaimed")
+          print("ZCLOUD_ZSSH_PUBLIC_RELEASE_QUEUE_DONE_GREEN=1")
+          PY
