@@ -95,14 +95,22 @@ jobs:
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
 
-          payload="$(gh api "repos/Zennay/Ftmo/actions/runs/$FTMO_DEPLOY_RUN")"
-          status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$payload")"
-          conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion"))' <<<"$payload")"
-          sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$payload")"
-          echo "FTMO_W5_DEPLOY_GATE run=$FTMO_DEPLOY_RUN status=$status conclusion=$conclusion sha=$sha"
-          test "$sha" = "$FTMO_DEPLOY_SHA"
-          test "$status" = "completed"
-          test "$conclusion" = "success"
+          gate_green=0
+          for _ in $(seq 1 120); do
+            payload="$(gh api "repos/Zennay/Ftmo/actions/runs/$FTMO_DEPLOY_RUN")"
+            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$payload")"
+            conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion"))' <<<"$payload")"
+            sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$payload")"
+            echo "FTMO_W5_DEPLOY_GATE run=$FTMO_DEPLOY_RUN status=$status conclusion=$conclusion sha=$sha"
+            test "$sha" = "$FTMO_DEPLOY_SHA"
+            if [[ "$status" == "completed" ]]; then
+              test "$conclusion" = "success"
+              gate_green=1
+              break
+            fi
+            sleep 5
+          done
+          test "$gate_green" = "1"
 
           python3 - <<'PY'
           import importlib.util
