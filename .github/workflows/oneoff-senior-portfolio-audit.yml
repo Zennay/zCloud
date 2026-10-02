@@ -6,38 +6,27 @@ on:
       - ".github/workflows/oneoff-senior-portfolio-audit.yml"
 
 jobs:
-  senior-portfolio-audit:
+  diagnose-senior-review:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 12
+    timeout-minutes: 5
     steps:
-      - name: Verify live zCloud audit route
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
-          test -f /home/ubuntu/zennay-cloud/history.db
-          echo "runner=$(hostname)"
-          echo "audit_route=Senior Team OS / Portfolio Bird's-eye Review"
-
-      - name: Trigger bounded senior review now
-        shell: bash
-        run: |
-          set -euo pipefail
-          export ZCLOUD_ROOT=/home/ubuntu/zennay-cloud
-          export ZCLOUD_DB=/home/ubuntu/zennay-cloud/history.db
-          export ZCLOUD_BIRDSEYE_WINDOW_HOURS=12
-          export ZCLOUD_BIRDSEYE_MIN_INTERVAL_HOURS=0
-          export ZCLOUD_BIRDSEYE_WAIT_TIMEOUT=120
-          bash /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
-
-      - name: Prove reviewer dispatch state
+      - name: Inspect reviewer state and VPS pressure
         shell: bash
         run: |
           set -euo pipefail
           DB=/home/ubuntu/zennay-cloud/history.db
-          echo "== latest bounded review =="
-          sqlite3 -header -column "$DB"             "SELECT ts,status,projects FROM daily_review_runs ORDER BY ts DESC LIMIT 1;"
-          echo "== reviewer commands =="
-          sqlite3 -header -column "$DB"             "SELECT id,action,status,created_at,updated_at,substr(COALESCE(result,''),1,180) AS result FROM runner_commands WHERE project_id='portfolio-review' ORDER BY id DESC LIMIT 8;"
-          echo "== reviewer events =="
-          sqlite3 -header -column "$DB"             "SELECT id,ts,event,substr(COALESCE(reason,''),1,180) AS reason,substr(COALESCE(error,''),1,180) AS error FROM runner_events WHERE project_id='portfolio-review' ORDER BY id DESC LIMIT 20;"
+          echo "runner=$(hostname)"
+          echo "== memory =="
+          free -m
+          echo "== load =="
+          uptime
+          echo "== recent OOM / killed-process kernel evidence =="
+          journalctl -k --since "20 minutes ago" --no-pager 2>/dev/null | grep -Ei "out of memory|oom|killed process" | tail -n 80 || true
+          echo "== latest bounded reviews =="
+          sqlite3 -header -column "$DB"             "SELECT ts,status,projects FROM daily_review_runs ORDER BY ts DESC LIMIT 5;"
+          echo "== portfolio-review commands =="
+          sqlite3 -header -column "$DB"             "SELECT id,action,status,created_at,updated_at,substr(COALESCE(result,''),1,240) AS result FROM runner_commands WHERE project_id='portfolio-review' ORDER BY id DESC LIMIT 12;"
+          echo "== portfolio-review events =="
+          sqlite3 -header -column "$DB"             "SELECT id,ts,event,generating,sending,substr(COALESCE(reason,''),1,200) AS reason,substr(COALESCE(error,''),1,200) AS error FROM runner_events WHERE project_id='portfolio-review' ORDER BY id DESC LIMIT 30;"
+          echo "== runner live =="
+          curl -fsS http://127.0.0.1:8765/api/runner-live || true
