@@ -61,7 +61,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
-      TARGET_SHA: b3fc717fdf255fba039fed382274b0fa73c7ddff
+      TARGET_SHA: 60fcbbc3562e77013f44830c4db26b69f0167ca1
     steps:
       - name: Fetch exact FTMO PR head
         shell: bash
