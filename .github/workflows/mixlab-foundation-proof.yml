@@ -1,0 +1,82 @@
+name: MixLab foundation proof and worker handoff
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/mixlab-foundation-proof.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mixlab-foundation-proof
+  cancel-in-progress: false
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      MIXLAB_SHA: f089e0ddfc22347b7ccb08f88c5dfa6ec12663cf
+    steps:
+      - name: Checkout exact MixLab foundation
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: Zennay/Mixlab
+          ref: f089e0ddfc22347b7ccb08f88c5dfa6ec12663cf
+          path: mixlab-foundation
+          persist-credentials: false
+      - name: Test and render synthetic proof on one CPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          cd mixlab-foundation
+          test "$(git rev-parse HEAD)" = "$MIXLAB_SHA"
+          evidence="$RUNNER_TEMP/mixlab-proof-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 ops/prove.py "$evidence"
+          echo "MIXLAB_EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          cat "$evidence/receipt.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Enqueue scoped zSSH integration work
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+          payload = {
+              "action": "enqueue",
+              "queue_id": "zssh-mixlab-foundation-integration-20261002",
+              "project_id": "zssh", "priority": "P2",
+              "title": "Implement MixLab zCloud registration and bounded worker continuation",
+              "source_url": "https://github.com/Zennay/Mixlab/issues/1",
+              "completion_criteria": (
+                  "Execute MixLab issue #1 using Zennay/Mixlab at commit " + os.environ["MIXLAB_SHA"] +
+                  ". Synthetic foundation proof workflow_run_id=" + os.environ["GITHUB_RUN_ID"] +
+                  " passed before enqueue. Read MixLab HQ 3e79e19ac95581a78ee3f24aa5e7e8b6 and handoff "
+                  "3e79e19ac95581f4bf15c26a833da642. Claim the exact shared project-registration scope. "
+                  "Add only MixLab's entry through the accepted zCloud deployment path, preserving other projects "
+                  "and global concurrency; one MixLab write worker/render process, priority normal/P2. "
+                  "Then enqueue MixLab issue #2 as the next implementation task in SQLite, with its file scope. "
+                  "Use docs/infrastructure.md and docs/worker-plan.md; no new VPS, paid services, model installs, "
+                  "public media or broad restarts. Record commit, workflow_run_id, tested/deployed status and actual "
+                  "queue IDs. Do not mark M1 complete; real permitted tracks/listener proof remain open."
+              ),
+          }
+          req=urllib.request.Request("http://127.0.0.1:8765/api/portfolio-queue",
+              data=json.dumps(payload).encode(), headers={"Content-Type":"application/json"}, method="POST")
+          with urllib.request.urlopen(req, timeout=30) as response:
+              result=json.load(response)
+          if not result.get("ok") or result.get("backend") != "sqlite":
+              raise SystemExit("SQLite queue did not confirm enqueue")
+          item=result["item"]
+          receipt={"queue_id":item["queue_id"],"project_id":item["project_id"],
+                   "status":item["status"],"workflow_run_id":os.environ["GITHUB_RUN_ID"]}
+          print(json.dumps(receipt,sort_keys=True))
+          from pathlib import Path
+          Path(os.environ["MIXLAB_EVIDENCE"],"queue-receipt.json").write_text(json.dumps(receipt,indent=2)+"\n")
+          PY
+      - name: Preserve sanitized evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mixlab-foundation-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/mixlab-proof-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+          if-no-files-found: warn
+          retention-days: 14
