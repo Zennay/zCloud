@@ -1,5 +1,5 @@
 name: FTMO PR429 exact-head proof
-# trigger: worker3-pr429-proof
+# trigger: worker3-pr429-proof-v2
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ftmo-pr428-exact-head-proof
+  group: ftmo-pr429-exact-head-proof
   cancel-in-progress: true
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     env:
-      TARGET_SHA: 8ec1585fb50e9d4a62cce292d54d4a2dacc922c8
+      TARGET_SHA: 1a0b95dca1826a67657af24a2e754b9885c02eee
     steps:
       - name: Verify VPS identity and fetch exact FTMO head
         shell: bash
