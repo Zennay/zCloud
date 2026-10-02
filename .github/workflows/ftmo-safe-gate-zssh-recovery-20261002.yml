@@ -37,8 +37,12 @@ jobs:
               "priority": "P0",
               "completion_criteria": (
                   "On vps-bb300bba reconcile /opt/ftmo-autonomous to exact Ftmo main "
-                  "3b512f5631984a46072495727214bb7bf03a02ba if the normal FTMO self-hosted "
-                  "deploy run has not already done so. Do not invoke v1_autonomous_tick "
+                  "3b512f5631984a46072495727214bb7bf03a02ba. FTMO verify run 36949032213 "
+                  "proved files were deployed but the active marathon process still published old "
+                  "runtime_revision 1b85e412703f966a2b92d98cfd45cb0ffc47b51e and old deployment run "
+                  "36944877718. Perform the minimal controlled service restart/reload needed so the "
+                  "active process actually uses 3b512f5631984a46072495727214bb7bf03a02ba. "
+                  "Do not invoke v1_autonomous_tick "
                   "manually and do not act as the normal generation loop. Preserve mutable "
                   "research_machine generation state, provider provenance, preregistration, "
                   "walk-forward and final-holdout separation. Ensure ftmo-autonomous-marathon.service "
