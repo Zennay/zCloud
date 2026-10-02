@@ -33,6 +33,9 @@ jobs:
             "worker5/day-cache-temporal-provenance-20261002"
             "worker3/provider-publication-atomicity-20261002"
             "worker1/gen29-day-cache-write-validation-20261002"
+            "worker1/jetta-tick-chronology-v3-20261002"
+            "worker1/jetta-tick-chronology-v2-20261002"
+            "worker3/foundation-readiness-path-integrity-20261002"
             "proof/worker3-pr390-targeted-20261002"
             "proof/worker3-pr386-targeted-20261002"
           )
@@ -61,7 +64,7 @@ jobs:
           done
 
           echo "cancelled_count=$cancelled"
-          for run_id in 36994271969 36994272089 36994276808; do
+          for run_id in 36995115879 36995115888; do
             status="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id" --jq .status 2>/dev/null || true)"
             [[ -n "$status" ]] && echo "protected_current_main_run=$run_id status=$status"
           done
