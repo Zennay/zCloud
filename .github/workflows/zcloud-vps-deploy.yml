@@ -213,7 +213,7 @@ jobs:
         run: |
           set -euo pipefail
           service="zennay-cloud.service"
-          url="http://127.0.0.1:8765/api/status"
+          url="http://127.0.0.1:8765/api/runner-targets"
           lock_file="/run/zcloud-self-heal.lock"
 
           # The self-heal timer owns this /run lock as root. Hold the same lock
