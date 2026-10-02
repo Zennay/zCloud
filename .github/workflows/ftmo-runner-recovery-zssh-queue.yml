@@ -30,7 +30,7 @@ jobs:
           import urllib.request
 
           base = "http://127.0.0.1:8765"
-          queue_id = "zssh-ftmo-pr434-runner-recovery-20261002"
+          queue_id = "zssh-ftmo-pr437-runner-recovery-20261002"
           payload = {
               "action": "enqueue",
               "queue_id": queue_id,
@@ -39,21 +39,21 @@ jobs:
               "priority": "P0",
               "completion_criteria": (
                   "On vps-bb300bba recover only the GitHub Actions runner used by Zennay/Ftmo, "
-                  "observed as runner name vps-bb300bba-ftmo. Exact PR #434 head "
-                  "2bbc0334ec05de2d66558c5284ef2977c466ca97 has self-hosted runs "
-                  "37001378862 (Dukascopy resume-cache integrity), 37001378965 (full Test suite), "
-                  "and 37001378853 (provider publication integrity) stuck queued. Diagnose current "
+                  "observed as runner name vps-bb300bba-ftmo. Exact PR #437 head "
+                  "2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0 has self-hosted runs "
+                  "37002559195 (Dukascopy resume-cache integrity), 37002559068 (full Test suite), "
+                  "and 37002559132 (provider publication integrity) stuck queued. Diagnose current "
                   "listener/service health, active Runner.Worker state, and fresh OOM evidence. "
                   "If inactive or unhealthy, restart only the FTMO Actions runner using the existing "
                   "service installation; if a valid worker is active, preserve it. Verify the runner "
-                  "is online/listening and at least one protected PR #434 exact-head run starts "
+                  "is online/listening and at least one protected PR #437 exact-head run starts "
                   "scheduling. Do not cancel or rerun the protected runs and do not modify the FTMO "
                   "application runtime, marathon service, strategy outcomes, provider evidence, "
                   "preregistration, development, walk-forward, final holdout, broker/live permissions, "
                   "paid-cloud boundary, or secrets. Return the service name, pre/post state, concrete "
                   "recovery action, and scheduling evidence."
               ),
-              "source_url": "https://github.com/Zennay/Ftmo/pull/434",
+              "source_url": "https://github.com/Zennay/Ftmo/pull/437",
           }
 
           def post(path, body):
@@ -120,7 +120,7 @@ jobs:
           import subprocess
           import urllib.request
 
-          queue_id = "zssh-ftmo-pr434-runner-recovery-20261002"
+          queue_id = "zssh-ftmo-pr437-runner-recovery-20261002"
           with urllib.request.urlopen(
               "http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10
           ) as response:
@@ -167,8 +167,8 @@ jobs:
                   "worker_slot": item.get("worker_slot"),
                   "updated_at": item.get("updated_at"),
               },
-              "protected_ftmo_runs": [37001378862, 37001378965, 37001378853],
-              "target_exact_head_sha": "2bbc0334ec05de2d66558c5284ef2977c466ca97",
+              "protected_ftmo_runs": [37002559195, 37002559068, 37002559132],
+              "target_exact_head_sha": "2bf3c52bfc66399eaa1a3bdd47a9e3e5ccb17da0",
           }
           target = Path("artifacts/ops/ftmo-runner-recovery-zssh-queue.json")
           target.parent.mkdir(parents=True, exist_ok=True)
