@@ -1,0 +1,133 @@
+name: FTMO PR408 exact-head provider boundary proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr408-provider-boundary-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr408-provider-boundary-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: 98c033b2b571cea2313f20bee31820286132226f
+    steps:
+      - name: Fetch exact FTMO PR408 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr408-proof"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR408_EXACT_SHA=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr408-proof"
+          venv="$RUNNER_TEMP/ftmo-pr408-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile provider boundary runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr408-proof"
+          venv="$RUNNER_TEMP/ftmo-pr408-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q \
+            src/prop_trading_ai/ops/autonomous_rollover.py \
+            src/prop_trading_ai/ops/autonomous_generation_loop.py
+          echo "FTMO_PR408_COMPILE_GREEN=1"
+
+      - name: Prove provider credential isolation and deploy lockstep
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr408-proof"
+          venv="$RUNNER_TEMP/ftmo-pr408-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q \
+            tests/test_autonomous_provider_retry.py \
+            tests/test_autonomous_deploy_lockstep.py \
+            tests/test_zero_cost_workflow_boundary.py
+          echo "FTMO_PR408_TARGETED_GREEN=1"
+
+      - name: Build exact FTMO full-suite plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr408-proof"
+          venv="$RUNNER_TEMP/ftmo-pr408-venv"
+          cd "$src"
+          mkdir -p .scratch
+          "$venv/bin/python" - <<'PY'
+          from pathlib import Path
+          import contextlib
+          import io
+          import pytest
+
+          class Collector:
+              paths = None
+              count = None
+              def pytest_collection_finish(self, session):
+                  self.count = len(session.items)
+                  self.paths = sorted({
+                      Path(str(item.path)).resolve().relative_to(Path.cwd().resolve()).as_posix()
+                      for item in session.items
+                  })
+
+          collector = Collector()
+          captured = io.StringIO()
+          with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+              exit_code = pytest.main(["--collect-only", "-q"], plugins=[collector])
+          if exit_code != pytest.ExitCode.OK or collector.paths is None or collector.count is None:
+              raise SystemExit("pytest collection failed: " + captured.getvalue()[-2000:])
+          if not collector.paths or collector.count <= 0:
+              raise SystemExit("pytest collected no tests")
+          Path(".scratch/ci-test-files-pr408.txt").write_text(
+              "\n".join(collector.paths) + "\n", encoding="utf-8"
+          )
+          Path(".scratch/ci-test-count-pr408.txt").write_text(
+              str(collector.count) + "\n", encoding="utf-8"
+          )
+          print(f"FTMO_PR408_COLLECTED_TESTS={collector.count}")
+          print(f"FTMO_PR408_TEST_FILES={len(collector.paths)}")
+          PY
+
+      - name: Run exact FTMO full suite in memory-bounded batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr408-proof"
+          venv="$RUNNER_TEMP/ftmo-pr408-venv"
+          cd "$src"
+          expected_count="$(cat .scratch/ci-test-count-pr408.txt)"
+          executed_files=0
+          while IFS= read -r test_file; do
+            [[ -n "$test_file" ]] || continue
+            echo "::group::$test_file"
+            "$venv/bin/python" -m pytest -q "$test_file"
+            echo "::endgroup::"
+            executed_files=$((executed_files + 1))
+          done < .scratch/ci-test-files-pr408.txt
+          test "$executed_files" -gt 0
+          echo "FTMO_PR408_FULL_SUITE_COLLECTED_TESTS=$expected_count"
+          echo "FTMO_PR408_FULL_SUITE_EXECUTED_FILES=$executed_files"
+          echo "FTMO_PR408_FULL_SUITE_GREEN=1"
