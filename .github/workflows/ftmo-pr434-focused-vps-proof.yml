@@ -1,0 +1,122 @@
+name: FTMO PR434 focused semantic cache proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr434-focused-vps-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr434-focused-vps-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: 2bbc0334ec05de2d66558c5284ef2977c466ca97
+    steps:
+      - name: Verify runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "runner_host=$(hostname)"
+
+      - name: Fetch exact FTMO PR434 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr434-focused"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "exact_head_sha=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr434-focused"
+          venv="$RUNNER_TEMP/ftmo-pr434-focused-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Prove semantic cache-progress boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr434-focused"
+          venv="$RUNNER_TEMP/ftmo-pr434-focused-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q \
+            src/prop_trading_ai/ops/autonomous_rollover.py \
+            src/prop_trading_ai/data/market/dukascopy_resume_cache.py \
+            src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py
+          "$venv/bin/python" -m pytest -q tests/test_autonomous_provider_retry.py
+          "$venv/bin/python" -m pytest -q \
+            tests/test_dukascopy_tick_resume_cache.py \
+            tests/test_dukascopy_jetta_m1.py
+          "$venv/bin/python" -m pytest -q \
+            tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner \
+            tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
+
+      - name: Persist sanitized success receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/zcloud-pr434-focused-receipt"
+          rm -rf "$work"
+          gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git checkout main >/dev/null
+          mkdir -p runtime-evidence
+          cat > runtime-evidence/ftmo-pr434-focused-vps-proof.json <<EOF
+          {
+            "schema_version": 1,
+            "scope": "ftmo-pr434-focused-vps-proof",
+            "target_sha": "$TARGET_SHA",
+            "workflow_run_id": "$GITHUB_RUN_ID",
+            "workflow_run_attempt": "$GITHUB_RUN_ATTEMPT",
+            "result": "success",
+            "runner_host": "$(hostname)",
+            "tests": [
+              "compileall autonomous_rollover + resume-cache modules",
+              "test_autonomous_provider_retry.py",
+              "test_dukascopy_tick_resume_cache.py",
+              "test_dukascopy_jetta_m1.py",
+              "zero-cost workflow boundary"
+            ],
+            "research_stage": "provider_foundation",
+            "generation_10_reopened": false,
+            "development_access_relaxed": false,
+            "walk_forward_access_relaxed": false,
+            "final_holdout_access_relaxed": false,
+            "live_or_broker_access_relaxed": false
+          }
+          EOF
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add runtime-evidence/ftmo-pr434-focused-vps-proof.json
+          if git diff --cached --quiet; then
+            echo "Receipt unchanged"
+            exit 0
+          fi
+          git commit -m "Record FTMO PR434 focused VPS proof"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "receipt_push_retry=$attempt"
+            git fetch origin main
+            git rebase origin/main
+          done
+          exit 1
