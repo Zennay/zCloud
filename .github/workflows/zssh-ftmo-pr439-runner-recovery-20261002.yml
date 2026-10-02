@@ -134,9 +134,9 @@ jobs:
         run: |
           set -euo pipefail
           exact="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/Zennay/Ftmo/actions/runs/$EXACT_HEAD_GREEN_RUN")"
-          python3 - "$TARGET_SHA" "$EXACT_HEAD_GREEN_RUN" <<'PY' <<<"$exact"
-          import json,sys
-          d=json.load(sys.stdin)
+          EXACT_JSON="$exact" python3 - "$TARGET_SHA" "$EXACT_HEAD_GREEN_RUN" <<'PY'
+          import json,os,sys
+          d=json.loads(os.environ["EXACT_JSON"])
           target=sys.argv[1]
           rid=int(sys.argv[2])
           if d.get("id") != rid: raise SystemExit("exact-head run id mismatch")
@@ -150,9 +150,9 @@ jobs:
           PY
           for run_id in $PROTECTED_RUNS; do
             payload="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/Zennay/Ftmo/actions/runs/$run_id")"
-            python3 - "$run_id" <<'PY' <<<"$payload"
-          import json,sys
-          d=json.load(sys.stdin)
+            PROTECTED_JSON="$payload" python3 - "$run_id" <<'PY'
+          import json,os,sys
+          d=json.loads(os.environ["PROTECTED_JSON"])
           print("PROTECTED_READ_ONLY", json.dumps({
               "run_id": int(sys.argv[1]), "status": d.get("status"), "conclusion": d.get("conclusion"),
               "head_sha": d.get("head_sha")
