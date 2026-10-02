@@ -61,7 +61,7 @@ DEFAULT_RELOAD_HELPER = Path(os.environ.get(
     str(Path.home() / ".local/bin/zcloud-reload-extension.mjs"),
 ))
 SERVICE = os.environ.get("ZCLOUD_SERVICE", "zennay-cloud.service")
-HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/api/runner-targets")
+HEALTH_URL = os.environ.get("ZCLOUD_HEALTH_URL", "http://127.0.0.1:8765/")
 # Match the service manager's bounded startup budget. VPS evidence shows
 # TimeoutStartUSec=1min 30s; the previous 20s window caused false rollbacks
 # while systemd was still legitimately bringing the control plane up.
