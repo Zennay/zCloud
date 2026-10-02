@@ -7,7 +7,8 @@ import server
 
 class WorkerEnv:
     KEYS = ("DB", "PORTFOLIO_QUEUE_SEED_FILE", "GLOBAL_CHATGPT_WORKER_LIMIT",
-            "MAX_CHATGPT_WORKERS", "DYNAMIC_CHATGPT_WORKERS", "DYNAMIC_CLAUDE_WORKERS")
+            "MAX_CHATGPT_WORKERS", "DYNAMIC_CHATGPT_WORKERS", "DYNAMIC_CLAUDE_WORKERS",
+            "worker_memory_status")
 
     def __enter__(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -20,6 +21,13 @@ class WorkerEnv:
         server.MAX_CHATGPT_WORKERS = 3
         server.DYNAMIC_CHATGPT_WORKERS = 2
         server.DYNAMIC_CLAUDE_WORKERS = 1
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 16384, "total_mb": 32768,
+            "swap_total_mb": 4096, "swap_free_mb": 4096,
+            "headroom_mb": 2048, "effective_headroom_mb": 2048,
+            "per_new_slot_mb": 1536, "new_worker_capacity": 8,
+            "pressure": "ok", "healthy_for_new_worker": True, "swap_healthy": True,
+        }
         server.init_db()
         server.portfolio_queue_enqueue("cloud", "Deploylane", "P1", "green deploy")
         server.portfolio_queue_enqueue("haxlab", "Evidence gate", "P2", "gate closed")
