@@ -94,4 +94,24 @@ jobs:
               raise SystemExit("DONE state did not persist")
           if "36968146164" not in str(item.get("evidence") or "") or "3e770b0f765414b4b948a1ddd43ba7659339c48d" not in str(item.get("evidence") or ""):
               raise SystemExit("expected proof evidence missing from persisted queue row")
+
+          stale_child = "ftmo-c1ba38b2e7bec0c7"
+          child = next((x for x in final.get("items", []) if x.get("queue_id") == stale_child), None)
+          if child and child.get("status") not in {"done","dropped"}:
+              dropped = post("/api/portfolio-queue", {
+                  "action": "drop",
+                  "queue_id": stale_child,
+                  "evidence": (
+                      "Dropped stale auto-refill child created from obsolete projects.json Generation-10 walk-forward hint. "
+                      "Canonical FTMO handoff marks Generation 10 terminally closed/rejected and forbids rerun/reopen. "
+                      "projects.json corrected by zCloud commit 81b16fc3d753612a7f2feb2405379cde5825301c "
+                      "to persistent Generation-29 provider-foundation runtime guidance."
+                  ),
+              })
+              print("STALE_CHILD_DROP", json.dumps(dropped, sort_keys=True))
+          final2 = get("/api/portfolio-queue?all=1")
+          child2 = next((x for x in final2.get("items", []) if x.get("queue_id") == stale_child), None)
+          print("STALE_CHILD_AFTER", json.dumps(child2, sort_keys=True))
+          if child2 and child2.get("status") not in {"done","dropped"}:
+              raise SystemExit("stale Generation-10 child remained runnable")
           PY
