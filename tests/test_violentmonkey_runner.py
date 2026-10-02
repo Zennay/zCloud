@@ -135,9 +135,11 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('event == "send-blocked"', workflow)
         self.assertIn('"prompt-sent"', workflow)
         self.assertIn('"generation-started"', workflow)
-        self.assertIn('path.startswith("/api/status")', workflow)
+        self.assertIn('path.startswith("/api/runner-live")', workflow)
         self.assertIn("attempts = 10", workflow)
         self.assertIn('method == "GET" and exc.code == 503', workflow)
+        self.assertIn('call("GET", "/api/runner-live")', workflow)
+        self.assertNotIn('call("GET", "/api/status?project=zcloud")', workflow)
 
     def test_userscript_is_served_and_deployed(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
