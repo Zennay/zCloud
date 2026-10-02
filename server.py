@@ -3079,8 +3079,14 @@ def worker_contract_failures(cfg):
     problems = []
     if cfg.get('active') is not True: problems.append('not-active')
     if cfg.get('assignment_ready') is not True: problems.append('server-assignment-not-ready')
-    queue_id = str((cfg.get('queue_item') or {}).get('queue_id') or '').strip()
     prompt = str(cfg.get('prompt') or '')
+    if cfg.get('reviewer_mode') is True:
+        base_project = str(cfg.get('base_project_id') or cfg.get('project_id') or '').split('::w', 1)[0]
+        if base_project != 'portfolio-review': problems.append('reviewer-wrong-project')
+        if "Portfolio Bird's-eye Reviewer" not in prompt: problems.append('reviewer-prompt-missing-role')
+        if 'Senior Team OS' not in prompt: problems.append('reviewer-prompt-missing-policy')
+        return problems
+    queue_id = str((cfg.get('queue_item') or {}).get('queue_id') or '').strip()
     try: slot = int(cfg.get('global_worker_slot') or 0)
     except (TypeError, ValueError): slot = 0
     try: total = int(cfg.get('global_worker_count') or 0)
