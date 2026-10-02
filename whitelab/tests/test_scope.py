@@ -21,13 +21,13 @@ class ScopePolicyTests(unittest.TestCase):
         self.assertEqual(decision.reason, ScopeReason.PRIVATE_LAB)
 
     def test_unknown_public_ip_fails_closed(self):
-        decision = ScopePolicy().decide(Target("203.0.113.10"))
+        decision = ScopePolicy().decide(Target("8.8.8.8"))
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.reason, ScopeReason.OUT_OF_SCOPE)
 
     def test_public_network_needs_authorization(self):
-        policy = ScopePolicy(explicit_networks=("203.0.113.0/24",))
-        decision = policy.decide(Target("203.0.113.10"))
+        policy = ScopePolicy(explicit_networks=("8.8.8.0/24",))
+        decision = policy.decide(Target("8.8.8.8"))
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.reason, ScopeReason.AUTHORIZATION_MISSING)
 
