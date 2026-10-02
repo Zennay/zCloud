@@ -1,0 +1,113 @@
+name: FTMO PR441 final-head VPS proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr441-final-head-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr441-final-head-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: a127d8b25ac7d652df077924cb536daa8a7fd503
+      RECEIPT_PATH: runtime-evidence/ftmo-pr441-final-head-proof.json
+    steps:
+      - name: Checkout zCloud receipt workspace
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+      - name: Fetch exact FTMO PR441 final head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr441-final-head"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "exact_head_sha=$TARGET_SHA"
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr441-final-head"
+          venv="$RUNNER_TEMP/ftmo-pr441-final-head-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+      - name: Prove final BI5 payload and sealed provider boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr441-final-head"
+          venv="$RUNNER_TEMP/ftmo-pr441-final-head-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q src/prop_trading_ai/data/market/providers/dukascopy_public.py
+          "$venv/bin/python" -m pytest -q             tests/test_dukascopy_public.py             tests/test_dukascopy_timeout_transport.py             tests/test_autonomous_provider_retry.py             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
+          "$venv/bin/python" -m pytest --collect-only -q >/tmp/ftmo-pr441-final-collect.txt
+          test -s /tmp/ftmo-pr441-final-collect.txt
+      - name: Record final-head proof receipt
+        if: always()
+        shell: bash
+        env:
+          PROOF_STATUS: ${{ job.status }}
+          PROOF_RUN_ID: ${{ github.run_id }}
+          PROOF_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          mkdir -p "$(dirname "$RECEIPT_PATH")"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              "schema_version": 1,
+              "project": "ftmo",
+              "queue_item": "ftmo-7f9609eabd4ad2c8",
+              "pull_request": 441,
+              "target_sha": os.environ["TARGET_SHA"],
+              "workflow_run_id": int(os.environ["PROOF_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["PROOF_RUN_ATTEMPT"]),
+              "result": os.environ["PROOF_STATUS"],
+              "runner_host": "vps-bb300bba",
+              "research_stage": "provider_foundation",
+              "generation_10_reopened": False,
+              "development_access_relaxed": False,
+              "walk_forward_access_relaxed": False,
+              "final_holdout_access_relaxed": False,
+              "live_or_broker_access_relaxed": False,
+              "paid_cloud_budget_relaxed": False,
+              "proof_scope": [
+                  "exact final SHA checkout",
+                  "isolated install",
+                  "compile dukascopy_public provider",
+                  "full Dukascopy public provider regressions",
+                  "timeout/retry transport compatibility",
+                  "autonomous provider retry compatibility",
+                  "zero-cost workflow boundary",
+                  "repository test collection"
+              ],
+          }
+          Path(os.environ["RECEIPT_PATH"]).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          git config user.name "zCloud FTMO proof"
+          git config user.email "zcloud-ftmo-proof@users.noreply.github.com"
+          git add "$RECEIPT_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Record FTMO PR441 final-head VPS proof"
+            git push origin HEAD:main
+          fi
