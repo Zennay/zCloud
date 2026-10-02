@@ -209,7 +209,10 @@ def evaluate(
     firefox = status.get("chatgpt_firefox") or {}
     firefox_runtime_active = firefox.get("active") is True or firefox.get("state") == "active"
     firefox_service_ok = firefox_service or legacy_violentmonkey_only
-    firefox_runtime_ok = firefox_runtime_active or legacy_violentmonkey_only
+    # The legacy marker only excuses the intentionally disabled systemd unit.
+    # A standalone Violentmonkey Firefox process must still be alive; otherwise
+    # an OOM-killed browser could be reported healthy.
+    firefox_runtime_ok = firefox_runtime_active
     add("firefox_service", firefox_service_ok, {
         "active": firefox_service,
         "legacy_violentmonkey_only": legacy_violentmonkey_only,
@@ -222,7 +225,7 @@ def evaluate(
 
     memory_guard = (status.get("dynamic_workers") or {}).get("memory_guard") or {}
     memory_pressure = str(memory_guard.get("pressure") or "unknown").lower()
-    memory_ok = memory_pressure != "critical"
+    memory_ok = memory_pressure in {"ok", "warning", "guarded"}
     add("worker_memory", memory_ok, {
         "pressure": memory_pressure,
         "available_mb": memory_guard.get("available_mb"),
