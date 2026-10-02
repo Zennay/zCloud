@@ -1,0 +1,70 @@
+name: zCloud OOM guard VPS validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "server.py"
+      - "scripts/zcloud_worker_watchdog.py"
+      - "scripts/zcloud_healthcheck.py"
+      - "tests/test_worker_memory_guard.py"
+      - "tests/test_worker_progress_watchdog.py"
+      - "tests/test_portfolio_queue_backend.py"
+      - "tests/test_runner_smoke.py"
+      - "tests/test_zcloud_healthcheck.py"
+      - ".github/workflows/zcloud-oom-guard-vps-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-oom-guard-vps-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Compile OOM recovery paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py scripts/zcloud_worker_watchdog.py scripts/zcloud_healthcheck.py
+
+      - name: Run focused worker recovery regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_worker_memory_guard \
+            tests.test_worker_progress_watchdog \
+            tests.test_zcloud_healthcheck \
+            tests.test_portfolio_queue_backend \
+            tests.test_runner_smoke
+
+      - name: Probe live VPS memory and swap without changing runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "HOST=$(hostname)"
+          free -h
+          swapon --show || true
+          python3 - <<'PY'
+          import json
+          import server
+          status = server.worker_memory_status()
+          print("WORKER_MEMORY_GUARD=" + json.dumps(status, sort_keys=True))
+          if not status.get("total_mb"):
+              raise SystemExit("MemTotal unavailable")
+          PY
+          echo "RECENT_OOM_EVENTS"
+          journalctl -k --since "-6 hours" --no-pager 2>/dev/null \
+            | grep -Ei "oom-kill|out of memory|killed process" \
+            | tail -n 80 || true
