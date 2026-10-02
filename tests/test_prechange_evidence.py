@@ -73,6 +73,13 @@ class PrechangeEvidenceTests(unittest.TestCase):
             self.assertTrue(report["files"]["projects.json"]["audits"][0]["matches_current"])
             self.assertTrue(report["files"]["projects.json"]["audits"][0]["after_lkg"])
             self.assertTrue(report["files"]["project-layout.json"]["live_equals_candidate"])
+            self.assertEqual(
+                ["ftmo"],
+                report["files"]["projects.json"]["live_vs_lkg"]["added_ids"],
+            )
+            self.assertTrue(
+                report["files"]["project-layout.json"]["live_vs_lkg"]["order_changed"]
+            )
             rendered = json.dumps(report, sort_keys=True)
             self.assertNotIn("secret-actor", rendered)
             self.assertNotIn("sensitive detail", rendered)
