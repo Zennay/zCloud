@@ -40,6 +40,18 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(server.DB_BUSY_TIMEOUT_MS, busy_timeout)
         self.assertGreaterEqual(busy_timeout, 15000)
 
+    def test_init_db_clamps_persisted_ftmo_worker_count_to_two(self):
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=5 WHERE project_id='ftmo'")
+
+        server.init_db()
+
+        with server.connect() as conn:
+            worker_count = conn.execute(
+                "SELECT worker_count FROM runner_targets WHERE project_id='ftmo'"
+            ).fetchone()[0]
+        self.assertEqual(2, worker_count)
+
     def test_claims_priority_and_two_global_slots(self):
         server.portfolio_queue_enqueue("haxlab", "normal", "P2", "prove normal")
         server.portfolio_queue_enqueue("raiseai", "high", "P1", "prove high")
@@ -78,7 +90,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(3, len(selected))
         self.assertEqual(["ftmo", "ftmo", "zssh"], [item["project_id"] for item in selected])
 
-    def test_three_slots_can_all_run_one_project_when_no_alternative_exists(self):
+    def test_ftmo_hard_cap_keeps_third_slot_unallocated_without_alternative(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
         server.portfolio_queue_enqueue(
@@ -96,8 +108,14 @@ class VpsPortfolioQueueTests(unittest.TestCase):
 
         selected = server.portfolio_queue_allocate()
 
-        self.assertEqual(3, len(selected))
-        self.assertEqual(["ftmo", "ftmo", "ftmo"], [item["project_id"] for item in selected])
+        self.assertEqual(2, len(selected))
+        self.assertEqual(["ftmo", "ftmo"], [item["project_id"] for item in selected])
+        queued_ftmo = [
+            item for item in server.portfolio_queue_items(True)
+            if item["project_id"] == "ftmo" and item["status"] == "queued"
+        ]
+        self.assertEqual(1, len(queued_ftmo))
+        self.assertIsNone(queued_ftmo[0]["worker_slot"])
 
     def test_p0_preempts_lower_priority_claim_that_has_not_started(self):
         lower = server.portfolio_queue_enqueue("cloud", "lower", "P1", "Implement lower-priority change with tests.")
@@ -382,10 +400,10 @@ class VpsPortfolioQueueTests(unittest.TestCase):
 
         selected = server.portfolio_queue_allocate()
 
-        self.assertEqual(3, len(selected))
+        self.assertEqual(2, len(selected))
         self.assertEqual({"ftmo"}, {item["project_id"] for item in selected})
         lanes = {item["execution_lane"]["lane_id"] for item in selected}
-        self.assertEqual({"critical-path", "qa-validation", "data-provenance"}, lanes)
+        self.assertEqual({"critical-path", "qa-validation"}, lanes)
         for item in selected:
             self.assertTrue(item["execution_lane"]["scope"]["capabilities"])
 
