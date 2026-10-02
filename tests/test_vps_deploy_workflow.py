@@ -33,7 +33,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.prewrite.outputs.deploy == 'true'", text)
         self.assertIn("fetch-depth: 513", text)
         self.assertLess(
-            text.index("- name: Promote backend and autonomy policy"),
+            text.index("- name: Promote backend runtime core"),
             text.index("- name: Promote Violentmonkey worker"),
         )
         backend = text[
@@ -168,7 +168,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(5, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
             "lane_generator.py",
@@ -218,6 +218,36 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("Publish production deploy result", text)
         self.assertIn("steps.freshness.outputs.deploy_sha", text)
         self.assertNotIn("DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}", text)
+
+    def test_backend_backlog_is_promoted_in_bounded_transactions(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        core = text[
+            text.index("- name: Promote backend runtime core"):
+            text.index("- name: Promote autonomy policies and queue seed")
+        ]
+        policy = text[
+            text.index("- name: Promote autonomy policies and queue seed"):
+            text.index("- name: Promote Violentmonkey worker")
+        ]
+
+        self.assertEqual(1, core.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(1, policy.count("scripts/zcloud_transactional_promote.py"))
+        for path in ("server.py", "lane_generator.py", "scripts/zcloud_recovery.py"):
+            self.assertIn(f"--path {path}", core)
+            self.assertNotIn(f"--path {path}", policy)
+        for path in ("autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
+            self.assertIn(f"--path {path}", policy)
+            self.assertNotIn(f"--path {path}", core)
+        self.assertNotIn("high_blast_radius_promotion", core + policy)
+
+    def test_publish_status_requires_actual_prewrite_confirmation(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        publish = text[text.index("- name: Publish production deploy result"):]
+        self.assertIn(
+            "if: always() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'",
+            publish,
+        )
+        self.assertIn("MAIN_MOVED_BEFORE_VPS_WRITE", text)
 
     def test_execution_probe_claims_cloud_task_on_self_hosted_runner(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
