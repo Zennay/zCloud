@@ -15,6 +15,12 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
+      - name: Check out exact main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
       - name: Enqueue exact stale FTMO Actions cancellation
         shell: bash
         run: |
@@ -72,4 +78,61 @@ jobs:
           push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
           print("ZSSH_START", json.dumps(start, sort_keys=True))
           print("ZSSH_PUSH", json.dumps(push, sort_keys=True))
+
+          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+              live = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(live)
+          if not item:
+              raise RuntimeError("stale FTMO CI cancellation queue item not found after enqueue")
+          receipt = {
+              "schema_version": 1,
+              "scope": "ftmo-stale-ci-zssh-queue",
+              "queue_id": queue_id,
+              "queue_status": item.get("status"),
+              "queue_priority": item.get("priority"),
+              "queue_project_id": item.get("project_id"),
+              "worker_slot": item.get("worker_slot"),
+              "start_ok": start.get("ok"),
+              "push_ok": push.get("ok"),
+              "stale_run_ids": [36945491297, 36946253651],
+              "protected_current_run_id": 36947540556,
+          }
+          from pathlib import Path
+          target = Path("artifacts/ops/ftmo-stale-ci-zssh-queue.json")
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print("FTMO_STALE_CI_QUEUE_RECEIPT", json.dumps(receipt, sort_keys=True))
           PY
+
+      - name: Persist sanitized queue receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+          test -f artifacts/ops/ftmo-stale-ci-zssh-queue.json
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add artifacts/ops/ftmo-stale-ci-zssh-queue.json
+          if git diff --cached --quiet; then
+            echo "Queue receipt unchanged"
+          else
+            git commit -m "Record stale FTMO CI zSSH queue receipt"
+            git push origin HEAD:main
+          fi
