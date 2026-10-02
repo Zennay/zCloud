@@ -1,0 +1,132 @@
+name: Unblock FTMO Worker1 main verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-worker1-unblock-main-verify.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-worker1-unblock-main-verify
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    env:
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+      MERGE_SHA: 2eca20de3cdec21873874d92902c3d954d3d9b9b
+      STALE_ACTIVE_RUN: 37000176861
+      STALE_ACTIVE_SHA: 1a0b95dca1826a67657af24a2e754b9885c02eee
+      SUPERSEDED_HEAD: 21ae700b96e21538360357679bc13ba5166b0667
+      STALE_BRANCH_RUNS: "37006339960 37006339754 37006339875"
+      VERIFY_RUN: 37006812031
+      TEST_RUN: 37006812032
+    steps:
+      - name: Verify stale identities and cancel only superseded runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess
+          pr429=json.loads(subprocess.check_output(['gh','api','repos/Zennay/Ftmo/pulls/429'],text=True))
+          if pr429.get('merged') is not True or pr429.get('head',{}).get('sha') != os.environ['STALE_ACTIVE_SHA']:
+              raise SystemExit('PR429 stale identity not proven')
+          stale=json.loads(subprocess.check_output(['gh','api',f"repos/Zennay/Ftmo/actions/runs/{os.environ['STALE_ACTIVE_RUN']}"],text=True))
+          if stale.get('head_sha') != os.environ['STALE_ACTIVE_SHA']:
+              raise SystemExit('active stale run SHA mismatch')
+          if stale.get('status') in {'queued','in_progress','waiting','pending'}:
+              subprocess.check_call(['gh','api','--method','POST',f"repos/Zennay/Ftmo/actions/runs/{os.environ['STALE_ACTIVE_RUN']}/cancel"])
+              print('CANCELLED_STALE_ACTIVE='+os.environ['STALE_ACTIVE_RUN'])
+          for rid in os.environ['STALE_BRANCH_RUNS'].split():
+              d=json.loads(subprocess.check_output(['gh','api',f'repos/Zennay/Ftmo/actions/runs/{rid}'],text=True))
+              if d.get('head_sha') != os.environ['SUPERSEDED_HEAD']:
+                  raise SystemExit(f'stale branch run SHA mismatch {rid}')
+              if d.get('status') in {'queued','waiting','pending'}:
+                  subprocess.check_call(['gh','api','--method','POST',f'repos/Zennay/Ftmo/actions/runs/{rid}/cancel'])
+                  print('CANCELLED_STALE_BRANCH='+rid)
+          PY
+
+      - name: Recover FTMO Actions listener conservatively
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 24); do
+            if ! pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          worker=0
+          pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1 && worker=1 || true
+          state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+          pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+          listener=0
+          if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pid/cmdline"; then
+            cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+            [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]] && listener=1 || true
+          fi
+          echo "FTMO_RUNNER_PRE state=$state worker=$worker listener=$listener pid=$pid"
+          if [[ "$worker" -eq 1 ]]; then
+            action=preserve-active-worker
+          elif [[ "$state" == active && "$listener" -eq 1 ]]; then
+            action=preserve-healthy-listener
+          else
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-listener
+          fi
+          for _ in $(seq 1 30); do
+            post="$(systemctl is-active "$FTMO_SERVICE" || true)"
+            [[ "$post" == active ]] && break
+            sleep 2
+          done
+          test "${post:-}" = active
+          echo "FTMO_RUNNER_RECOVERY_ACTION=$action"
+
+      - name: Prove current-main verification schedules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          ids=[os.environ['VERIFY_RUN'],os.environ['TEST_RUN']]
+          scheduled=None
+          for _ in range(36):
+              for rid in ids:
+                  d=json.loads(subprocess.check_output(['gh','api',f'repos/Zennay/Ftmo/actions/runs/{rid}'],text=True))
+                  if d.get('head_sha') != os.environ['MERGE_SHA']:
+                      raise SystemExit(f'protected main run SHA mismatch {rid}')
+                  print(f'PROTECTED={rid}:{d.get("status")}:{d.get("conclusion")}')
+                  if d.get('status') in {'in_progress','completed'}:
+                      scheduled=rid
+              if scheduled: break
+              time.sleep(5)
+          if not scheduled: raise SystemExit('current-main runs did not schedule')
+          print('FTMO_CURRENT_MAIN_SCHEDULING_GREEN='+scheduled)
+          PY
+
+      - name: Persist unblock receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,json,os,socket,subprocess
+          ids=[os.environ['STALE_ACTIVE_RUN']]+os.environ['STALE_BRANCH_RUNS'].split()+[os.environ['VERIFY_RUN'],os.environ['TEST_RUN']]
+          runs=[]
+          for rid in ids:
+              d=json.loads(subprocess.check_output(['gh','api',f'repos/Zennay/Ftmo/actions/runs/{rid}'],text=True))
+              runs.append({'run_id':int(rid),'name':d.get('name'),'status':d.get('status'),'conclusion':d.get('conclusion'),'head_sha':d.get('head_sha')})
+          payload=json.dumps({'scope':'ftmo-worker1-unblock-main-verify','host':socket.gethostname(),'workflow_run_id':os.environ['GITHUB_RUN_ID'],'merge_sha':os.environ['MERGE_SHA'],'runs':runs},sort_keys=True,indent=2)+'\n'
+          encoded=base64.b64encode(payload.encode()).decode()
+          path=f".zcloud/receipts/ftmo-worker1-unblock-main-{os.environ['GITHUB_RUN_ID']}.json"
+          subprocess.check_call(['gh','api','--method','PUT',f'repos/Zennay/zCloud/contents/{path}','-f',f'message=Record FTMO Worker1 unblock {os.environ["GITHUB_RUN_ID"]}','-f',f'content={encoded}'])
+          print('UNBLOCK_RECEIPT_PATH='+path)
+          PY
