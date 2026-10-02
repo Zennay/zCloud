@@ -120,9 +120,14 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("worker_paths+=(--path firefox-extension/background.js)", block)
         self.assertIn("\"${worker_paths[@]}\"", block)
 
-    def test_one_time_live_server_migration_is_not_permanent(self):
+    def test_one_time_live_server_migration_is_exactly_reviewed(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertNotIn("--reconcile-known-live-sha server.py=", text)
+        marker = (
+            "--reconcile-known-live-sha "
+            "server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0"
+        )
+        self.assertIn(marker, text)
+        self.assertEqual(1, text.count("--reconcile-known-live-sha server.py="))
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         guard = "Enforce permanent zCloud VPS runner identity"
