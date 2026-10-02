@@ -1,0 +1,182 @@
+name: Finalize FTMO Worker1 queue item
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-worker1-queue-finalize.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-worker1-queue-finalize
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      QUEUE_ID: ftmo-4f501946a6249559
+      MERGE_SHA: 2eca20de3cdec21873874d92902c3d954d3d9b9b
+      EXACT_PROOF_RUN: 37006364026
+      DEPLOY_RUN: 37006812031
+      FTMO_ROOT: /opt/ftmo-autonomous
+    steps:
+      - name: Wait for exact proofs and main deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess, time
+
+          def get(repo, run_id):
+              return json.loads(subprocess.check_output(
+                  ['gh','api',f'repos/{repo}/actions/runs/{run_id}'], text=True
+              ))
+
+          exact=get('Zennay/Haxlab', os.environ['EXACT_PROOF_RUN'])
+          if (exact.get('status'), exact.get('conclusion')) != ('completed','success'):
+              raise SystemExit(f"exact proof not green: {exact.get('status')}/{exact.get('conclusion')}")
+          if exact.get('name') != 'FTMO PR445 exact-head proof via HaxLab':
+              raise SystemExit(f"unexpected exact proof name: {exact.get('name')!r}")
+
+          deploy=None
+          for _ in range(120):
+              deploy=get('Zennay/Ftmo', os.environ['DEPLOY_RUN'])
+              if deploy.get('status') == 'completed':
+                  break
+              time.sleep(5)
+          if not deploy or (deploy.get('status'), deploy.get('conclusion')) != ('completed','success'):
+              raise SystemExit(f"deploy proof not green: {None if deploy is None else (deploy.get('status'),deploy.get('conclusion'))}")
+          if deploy.get('head_sha') != os.environ['MERGE_SHA']:
+              raise SystemExit(f"deploy head mismatch: {deploy.get('head_sha')}")
+          print('FTMO_WORKER1_PROOFS_GREEN=1')
+          PY
+
+      - name: Verify live sealed Generation 29 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          def gh_json(path):
+              return json.loads(subprocess.check_output(['gh','api',path],text=True))
+
+          root=Path(os.environ['FTMO_ROOT'])
+          status_path=root/'.scratch/autonomy/status.json'
+          if not status_path.is_file() or status_path.is_symlink():
+              raise SystemExit('live FTMO status missing or unsafe')
+          status=json.loads(status_path.read_text(encoding='utf-8'))
+          research=status.get('research') or {}
+          controller=status.get('research_controller') or {}
+          loop=controller.get('generation_loop') or {}
+          outcome=controller.get('outcome_execution') or {}
+          compute=controller.get('compute') or {}
+          runtime_revision=str(status.get('runtime_revision') or '')
+          if len(runtime_revision)!=40 or any(c not in '0123456789abcdef' for c in runtime_revision):
+              raise SystemExit(f'invalid runtime revision: {runtime_revision!r}')
+          ancestry=gh_json(f"repos/Zennay/Ftmo/compare/{os.environ['MERGE_SHA']}...{runtime_revision}")
+          if ancestry.get('status') not in {'ahead','identical'}:
+              raise SystemExit(f"live runtime does not contain Worker1 merge: {ancestry.get('status')}")
+          live_run_id=str(status.get('deployment_workflow_run_id') or '')
+          if not live_run_id.isdigit():
+              raise SystemExit(f'invalid live deployment run id: {live_run_id!r}')
+          live_run=gh_json(f'repos/Zennay/Ftmo/actions/runs/{live_run_id}')
+          if (live_run.get('status'),live_run.get('conclusion')) != ('completed','success'):
+              raise SystemExit('live deployment workflow is not green')
+          required={
+              'research_cycle_ok': status.get('research_cycle_ok') is True,
+              'generation_29': research.get('generation_number') == 29,
+              'provider_foundation': research.get('next_stage') == 'provider_foundation',
+              'development_sealed': research.get('development_access_allowed') is False,
+              'walk_forward_sealed': research.get('walk_forward_access_allowed') is False,
+              'final_holdout_sealed': research.get('final_holdout_access_allowed') is False,
+              'no_outcomes': loop.get('outcomes_executed') is False,
+              'wf_not_accessed': loop.get('walk_forward_accessed') is False,
+              'holdout_not_accessed': loop.get('final_holdout_accessed') is False,
+              'live_false': status.get('live_trading_allowed') is False,
+              'broker_false': status.get('broker_order_submission_allowed') is False,
+              'controller_wf_false': outcome.get('walk_forward_accessed') is False,
+              'controller_holdout_false': outcome.get('final_holdout_accessed') is False,
+              'controller_broker_false': outcome.get('broker_order_submission_allowed') is False,
+              'compute_ok': compute.get('ok') is True,
+              'zero_cloud': str(status.get('autonomous_cloud_budget_usd')) == '0.00',
+          }
+          failed=[name for name,ok in required.items() if not ok]
+          if failed:
+              raise SystemExit('sealed runtime verification failed: '+','.join(failed))
+          state=subprocess.check_output(['systemctl','is-active','ftmo-autonomous-marathon.service'],text=True).strip()
+          pid=subprocess.check_output(['systemctl','show','ftmo-autonomous-marathon.service','-p','MainPID','--value'],text=True).strip()
+          if state!='active' or not pid.isdigit() or int(pid)<=0:
+              raise SystemExit(f'FTMO service unhealthy state={state!r} pid={pid!r}')
+          receipt={
+              'merge_sha':os.environ['MERGE_SHA'],
+              'exact_proof_run':int(os.environ['EXACT_PROOF_RUN']),
+              'deploy_proof_run':int(os.environ['DEPLOY_RUN']),
+              'live_runtime_revision':runtime_revision,
+              'live_deployment_run_id':live_run_id,
+              'generation_number':research.get('generation_number'),
+              'stage':research.get('next_stage'),
+              'walk_forward_accessed':loop.get('walk_forward_accessed'),
+              'final_holdout_accessed':loop.get('final_holdout_accessed'),
+              'service_state':state,'service_pid':pid,
+          }
+          print('FTMO_WORKER1_RUNTIME_GREEN='+json.dumps(receipt,sort_keys=True))
+          PY
+
+      - name: Finalize exact SQLite queue assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util, json, os, sqlite3, sys
+          from pathlib import Path
+          queue_id=os.environ['QUEUE_ID']
+          root=Path('/home/ubuntu/zennay-cloud')
+          server_path=root/'server.py'; db_path=root/'history.db'
+          if not server_path.is_file() or not db_path.is_file():
+              raise SystemExit('live zCloud server/history.db missing')
+          sys.path.insert(0,str(root))
+          spec=importlib.util.spec_from_file_location('zcloud_live_server',server_path)
+          if spec is None or spec.loader is None: raise SystemExit('cannot load live zCloud server module')
+          server=importlib.util.module_from_spec(spec); spec.loader.exec_module(server); server.DB=db_path
+          with sqlite3.connect(db_path) as c:
+              c.row_factory=sqlite3.Row
+              row=c.execute(
+                  'SELECT queue_id,project_id,title,status,eligible,worker_slot,evidence,updated_at FROM portfolio_queue WHERE queue_id=?',
+                  (queue_id,),
+              ).fetchone()
+          if row is None: raise SystemExit('queue item missing')
+          item=dict(row); print('QUEUE_BEFORE='+json.dumps(item,sort_keys=True))
+          if item['project_id']!='ftmo': raise SystemExit(f"project mismatch: {item['project_id']}")
+          evidence=(
+              'Worker1 Generation 29 provider_foundation hardening completed. '
+              'PR #445 merged as 2eca20de3cdec21873874d92902c3d954d3d9b9b after exact-head VPS proof '
+              'HaxLab run 37006364026 SUCCESS (exact checkout, isolated install, compile, targeted sealed-boundary tests, full pytest suite). '
+              'Canonical FTMO main deploy/runtime verify run 37006812031 SUCCESS deployed a descendant containing #445 and proved Generation 29 remains provider_foundation, '
+              'development/walk-forward/final-holdout/live/broker access sealed, zero paid-cloud budget, and persistent marathon active.'
+          )
+          if item['status']=='done' and int(item['eligible'] or 0)==0 and item['worker_slot'] is None:
+              print('QUEUE_ALREADY_DONE=1')
+          elif item['status'] in {'claimed','running','verifying','in_progress'} and item['worker_slot'] is not None:
+              result=server.portfolio_queue_finish(int(item['worker_slot']),queue_id,'DONE',evidence)
+              print('QUEUE_FINISH_RESULT='+json.dumps(result,sort_keys=True,default=str))
+              if not result.get('updated'): raise SystemExit('portfolio_queue_finish refused active assignment')
+          else:
+              raise SystemExit(f"refusing nonstandard queue mutation status={item['status']} eligible={item['eligible']} worker_slot={item['worker_slot']}")
+          with sqlite3.connect(db_path) as c:
+              c.row_factory=sqlite3.Row
+              after=c.execute('SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
+          final=dict(after) if after else None
+          print('QUEUE_AFTER='+json.dumps(final,sort_keys=True))
+          if not final or final['status']!='done' or int(final['eligible'] or 0)!=0 or final['worker_slot'] is not None:
+              raise SystemExit('queue final state is not done/eligible=0/worker_slot=None')
+          print('ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1')
+          PY
