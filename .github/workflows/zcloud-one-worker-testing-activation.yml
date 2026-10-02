@@ -71,7 +71,7 @@ jobs:
               # /api/status can legitimately return 503 while its monitor starts.
               # Keep worker activation alive through that bounded warm-up instead
               # of abandoning already-allocated/queued workers.
-              if method == "GET" and path.startswith("/api/status"):
+              if method == "GET" and path.startswith("/api/runner-live"):
                   attempts = 10
               else:
                   attempts = 3 if method == "GET" else 1
@@ -201,7 +201,7 @@ jobs:
           for _ in range(12):
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
-              status = call("GET", "/api/status?project=zcloud")
+              status = call("GET", "/api/runner-live")
               live = {key: dispatched_worker(status, key, command_ids[key]) for key in keys}
               if all(live.values()):
                   break
@@ -221,7 +221,7 @@ jobs:
               for _ in range(12):
                   time.sleep(5)
                   final = call("GET", "/api/runner-targets")
-                  status = call("GET", "/api/status?project=zcloud")
+                  status = call("GET", "/api/runner-live")
                   live = {key: dispatched_worker(status, key, command_ids[key]) for key in keys}
                   if all(live.values()):
                       break
