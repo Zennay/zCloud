@@ -109,7 +109,7 @@ jobs:
           server.init_db()
           with server.connect() as conn:
               row = conn.execute(
-                  "SELECT id,project_id,priority,status,eligible,worker_slot FROM portfolio_queue WHERE id=?",
+                  "SELECT queue_id,project_id,priority,status,eligible,worker_slot FROM portfolio_queue WHERE queue_id=?",
                   (queue_id,),
               ).fetchone()
           if row is None:
@@ -125,7 +125,7 @@ jobs:
               print("WORKER5_RECOVERY_QUEUE_ENQUEUE=" + json.dumps(result, sort_keys=True, default=str))
           with server.connect() as conn:
               row = conn.execute(
-                  "SELECT id,project_id,priority,status,eligible,worker_slot FROM portfolio_queue WHERE id=?",
+                  "SELECT queue_id,project_id,priority,status,eligible,worker_slot FROM portfolio_queue WHERE queue_id=?",
                   (queue_id,),
               ).fetchone()
           item = dict(row) if row else None
@@ -202,7 +202,7 @@ jobs:
               raise SystemExit("recovery queue drop refused")
           with server.connect() as conn:
               row = conn.execute(
-                  "SELECT id,status,eligible,worker_slot,evidence FROM portfolio_queue WHERE id=?",
+                  "SELECT queue_id,status,eligible,worker_slot,evidence FROM portfolio_queue WHERE queue_id=?",
                   (queue_id,),
               ).fetchone()
           print("WORKER5_RECOVERY_QUEUE_READBACK=" + json.dumps(dict(row) if row else None, sort_keys=True, default=str))
