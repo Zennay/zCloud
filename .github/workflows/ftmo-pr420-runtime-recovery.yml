@@ -11,11 +11,11 @@ permissions:
 
 concurrency:
   group: ftmo-pr420-exact-runtime-recovery
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   recover:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 12
     env:
       TARGET_SHA: fd409196cb6a4d83c258343a3799d27d916c07d6
