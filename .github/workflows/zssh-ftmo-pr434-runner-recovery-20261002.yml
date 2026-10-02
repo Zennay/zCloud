@@ -1,0 +1,293 @@
+name: Recover FTMO runner for PR434 exact head
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-ftmo-pr434-runner-recovery-20261002.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zssh-ftmo-pr434-runner-recovery-20261002
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      QUEUE_ID: zssh-ftmo-pr434-runner-recovery-20261002
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+      TARGET_SHA: 2bbc0334ec05de2d66558c5284ef2977c466ca97
+      PROTECTED_RUNS: "37001378862 37001378965 37001378853"
+
+    steps:
+      - name: Check out exact main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify recovery lane and live SQLite assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          if [[ "${RUNNER_NAME:-}" == "vps-bb300bba-ftmo" ]]; then
+            echo "Refusing to recover FTMO runner from the FTMO runner itself" >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          queue_id = os.environ["QUEUE_ID"]
+          with urllib.request.urlopen(
+              "http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10
+          ) as response:
+              payload = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(payload)
+          if not item:
+              raise SystemExit(f"{queue_id} missing from live SQLite queue")
+          if str(item.get("project_id") or "").lower() != "zssh":
+              raise SystemExit(f"{queue_id} belongs to {item.get('project_id')!r}, not zssh")
+          if str(item.get("priority") or "").upper() != "P0":
+              raise SystemExit(f"{queue_id} is not P0")
+          if str(item.get("status") or "").lower() not in {
+              "queued", "claimed", "running", "verifying", "in_progress"
+          }:
+              raise SystemExit(
+                  f"{queue_id} not runnable: status={item.get('status')!r}"
+              )
+          print("ZSSH_PR434_QUEUE_GREEN", json.dumps({
+              "queue_id": item.get("queue_id"),
+              "project_id": item.get("project_id"),
+              "priority": item.get("priority"),
+              "status": item.get("status"),
+              "worker_slot": item.get("worker_slot"),
+              "updated_at": item.get("updated_at"),
+          }, sort_keys=True))
+          PY
+
+      - name: Diagnose listener worker and fresh OOM evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "FTMO_RUNNER_SERVICE=$FTMO_SERVICE"
+          systemctl show "$FTMO_SERVICE"             -p ActiveState -p SubState -p MainPID -p NRestarts             -p Result -p ExecMainCode -p ExecMainStatus             -p ActiveEnterTimestamp -p InactiveEnterTimestamp             --no-pager || true
+
+          echo "FTMO_RUNNER_PROCESSES_BEGIN"
+          ps -o pid=,ppid=,lstart=,etime=,cmd= -u "$FTMO_RUN_USER"             | grep -E 'Runner\.(Worker|Listener)|runsvc\.sh' || true
+          echo "FTMO_RUNNER_PROCESSES_END"
+
+          echo "FTMO_RUNNER_JOURNAL_FRESH_BEGIN"
+          journalctl -u "$FTMO_SERVICE" --since "-60 min" --no-pager 2>/dev/null             | grep -Eai 'runner|listener|worker|shutdown|signal|stopp|start|kill|oom|memory'             | tail -160 || true
+          echo "FTMO_RUNNER_JOURNAL_FRESH_END"
+
+          echo "FTMO_KERNEL_OOM_FRESH_BEGIN"
+          (sudo -n journalctl -k --since "-60 min" --no-pager 2>/dev/null ||             journalctl -k --since "-60 min" --no-pager 2>/dev/null || true)             | grep -Eai 'out of memory|oom|killed process|memory cgroup'             | tail -160 || true
+          echo "FTMO_KERNEL_OOM_FRESH_END"
+
+      - name: Recover only dedicated FTMO Actions listener
+        id: recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          pre_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+          pre_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+          worker_before=0
+          listener_before=0
+
+          if pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            worker_before=1
+          fi
+          if [[ "$pre_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pre_pid/cmdline"; then
+            pre_cmdline="$(tr '\0' ' ' < "/proc/$pre_pid/cmdline")"
+            if [[ "$pre_cmdline" == *"Runner.Listener"* || "$pre_cmdline" == *"runsvc.sh"* ]]; then
+              listener_before=1
+            fi
+          fi
+
+          echo "FTMO_RUNNER_PRE state=$pre_state pid=$pre_pid listener=$listener_before worker=$worker_before"
+
+          action=none
+          if [[ "$pre_state" != "active" ]]; then
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl start "$FTMO_SERVICE"
+            action=start-inactive-listener
+          elif [[ "$worker_before" -eq 1 ]]; then
+            action=preserve-active-worker
+          elif [[ "$listener_before" -eq 1 ]]; then
+            action=preserve-healthy-listener
+          else
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-unhealthy-listener
+          fi
+
+          post_state=""
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+            [[ "$post_state" == "active" ]] && break
+            sleep 2
+          done
+          test "$post_state" = "active"
+
+          post_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value)"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          test -r "/proc/$post_pid/cmdline"
+          post_cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+          [[ "$post_cmdline" == *"Runner.Listener"* || "$post_cmdline" == *"runsvc.sh"* ]]
+
+          echo "FTMO_RUNNER_RECOVERY_ACTION=$action"
+          echo "FTMO_RUNNER_POST state=$post_state pid=$post_pid listener=1"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "pre_state=$pre_state" >> "$GITHUB_OUTPUT"
+          echo "pre_pid=$pre_pid" >> "$GITHUB_OUTPUT"
+          echo "worker_before=$worker_before" >> "$GITHUB_OUTPUT"
+          echo "post_state=$post_state" >> "$GITHUB_OUTPUT"
+          echo "post_pid=$post_pid" >> "$GITHUB_OUTPUT"
+
+      - name: Verify PR434 exact-head scheduling without mutating protected runs
+        id: scheduling
+        shell: bash
+        run: |
+          set -euo pipefail
+          scheduled_run=""
+          evidence_file="$RUNNER_TEMP/pr434-scheduling.tsv"
+          : > "$evidence_file"
+
+          for attempt in $(seq 1 30); do
+            : > "$evidence_file"
+            for run_id in $PROTECTED_RUNS; do
+              payload="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id")"
+              status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$payload")"
+              sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$payload")"
+              name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' <<<"$payload")"
+              printf '%s\t%s\t%s\t%s\n' "$run_id" "$status" "$sha" "$name" >> "$evidence_file"
+              test "$sha" = "$TARGET_SHA"
+              if [[ "$status" == "in_progress" || "$status" == "completed" ]]; then
+                scheduled_run="$run_id"
+              fi
+            done
+            if [[ -n "$scheduled_run" ]]; then
+              break
+            fi
+            sleep 4
+          done
+
+          cat "$evidence_file"
+          if [[ -z "$scheduled_run" ]]; then
+            echo "No protected PR434 exact-head run started scheduling inside bounded verification window" >&2
+            exit 1
+          fi
+          echo "FTMO_PR434_SCHEDULING_GREEN run_id=$scheduled_run"
+          echo "scheduled_run=$scheduled_run" >> "$GITHUB_OUTPUT"
+
+      - name: Record runner recovery receipt
+        env:
+          RECOVERY_ACTION: ${{ steps.recovery.outputs.action }}
+          PRE_STATE: ${{ steps.recovery.outputs.pre_state }}
+          PRE_PID: ${{ steps.recovery.outputs.pre_pid }}
+          WORKER_BEFORE: ${{ steps.recovery.outputs.worker_before }}
+          POST_STATE: ${{ steps.recovery.outputs.post_state }}
+          POST_PID: ${{ steps.recovery.outputs.post_pid }}
+          SCHEDULED_RUN: ${{ steps.scheduling.outputs.scheduled_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          service = os.environ["FTMO_SERVICE"]
+          oom = subprocess.run(
+              ["bash", "-lc",
+               "(sudo -n journalctl -k --since '-60 min' --no-pager 2>/dev/null || "
+               "journalctl -k --since '-60 min' --no-pager 2>/dev/null || true) | "
+               "grep -Eai 'out of memory|oom|killed process|memory cgroup' | tail -80"],
+              text=True, capture_output=True
+          ).stdout.strip().splitlines()
+          processes = subprocess.run(
+              ["bash", "-lc",
+               "ps -o pid=,ppid=,lstart=,etime=,cmd= -u ftmo-runner | "
+               "grep -E 'Runner\\.(Worker|Listener)|runsvc\\.sh' || true"],
+              text=True, capture_output=True
+          ).stdout.strip().splitlines()
+
+          protected = []
+          for run_id in os.environ["PROTECTED_RUNS"].split():
+              raw = subprocess.check_output(
+                  ["gh", "api", f"repos/Zennay/Ftmo/actions/runs/{run_id}"],
+                  text=True
+              )
+              data = json.loads(raw)
+              protected.append({
+                  "run_id": int(run_id),
+                  "name": data.get("name"),
+                  "status": data.get("status"),
+                  "conclusion": data.get("conclusion"),
+                  "head_sha": data.get("head_sha"),
+                  "updated_at": data.get("updated_at"),
+              })
+
+          receipt = {
+              "schema_version": 1,
+              "queue_id": os.environ["QUEUE_ID"],
+              "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+              "workflow_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "workflow_sha": os.environ.get("GITHUB_SHA"),
+              "execution_runner": os.environ.get("RUNNER_NAME"),
+              "service": service,
+              "target_sha": os.environ["TARGET_SHA"],
+              "pre_state": os.environ.get("PRE_STATE"),
+              "pre_pid": os.environ.get("PRE_PID"),
+              "worker_before": os.environ.get("WORKER_BEFORE"),
+              "recovery_action": os.environ.get("RECOVERY_ACTION"),
+              "post_state": os.environ.get("POST_STATE"),
+              "post_pid": os.environ.get("POST_PID"),
+              "scheduled_protected_run": int(os.environ["SCHEDULED_RUN"]),
+              "protected_runs": protected,
+              "runner_processes": processes,
+              "fresh_oom_evidence": oom,
+          }
+          target = Path("artifacts/ops/zssh-ftmo-pr434-runner-recovery-20261002.json")
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print("ZSSH_FTMO_PR434_RECOVERY_RECEIPT", json.dumps(receipt, sort_keys=True))
+          PY
+
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add artifacts/ops/zssh-ftmo-pr434-runner-recovery-20261002.json
+          if git diff --cached --quiet; then
+            echo "Recovery receipt unchanged"
+          else
+            git commit -m "Record PR434 FTMO runner recovery"
+            git push origin HEAD:main
+          fi
