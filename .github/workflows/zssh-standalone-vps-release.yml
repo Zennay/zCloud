@@ -20,7 +20,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     env:
-      ZSSH_RELEASE_SHA: 1c204f43cc5af538973fc1c871ac90c63b947916
+      ZSSH_RELEASE_SHA: c1a249e4995605b025496a0178cacbc4cfcecf41
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
@@ -59,6 +59,56 @@ jobs:
           systemctl --user is-active --quiet zssh.service
           curl --fail --silent --show-error http://127.0.0.1:8788/health
           echo "ZSSH_STANDALONE_M1_LIVE_GREEN sha=$ZSSH_RELEASE_SHA"
+      - name: Verify isolated public review site on exact release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_root="$(mktemp -d)"
+          port=18797
+          server_pid=""
+          cleanup() {
+            if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; fi
+            rm -rf "$test_root"
+          }
+          trap cleanup EXIT
+
+          NODE_ENV=production \
+          PORT="$port" \
+          ZSSH_PLUGIN_PROFILE=public \
+          ZSSH_PUBLIC_AUTH_MODE=legacy \
+          ZSSH_ALLOW_LEGACY_PUBLIC_AUTH=1 \
+          ZSSH_PAIRING_REQUIRED=0 \
+          ZSSH_ALLOW_UNPAIRED_PUBLIC=1 \
+          ZSSH_EXEC_MODE=disabled \
+          ZSSH_PUBLIC_ALLOWED_ROOTS="$test_root" \
+          ZSSH_ALLOWED_ROOTS="$test_root" \
+          ZSSH_AUDIT_LOG="$test_root/audit.jsonl" \
+          ZSSH_DEV_BEARER_TOKEN="$(openssl rand -hex 32)" \
+          node zssh-source/server.mjs >"$test_root/server.log" 2>&1 &
+          server_pid=$!
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null
+
+          for page in / /support /privacy /terms; do
+            headers="$test_root/headers-$(echo "$page" | tr '/' '_' | sed 's/^_$/root/').txt"
+            body="$test_root/body-$(echo "$page" | tr '/' '_' | sed 's/^_$/root/').html"
+            curl --fail --silent --show-error --dump-header "$headers" --output "$body" "http://127.0.0.1:$port$page"
+            grep -Eqi '^content-type: text/html' "$headers"
+            grep -Eqi "^content-security-policy: .*default-src 'none'" "$headers"
+            grep -Eqi "frame-ancestors 'none'" "$headers"
+            grep -F 'zSSH' "$body" >/dev/null
+          done
+
+          grep -F 'Your Linux target stays yours.' "$test_root/body-root.html" >/dev/null
+          grep -F '<h1>Support</h1>' "$test_root/body-_support.html" >/dev/null
+          grep -F '<h1>Privacy</h1>' "$test_root/body-_privacy.html" >/dev/null
+          grep -F '<h1>Terms</h1>' "$test_root/body-_terms.html" >/dev/null
+          echo "ZSSH_PUBLIC_LISTING_SITE_VPS_GREEN sha=$ZSSH_RELEASE_SHA"
+
       - name: Verify public hosted-client MCP auth
         run: |
           set -a
