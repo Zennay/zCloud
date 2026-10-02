@@ -1,4 +1,4 @@
-name: FTMO PR438 exact-head provider validation proof
+name: FTMO PR439 exact-head provider validation proof
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ftmo-pr438-exact-head-proof
+  group: ftmo-pr439-exact-head-proof
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 35
     env:
-      TARGET_SHA: 39c26edf954753a0c6fa766c600d5f45a7f8d296
+      TARGET_SHA: 683768c80816096057dd8bd52a77f96e44b1b9d5
     steps:
       - name: Verify runner identity
         shell: bash
@@ -28,11 +28,11 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           echo "runner_host=$(hostname)"
 
-      - name: Fetch exact FTMO PR438 head
+      - name: Fetch exact FTMO PR439 head
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr438-exact"
+          src="$RUNNER_TEMP/ftmo-pr439-exact"
           rm -rf "$src"
           gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
@@ -43,8 +43,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr438-exact"
-          venv="$RUNNER_TEMP/ftmo-pr438-exact-venv"
+          src="$RUNNER_TEMP/ftmo-pr439-exact"
+          venv="$RUNNER_TEMP/ftmo-pr439-exact-venv"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
@@ -54,8 +54,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr438-exact"
-          venv="$RUNNER_TEMP/ftmo-pr438-exact-venv"
+          src="$RUNNER_TEMP/ftmo-pr439-exact"
+          venv="$RUNNER_TEMP/ftmo-pr439-exact-venv"
           cd "$src"
           "$venv/bin/python" -m compileall -q src/prop_trading_ai/research/provider_validation.py
           "$venv/bin/python" -m pytest -q \
@@ -71,8 +71,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          src="$RUNNER_TEMP/ftmo-pr438-exact"
-          venv="$RUNNER_TEMP/ftmo-pr438-exact-venv"
+          src="$RUNNER_TEMP/ftmo-pr439-exact"
+          venv="$RUNNER_TEMP/ftmo-pr439-exact-venv"
           cd "$src"
           "$venv/bin/python" -m pytest -q
 
@@ -80,16 +80,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/zcloud-pr438-exact-receipt"
+          work="$RUNNER_TEMP/zcloud-pr439-exact-receipt"
           rm -rf "$work"
           gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
           cd "$work"
           git checkout main >/dev/null
           mkdir -p runtime-evidence
-          cat > runtime-evidence/ftmo-pr438-exact-head-proof.json <<EOF
+          cat > runtime-evidence/ftmo-pr439-exact-head-proof.json <<EOF
           {
             "schema_version": 1,
-            "scope": "ftmo-pr438-exact-head-proof",
+            "scope": "ftmo-pr439-exact-head-proof",
             "target_sha": "$TARGET_SHA",
             "workflow_run_id": "$GITHUB_RUN_ID",
             "workflow_run_attempt": "$GITHUB_RUN_ATTEMPT",
@@ -112,12 +112,12 @@ jobs:
           EOF
           git config user.name "zcloud-automation"
           git config user.email "zcloud-automation@users.noreply.github.com"
-          git add runtime-evidence/ftmo-pr438-exact-head-proof.json
+          git add runtime-evidence/ftmo-pr439-exact-head-proof.json
           if git diff --cached --quiet; then
             echo "Receipt unchanged"
             exit 0
           fi
-          git commit -m "Record FTMO PR438 exact-head proof"
+          git commit -m "Record FTMO PR439 exact-head proof"
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               exit 0
