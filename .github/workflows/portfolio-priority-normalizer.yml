@@ -1,4 +1,4 @@
-name: Reconcile live FTMO-first portfolio priorities
+name: Reconcile live LightUp-first portfolio priorities
 
 on:
   push:
@@ -26,12 +26,20 @@ jobs:
 
           base="http://127.0.0.1:8765"
           desired={
+            "lightup-m0-control-plane":(
+              "lightup","P0","Finish LightUp M0 authorization-first control plane",
+              "Advance LightUp infrastructure only: implement plan-only orchestration, explicit authorization/scope contracts, fail-closed execution gates and deterministic tests. Do not perform active target interaction or offensive execution; keep activation disabled until the user explicitly authorizes a specific owned or permitted lab target.",
+              "https://app.notion.com/p/3ed9e19ac9558117b639f2254fe0e165"),
+            "lightup-m0-evidence-lab-ci":(
+              "lightup","P0","Finish LightUp reproducible lab, evidence store and defensive CI",
+              "Advance the isolated LightUp lab harness, reproducible fixtures, evidence/remediation/retest storage and defensive CI with deterministic test evidence. Infrastructure and safe local fixtures only; no live external target interaction until explicit activation and authorization.",
+              "https://app.notion.com/p/3ed9e19ac9558117b639f2254fe0e165"),
             "zssh-openai-public-plugin-release":(
               "zssh","P1","Finish the next zSSH public plugin release increment",
-              "Make a material production-grade code/config/workflow change that advances the self-hosted public OpenAI plugin route while FTMO retains the portfolio P0 compute/research lane.",
+              "Make a material production-grade code/config/workflow change that advances the self-hosted public OpenAI plugin route while LightUp retains the portfolio P0 build lane.",
               "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"),
             "ftmo-current-generation-safe-gate":(
-              "ftmo","P0","Keep FTMO autonomous progression healthy and self-recovering",
+              "ftmo","P1","Keep FTMO autonomous progression healthy and self-recovering",
               "Do not manually act as the normal generation loop. FTMO research progression belongs to the persistent self-hosted runtime. Only intervene when that runtime cannot self-advance: fix the concrete code/config/service/data-gate cause, preserve provider provenance and sealed outcome boundaries, then prove the persistent runtime resumes autonomous safe progression with deterministic workflow/runtime evidence.",
               "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
             "supa-supermarket-html-scrapers":(
@@ -89,7 +97,8 @@ jobs:
               print("QUEUE_RETIRED",qid,json.dumps(result,sort_keys=True))
 
           # Reconcile current allocation with unchanged worker settings. Existing
-          # real claimed/running work is not killed; newly free slots follow P0>P1>P2>P3.
+          # real running work is not killed; newly free slots follow P0>P1>P2>P3,
+          # with two independent LightUp M0 infrastructure lanes occupying P0.
           dynamic=get("/api/dynamic-workers").get("dynamic_workers") or {}
           same={
               key:dynamic.get(key)
@@ -108,8 +117,8 @@ jobs:
           focus=[
               {k:x.get(k) for k in ("queue_id","project_id","priority","status","worker_slot","title")}
               for x in final.get("items",[])
-              if x.get("eligible") and x.get("project_id") in {"ftmo","haxlab"}
+              if x.get("eligible") and x.get("project_id") in {"lightup","ftmo","haxlab"}
           ]
-          print("FTMO_HAXLAB_FINAL",json.dumps(focus,sort_keys=True))
+          print("LIGHTUP_FTMO_HAXLAB_FINAL",json.dumps(focus,sort_keys=True))
           print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))
           PY
