@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "description": "Canonical runtime contracts for zCloud projects. projects.json remains presentation/product registry; this file owns autonomy, AI concurrency and compute admission.",
+  "defaults": {
+    "autonomy": {
+      "continue_delay_seconds": 120,
+      "wait_vps_seconds": 900,
+      "wait_human_seconds": 21600,
+      "complete_recheck_seconds": 86400,
+      "dispatch_mode": "vps",
+      "min_ai_interval_seconds": 120
+    },
+    "ai_worker_cap": 1
+  },
+  "resource_pools": {
+    "protected": {
+      "slots": 2,
+      "description": "Control-plane work that must remain available."
+    },
+    "build": {
+      "slots": 2,
+      "description": "Bounded build/test workloads."
+    },
+    "heavy": {
+      "slots": 1,
+      "description": "CPU/RAM-heavy research, ML or isolated lab workloads."
+    },
+    "disabled": {
+      "slots": 0,
+      "description": "No autonomous compute admission."
+    }
+  },
+  "projects": {
+    "cloud": {
+      "queue_mode": "execution",
+      "lane_profile": "platform",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "zcloud_stopgate",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "control-plane",
+        "pool": "protected",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 1536,
+        "priority": "high",
+        "protected": true
+      }
+    },
+    "zssh": {
+      "queue_mode": "execution",
+      "lane_profile": "platform",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "control-plane",
+        "pool": "protected",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 1536,
+        "priority": "high",
+        "protected": true
+      }
+    },
+    "ftmo": {
+      "queue_mode": "execution",
+      "lane_profile": "research-validation",
+      "ai_worker_cap": 2,
+      "autonomy": {
+        "mode": "ftmo_status",
+        "auto_start": true,
+        "status_file": "/opt/ftmo-autonomous/.scratch/autonomy/status.json",
+        "ai_stages": [],
+        "local_executor_owns_stages": true,
+        "status_missing_fail_closed": true
+      },
+      "compute": {
+        "class": "research-heavy",
+        "pool": "heavy",
+        "cpu_soft_cores": 4,
+        "memory_soft_mb": 4608,
+        "priority": "turbo",
+        "protected": false
+      }
+    },
+    "haxlab": {
+      "queue_mode": "execution",
+      "lane_profile": "ml-training",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "haxlab_status",
+        "auto_start": true,
+        "status_file": "/var/lib/haxlab/state/autonomy-status.json",
+        "ai_states": [],
+        "local_executor_owns_states": true,
+        "status_missing_fail_closed": true
+      },
+      "compute": {
+        "class": "ml-heavy",
+        "pool": "heavy",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 3072,
+        "priority": "background",
+        "protected": false
+      }
+    },
+    "supa": {
+      "queue_mode": "execution",
+      "lane_profile": "product",
+      "ai_worker_cap": 2,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "build",
+        "pool": "build",
+        "cpu_soft_cores": 2,
+        "memory_soft_mb": 2048,
+        "priority": "normal",
+        "protected": false
+      }
+    },
+    "raiseai": {
+      "queue_mode": "execution",
+      "lane_profile": "device-product",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "build",
+        "pool": "build",
+        "cpu_soft_cores": 2,
+        "memory_soft_mb": 2048,
+        "priority": "normal",
+        "protected": false
+      }
+    },
+    "ulab": {
+      "queue_mode": "human-gated",
+      "lane_profile": "human-gated",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "compute": {
+        "class": "human-gated",
+        "pool": "disabled",
+        "cpu_soft_cores": 0,
+        "memory_soft_mb": 0,
+        "priority": "normal",
+        "protected": false
+      }
+    },
+    "lightup": {
+      "queue_mode": "execution",
+      "lane_profile": "security-lab",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "lab-burst",
+        "pool": "heavy",
+        "cpu_soft_cores": 2,
+        "memory_soft_mb": 3072,
+        "priority": "normal",
+        "protected": false
+      }
+    }
+  }
+}
