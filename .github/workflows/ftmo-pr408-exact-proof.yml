@@ -19,7 +19,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 12
     env:
-      TARGET_SHA: 3a262842a58366a77a8b8a6ccb88cd3ed7e94e9b
+      TARGET_SHA: eac3d115741a60c9bb9004636d69b34a3ca81ed2
     steps:
       - name: Verify VPS and exact PR408 head
         shell: bash
