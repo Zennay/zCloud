@@ -11,13 +11,13 @@
     "project_id": "zssh",
     "queue_id": "zssh-ftmo-runner-recovery-20261002",
     "status": "claimed",
-    "updated_at": "2026-10-02T01:31:31.175298+00:00",
+    "updated_at": "2026-10-02T01:34:52.196316+00:00",
     "worker_slot": 5
   },
-  "receipt_base_sha": "3149cc12127f495ab3b9e942630ec3ea1b681d22",
+  "receipt_base_sha": "7c877f42e15f9394ea0d30f03c073795d1ecfd42",
   "schema_version": 1,
   "scope": "ftmo-runner-recovery-zssh-queue",
   "workflow_run_attempt": "1",
-  "workflow_run_id": "36951282190",
-  "workflow_source_sha": "3149cc12127f495ab3b9e942630ec3ea1b681d22"
+  "workflow_run_id": "36951373781",
+  "workflow_source_sha": "7c877f42e15f9394ea0d30f03c073795d1ecfd42"
 }
