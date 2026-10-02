@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib
 from contextlib import contextmanager, closing
 import enhancements
+import project_runtime
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
 
 ROOT = Path(__file__).resolve().parent
@@ -606,6 +607,7 @@ def init_db():
         AUTONOMY_TICK_SECONDS=setting_int('scheduler_interval_seconds',AUTONOMY_TICK_SECONDS,1,300)
         GLOBAL_CHATGPT_WORKER_LIMIT=DYNAMIC_CHATGPT_WORKERS+DYNAMIC_CLAUDE_WORKERS
         c.execute("CREATE TABLE IF NOT EXISTS autonomy_runtime(project_id TEXT PRIMARY KEY, initialized_at TEXT NOT NULL, manual_pause INTEGER NOT NULL DEFAULT 0, last_dispatch_at TEXT, last_reason TEXT NOT NULL DEFAULT '')")
+        project_runtime.init_tables(c)
         if PORTFOLIO_QUEUE_SEED_FILE.exists():
             try:
                 seed=json.loads(PORTFOLIO_QUEUE_SEED_FILE.read_text(encoding='utf-8'))
@@ -701,6 +703,12 @@ def replay_metrics():
 def collect():
     projects = json.loads((ROOT/'projects.json').read_text())
     errors=[]
+    try:
+        with connect() as c:
+            state_receipts=project_runtime.latest_receipts(c)
+    except Exception:
+        logging.exception('Could not read project state receipts')
+        state_receipts={}
     try: states=service_states()
     except Exception: states={}; errors.append('Servicestatus tijdelijk niet beschikbaar')
     try: user_states=user_service_states()
@@ -717,6 +725,16 @@ def collect():
         p['next']=next((m['title'] for m in p['milestones'] if not m['done']), 'Alle milestones afgerond')
         p['current_milestone_progress']=next((m['progress'] for m in p['milestones'] if not m['done']),100)
         p['resource']=resources.get(p['id'],{})
+        try:
+            contract=project_runtime.project_contract(p['id'])
+            p['runtime_contract']={
+                'queue_mode':contract.get('queue_mode'),
+                'lane_profile':contract.get('lane_profile'),
+                'ai_worker_cap':contract.get('ai_worker_cap'),
+                'compute':contract.get('compute') or {},
+            }
+        except Exception:
+            p['runtime_contract']={'error':'missing_or_invalid'}
         p['source_status']='ok'; p['commits']=None; p['commit']=''; p['updated']=None; p['message']='Nog geen Git-bron'; p['shallow']=False
         path=p.pop('repo',None)
         repo_ref=p.pop('repo_ref','HEAD')
@@ -776,10 +794,17 @@ def collect():
             if name=='ftmo-autonomous.service' and state=='inactive' and s.get('Result')=='success':state='waiting'
             p['services'].append({'name':label,'state':state,'result':s.get('Result'), 'last_run':s.get('ExecMainExitTimestamp') or None})
         p['health']='healthy' if not names or all(s['state'] in ('active','activating','waiting') for s in p['services']) else 'attention'
+        project_runtime.apply_receipt(p,state_receipts.get(p['id']))
         p['last_chatgpt_run']=watch_last_run(p['id'])
     with connect() as c:
         c.executemany('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)',events)
-    data={'version':3,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam','attention_needed':portfolio_attention_items(),'portfolio_queue_health':portfolio_queue_health()}
+    try:
+        with connect() as c:
+            governor=project_runtime.resource_status(c)
+    except Exception:
+        logging.exception('Resource governor status unavailable')
+        governor={'time':now(),'pools':{},'leases':[],'error':'unavailable'}
+    data={'version':4,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'resource_governor':governor,'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam','attention_needed':portfolio_attention_items(),'portfolio_queue_health':portfolio_queue_health()}
     try: enhancements.evaluate_alerts(data,runner_status(),DB)
     except Exception: logging.exception('Alert evaluation failed')
     return data
@@ -1403,7 +1428,7 @@ def task_claim_release(project_id,claim_key,owner_id):
         cur=c.execute('DELETE FROM task_claims WHERE project_id=? AND claim_key=? AND owner_id=?',(project_id,claim_key,owner_id))
     return {'released':cur.rowcount==1}
 
-def load_autonomy_policy():
+def _legacy_autonomy_policy():
     default={
         'schema_version':1,
         'default':{
@@ -1462,6 +1487,21 @@ def load_autonomy_policy():
     except Exception:
         logging.exception('Invalid autonomy policy; fail closed')
         return {'schema_version':1,'default':{**default['default'],'mode':'manual','auto_start':False},'projects':{}}
+
+
+def load_autonomy_policy():
+    """Use project-contracts.json as production autonomy truth.
+
+    Tests or recovery tools that explicitly redirect AUTONOMY_POLICY_FILE keep the
+    legacy isolated policy path so migration/recovery remains testable.
+    """
+    if AUTONOMY_POLICY_FILE != ROOT / 'autonomy-policy.json':
+        return _legacy_autonomy_policy()
+    try:
+        return project_runtime.autonomy_policy()
+    except Exception:
+        logging.exception('Invalid canonical project runtime contracts; fail closed')
+        return {'schema_version':1,'default':{'mode':'manual','auto_start':False},'projects':{}}
 
 def _autonomy_config(project_id):
     policy=load_autonomy_policy()
@@ -1821,18 +1861,14 @@ def _portfolio_project_soft_cap():
 
 
 def _portfolio_project_hard_cap(project_id):
-    """Return the hard AI/code-worker cap for one project.
-
-    This is intentionally separate from VPS/service compute concurrency. A project
-    without an explicit cap may still consume the whole global AI pool when safe.
-    """
+    """Return the canonical per-project AI/code-worker cap."""
     limit=max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))
-    configured=PROJECT_AI_WORKER_LIMITS.get(str(project_id or '').strip().lower(), limit)
     try:
-        configured=int(configured)
+        return project_runtime.ai_worker_cap(str(project_id or '').strip().lower(),limit)
     except Exception:
-        configured=limit
-    return max(1,min(limit,configured))
+        logging.exception('Missing/invalid project runtime contract for %s',project_id)
+        # Fail closed to one worker rather than silently granting the full pool.
+        return 1
 
 def _portfolio_queue_metadata(row):
     if not row:
@@ -2449,6 +2485,35 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             created=portfolio_write_continuation(row['project_id'],queue_id)
         except ValueError:
             created=None
+    # Every material queue transition leaves an evidence-backed state receipt.
+    # Rich CI/deploy paths may later supersede this with a more specific receipt.
+    try:
+        next_gate=(
+            (created or {}).get('title')
+            if isinstance(created,dict)
+            else ''
+        ) or (str(row['title']) if result=='CONTINUE' else '')
+        project=PROJECT_INDEX.get(str(row['project_id'])) or {}
+        receipt_status={'DONE':'success','BLOCKED':'failure','CONTINUE':'in_progress'}[result]
+        with connect() as c:
+            project_runtime.record_receipt(
+                c,
+                str(row['project_id']),
+                phase=str(project.get('phase') or ''),
+                action=f"{row['title']} -> {result}",
+                ci_status=receipt_status,
+                blocker=str(evidence or '') if result=='BLOCKED' else '',
+                next_gate=next_gate or str(project.get('next_step') or ''),
+                source='portfolio_queue:'+queue_id,
+                evidence={
+                    'queue_id':queue_id,
+                    'result':result,
+                    'priority':str(row['priority'] or ''),
+                    'evidence':str(evidence or '')[:3500],
+                },
+            )
+    except Exception:
+        logging.exception('Could not persist project state receipt for %s',queue_id)
     audit=portfolio_queue_audit(refill=False)
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
 
@@ -3201,6 +3266,42 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('UPDATE runner_commands SET status=?,updated_at=?,result=? WHERE id=?',
                               (status,now(),str(payload.get('result') or '')[:300],command_id))
                 return self.reply({'ok':True})
+            if u.path=='/api/project-state-receipts':
+                if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+                project_id=str(payload.get('project_id') or '').strip().lower()
+                if project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+                with connect() as c:
+                    receipt=project_runtime.record_receipt(
+                        c,project_id,
+                        phase=payload.get('phase') or '',
+                        action=payload.get('action') or '',
+                        commit_sha=payload.get('commit_sha') or '',
+                        ci_status=payload.get('ci_status') or '',
+                        blocker=payload.get('blocker') or '',
+                        next_gate=payload.get('next_gate') or '',
+                        source=payload.get('source') or request_actor(self),
+                        observed_at=payload.get('observed_at') or None,
+                        evidence=payload.get('evidence') if isinstance(payload.get('evidence'),dict) else {},
+                    )
+                return self.reply({'ok':True,'receipt':receipt,'time':now()})
+            if u.path=='/api/resource-governor':
+                if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
+                action=str(payload.get('action') or 'acquire').strip().lower()
+                project_id=str(payload.get('project_id') or '').strip().lower()
+                owner_id=str(payload.get('owner_id') or '').strip()
+                if project_id not in PROJECT_INDEX or not owner_id:return self.reply({'error':'project_id en owner_id zijn verplicht'},400)
+                with connect() as c:
+                    if action=='acquire':
+                        result=project_runtime.acquire_resource(
+                            c,project_id,owner_id,
+                            lease_seconds=payload.get('lease_seconds') or 1800,
+                            metadata=payload.get('metadata') if isinstance(payload.get('metadata'),dict) else {},
+                        )
+                    elif action=='release':
+                        result=project_runtime.release_resource(c,project_id,owner_id)
+                    else:
+                        return self.reply({'error':'Ongeldige resource-governor actie'},400)
+                return self.reply({'ok':bool(result.get('acquired') or result.get('released')),'result':result,'time':now()},200 if (result.get('acquired') or result.get('released')) else 409)
             if u.path=='/api/dynamic-workers/force-push':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 return self.reply(dynamic_force_push())
@@ -3516,6 +3617,18 @@ class Handler(BaseHTTPRequestHandler):
             logging.exception('POST failed');self.reply({'error':'Opslaan mislukt'},500)
     def route(self):
         u=urlparse(self.path);q=parse_qs(u.query)
+        if u.path=='/api/project-state-receipts':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            with connect() as c:
+                receipts=project_runtime.latest_receipts(c)
+            if project_id:
+                return self.reply({'project_id':project_id,'receipt':receipts.get(project_id),'time':now()})
+            return self.reply({'receipts':receipts,'time':now()})
+        if u.path=='/api/resource-governor':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            with connect() as c:
+                return self.reply(project_runtime.resource_status(c))
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})

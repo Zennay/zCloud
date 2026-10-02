@@ -7,32 +7,55 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectAutonomyCoverageTests(unittest.TestCase):
-    def test_every_registered_active_project_has_explicit_autonomy_contract(self):
-        projects = json.loads((ROOT / "projects.json").read_text(encoding="utf-8"))
-        policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
-        explicit = set((policy.get("projects") or {}).keys())
+    def setUp(self):
+        self.projects = json.loads((ROOT / "projects.json").read_text(encoding="utf-8"))
+        self.contracts = json.loads((ROOT / "project-contracts.json").read_text(encoding="utf-8"))
+        self.legacy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
+
+    def test_every_registered_active_project_has_explicit_runtime_contract(self):
+        explicit = set((self.contracts.get("projects") or {}).keys())
         active = {
             str(project["id"])
-            for project in projects
+            for project in self.projects
             if str(project.get("status") or "active") != "archived"
         }
         self.assertEqual(
             active,
             explicit,
-            "Every active project must declare an explicit autonomy policy; "
-            "new projects may not silently inherit the global default.",
+            "Every active project must declare one canonical project runtime contract.",
         )
 
-    def test_human_gated_projects_are_not_auto_started(self):
-        projects = json.loads((ROOT / "projects.json").read_text(encoding="utf-8"))
-        policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
-        by_id = {str(project["id"]): project for project in projects}
-        for project_id, project in by_id.items():
+    def test_registry_queue_and_lane_metadata_match_runtime_contract(self):
+        contracts = self.contracts["projects"]
+        for project in self.projects:
+            pid = str(project["id"])
+            if str(project.get("status") or "active") == "archived":
+                continue
+            contract = contracts[pid]
+            self.assertEqual(project.get("queue_mode"), contract.get("queue_mode"), pid)
+            self.assertEqual(project.get("lane_profile"), contract.get("lane_profile"), pid)
+
+    def test_human_gated_projects_are_fail_closed(self):
+        contracts = self.contracts["projects"]
+        for project in self.projects:
             if str(project.get("queue_mode") or "").lower() != "human-gated":
                 continue
-            cfg = (policy.get("projects") or {}).get(project_id) or {}
+            cfg = contracts[str(project["id"])]["autonomy"]
+            compute = contracts[str(project["id"])]["compute"]
+            pool = self.contracts["resource_pools"][compute["pool"]]
             self.assertIn(cfg.get("mode"), {"external_gate", "manual"})
             self.assertFalse(bool(cfg.get("auto_start")))
+            self.assertEqual(0, pool.get("slots"))
+
+    def test_legacy_autonomy_file_cannot_drift_during_migration(self):
+        canonical = self.contracts["projects"]
+        legacy = self.legacy.get("projects") or {}
+        self.assertEqual(set(canonical), set(legacy))
+        for pid, contract in canonical.items():
+            old = legacy[pid]
+            new = contract["autonomy"]
+            self.assertEqual(old.get("mode"), new.get("mode"), pid)
+            self.assertEqual(bool(old.get("auto_start")), bool(new.get("auto_start")), pid)
 
 
 if __name__ == "__main__":

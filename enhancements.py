@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 import hashlib, json, os, re, sqlite3, subprocess, time
+import project_runtime
 
 ROOT = Path("/home/ubuntu/zennay-cloud")
 RESOURCE_FILE = ROOT / "resource-policy.json"
@@ -25,6 +26,9 @@ PROJECT_UNITS = {
     "cloud": ["zennay-cloud.service"],
     "supa": [],
     "raiseai": [],
+    "ulab": [],
+    "zssh": ["zssh.service"],
+    "lightup": [],
 }
 _RESOURCE_PREV = {}
 _RESOURCE_HOST_PREV = None
@@ -55,13 +59,23 @@ def _json(path, sudo=False):
         return None
 
 def load_resource_policy():
-    default = {
-        "haxlab": {"priority": "background"},
-        "ftmo": {"priority": "turbo"},
-        "supa": {"priority": "normal"},
-        "raiseai": {"priority": "normal"},
-        "cloud": {"priority": "normal"},
-    }
+    try:
+        contracts = project_runtime.load_contracts()
+        default = {
+            pid: {"priority": str((contract.get("compute") or {}).get("priority") or "normal")}
+            for pid, contract in contracts["projects"].items()
+        }
+    except Exception:
+        default = {
+            "haxlab": {"priority": "background"},
+            "ftmo": {"priority": "turbo"},
+            "supa": {"priority": "normal"},
+            "raiseai": {"priority": "normal"},
+            "cloud": {"priority": "normal"},
+            "ulab": {"priority": "normal"},
+            "zssh": {"priority": "high"},
+            "lightup": {"priority": "normal"},
+        }
     try:
         raw = json.loads(RESOURCE_FILE.read_text())
     except Exception:
@@ -160,6 +174,15 @@ def resource_snapshot():
             "mode": "host_share",
             "note": "CPU is aandeel van totale VPS-capaciteit; cgroup-metingen nemen child-processen mee.",
         }
+        try:
+            compute = project_runtime.project_contract(pid).get("compute") or {}
+            out[pid]["compute_class"] = compute.get("class")
+            out[pid]["resource_pool"] = compute.get("pool")
+            out[pid]["cpu_soft_cores"] = compute.get("cpu_soft_cores")
+            out[pid]["memory_soft_mb"] = compute.get("memory_soft_mb")
+            out[pid]["protected"] = bool(compute.get("protected"))
+        except Exception:
+            out[pid]["contract_error"] = True
 
     unattributed = None
     if host_cpu_pct is not None:

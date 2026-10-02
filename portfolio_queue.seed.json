@@ -1,5 +1,35 @@
 [
   {
+    "queue_id": "cloud-resource-governor-full-enforcement",
+    "project_id": "cloud",
+    "title": "Enforce the portfolio resource governor on real heavy workloads",
+    "priority": "P0",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Finish real resource-governor enforcement, not dashboard-only telemetry. Keep protected control-plane capacity for zCloud/zSSH; enforce one shared heavy pool across FTMO research/backtests, HaxLab training and LightUp lab bursts; keep bounded build capacity for Supa/RaiseAI/uLab technical jobs. Wire acquire/renew/release with finally/always cleanup into every relevant self-hosted workflow/service entrypoint. Apply safe systemd/cgroup CPU and memory controls or equivalent bounded process controls using the declared project contracts, without exposing secrets or interrupting already-running critical jobs. Add deterministic contention, expiry, crash-recovery and no-starvation tests plus a live VPS concurrency canary proving two heavy projects cannot run simultaneously while control-plane work remains responsive. Completion requires merged code, exact-head green CI, production deploy evidence and a live governor status receipt.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "cloud-project-contract-cutover",
+    "project_id": "cloud",
+    "title": "Finish the unified project runtime contract cutover",
+    "priority": "P0",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Make project-contracts.json the single canonical runtime contract for every active project: autonomy mode, auto-start, queue mode, lane profile, AI worker cap, compute class/pool, soft CPU/memory budget and protected status. Remove or demote duplicated hard-coded runtime truth in server.py/enhancements.py/autonomy-policy.json after compatibility proof, and extend fail-closed config validation so a project cannot start when registry and contract disagree or a contract is missing. Completion requires all active projects covered, migration/backward-compatibility tests, green regression suite and production evidence that /api/autonomy, allocator caps and resource telemetry are contract-driven.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "cloud-state-receipts-full-rollout",
+    "project_id": "cloud",
+    "title": "Finish evidence-driven project state receipts across all execution paths",
+    "priority": "P0",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Complete the receipt rollout end-to-end. Every material worker/CI/VPS completion path must emit a project_state_receipt with project, phase, last material action, canonical commit, CI/runtime result, blocker if any, next executable gate, timestamp and machine-readable evidence. zCloud dashboard/API must prefer the latest valid receipt for phase/next-step while retaining registry fallback when no receipt exists. Backfill at least one current receipt for every active project from verified canonical evidence. Add regression tests for stale projects.json state being superseded by receipts, malformed receipts failing closed, and receipt persistence across restart. Completion requires merged code, green exact-head CI, production deployment, and live /api/status evidence showing receipt-backed state for all active projects.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
     "queue_id": "zssh-research-openai-plugin-contract",
     "project_id": "zssh",
     "title": "Research and codify the current OpenAI plugin submission contract",
