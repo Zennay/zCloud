@@ -19,7 +19,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 8
     steps:
-      - name: Diagnose FTMO observer invariants safely
+      - name: Diagnose FTMO marathon restart loop
         shell: bash
         run: |
           set -euo pipefail
@@ -28,61 +28,34 @@ jobs:
           PY="$ROOT/.venv/bin/python"
 
           echo "runner=$(hostname)"
-          echo "service_state=$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
-          test -x "$PY"
+          systemctl show "$SERVICE"             -p ActiveState -p SubState -p NRestarts -p MainPID             -p ExecMainCode -p ExecMainStatus -p Result             -p ExecMainStartTimestamp -p ExecMainExitTimestamp --no-pager
 
+          test -x "$PY"
           "$PY" - <<'PY'
-          from datetime import datetime, timezone
           import json
           from pathlib import Path
 
           root = Path("/opt/ftmo-autonomous")
           status = json.loads((root / ".scratch/autonomy/status.json").read_text(encoding="utf-8"))
-          revision = (root / ".scratch/autonomy/deployed-main-sha").read_text(encoding="utf-8").strip()
-          run_id = (root / ".scratch/autonomy/deployed-workflow-run-id").read_text(encoding="utf-8").strip()
           research = status.get("research") or {}
           controller = status.get("research_controller") or {}
-          loop = controller.get("generation_loop") or {}
-          outcome = controller.get("outcome_execution") or {}
-          completed_raw = status.get("research_cycle_completed_at_utc")
-          age = None
-          if completed_raw:
-              completed = datetime.fromisoformat(completed_raw.replace("Z", "+00:00"))
-              age = (datetime.now(timezone.utc) - completed).total_seconds()
-
-          checks = {
-              "valid_deployed_revision": len(revision) == 40,
-              "valid_deployment_run_id": run_id.isdigit(),
-              "runtime_revision_matches_marker": status.get("runtime_revision") == revision,
-              "deployment_run_matches_marker": str(status.get("deployment_workflow_run_id")) == run_id,
-              "research_cycle_ok": status.get("research_cycle_ok") is True,
-              "live_trading_sealed": status.get("live_trading_allowed") is False,
-              "broker_submission_sealed": status.get("broker_order_submission_allowed") is False,
-              "cloud_budget_zero": str(status.get("autonomous_cloud_budget_usd")) in {"0", "0.0", "0.00"},
-              "compute_ok": (controller.get("compute") or {}).get("ok") is True,
-              "generation_loop_enabled": loop.get("enabled") is True,
-              "outcome_live_sealed": outcome.get("live_trading_allowed") is False,
-              "outcome_broker_sealed": outcome.get("broker_order_submission_allowed") is False,
-              "walk_forward_access_consistent": outcome.get("walk_forward_accessed") is not True
-                  or research.get("walk_forward_access_allowed") is True,
-              "holdout_access_consistent": outcome.get("final_holdout_accessed") is not True
-                  or research.get("final_holdout_access_allowed") is True,
-              "cycle_timestamp_present": bool(completed_raw),
-              "cycle_timestamp_not_future": age is not None and age >= 0,
-              "cycle_fresh_under_1800s": age is not None and age < 1800,
-          }
-          failed = sorted(name for name, ok in checks.items() if not ok)
-          print("FTMO_OBSERVER_CHECKS", json.dumps(checks, sort_keys=True))
-          print("FTMO_OBSERVER_FAILED", json.dumps(failed))
-          print("FTMO_OBSERVER_STATE", json.dumps({
-              "research_cycle_age_seconds": age,
+          print("FTMO_SAFE_STATUS", json.dumps({
+              "ok": status.get("ok"),
+              "research_cycle_ok": status.get("research_cycle_ok"),
+              "error_type": type(status.get("error")).__name__ if status.get("error") is not None else None,
+              "error_present": bool(status.get("error")),
               "generation_number": research.get("generation_number"),
               "generation_id": research.get("generation_id"),
               "next_stage": research.get("next_stage"),
               "controller_action": controller.get("action"),
-              "generation_loop_action": loop.get("action"),
-              "walk_forward_accessed": outcome.get("walk_forward_accessed"),
-              "final_holdout_accessed": outcome.get("final_holdout_accessed"),
+              "runtime_revision": status.get("runtime_revision"),
+              "deployment_workflow_run_id": status.get("deployment_workflow_run_id"),
+              "live_trading_allowed": status.get("live_trading_allowed"),
+              "broker_order_submission_allowed": status.get("broker_order_submission_allowed"),
+              "autonomous_cloud_budget_usd": str(status.get("autonomous_cloud_budget_usd")),
           }, sort_keys=True))
-          raise SystemExit(1 if failed else 0)
           PY
+
+          echo "FTMO_RECENT_SERVICE_EVENTS_BEGIN"
+          journalctl -u "$SERVICE" --since "-12 min" --no-pager -o cat             | grep -E '^(FTMO |Traceback|[A-Za-z].*(Error|Exception):|.*provider.*|.*autonomous.*)'             | tail -n 80             | sed -E 's/([A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)[A-Za-z0-9_]*)=[^[:space:]]+/\1=<redacted>/Ig'             || true
+          echo "FTMO_RECENT_SERVICE_EVENTS_END"
