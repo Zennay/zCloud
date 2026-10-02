@@ -233,6 +233,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("--preserve-prechange-drift public/zcloud-worker.user.js", catalog)
         self.assertIn("--preserve-prechange-drift firefox-extension/background.js", catalog)
         self.assertIn("--allow-recent-ancestor-prechange-drift", catalog)
+        self.assertIn(
+            "--reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0",
+            catalog,
+        )
         self.assertEqual(1, catalog.count("scripts/zcloud_transactional_promote.py"))
         self.assertNotIn("- name: Promote translated project catalog", text)
 
