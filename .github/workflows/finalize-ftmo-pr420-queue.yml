@@ -16,7 +16,7 @@ concurrency:
 jobs:
   finalize:
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       MERGE_SHA: fd409196cb6a4d83c258343a3799d27d916c07d6
       EXACT_PROOF_RUN: "36995756456"
@@ -66,7 +66,7 @@ jobs:
               ))
 
           accepted = None
-          for attempt in range(60):
+          for attempt in range(120):
               try:
                   if status_path.is_file() and not status_path.is_symlink():
                       status = json.loads(status_path.read_text(encoding="utf-8"))
