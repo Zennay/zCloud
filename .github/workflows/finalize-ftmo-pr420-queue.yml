@@ -31,14 +31,7 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           gh auth status >/dev/null 2>&1
           raw="$(gh api "repos/Zennay/Ftmo/actions/runs/$STALE_FINALIZER_RUN")"
-          python3 - "$STALE_FINALIZER_SHA" <<'PY' <<<"$raw"
-          import json, sys
-          expected = sys.argv[1]
-          data = json.load(sys.stdin)
-          if data.get("head_sha") != expected or data.get("name") != "Worker5 SQLite queue finalizer":
-              raise SystemExit("stale-finalizer identity mismatch")
-          print("stale_finalizer_status=" + str(data.get("status")))
-          PY
+          EXPECTED_STALE_SHA="$STALE_FINALIZER_SHA" python3 -c 'import json,os,sys; d=json.load(sys.stdin); expected=os.environ["EXPECTED_STALE_SHA"]; (d.get("head_sha")==expected and d.get("name")=="Worker5 SQLite queue finalizer") or (_ for _ in ()).throw(SystemExit("stale-finalizer identity mismatch")); print("stale_finalizer_status="+str(d.get("status")))' <<<"$raw"
           status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$raw")"
           if [ "$status" = "queued" ] || [ "$status" = "in_progress" ]; then
             gh api --method POST "repos/Zennay/Ftmo/actions/runs/$STALE_FINALIZER_RUN/cancel"
@@ -50,13 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           raw="$(gh api "repos/Zennay/zCloud/actions/runs/$EXACT_PROOF_RUN")"
-          python3 - "$MERGE_SHA" <<'PY' <<<"$raw"
-          import json, sys
-          data = json.load(sys.stdin)
-          if (data.get("status"), data.get("conclusion")) != ("completed", "success"):
-              raise SystemExit("PR420 exact-head VPS proof is not green")
-          print("PR420_EXACT_PROOF_GREEN=1")
-          PY
+          python3 -c 'import json,sys; d=json.load(sys.stdin); (d.get("status"),d.get("conclusion"))==("completed","success") or (_ for _ in ()).throw(SystemExit("PR420 exact-head VPS proof is not green")); print("PR420_EXACT_PROOF_GREEN=1")' <<<"$raw"
 
       - name: Wait for deployed descendant and prove sealed runtime
         shell: bash
