@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,6 +82,69 @@ def audit_rows(db_path: Path, config_key: str, target: str, current) -> list[dic
     return evidence
 
 
+def project_delta(left, right) -> dict:
+    if not isinstance(left, list) or not isinstance(right, list):
+        return {"comparable": False}
+    def index(items):
+        out = {}
+        for item in items:
+            if isinstance(item, dict) and str(item.get("id") or "").strip():
+                out[str(item["id"])] = item
+        return out
+    old = index(left)
+    new = index(right)
+    changed = {}
+    for project_id in sorted(set(old) & set(new)):
+        keys = sorted(
+            key for key in (set(old[project_id]) | set(new[project_id]))
+            if old[project_id].get(key) != new[project_id].get(key)
+        )
+        if keys:
+            changed[project_id] = keys
+    return {
+        "comparable": True,
+        "added_ids": sorted(set(new) - set(old)),
+        "removed_ids": sorted(set(old) - set(new)),
+        "changed_fields": changed,
+    }
+
+
+def layout_delta(left, right) -> dict:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return {"comparable": False}
+    return {
+        "comparable": True,
+        "order_changed": left.get("order") != right.get("order"),
+        "archived_changed": left.get("archived") != right.get("archived"),
+        "left_order": list(left.get("order") or []),
+        "right_order": list(right.get("order") or []),
+        "left_archived": list(left.get("archived") or []),
+        "right_archived": list(right.get("archived") or []),
+    }
+
+
+def repository_file_match(repo: Path, rel: str, target_sha: str | None) -> str | None:
+    if not target_sha or not (repo / ".git").exists():
+        return None
+    history = subprocess.run(
+        ["git", "-C", str(repo), "log", "--all", "--format=%H", "--", rel],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=20,
+    )
+    for commit in history.stdout.splitlines()[:512]:
+        blob = subprocess.run(
+            ["git", "-C", str(repo), "show", f"{commit}:{rel}"],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == target_sha:
+            return commit
+    return None
+
+
 def build_report(root: Path, state: Path, candidate: Path) -> dict:
     pointer = read_json(state / "last-known-good.json")
     snapshot = state / "snapshots" / str(pointer["snapshot_id"])
@@ -103,6 +167,7 @@ def build_report(root: Path, state: Path, candidate: Path) -> dict:
                 row["after_lkg"] = row_time > lkg_created
             except Exception:
                 row["after_lkg"] = False
+        delta_fn = project_delta if rel == "projects.json" else layout_delta
         files[rel] = {
             "live_sha256": sha256_file(live_path),
             "lkg_sha256": sha256_file(lkg_path),
@@ -112,23 +177,29 @@ def build_report(root: Path, state: Path, candidate: Path) -> dict:
             "candidate_semantic_sha256": canonical_json_sha(candidate_value),
             "live_equals_lkg": live == lkg,
             "live_equals_candidate": live == candidate_value,
+            "live_vs_lkg": delta_fn(lkg, live),
+            "live_vs_candidate": delta_fn(candidate_value, live),
             "audits": rows,
         }
 
     server_live = root / "server.py"
     server_lkg = snapshot / "files" / "server.py"
     server_candidate = candidate / "server.py"
+    server_live_sha = sha256_file(server_live)
     files["server.py"] = {
-        "live_sha256": sha256_file(server_live),
+        "live_sha256": server_live_sha,
         "lkg_sha256": sha256_file(server_lkg),
         "candidate_sha256": sha256_file(server_candidate),
         "live_equals_lkg": (
-            sha256_file(server_live) is not None
-            and sha256_file(server_live) == sha256_file(server_lkg)
+            server_live_sha is not None
+            and server_live_sha == sha256_file(server_lkg)
         ),
         "live_equals_candidate": (
-            sha256_file(server_live) is not None
-            and sha256_file(server_live) == sha256_file(server_candidate)
+            server_live_sha is not None
+            and server_live_sha == sha256_file(server_candidate)
+        ),
+        "repository_match_commit": repository_file_match(
+            candidate, "server.py", server_live_sha
         ),
     }
     return {
