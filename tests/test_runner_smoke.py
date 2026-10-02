@@ -413,6 +413,14 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual(400, status, body)
         self.assertIn("Onbekende", body["error"])
 
+    def test_runner_live_is_available_before_telemetry_cache(self):
+        self.assertIsNone(server.CACHE)
+        status, body = self.request("/api/runner-live")
+        self.assertEqual(200, status, body)
+        self.assertIn("chatgpt_runners", body)
+        self.assertIn("chatgpt_firefox", body)
+        self.assertIn("cloud", body["chatgpt_runners"])
+
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
             "/api/runner-workers", {"project_id": "cloud", "worker_count": 2}
