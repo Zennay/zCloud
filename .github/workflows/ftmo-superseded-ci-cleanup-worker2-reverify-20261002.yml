@@ -1,0 +1,241 @@
+name: FTMO superseded CI cleanup Worker2 fresh reverify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-superseded-ci-cleanup-worker2-reverify-20261002.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-superseded-ci-cleanup-worker2-reverify-20261002
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      QUEUE_ID: zssh-ftmo-cancel-superseded-pr-ci-20261002-worker5
+      FTMO_REPO: Zennay/Ftmo
+      TARGET_PR: "421"
+      TARGET_RUN: "36996247136"
+      TARGET_SHA: 44c28172f2d6db168f0d3271bf859fb43b82e3d5
+      PROTECTED_SHA: 150ccd1b5deb4388ed1b1c6c29ac7138074ead51
+      PROTECTED_RUNS: "37003576188 37003576200 37003581840"
+      RECEIPT_PATH: artifacts/ops/zssh-ftmo-cancel-superseded-pr-ci-20261002-worker5-reverify.json
+    steps:
+      - name: Checkout control plane
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify VPS and perform fail-closed cleanup
+        id: cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          from pathlib import Path
+
+          repo=os.environ["FTMO_REPO"]
+          target_pr=int(os.environ["TARGET_PR"])
+          target_run=int(os.environ["TARGET_RUN"])
+          target_sha=os.environ["TARGET_SHA"]
+          protected_sha=os.environ["PROTECTED_SHA"]
+          protected_runs={int(x) for x in os.environ["PROTECTED_RUNS"].split()}
+          active_statuses=("queued","pending","in_progress")
+
+          def gh_json(path):
+              return json.loads(subprocess.check_output(
+                  ["gh","api","-H","X-GitHub-Api-Version: 2022-11-28",path],
+                  text=True,
+              ))
+
+          def cancel(rid):
+              subprocess.check_call([
+                  "gh","api","--method","POST",
+                  "-H","X-GitHub-Api-Version: 2022-11-28",
+                  f"repos/{repo}/actions/runs/{rid}/cancel",
+              ], stdout=subprocess.DEVNULL)
+
+          main_sha=gh_json(f"repos/{repo}/branches/main")["commit"]["sha"]
+          open_prs=gh_json(f"repos/{repo}/pulls?state=open&per_page=100")
+          open_by_branch={(p.get("head") or {}).get("ref"): p for p in open_prs if (p.get("head") or {}).get("ref")}
+          open_head_shas={(p.get("head") or {}).get("sha") for p in open_prs if (p.get("head") or {}).get("sha")}
+
+          pr421=gh_json(f"repos/{repo}/pulls/{target_pr}")
+          trun=gh_json(f"repos/{repo}/actions/runs/{target_run}")
+          assert pr421.get("state")=="closed", pr421.get("state")
+          assert (pr421.get("head") or {}).get("sha")==target_sha
+          assert trun.get("head_sha")==target_sha
+          assert target_sha != main_sha
+          assert target_sha not in open_head_shas
+
+          protected={}
+          for rid in sorted(protected_runs):
+              r=gh_json(f"repos/{repo}/actions/runs/{rid}")
+              if r.get("head_sha") != protected_sha:
+                  raise SystemExit(f"protected run {rid} head mismatch: {r.get('head_sha')}")
+              protected[str(rid)]={
+                  "status":r.get("status"),"conclusion":r.get("conclusion"),
+                  "head_sha":r.get("head_sha"),"head_branch":r.get("head_branch")
+              }
+
+          before={}
+          active=[]
+          for status in active_statuses:
+              payload=gh_json(f"repos/{repo}/actions/runs?status={status}&per_page=100")
+              total=int(payload.get("total_count") or 0)
+              if total>100:
+                  raise SystemExit(f"refuse incomplete pagination for {status}: {total}")
+              runs=payload.get("workflow_runs") or []
+              before[status]=total
+              active.extend(runs)
+
+          cancelled=[]
+          kept=[]
+
+          if trun.get("status") in active_statuses:
+              cancel(target_run)
+              cancelled.append({"id":target_run,"reason":"closed_pr421_exact_target"})
+          else:
+              kept.append({"id":target_run,"reason":f"already_terminal:{trun.get('status')}:{trun.get('conclusion')}"})
+
+          for run in sorted(active,key=lambda r:int(r["id"])):
+              rid=int(run["id"])
+              if rid==target_run:
+                  continue
+              sha=run.get("head_sha")
+              branch=run.get("head_branch")
+              status=run.get("status")
+
+              if rid in protected_runs:
+                  kept.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"explicitly_protected_run"})
+                  continue
+              if sha==protected_sha:
+                  kept.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"explicitly_protected_merged_main_sha"})
+                  continue
+              if sha==main_sha or branch=="main":
+                  kept.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"current_main"})
+                  continue
+              if sha in open_head_shas:
+                  prs=[int(p["number"]) for p in open_prs if (p.get("head") or {}).get("sha")==sha]
+                  kept.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"latest_head_of_open_pr","prs":prs})
+                  continue
+
+              open_pr=open_by_branch.get(branch)
+              if open_pr is not None:
+                  latest=(open_pr.get("head") or {}).get("sha")
+                  if latest and sha!=latest:
+                      cancel(rid)
+                      cancelled.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"stale_head_of_open_pr","pr":int(open_pr["number"]),"latest_sha":latest})
+                      continue
+
+              related=gh_json(f"repos/{repo}/commits/{sha}/pulls") if sha else []
+              if related and all(p.get("state")=="closed" for p in related):
+                  cancel(rid)
+                  cancelled.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"associated_prs_closed_or_merged","prs":[{"number":int(p["number"]),"merged":bool(p.get("merged_at"))} for p in related]})
+                  continue
+
+              kept.append({"id":rid,"status":status,"sha":sha,"branch":branch,"reason":"no_safe_cancel_proof"})
+
+          time.sleep(4)
+          after={}
+          for status in active_statuses:
+              payload=gh_json(f"repos/{repo}/actions/runs?status={status}&per_page=100")
+              after[status]=int(payload.get("total_count") or 0)
+
+          final_cancelled={}
+          for item in cancelled:
+              r=gh_json(f"repos/{repo}/actions/runs/{item['id']}")
+              final_cancelled[str(item["id"])]={"status":r.get("status"),"conclusion":r.get("conclusion"),"head_sha":r.get("head_sha")}
+
+          receipt={
+              "schema_version":1,
+              "queue_id":os.environ["QUEUE_ID"],
+              "workflow_run_id":os.environ["GITHUB_RUN_ID"],
+              "runner_name":os.environ.get("RUNNER_NAME"),
+              "host":subprocess.check_output(["hostname"],text=True).strip(),
+              "main_sha":main_sha,
+              "open_pr_heads":[{"number":int(p["number"]),"head_ref":(p.get("head") or {}).get("ref"),"head_sha":(p.get("head") or {}).get("sha")} for p in open_prs],
+              "preflight":{
+                  "pr421_state":pr421.get("state"),
+                  "pr421_head_sha":(pr421.get("head") or {}).get("sha"),
+                  "target_run_status":trun.get("status"),
+                  "target_run_conclusion":trun.get("conclusion"),
+                  "target_run_head_sha":trun.get("head_sha"),
+                  "target_not_current_main":target_sha!=main_sha,
+                  "target_not_latest_open_pr_head":target_sha not in open_head_shas,
+              },
+              "protected_sha":protected_sha,
+              "protected_runs":protected,
+              "before":before,
+              "cancelled":cancelled,
+              "kept":kept,
+              "after":after,
+              "cancelled_final_status":final_cancelled,
+          }
+          Path(os.environ["RECEIPT_PATH"]).parent.mkdir(parents=True,exist_ok=True)
+          Path(os.environ["RECEIPT_PATH"]).write_text(json.dumps(receipt,sort_keys=True,indent=2)+"\n")
+          print("FTMO_CI_CLEANUP_RESULT="+json.dumps(receipt,sort_keys=True))
+          PY
+
+      - name: Finalize exact SQLite queue item when actively claimed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util,json,os,sqlite3,sys
+          from pathlib import Path
+          qid=os.environ["QUEUE_ID"]
+          root=Path("/home/ubuntu/zennay-cloud")
+          db=root/"history.db"
+          sp=root/"server.py"
+          sys.path.insert(0,str(root))
+          spec=importlib.util.spec_from_file_location("zcloud_live_server",sp)
+          server=importlib.util.module_from_spec(spec); spec.loader.exec_module(server); server.DB=db
+          with sqlite3.connect(db) as c:
+              c.row_factory=sqlite3.Row
+              row=c.execute("SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at FROM portfolio_queue WHERE queue_id=?",(qid,)).fetchone()
+          if not row: raise SystemExit("queue item missing")
+          item=dict(row)
+          print("QUEUE_BEFORE="+json.dumps(item,sort_keys=True,default=str))
+          receipt=json.loads(Path(os.environ["RECEIPT_PATH"]).read_text())
+          ev=(f"Fresh FTMO CI cleanup reverify workflow {os.environ['GITHUB_RUN_ID']} on vps-bb300bba; "
+              f"cancelled={[x['id'] for x in receipt['cancelled']]}; before={receipt['before']}; after={receipt['after']}; "
+              f"PR421/head target verified; protected runs {sorted(map(int, receipt['protected_runs'].keys()))} preserved.")
+          if item["status"]=="done" and int(item["eligible"] or 0)==0 and item["worker_slot"] is None:
+              print("QUEUE_ALREADY_DONE=1")
+          elif item["status"] in {"claimed","running","verifying","in_progress"} and item["worker_slot"] is not None:
+              result=server.portfolio_queue_finish(int(item["worker_slot"]),qid,"DONE",ev)
+              print("QUEUE_FINISH_RESULT="+json.dumps(result,sort_keys=True,default=str))
+              if not result.get("updated"): raise SystemExit("queue finish refused")
+          else:
+              print("QUEUE_LEFT_UNCHANGED=1")
+          with sqlite3.connect(db) as c:
+              c.row_factory=sqlite3.Row
+              final=c.execute("SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at FROM portfolio_queue WHERE queue_id=?",(qid,)).fetchone()
+          print("QUEUE_AFTER="+json.dumps(dict(final),sort_keys=True,default=str))
+          PY
+
+      - name: Commit immutable receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+          test -f "$RECEIPT_PATH"
+          git config user.name zcloud-automation
+          git config user.email zcloud-automation@users.noreply.github.com
+          git add "$RECEIPT_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Record fresh FTMO CI cleanup verification"
+            git push origin HEAD:main
+          fi
