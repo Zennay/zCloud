@@ -236,6 +236,7 @@ jobs:
                   "haxlab-live-room.service",
                   "haxlab-worker.service",
                   "haxlab-analyzer.service",
+                  "haxlab-ingest.service",
               ):
                   loaded = run("systemctl", "show", unit, "--property=LoadState", "--value")
                   if loaded.returncode == 0 and loaded.stdout.strip() == "loaded":
@@ -250,7 +251,7 @@ jobs:
               # If the interactive desktop user slice is the measured dominant
               # competitor, bound only that slice at runtime. This is reversible
               # on reboot and preserves system/control-plane services.
-              if pre.get("primary_competitor_bucket") == "user_slice":
+              if float(pre.get("user_slice_cpu_seconds") or 0.0) > float(pre.get("sample_seconds") or 1.0):
                   uid = run("id", "-u", "ubuntu").stdout.strip()
                   if not uid.isdigit():
                       raise SystemExit(f"cannot resolve ubuntu uid: {uid!r}")
