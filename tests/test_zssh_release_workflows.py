@@ -35,6 +35,16 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         ]))
         self.assertFalse(coordination.release_only_main_advance([]))
 
+    def test_vps_release_proves_public_listing_site_without_switching_live_profile(self):
+        text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
+        self.assertIn("ZSSH_RELEASE_SHA: c1a249e4995605b025496a0178cacbc4cfcecf41", text)
+        self.assertIn("Verify isolated public review site on exact release", text)
+        self.assertIn("ZSSH_PUBLIC_LISTING_SITE_VPS_GREEN", text)
+        self.assertIn("ZSSH_PLUGIN_PROFILE=public", text)
+        self.assertIn("ZSSH_PUBLIC_AUTH_MODE=legacy", text)
+        self.assertIn("Your Linux target stays yours.", text)
+        self.assertIn("/support /privacy /terms", text)
+
     def test_vps_release_uses_permanent_runner_guard(self):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: self-hosted", text)
