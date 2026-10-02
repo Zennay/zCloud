@@ -128,7 +128,9 @@ jobs:
           echo "FTMO_PR433_FULL_SUITE_GREEN=1"
 
       - name: Persist exact-head proof receipt
-        if: success()
+        if: always()
+        env:
+          PROOF_RESULT: ${{ job.status }}
         shell: bash
         run: |
           set -euo pipefail
@@ -143,7 +145,7 @@ jobs:
               "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "runner_name": os.environ.get("RUNNER_NAME"),
               "host": socket.gethostname(),
-              "result": "success",
+              "result": os.environ["PROOF_RESULT"],
               "proof": [
                   "exact-sha-checkout",
                   "isolated-install",
