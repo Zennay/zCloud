@@ -1,0 +1,55 @@
+name: LightUp web hardening VPS proof
+
+on:
+  push:
+    branches: [codex/lightup-web-vps-proof]
+    paths: [.github/workflows/lightup-web-vps-proof.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-web-hardening-vps-proof
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Verify intended VPS
+        run: |
+          python3 - <<'PY'
+          import os, socket
+          host = socket.gethostname().split(".")[0]
+          assert host == "vps-bb300bba", host
+          print("host=" + host)
+          print("runner=" + os.environ.get("RUNNER_NAME", ""))
+          PY
+      - name: Check out exact LightUp revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Lightup
+          ref: b9520119ed9cfc1aa61c2f6d5f20e4e644196c5b
+          path: lightup-web-proof
+          persist-credentials: false
+      - name: Compile and run full offline and lab suite
+        working-directory: lightup-web-proof
+        env:
+          PYTHONPATH: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b9520119ed9cfc1aa61c2f6d5f20e4e644196c5b"
+          python3 --version
+          python3 -m compileall -q src tests
+          nice -n 10 python3 -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/lightup-web-proof.log"
+      - name: Preserve test receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-web-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/lightup-web-proof.log
+          if-no-files-found: warn
+          retention-days: 14
