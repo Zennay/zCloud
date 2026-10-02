@@ -61,6 +61,13 @@ jobs:
           set -euo pipefail
           python3 -m unittest -v tests.test_portfolio_queue_backend
 
+      - name: Inspect sanitized deploy pre-change evidence
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_prechange_evidence.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            | tee "$RUNNER_TEMP/zcloud-prechange-evidence.json"
+
       - name: Probe shared VPS execution capabilities
         run: |
           set -euo pipefail
@@ -95,3 +102,4 @@ jobs:
             ${{ runner.temp }}/zcloud-deploylane-claim.jsonl
             ${{ runner.temp }}/zcloud-vps-execution-probe.log
             ${{ runner.temp }}/zcloud-vps-runner-guard.json
+            ${{ runner.temp }}/zcloud-prechange-evidence.json
