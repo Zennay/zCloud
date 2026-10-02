@@ -13,33 +13,37 @@ permissions:
 env:
   FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: '0.00'
   FTMO_ALLOW_PAID_AWS: ''
+  FTMO_EXACT_SHA: '6146e1369b84da8aece11210e7ba29d57c931218'
 
 jobs:
   proof:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: Zennay/Ftmo
-          ref: 6146e1369b84da8aece11210e7ba29d57c931218
-          persist-credentials: false
-      - name: Verify exact FTMO head
+      - name: Fetch exact public FTMO source without repo-scoped token
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "6146e1369b84da8aece11210e7ba29d57c931218"
-          echo "FTMO_PR405_EXACT_HEAD=6146e1369b84da8aece11210e7ba29d57c931218"
+          rm -rf ftmo-src ftmo.tar.gz
+          curl --fail --location --silent --show-error \
+            "https://codeload.github.com/Zennay/Ftmo/tar.gz/$FTMO_EXACT_SHA" \
+            -o ftmo.tar.gz
+          mkdir ftmo-src
+          tar -xzf ftmo.tar.gz --strip-components=1 -C ftmo-src
+          test -f ftmo-src/pyproject.toml
+          echo "FTMO_PR405_EXACT_SOURCE=$FTMO_EXACT_SHA"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       - name: Install exact test environment
+        working-directory: ftmo-src
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install -r requirements-ci.txt
           python -m pip install -e .
       - name: Compile changed runtime modules
+        working-directory: ftmo-src
         shell: bash
         run: |
           set -euo pipefail
@@ -48,6 +52,7 @@ jobs:
             src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py \
             src/prop_trading_ai/data/market/dukascopy_public_ingest.py
       - name: Prove hour resume, existing cache integrity and zero-cost boundary
+        working-directory: ftmo-src
         shell: bash
         run: |
           set -euo pipefail
