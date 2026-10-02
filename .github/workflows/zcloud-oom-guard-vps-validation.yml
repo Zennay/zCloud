@@ -12,6 +12,8 @@ on:
       - "tests/test_portfolio_queue_backend.py"
       - "tests/test_runner_smoke.py"
       - "tests/test_zcloud_healthcheck.py"
+      - "scripts/zcloud-self-heal.sh"
+      - "tests/test_self_heal_assets.py"
       - ".github/workflows/zcloud-oom-guard-vps-validation.yml"
   workflow_dispatch:
 
@@ -46,6 +48,7 @@ jobs:
             tests.test_worker_memory_guard \
             tests.test_worker_progress_watchdog \
             tests.test_zcloud_healthcheck \
+            tests.test_self_heal_assets \
             tests.test_portfolio_queue_backend \
             tests.test_runner_smoke
 
