@@ -1,0 +1,112 @@
+name: Push all zCloud workers now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/push-all-workers-now.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  push-all:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Force push every active worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+
+          def call(method, path, payload=None):
+              data = None
+              headers = {"User-Agent": "zcloud-push-all-workers-now/1"}
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
+
+          before = call("GET", "/api/runner-targets")
+          allocation = (before.get("global_allocation") or {}).get("workers") or []
+          active = []
+          for item in allocation:
+              key = str(item.get("worker_key") or "").strip()
+              if not key:
+                  base = str(item.get("project_id") or "").strip()
+                  slot = int(item.get("worker_slot") or 1)
+                  key = f"{base}::w{slot}"
+              active.append({
+                  "worker": key,
+                  "project": item.get("project_id"),
+                  "provider": item.get("provider"),
+                  "global_slot": item.get("global_worker_slot"),
+              })
+
+          if not active:
+              raise SystemExit("no allocated active workers to push")
+
+          print("ACTIVE_WORKERS=" + json.dumps(active, sort_keys=True))
+          pushed = call("POST", "/api/dynamic-workers/force-push", {})
+          print("FORCE_PUSH=" + json.dumps(pushed, sort_keys=True))
+          if not pushed.get("ok"):
+              raise SystemExit("force-push returned ok=false")
+
+          results = pushed.get("results") or []
+          by_worker = {str(r.get("worker")): r for r in results}
+          missing = [item["worker"] for item in active if item["worker"] not in by_worker]
+          refused = [
+              item["worker"] for item in active
+              if not bool((by_worker.get(item["worker"]) or {}).get("queued"))
+          ]
+          if missing or refused:
+              raise SystemExit(
+                  "not all allocated workers were queued: "
+                  + json.dumps({"missing": missing, "refused": refused}, sort_keys=True)
+              )
+
+          command_ids = {
+              item["worker"]: int(by_worker[item["worker"]]["command_id"])
+              for item in active
+          }
+          final = {}
+          deadline = time.time() + 70
+          while time.time() < deadline:
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  final = {}
+                  for worker, command_id in command_ids.items():
+                      row = conn.execute(
+                          "SELECT id,action,status,result,created_at,updated_at "
+                          "FROM runner_commands WHERE id=?",
+                          (command_id,),
+                      ).fetchone()
+                      final[worker] = dict(row) if row else {"status": "missing"}
+              if all(v.get("status") in ("completed", "failed") for v in final.values()):
+                  break
+              time.sleep(4)
+
+          print("PUSH_COMMANDS=" + json.dumps(final, sort_keys=True, default=str))
+          failed = [w for w, v in final.items() if v.get("status") == "failed"]
+          pending = [
+              w for w, v in final.items()
+              if v.get("status") not in ("completed", "failed")
+          ]
+          if failed:
+              raise SystemExit("push failed for: " + ", ".join(failed))
+          if pending:
+              raise SystemExit("push remained pending for: " + ", ".join(pending))
+
+          print("ALL_WORKERS_PUSHED_GREEN=1")
+          PY
