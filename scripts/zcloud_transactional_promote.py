@@ -234,11 +234,9 @@ def audited_runtime_config_drift_matches(
 
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
         current = json.loads(current_path.read_text(encoding="utf-8"))
-        if not isinstance(baseline, dict) or not isinstance(current, dict):
-            return False
 
         # JSON key order/whitespace is not runtime configuration drift. If
-        # parsing yields the exact same object as the LKG, accepting the
+        # parsing yields the exact same value as the LKG, accepting the
         # byte-only difference is safer than permanently deadlocking deploys.
         if baseline == current:
             return True
@@ -268,6 +266,10 @@ def audited_runtime_config_drift_matches(
             if audited_at <= lkg_created:
                 return False
             return json.loads(row[1]) == current
+
+        # resource-policy.json has a stricter field-level ownership contract.
+        if not isinstance(baseline, dict) or not isinstance(current, dict):
+            return False
 
         changed: list[tuple[str, str]] = []
         for project_id in sorted(set(baseline) | set(current)):
