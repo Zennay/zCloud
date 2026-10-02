@@ -72,6 +72,39 @@ jobs:
           print("FTMO_RUNNER_RECOVERY_ENQUEUE", json.dumps(enqueue, sort_keys=True))
           print("ZSSH_START", json.dumps(start, sort_keys=True))
           print("ZSSH_PUSH", json.dumps(push, sort_keys=True))
+
+          command_ids = {
+              int(value)
+              for value in (start.get("command_id"), push.get("command_id"))
+              if value
+          }
+          if not command_ids:
+              raise RuntimeError("zSSH recovery start/push did not return command ids")
+
+          import time
+          deadline = time.monotonic() + 75
+          pending = set(command_ids)
+          while pending and time.monotonic() < deadline:
+              with urllib.request.urlopen(
+                  base + "/api/runner-commands?limit=200", timeout=10
+              ) as response:
+                  live_commands = json.load(response).get("commands") or []
+              pending = {
+                  int(row.get("id"))
+                  for row in live_commands
+                  if row.get("id") is not None and int(row.get("id")) in command_ids
+              }
+              if pending:
+                  time.sleep(5)
+          if pending:
+              raise RuntimeError(
+                  "zSSH browser worker did not consume recovery commands: "
+                  + ",".join(str(value) for value in sorted(pending))
+              )
+          print(
+              "ZSSH_RECOVERY_COMMANDS_CONSUMED",
+              json.dumps({"command_ids": sorted(command_ids)}, sort_keys=True),
+          )
           PY
 
           git fetch origin main
