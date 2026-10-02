@@ -15,7 +15,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cancel-stale-worker1-proof:
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Cancel only obsolete Worker1 cross-proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth status >/dev/null 2>&1
+          python3 - <<'PY'
+          import json
+          import subprocess
+
+          stale_sha = "dab3151a8484ed4e38ef8ab270cf819c42de2cfc"
+          stale_run_id = 36981448936
+
+          def gh_json(path):
+              return json.loads(subprocess.check_output(
+                  ["gh", "api", "-H", "X-GitHub-Api-Version: 2022-11-28", path],
+                  text=True,
+                  stderr=subprocess.DEVNULL,
+              ))
+
+          pr = gh_json("repos/Zennay/Ftmo/pulls/406")
+          current_head = (pr.get("head") or {}).get("sha")
+          run = gh_json(f"repos/Zennay/zCloud/actions/runs/{stale_run_id}")
+          if current_head == stale_sha:
+              raise SystemExit("Worker1 proof is still current; refusing cancellation")
+          if run.get("head_sha") != "be9cb7fa3af8d49b0bddce8ecfced3271b762522":
+              raise SystemExit("Worker1 proof run identity changed")
+          if run.get("status") != "completed":
+              subprocess.check_call([
+                  "gh", "api", "--method", "POST",
+                  f"repos/Zennay/zCloud/actions/runs/{stale_run_id}/cancel",
+              ])
+              print(f"STALE_WORKER1_PROOF_CANCEL_REQUESTED={stale_run_id}")
+          else:
+              print(f"STALE_WORKER1_PROOF_ALREADY_TERMINAL={stale_run_id}")
+          print(f"FTMO_PR406_CURRENT_HEAD={current_head}")
+          PY
+
   prove:
+    needs: cancel-stale-worker1-proof
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
