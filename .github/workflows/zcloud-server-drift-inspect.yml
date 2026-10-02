@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 20
+          fetch-depth: 0
       - name: Inspect live server source drift
         shell: bash
         run: |
@@ -41,6 +41,16 @@ jobs:
             fi
           done < <(git log --first-parent --format=%H -- server.py)
           echo "LIVE_SERVER_MATCHING_FIRST_PARENT_COMMIT=${match:-NONE}"
+          any_match=""
+          while read -r commit; do
+            test -n "$commit" || continue
+            blob_sha="$(git show "$commit:server.py" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            if [[ "$blob_sha" == "$live_sha" ]]; then
+              any_match="$commit"
+              break
+            fi
+          done < <(git rev-list --all -- server.py)
+          echo "LIVE_SERVER_MATCHING_ANY_COMMIT=${any_match:-NONE}"
           echo "DIFF_BEGIN"
           diff -u --label live/server.py --label candidate/server.py "$live" "$candidate" || true
           echo "DIFF_END"
