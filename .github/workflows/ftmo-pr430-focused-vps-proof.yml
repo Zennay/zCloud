@@ -69,6 +69,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          work="$RUNNER_TEMP/zcloud-pr430-focused-receipt"
+          rm -rf "$work"
+          gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git checkout main >/dev/null
           mkdir -p runtime-evidence
           cat > runtime-evidence/ftmo-pr430-focused-vps-proof.json <<EOF
           {
@@ -90,13 +95,24 @@ jobs:
             "generation_10_reopened": false,
             "development_access_relaxed": false,
             "walk_forward_access_relaxed": false,
-            "final_holdout_access_relaxed": false
+            "final_holdout_access_relaxed": false,
+            "live_or_broker_access_relaxed": false
           }
           EOF
           git config user.name "zcloud-automation"
           git config user.email "zcloud-automation@users.noreply.github.com"
           git add runtime-evidence/ftmo-pr430-focused-vps-proof.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Record FTMO PR430 focused VPS proof"
-            git push origin HEAD:main
+          if git diff --cached --quiet; then
+            echo "Receipt unchanged"
+            exit 0
           fi
+          git commit -m "Record FTMO PR430 focused VPS proof"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "receipt_push_retry=$attempt"
+            git fetch origin main
+            git rebase origin/main
+          done
+          exit 1
