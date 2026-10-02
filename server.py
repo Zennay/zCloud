@@ -1,9 +1,9 @@
 """zCloud: read-only project monitoring; stdlib only."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from datetime import datetime, timezone, timedelta
-import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib
+import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib, signal
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
@@ -203,17 +203,169 @@ def user_systemctl(*args):
     env=os.environ.copy()
     env.update({'XDG_RUNTIME_DIR':'/run/user/1000','DBUS_SESSION_BUS_ADDRESS':'unix:path=/run/user/1000/bus'})
     return subprocess.check_output(['systemctl','--user',*args], text=True, stderr=subprocess.STDOUT, timeout=12, env=env).strip()
-def firefox_runner_status():
+FIREFOX_LEGACY_DISABLE_FILE = Path.home() / '.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf'
+
+def _violentmonkey_only_mode():
     try:
-        try: state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
-        except subprocess.CalledProcessError as e: state=(e.output or '').strip() or 'inactive'
+        text=FIREFOX_LEGACY_DISABLE_FILE.read_text(encoding='utf-8').lower()
+        return 'violentmonkey only' in text and 'execcondition=/bin/false' in text
+    except OSError:
+        return False
+
+def _standalone_firefox_pids():
+    try:
+        proc=subprocess.run(
+            ['pgrep','-u',str(os.getuid()),'-f',r'/snap/firefox/.*/usr/lib/firefox/firefox'],
+            text=True,capture_output=True,check=False,timeout=5,
+        )
+        return [int(value) for value in proc.stdout.split() if value.isdigit()]
+    except Exception:
+        return []
+
+def _firefox_session_env(primary_pid=None):
+    allowed={
+        'DISPLAY','XAUTHORITY','WAYLAND_DISPLAY','DBUS_SESSION_BUS_ADDRESS',
+        'XDG_RUNTIME_DIR','HOME','USER','LOGNAME',
+    }
+    values={}
+    if primary_pid:
+        try:
+            for item in Path(f'/proc/{int(primary_pid)}/environ').read_bytes().split(b'\0'):
+                if b'=' not in item:
+                    continue
+                key,value=item.split(b'=',1)
+                name=key.decode('utf-8','replace')
+                if name in allowed:
+                    values[name]=value.decode('utf-8','replace')
+        except OSError:
+            pass
+    if not values:
+        try:
+            raw=user_systemctl('show-environment')
+            for line in raw.splitlines():
+                if '=' not in line:
+                    continue
+                key,value=line.split('=',1)
+                if key in allowed:
+                    values[key]=value
+        except Exception:
+            pass
+    env=os.environ.copy()
+    env.pop('RUNNER_TRACKING_ID',None)
+    env.update(values)
+    if not env.get('DISPLAY'):
+        sockets=sorted(
+            (Path('/tmp/.X11-unix').glob('X*') if Path('/tmp/.X11-unix').exists() else []),
+            key=lambda p:(p.name!='X10',p.name),
+        )
+        env['DISPLAY']=(':'+sockets[0].name[1:]+'.0') if sockets else ':10.0'
+    env.setdefault('XDG_RUNTIME_DIR',f'/run/user/{os.getuid()}')
+    env.setdefault('DBUS_SESSION_BUS_ADDRESS','unix:path='+env['XDG_RUNTIME_DIR']+'/bus')
+    return env
+
+def _firefox_bootstrap_urls():
+    urls=[]
+    try:
+        with connect() as c:
+            rows=c.execute(
+                """SELECT s.project_id,s.worker_slot,COALESCE(w.provider,'chatgpt') provider
+                   FROM ai_global_slots s
+                   LEFT JOIN runner_workers w
+                     ON w.project_id=s.project_id AND w.worker_slot=s.worker_slot
+                   ORDER BY s.slot"""
+            ).fetchall()
+        for row in rows:
+            worker=f"{row['project_id']}::w{int(row['worker_slot'] or 1)}"
+            provider='claude' if str(row['provider'] or '').lower()=='claude' else 'chatgpt'
+            base='https://claude.ai/new' if provider=='claude' else 'https://chatgpt.com/'
+            urls.append(base+('&' if '?' in base else '?')+'zcloud_worker='+quote(worker,safe=''))
+    except Exception:
+        logging.exception('Could not build standalone Firefox bootstrap URLs')
+    return urls
+
+def firefox_runner_status():
+    standalone=_standalone_firefox_pids()
+    try:
+        try: service_state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
+        except subprocess.CalledProcessError as e: service_state=(e.output or '').strip() or 'inactive'
         raw=user_systemctl('show',FIREFOX_RUNNER_SERVICE,'-p','MainPID','-p','ActiveEnterTimestamp','-p','NRestarts','-p','Restart')
         fields=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
-        return {'state':state,'active':state=='active','main_pid':int(fields.get('MainPID') or 0),
-                'active_since':fields.get('ActiveEnterTimestamp') or None,'restarts':int(fields.get('NRestarts') or 0),
-                'auto_restart':fields.get('Restart') or 'unknown'}
     except Exception as e:
-        return {'state':'unknown','active':False,'main_pid':0,'active_since':None,'restarts':0,'auto_restart':'unknown','error':str(e)[:200]}
+        service_state='unknown'
+        fields={}
+        service_error=str(e)[:200]
+    else:
+        service_error=None
+    service_active=service_state=='active'
+    active=service_active or bool(standalone)
+    runtime_mode='systemd' if service_active else ('standalone' if standalone else ('violentmonkey-only' if _violentmonkey_only_mode() else 'none'))
+    result={
+        'state':'active' if active else service_state,
+        'service_state':service_state,
+        'active':active,
+        'runtime_mode':runtime_mode,
+        'main_pid':(int(fields.get('MainPID') or 0) if service_active else (standalone[0] if standalone else 0)),
+        'standalone_pids':standalone[:20],
+        'active_since':fields.get('ActiveEnterTimestamp') or None,
+        'restarts':int(fields.get('NRestarts') or 0),
+        'auto_restart':('watchdog' if runtime_mode=='standalone' else (fields.get('Restart') or 'unknown')),
+    }
+    if service_error and not active:
+        result['error']=service_error
+    return result
+
+def restart_firefox_runtime():
+    """Recover either the managed systemd Firefox or the standalone VM runtime."""
+    if _violentmonkey_only_mode():
+        old_pids=_standalone_firefox_pids()
+        env=_firefox_session_env(old_pids[0] if old_pids else None)
+        for pid in old_pids:
+            try: os.kill(pid,signal.SIGTERM)
+            except ProcessLookupError: pass
+        deadline=time.time()+10
+        alive=list(old_pids)
+        while alive and time.time()<deadline:
+            time.sleep(0.5)
+            next_alive=[]
+            for pid in alive:
+                try: os.kill(pid,0);next_alive.append(pid)
+                except ProcessLookupError: pass
+            alive=next_alive
+        for pid in alive:
+            try: os.kill(pid,signal.SIGKILL)
+            except ProcessLookupError: pass
+        log_path=Path('/tmp/zcloud-firefox-recovery.log')
+        with log_path.open('ab',buffering=0) as log:
+            subprocess.Popen(
+                ['/usr/bin/firefox',*_firefox_bootstrap_urls()],
+                stdin=subprocess.DEVNULL,stdout=log,stderr=log,
+                env=env,start_new_session=True,close_fds=True,
+            )
+        deadline=time.time()+20
+        while time.time()<deadline:
+            current=_standalone_firefox_pids()
+            fresh=[pid for pid in current if pid not in old_pids]
+            if fresh or (not old_pids and current):
+                return firefox_runner_status()
+            time.sleep(1)
+        status=firefox_runner_status()
+        status['recovery_error']='standalone Firefox did not become active before timeout'
+        return status
+
+    for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
+        try: user_systemctl('reset-failed',dependency)
+        except Exception: pass
+        user_systemctl('start',dependency)
+    try: user_systemctl('reset-failed',FIREFOX_RUNNER_SERVICE)
+    except Exception: pass
+    user_systemctl('restart',FIREFOX_RUNNER_SERVICE)
+    deadline=time.time()+15
+    status=firefox_runner_status()
+    while not status.get('active') and time.time()<deadline:
+        time.sleep(1)
+        status=firefox_runner_status()
+    return status
+
 def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
     """Return host RAM/swap admission state for browser workers.
 
@@ -3377,16 +3529,7 @@ class Handler(BaseHTTPRequestHandler):
                 action=str(payload.get('action') or '')
                 if action=='restart_firefox':
                     try:
-                        # Recover the full user-service dependency chain. Restarting
-                        # Firefox alone can stay inactive when display/openbox failed.
-                        for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
-                            try: user_systemctl('reset-failed',dependency)
-                            except Exception: pass
-                            user_systemctl('start',dependency)
-                        try: user_systemctl('reset-failed',FIREFOX_RUNNER_SERVICE)
-                        except Exception: pass
-                        user_systemctl('restart',FIREFOX_RUNNER_SERVICE)
-                        status=firefox_runner_status()
+                        status=restart_firefox_runtime()
                         return self.reply({'ok':bool(status.get('active')),'status':status},200 if status.get('active') else 503)
                     except Exception as e:
                         logging.exception('Firefox runner restart failed')
