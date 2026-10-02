@@ -84,7 +84,10 @@ jobs:
               "and no runner assignment by workflow concurrency, not runner health. Attempt 4 was cancelled at 09:54:45 UTC exactly as the newest "
               "same-workflow run 36991608063 attempt 2 became queued; deploy-autonomous-vps.yml uses concurrency group ftmo-autonomous-vps-verify "
               "with cancel-in-progress true. No FTMO strategy outcomes, provider evidence, preregistration, development, walk-forward, final holdout, "
-              "broker/live permission, paid-cloud boundary, protected run, or secrets were modified."
+              "broker/live permission, paid-cloud boundary, protected run, or secrets were modified. "
+              "Quality retry commit 75f4c5c580923914b08208eb35dc177228148e53 triggered bounded recovery workflow 36993276087; "
+              "at handoff it is queued behind the self-hosted zCloud VPS lane, while current same-workflow FTMO run 36993218498 is also queued. "
+              "PR410 evidence comment 5949889304 records the verified runner/OOM/concurrency facts."
           )
 
           if item["status"] == "queued" and int(item["eligible"] or 0) == 1:
