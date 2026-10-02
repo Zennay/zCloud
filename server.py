@@ -3488,6 +3488,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
             return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
+        if u.path=='/api/runner-live':
+            if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
+            return self.reply({'chatgpt_runners':runner_statuses(),'chatgpt_firefox':firefox_runner_status(),'time':now()})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
