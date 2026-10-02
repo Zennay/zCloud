@@ -1,0 +1,178 @@
+name: FTMO PR458 exact-head immutable evidence proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr458-immutable-evidence-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr458-exact-head-immutable-evidence
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: 18e8d8329a1708a5fda88de9081ec5f15fe1cc88
+      RECEIPT_PATH: runtime-evidence/ftmo-pr458-exact-head-proof.json
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: '0.00'
+      FTMO_ALLOW_PAID_AWS: ''
+    steps:
+      - name: Verify VPS and fetch exact FTMO PR458 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr458-exact"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR458_EXACT_SHA=$TARGET_SHA"
+          echo "FTMO_PR458_RUNNER_HOST=$(hostname)"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr458-exact"
+          venv="$RUNNER_TEMP/ftmo-pr458-exact-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Prove immutable evidence and sealed provider boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr458-exact"
+          venv="$RUNNER_TEMP/ftmo-pr458-exact-venv"
+          cd "$src"
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = '0.00'
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+          "$venv/bin/python" -m compileall -q src/prop_trading_ai/research/immutable.py
+          "$venv/bin/python" -m pytest -q             tests/test_immutable_evidence.py             tests/test_provider_validation_json_integrity.py             tests/test_provider_validation.py             tests/test_atomic_preresearch_evidence.py             tests/test_research_machine.py
+          "$venv/bin/python" -m pytest -q             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
+
+      - name: Collect full exact-head suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr458-exact"
+          venv="$RUNNER_TEMP/ftmo-pr458-exact-venv"
+          cd "$src"
+          mkdir -p .scratch
+          "$venv/bin/python" - <<'PY'
+          from pathlib import Path
+          import contextlib
+          import io
+          import pytest
+
+          class Collector:
+              paths = None
+              count = None
+              def pytest_collection_finish(self, session):
+                  self.count = len(session.items)
+                  self.paths = sorted({
+                      Path(str(item.path)).resolve().relative_to(Path.cwd().resolve()).as_posix()
+                      for item in session.items
+                  })
+
+          collector = Collector()
+          captured = io.StringIO()
+          with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+              exit_code = pytest.main(["--collect-only", "-q"], plugins=[collector])
+          if exit_code != pytest.ExitCode.OK or not collector.paths or not collector.count:
+              raise SystemExit("pytest collection failed: " + captured.getvalue()[-2000:])
+          Path(".scratch/ci-test-files-pr458.txt").write_text(
+              "\n".join(collector.paths) + "\n", encoding="utf-8"
+          )
+          Path(".scratch/ci-test-count-pr458.txt").write_text(
+              str(collector.count) + "\n", encoding="utf-8"
+          )
+          print(f"FTMO_PR458_COLLECTED_TESTS={collector.count}")
+          print(f"FTMO_PR458_TEST_FILES={len(collector.paths)}")
+          PY
+
+      - name: Run full exact-head suite in memory-bounded file batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr458-exact"
+          venv="$RUNNER_TEMP/ftmo-pr458-exact-venv"
+          cd "$src"
+          expected_count="$(cat .scratch/ci-test-count-pr458.txt)"
+          executed_files=0
+          while IFS= read -r test_file; do
+            [[ -n "$test_file" ]] || continue
+            echo "::group::$test_file"
+            "$venv/bin/python" -m pytest -q "$test_file"
+            echo "::endgroup::"
+            executed_files=$((executed_files + 1))
+          done < .scratch/ci-test-files-pr458.txt
+          test "$executed_files" -gt 0
+          echo "FTMO_PR458_FULL_SUITE_COLLECTED_TESTS=$expected_count"
+          echo "FTMO_PR458_FULL_SUITE_EXECUTED_FILES=$executed_files"
+          echo "FTMO_PR458_FULL_SUITE_GREEN=1"
+
+      - name: Persist sanitized proof receipt
+        if: always()
+        shell: bash
+        env:
+          PROOF_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/zcloud-pr458-exact-receipt"
+          rm -rf "$work"
+          gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git checkout main >/dev/null
+          git pull --rebase origin main
+          mkdir -p "$(dirname "$RECEIPT_PATH")"
+          python3 - <<'PY'
+          import json, os, socket
+          from pathlib import Path
+          payload = {
+              "schema_version": 1,
+              "project": "ftmo",
+              "pull_request": 458,
+              "target_sha": os.environ["TARGET_SHA"],
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "result": os.environ["PROOF_RESULT"],
+              "runner_host": socket.gethostname(),
+              "scope": "immutable evidence exact-head + sealed provider boundaries + full memory-bounded suite",
+              "research_stage": "provider_foundation",
+              "generation_10_reopened": False,
+              "development_access_relaxed": False,
+              "walk_forward_access_relaxed": False,
+              "final_holdout_access_relaxed": False,
+              "live_or_broker_access_relaxed": False,
+              "paid_cloud_enabled": False,
+          }
+          Path(os.environ["RECEIPT_PATH"]).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add "$RECEIPT_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Record FTMO PR458 exact-head proof"
+            for attempt in 1 2 3; do
+              if git push origin HEAD:main; then
+                exit 0
+              fi
+              git fetch origin main
+              git rebase origin/main
+            done
+            exit 1
+          fi
