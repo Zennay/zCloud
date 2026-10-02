@@ -46,6 +46,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             backend,
         )
         self.assertIn("--allow-recent-ancestor-prechange-drift", backend)
+        self.assertIn("--path lane_generator.py", backend)
+        recovery = (ROOT / "scripts/zcloud_recovery.py").read_text(encoding="utf-8")
+        prechange = (ROOT / "scripts/zcloud_prechange_guard.py").read_text(encoding="utf-8")
+        self.assertIn('"lane_generator.py"', recovery)
+        self.assertIn('"lane_generator.py"', prechange)
         self.assertEqual(
             1,
             text.count("--allow-recent-ancestor-prechange-drift"),
