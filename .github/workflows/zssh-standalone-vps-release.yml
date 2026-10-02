@@ -20,7 +20,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     env:
-      ZSSH_RELEASE_SHA: c1a249e4995605b025496a0178cacbc4cfcecf41
+      ZSSH_RELEASE_SHA: 9fcdfea1bc9d211929e4e649e60aba3be85d2b92
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
