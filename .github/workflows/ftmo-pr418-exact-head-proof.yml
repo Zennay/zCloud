@@ -1,0 +1,132 @@
+name: FTMO PR418 exact-head foundation readiness proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr418-exact-head-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr418-exact-head-foundation-readiness-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 18
+    env:
+      TARGET_SHA: 2df7224bfa93ac73aed15bf714314638b61a1edc
+      RECEIPT_PATH: runtime-evidence/ftmo-pr418-exact-head-proof.json
+    steps:
+      - name: Checkout zCloud receipt workspace
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+
+      - name: Fetch exact FTMO PR418 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr418-proof"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR418_EXACT_SHA=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr418-proof"
+          venv="$RUNNER_TEMP/ftmo-pr418-proof-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile provider readiness boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr418-proof"
+          venv="$RUNNER_TEMP/ftmo-pr418-proof-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q src/prop_trading_ai/ops/autonomous_rollover.py
+          echo "FTMO_PR418_COMPILE_GREEN=1"
+
+      - name: Prove canonical readiness regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr418-proof"
+          venv="$RUNNER_TEMP/ftmo-pr418-proof-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q tests/test_provider_foundation_publication.py
+          echo "FTMO_PR418_READINESS_TESTS_GREEN=1"
+
+      - name: Prove retry, zero-cost and deploy-lockstep compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr418-proof"
+          venv="$RUNNER_TEMP/ftmo-pr418-proof-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q \
+            tests/test_autonomous_provider_retry.py \
+            tests/test_zero_cost_workflow_boundary.py \
+            tests/test_autonomous_deploy_lockstep.py
+          echo "FTMO_PR418_RELEVANT_SUITE_GREEN=1"
+
+      - name: Record exact-head proof receipt
+        if: always()
+        shell: bash
+        env:
+          PROOF_STATUS: ${{ job.status }}
+          PROOF_RUN_ID: ${{ github.run_id }}
+          PROOF_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RECEIPT_PATH")"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema_version": 1,
+              "project": "ftmo",
+              "pull_request": 418,
+              "target_sha": os.environ["TARGET_SHA"],
+              "workflow_run_id": int(os.environ["PROOF_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["PROOF_RUN_ATTEMPT"]),
+              "result": os.environ["PROOF_STATUS"],
+              "runner_required": "vps-bb300bba",
+              "proof_scope": [
+                  "compile autonomous_rollover",
+                  "provider foundation readiness/publication regressions",
+                  "autonomous provider retry compatibility",
+                  "zero-cost workflow boundary",
+                  "autonomous deploy lockstep",
+              ],
+          }
+          Path(os.environ["RECEIPT_PATH"]).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name "zCloud FTMO proof"
+          git config user.email "zcloud-ftmo-proof@users.noreply.github.com"
+          git pull --rebase origin main
+          git add "$RECEIPT_PATH"
+          if git diff --cached --quiet; then
+            echo "FTMO_PR418_RECEIPT_UNCHANGED=1"
+            exit 0
+          fi
+          git commit -m "Record FTMO PR418 exact-head proof receipt"
+          git push origin HEAD:main
