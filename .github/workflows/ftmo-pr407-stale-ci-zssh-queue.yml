@@ -1,4 +1,5 @@
 name: Enqueue stale merged-PR407 CI cancellation on zSSH
+# retrigger: worker2 completion proof via labeled VPS runner
 
 on:
   push:
