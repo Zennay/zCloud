@@ -1,0 +1,37 @@
+name: Inspect zCloud managed server drift
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-server-drift-inspect.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 20
+      - name: Inspect live server source drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="/home/ubuntu/zennay-cloud/server.py"
+          candidate="$GITHUB_WORKSPACE/server.py"
+          test -f "$live"
+          test -f "$candidate"
+          echo "LIVE_SERVER_SHA256=$(sha256sum "$live" | awk '{print $1}')"
+          echo "CANDIDATE_SERVER_SHA256=$(sha256sum "$candidate" | awk '{print $1}')"
+          echo "CANDIDATE_COMMIT=$GITHUB_SHA"
+          echo "DIFF_BEGIN"
+          diff -u --label live/server.py --label candidate/server.py "$live" "$candidate" || true
+          echo "DIFF_END"
+          echo "PROJECTS_LIVE_SHA256=$(sha256sum /home/ubuntu/zennay-cloud/projects.json | awk '{print $1}')"
+          echo "PROJECTS_CANDIDATE_SHA256=$(sha256sum "$GITHUB_WORKSPACE/projects.json" | awk '{print $1}')"
