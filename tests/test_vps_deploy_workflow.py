@@ -59,14 +59,14 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
         block = text[text.index(recover):text.index(quarantine)]
         self.assertIn('service="zennay-cloud.service"', block)
-        self.assertIn('url="http://127.0.0.1:8765/api/runner-targets"', block)
+        self.assertIn('url="http://127.0.0.1:8765/"', block)
         self.assertIn('systemctl restart "$service"', block)
         self.assertIn("curl -fsS --max-time 4", block)
         self.assertIn("for _ in $(seq 1 20)", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=recovered", block)
         self.assertIn("ZCLOUD_PREDEPLOY_HEALTH=failed", block)
         self.assertIn('lock_file="/run/zcloud-self-heal.lock"', block)
-        self.assertIn('sudo -n flock -w 30 "$lock_file" bash -s', block)
+        self.assertIn('sudo -n flock -w 240 "$lock_file" bash -s', block)
         self.assertNotIn('exec 9>"$lock_file"', block)
         self.assertLess(text.index(suspend), text.index(recover))
         self.assertLess(text.index(recover), text.index(promote))
