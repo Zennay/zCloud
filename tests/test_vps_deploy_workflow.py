@@ -59,7 +59,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         quarantine = "Quarantine stale non-runtime userscript backups before guarded promotion"
         block = text[text.index(recover):text.index(quarantine)]
         self.assertIn('service="zennay-cloud.service"', block)
-        self.assertIn('url="http://127.0.0.1:8765/api/status"', block)
+        self.assertIn('url="http://127.0.0.1:8765/api/runner-targets"', block)
         self.assertIn('systemctl restart "$service"', block)
         self.assertIn("curl -fsS --max-time 4", block)
         self.assertIn("for _ in $(seq 1 20)", block)
