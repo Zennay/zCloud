@@ -15,12 +15,12 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 3
     steps:
-      - name: Cancel closed PR 389 test run only if identity still matches
+      - name: Cancel merged PR 423 stale test run only if identity still matches
         shell: bash
         env:
-          TARGET_RUN: "36947322610"
-          TARGET_SHA: "766623ac149add52add9983c18a72c2e903f5eaa"
-          TARGET_PR: "389"
+          TARGET_RUN: "36998295127"
+          TARGET_SHA: "d79ede0190ff06fb8927b27b369d9363f706cef0"
+          TARGET_PR: "423"
         run: |
           set -euo pipefail
           gh auth status >/dev/null 2>&1
@@ -62,8 +62,8 @@ jobs:
               raise SystemExit("run SHA mismatch")
           if int(pr.get("number") or 0) != int(pr_number):
               raise SystemExit("PR identity mismatch")
-          if pr.get("state") != "closed" or pr.get("merged"):
-              raise SystemExit("PR 389 is not closed-unmerged")
+          if pr.get("state") != "closed" or not pr.get("merged"):
+              raise SystemExit("PR 423 is not closed-merged")
           if run.get("status") not in {"queued", "pending", "in_progress"}:
               print("FTMO_STALE_RUN_ALREADY_TERMINAL")
               raise SystemExit(0)
