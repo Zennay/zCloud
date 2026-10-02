@@ -1,0 +1,15 @@
+{
+  "queue": {
+    "eligible": 1,
+    "evidence": "",
+    "project_id": "ftmo",
+    "queue_id": "ftmo-2e49bff2460feac8",
+    "status": "claimed",
+    "title": "Execute substantial FTMO roadmap work package",
+    "updated_at": "2026-10-02T17:53:53.901304+00:00",
+    "worker_slot": 2
+  },
+  "runner_host": "vps-bb300bba",
+  "schema_version": 1,
+  "workflow_run_id": "37042083240"
+}
