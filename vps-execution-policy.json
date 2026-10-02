@@ -23,7 +23,7 @@
     "raiseai",
     "ulab",
     "zssh",
-    "whitelab"
+    "lightup"
   ],
   "capabilities": [
     "local-shell",
