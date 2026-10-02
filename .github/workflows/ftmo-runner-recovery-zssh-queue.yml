@@ -30,7 +30,7 @@ jobs:
           import urllib.request
 
           base = "http://127.0.0.1:8765"
-          queue_id = "zssh-ftmo-runner-recovery-20261002"
+          queue_id = "zssh-ftmo-verify72-runner-recovery-20261002"
           payload = {
               "action": "enqueue",
               "queue_id": queue_id,
@@ -39,18 +39,19 @@ jobs:
               "priority": "P0",
               "completion_criteria": (
                   "On vps-bb300bba recover only the GitHub Actions runner used by Zennay/Ftmo, "
-                  "observed as runner name vps-bb300bba-ftmo. Diagnose why its test job for run "
-                  "36950694954 received a runner shutdown signal at 2026-10-02T01:25:20Z. "
-                  "If its runner service/process is inactive or unhealthy, restart only that FTMO "
-                  "Actions runner using the existing service installation and verify it becomes "
-                  "online/listening again. Do not cancel or modify queued FTMO runs 36950919727, "
-                  "36950689873, or telemetry run 36950115556; allow GitHub to schedule them normally "
-                  "after recovery. Do not change FTMO strategy outcomes, provider evidence, "
-                  "preregistration, walk-forward, final holdout, broker/live permissions, or any "
-                  "secret. Return the runner service name, pre/post state, concrete recovery action, "
-                  "and evidence that a queued FTMO Actions job starts or that the runner is listening."
+                  "observed as runner name vps-bb300bba-ftmo. Verify autonomous VPS runtime run "
+                  "36987947126 attempt 1 deployed merge 7bda739c8cb82671adb7bfc47ac0a88c0a251188 "
+                  "successfully through compile/systemd handoff, then its observer exited 137 and "
+                  "the runner received a shutdown signal. Attempt 2 is queued. Diagnose current "
+                  "listener/service health and any fresh OOM evidence. If inactive or unhealthy, "
+                  "restart only the FTMO Actions runner using the existing service installation; "
+                  "if healthy, preserve it. Verify it is online/listening and that run 36987947126 "
+                  "attempt 2 starts scheduling. Do not cancel that run or modify FTMO strategy "
+                  "outcomes, provider evidence, preregistration, development, walk-forward, final "
+                  "holdout, broker/live permissions, paid-cloud boundary, or secrets. Return the "
+                  "service name, pre/post state, concrete recovery action, and scheduling evidence."
               ),
-              "source_url": "https://github.com/Zennay/Ftmo/pull/391",
+              "source_url": "https://github.com/Zennay/Ftmo/pull/410",
           }
 
           def post(path, body):
@@ -117,7 +118,7 @@ jobs:
           import subprocess
           import urllib.request
 
-          queue_id = "zssh-ftmo-runner-recovery-20261002"
+          queue_id = "zssh-ftmo-verify72-runner-recovery-20261002"
           with urllib.request.urlopen(
               "http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10
           ) as response:
@@ -164,8 +165,8 @@ jobs:
                   "worker_slot": item.get("worker_slot"),
                   "updated_at": item.get("updated_at"),
               },
-              "protected_ftmo_runs": [36950919727, 36950689873, 36950115556],
-              "failed_runner_job_run": 36950694954,
+              "protected_ftmo_runs": [36987947126],
+              "failed_runner_job_run": 36987947126,
           }
           target = Path("artifacts/ops/ftmo-runner-recovery-zssh-queue.json")
           target.parent.mkdir(parents=True, exist_ok=True)
