@@ -367,6 +367,7 @@ jobs:
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
+            --reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0 \
             --actor "github-actions-vps-deploy" \
             --json
 
