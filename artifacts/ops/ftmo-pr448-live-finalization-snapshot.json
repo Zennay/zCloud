@@ -1,0 +1,132 @@
+{
+  "deploy_runs": [
+    {
+      "conclusion": null,
+      "created_at": "2026-10-02T15:09:16Z",
+      "event": "workflow_dispatch",
+      "head_sha": "b03e28641dd2937327150bf3f654ae6e347f52cf",
+      "id": 37024946675,
+      "status": "in_progress",
+      "updated_at": "2026-10-02T15:09:21Z"
+    },
+    {
+      "conclusion": "failure",
+      "created_at": "2026-10-02T14:49:20Z",
+      "event": "push",
+      "head_sha": "b03e28641dd2937327150bf3f654ae6e347f52cf",
+      "id": 37022564379,
+      "status": "completed",
+      "updated_at": "2026-10-02T15:08:40Z"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-10-02T14:43:33Z",
+      "event": "workflow_dispatch",
+      "head_sha": "920df21438332e57e2bd4027bdd0e8f68f922e8d",
+      "id": 37021869215,
+      "status": "completed",
+      "updated_at": "2026-10-02T14:49:57Z"
+    },
+    {
+      "conclusion": "failure",
+      "created_at": "2026-10-02T14:36:28Z",
+      "event": "push",
+      "head_sha": "920df21438332e57e2bd4027bdd0e8f68f922e8d",
+      "id": 37021048461,
+      "status": "completed",
+      "updated_at": "2026-10-02T14:42:29Z"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-10-02T12:55:50Z",
+      "event": "push",
+      "head_sha": "ae0398b8038083a78b3dae897379434f029cbc11",
+      "id": 37009687244,
+      "status": "completed",
+      "updated_at": "2026-10-02T13:02:39Z"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-10-02T12:27:43Z",
+      "event": "push",
+      "head_sha": "2eca20de3cdec21873874d92902c3d954d3d9b9b",
+      "id": 37006812031,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:46:21Z"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-10-02T12:20:41Z",
+      "event": "push",
+      "head_sha": "f028eea5f0b6cd3c11ea821cdc92096facde8c8f",
+      "id": 37006122020,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:27:45Z"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-10-02T12:05:15Z",
+      "event": "push",
+      "head_sha": "f761bc3af1e62a16cdc441df7d4585d4a6e32f54",
+      "id": 37004626024,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:20:43Z"
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-10-02T11:54:08Z",
+      "event": "push",
+      "head_sha": "150ccd1b5deb4388ed1b1c6c29ac7138074ead51",
+      "id": 37003576188,
+      "status": "completed",
+      "updated_at": "2026-10-02T12:03:36Z"
+    },
+    {
+      "conclusion": "cancelled",
+      "created_at": "2026-10-02T11:37:32Z",
+      "event": "push",
+      "head_sha": "b93c3beb3f77d9127c24c8b5790ef6d7768a1c7e",
+      "id": 37002029011,
+      "status": "completed",
+      "updated_at": "2026-10-02T11:54:10Z"
+    }
+  ],
+  "project": "ftmo",
+  "queue": {
+    "eligible": 1,
+    "evidence": "",
+    "project_id": "ftmo",
+    "queue_id": "ftmo-7ee077e0b88278da",
+    "status": "claimed",
+    "updated_at": "2026-10-02T15:11:53.804947+00:00",
+    "worker_slot": 1
+  },
+  "queue_id": "ftmo-7ee077e0b88278da",
+  "required_deploy_fix": "b03e28641dd2937327150bf3f654ae6e347f52cf",
+  "required_merge": "920df21438332e57e2bd4027bdd0e8f68f922e8d",
+  "runtime": {
+    "autonomous_cloud_budget_usd": "0.00",
+    "broker_order_submission_allowed": false,
+    "completed_at_utc": "2026-10-02T15:11:54.374696Z",
+    "deployment_workflow_run_id": "37024946675",
+    "development_access_allowed": false,
+    "final_holdout_access_allowed": false,
+    "final_holdout_accessed": null,
+    "generation_id": "eurusd-fxcm-g30-chronological-2026-q4-v1-alpha-30",
+    "generation_number": 30,
+    "live_trading_allowed": false,
+    "loop_action": null,
+    "partial_progress_providers": null,
+    "provider_foundation_progress_made": null,
+    "research_cycle_completed_at_utc": null,
+    "research_cycle_ok": null,
+    "runtime_revision": "b03e28641dd2937327150bf3f654ae6e347f52cf",
+    "stage": "provider_foundation",
+    "walk_forward_access_allowed": false,
+    "walk_forward_accessed": null
+  },
+  "service": {
+    "pid": "1128676",
+    "state": "active"
+  }
+}
