@@ -9,6 +9,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -92,6 +93,35 @@ def http_json(url: str, timeout: float = 8.0) -> dict:
         if not isinstance(data, dict):
             raise RuntimeError(f"non-object JSON: {url}")
         return data
+
+
+def http_json_ready(
+    url: str,
+    timeout: float = 4.0,
+    readiness_seconds: float = 30.0,
+    retry_interval: float = 0.5,
+    *,
+    sleep_fn=time.sleep,
+    monotonic_fn=time.monotonic,
+) -> dict:
+    """Wait briefly for a just-restarted API endpoint to become ready.
+
+    The deploy already proves that the HTTP server is listening before this
+    canary runs. /api/status additionally depends on the first sampler snapshot,
+    so a short 503/connection race is expected during startup. Persistent
+    failures still raise and therefore keep the promotion fail-closed.
+    """
+    deadline = monotonic_fn() + max(0.0, float(readiness_seconds))
+    last_error = None
+    while True:
+        try:
+            return http_json(url, timeout=timeout)
+        except Exception as exc:
+            last_error = exc
+            remaining = deadline - monotonic_fn()
+            if remaining <= 0:
+                raise last_error
+            sleep_fn(min(max(0.05, float(retry_interval)), remaining))
 
 
 def http_ok(url: str, timeout: float = 8.0) -> bool:
@@ -297,7 +327,7 @@ def live_canary(
 ) -> dict:
     errors = []
     try:
-        status = http_json(base_url + "/api/status")
+        status = http_json_ready(base_url + "/api/status")
     except Exception as exc:
         status = {"errors": [f"status unavailable: {exc}"]}
         errors.append(str(exc))
