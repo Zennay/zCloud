@@ -17,66 +17,50 @@ def test_all_active_workers_keep_canonical_documentation_sources():
         assert project.get("handoff_url"), project_id
 
 
-def test_worker_prompt_is_short_execution_first_and_queue_owned():
+def test_worker_prompt_is_short_project_first_and_not_queue_owned():
     item = {
         "queue_id": "cloud-test",
         "project_id": "cloud",
         "priority": "P0",
-        "title": "Test VPS queue",
-        "completion_criteria": "green evidence",
-        "source_url": "https://example.invalid/source",
+        "title": "Internal queue coordination",
+        "completion_criteria": "internal only",
+        "source_url": "",
+        "execution_lane": {
+            "lane_id": "control-plane",
+            "scope": {"capabilities": ["zcloud-control-plane"], "files": []},
+        },
     }
     prompt = worker_prompt("cloud", item)
-    assert "Ga door met de queue: de SQLite queue van zCloud op de VPS" in prompt
-    assert "Notion is alleen documentatie, nooit scheduler of blocker" in prompt
-    assert "VPS_QUEUE_ASSIGNMENT id=cloud-test" in prompt
-    assert "Stop niet na één actie" in prompt
-    assert "Een status- of auditrapport is geen resultaat" in prompt
-    assert "probeer meteen een andere veilige route" in prompt
-    assert "Pas helemaal aan het einde" in prompt
-    assert "DONE alleen met bewijs, anders CONTINUE" in prompt
-    assert "ZCLOUD_QUEUE_ITEM: cloud-test" in prompt
-    assert "Worker 1/2." in prompt
-    assert "ZCLOUD_QUEUE_RESULT: DONE|CONTINUE" in prompt
-    assert "ZCLOUD_AUTONOMY: CONTINUE|WAIT_HUMAN|COMPLETE" in prompt
-    assert "TOEGANG & ROUTE" not in prompt
-    assert "Zeg NOOIT geen toegang" not in prompt
-    assert len(prompt) < 2400  # owner-requested intro + end-of-run next-task block (was 1800); cloud guard case is 2338
+    assert prompt.startswith("Werk verder aan zCloud.")
+    assert "Kijk in Notion in welke fase het project zit" in prompt
+    assert "Werkgebied: control-plane." in prompt
+    assert "bestaande claims/branches" in prompt
+    assert "VPS_QUEUE_ASSIGNMENT" not in prompt
+    assert "ZCLOUD_QUEUE_" not in prompt
+    assert "Jij bent Worker" not in prompt
+    assert "Ga door met de queue" not in prompt
+    assert len(prompt) < 500
 
 
 def test_stale_persisted_base_prompt_is_ignored():
     stale = "STALE HUGE PROMPT TOEGANG & ROUTE Zeg NOOIT geen toegang BLOCKED WAIT_VPS"
-    prompt = worker_prompt(
-        "cloud",
-        {
-            "queue_id": "cloud-test",
-            "project_id": "cloud",
-            "priority": "P1",
-            "title": "Do work",
-            "completion_criteria": "green",
-            "source_url": "",
-        },
-        base_prompt=stale,
-    )
+    prompt = worker_prompt("cloud", None, base_prompt=stale)
     assert stale not in prompt
     assert "TOEGANG & ROUTE" not in prompt
-    assert "WAIT_VPS" in prompt  # only the concise shared VPS rule remains
+    assert "WAIT_VPS" not in prompt
+    assert prompt.startswith("Werk verder aan zCloud.")
 
 
 def test_no_assignment_stays_local_and_simple():
     prompt = worker_prompt()
-    assert "VPS_QUEUE_ASSIGNMENT none" in prompt
-    assert "Notion is alleen documentatie, nooit scheduler of blocker" in prompt
-    assert len(prompt) < 2300  # owner-requested intro + end-of-run next-task block; longest case (cloud guard) is 2208
+    assert prompt.startswith("Werk verder aan zCloud.")
+    assert "kies een vrij onderdeel" in prompt
+    assert "VPS_QUEUE_ASSIGNMENT" not in prompt
+    assert len(prompt) < 400
 
 
-def test_project_specific_guard_is_preserved():
-    prompt = worker_prompt("ftmo", {
-        "queue_id": "ftmo-test",
-        "project_id": "ftmo",
-        "priority": "P1",
-        "title": "Validate",
-        "completion_criteria": "green",
-        "source_url": "",
-    })
-    assert "preregistration, walk-forward en final holdout gescheiden" in prompt
+def test_collision_guard_is_generic_not_project_specific_prompt_bloat():
+    prompt = worker_prompt("ftmo")
+    assert prompt.startswith("Werk verder aan FTMO.")
+    assert "kies een vrij onderdeel" in prompt
+    assert "preregistration, walk-forward en final holdout" not in prompt

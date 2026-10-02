@@ -31,8 +31,8 @@ function portfolioAssignmentReady(target) {
   return !!queueId &&
     Number.isInteger(slot) && slot >= 1 &&
     Number.isInteger(total) && total >= slot &&
-    prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
-    prompt.includes("Jij bent Worker " + slot + "/" + total + ".");
+    prompt.startsWith("Werk verder aan ") &&
+    prompt.includes("Kijk in Notion in welke fase het project zit");
 }
 
 function runnerConfigChanged(previous, next) {
@@ -236,29 +236,14 @@ function runProject(cfg) {
   const QUALITY_RETRY_LIMIT = "unbounded";
   function promptWithReplacementHandoff(basePrompt) {
     return replacementHandoffPending && REPLACEMENT_HANDOFF
-      ? basePrompt + "\n\n" +
-        "BEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
-        "Neem GEEN nieuwe taakclaim zolang onderstaande bestaande claim nog geldig is. " +
-        "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen; " +
-        "heartbeat en release moeten dezelfde owner_id blijven gebruiken. " +
-        "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit en probeer in dezelfde cyclus veilig opnieuw te claimen; bij succes ga je direct verder met de taak. Een ontbrekende claim is geen reden om na statuscontrole te stoppen. " +
-        "Handoff-context: " + JSON.stringify(REPLACEMENT_HANDOFF)
+      ? basePrompt + "\n\nGa verder met hetzelfde vrije werkgebied van deze worker; neem geen werk over dat al door een andere worker wordt uitgevoerd."
       : basePrompt;
   }
   function promptWithQualityRecovery(basePrompt) {
     const prompt = promptWithReplacementHandoff(basePrompt);
-    if (!qualityRetryPending) return prompt;
-    const retryLevel = qualityRetryCount >= 4 ? 3 : qualityRetryCount >= 2 ? 2 : 1;
-    const escalation = retryLevel === 3
-      ? "HERHAALDE KWALITEITSRETRY. Stop met korte/status-only cycli. Neem aantoonbaar meer redeneertijd, onderzoek waarom de eerdere routes niets opleverden, kies een ANDERE veilige uitvoeringsroute en voer meerdere concrete stappen uit totdat er materiële progressie + bewijs is. "
-      : retryLevel === 2
-        ? "DOE HET NU ECHT. GA GEWOON EN VOER HET ECHT UIT. GA DOOR MET DE REST VAN DE ASSIGNMENT. Dit is opnieuw geen geldige uitvoering. Geen audit, checklist, QA-overzicht, statusrapport of blocker-herhaling als vervanging voor werk. Kies zo nodig een ANDERE veilige uitvoeringsroute en bewijs de uitgevoerde stap. "
-        : "DOE HET NU ECHT. GA DOOR MET DE REST VAN DE ASSIGNMENT. De vorige cyclus was ongeveer tien seconden, leeg, te snel, blocker-only of zonder betrouwbare queue-evidence. Ga gewoon door met dezelfde assignment, gebruik extra redeneertijd en voer nu daadwerkelijk een concrete stap uit. ";
-    return prompt + "\n\n" +
-      "ZCLOUD_QUALITY_RETRY #" + qualityRetryCount + ": " + escalation +
-      "Gebruik exact dezelfde VPS_QUEUE_ASSIGNMENT en hetzelfde queue-item. Pauzeer of stop de worker NIET vanwege korte output. " +
-      "Een status-only/read-only antwoord telt niet. Herhaal geen oude WAIT/BLOCKED zonder nieuwe concrete evidence. " +
-      "Sluit pas af nadat je een echte write, run/job, verifier of materiële state-change hebt uitgevoerd en geef concrete ZCLOUD_QUEUE_EVIDENCE.";
+    return qualityRetryPending
+      ? prompt + "\n\nWerk verder aan het project en voer nu een concrete volgende stap uit binnen hetzelfde vrije werkgebied."
+      : prompt;
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
@@ -1045,8 +1030,8 @@ function runProject(cfg) {
       const valid = !!queueId && next.assignment_ready === true &&
         Number.isInteger(slot) && slot >= 1 &&
         Number.isInteger(total) && total >= slot &&
-        nextPrompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
-        nextPrompt.includes("Jij bent Worker " + slot + "/" + total + ".");
+        nextPrompt.startsWith("Werk verder aan ") &&
+        nextPrompt.includes("Kijk in Notion in welke fase het project zit");
       if (!valid) {
         paused = true;
         status("assignment-invalid", {reason:"config-refresh-missing-or-mismatched-assignment"});

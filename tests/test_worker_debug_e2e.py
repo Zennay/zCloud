@@ -65,7 +65,8 @@ class WorkerDebugE2ETests(unittest.TestCase):
         self.assertEqual({"cloud::w1", "haxlab::w1", "raiseai::w1"}, set(active))
         for key, cfg in active.items():
             self.assertEqual([], server.worker_contract_failures(cfg), key)
-            self.assertIn("Jij bent Worker", cfg["prompt"], key)
+            self.assertTrue(cfg["prompt"].startswith("Werk verder aan "), key)
+            self.assertIn("Kijk in Notion in welke fase het project zit", cfg["prompt"], key)
 
         # 2. no browser has reported yet -> explicit verdict instead of silence
         rows, report = self.verdicts()
@@ -142,15 +143,15 @@ class WorkerDebugE2ETests(unittest.TestCase):
 
     def test_broken_prompt_contract_is_reported_not_silent(self):
         original = server.project_worker_prompt
-        server.project_worker_prompt = lambda *a, **k: original(*a, **k).replace("Jij bent ", "")
+        server.project_worker_prompt = lambda *a, **k: original(*a, **k).replace("Werk verder aan ", "Ga door met ")
         try:
             rows, _ = self.verdicts()
             for worker, row in rows.items():
                 self.assertEqual("blocked:contract", row["verdict"], worker)
-                self.assertIn("prompt-missing-worker-line", row["contract_failures"], worker)
+                self.assertIn("prompt-missing-project-instruction", row["contract_failures"], worker)
             status, body = self.post("/api/dynamic-workers/force-push", {})
             self.assertFalse(body["ok"])
-            self.assertTrue(all((not r["queued"]) and "prompt-missing-worker-line" in r["reason"] for r in body["results"]))
+            self.assertTrue(all((not r["queued"]) and "prompt-missing-project-instruction" in r["reason"] for r in body["results"]))
             self.assertEqual([], self.get("/api/runner-commands")["commands"], "must not enqueue pushes that would be refused")
         finally:
             server.project_worker_prompt = original

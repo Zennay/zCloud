@@ -317,8 +317,8 @@
     return !!queueId &&
       Number.isInteger(slot) && slot >= 1 &&
       Number.isInteger(total) && total >= slot &&
-      prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId) &&
-      prompt.includes("Jij bent Worker " + slot + "/" + total + ".");
+      prompt.startsWith("Werk verder aan ") &&
+      prompt.includes("Kijk in Notion in welke fase het project zit");
   }
 
   async function refreshTarget() {
@@ -859,21 +859,10 @@
     let prompt = String(basePrompt || "");
     const handoff = target?.replacement_handoff || null;
     if (handoff && !handoffAlreadyConsumed()) {
-      prompt += "\n\nBEWUSTE WORKER-HANDOFF — je vervangt dezelfde zCloud-worker, niet de taak. " +
-        "Neem GEEN nieuwe taakclaim zolang de bestaande claim nog geldig is. " +
-        "Controleer vóór iedere write dat claim_key, owner_id en worker_id server-side nog exact overeenkomen. " +
-        "Als de claim ontbreekt, verlopen is of een andere owner heeft: voer direct een verse coordination-preflight uit, claim veilig opnieuw en ga in dezelfde cyclus verder. " +
-        "Handoff-context: " + JSON.stringify(handoff);
+      prompt += "\n\nGa verder met hetzelfde vrije werkgebied van deze worker; neem geen werk over dat al door een andere worker wordt uitgevoerd.";
     }
     if (qualityRetryPending) {
-      const retryLevel = qualityRetryCount >= 4 ? 3 : qualityRetryCount >= 2 ? 2 : 1;
-      const escalation = retryLevel === 3
-        ? "HERHAALDE KWALITEITSRETRY. Stop met korte/status-only cycli. Neem aantoonbaar meer redeneertijd, onderzoek waarom de vorige routes niets opleverden, kies een ANDERE veilige uitvoeringsroute en voer meerdere concrete stappen uit totdat er materiële progressie + bewijs is."
-        : retryLevel === 2
-          ? "DOE HET NU ECHT. Dit is opnieuw een te korte/ongeldige cyclus. Ga door met de REST van dezelfde assignment, kies zo nodig een andere veilige uitvoeringsroute en lever concrete write/run/state-change + bewijs."
-          : "DOE HET NU ECHT. De vorige generatie was te kort, te snel, blocker-only of zonder betrouwbare queue-evidence. Ga door met dezelfde assignment en voer vóór je antwoord minimaal één concrete write/run/state-change uit.";
-      prompt += "\n\nZCLOUD_QUALITY_RETRY #" + qualityRetryCount + ": " + escalation +
-        " Pauzeer of stop de worker NIET vanwege korte output. Alleen WAIT_HUMAN bij secret, vereiste toestemming of echte externe dependency. Geef concrete ZCLOUD_QUEUE_EVIDENCE.";
+      prompt += "\n\nWerk verder aan het project en voer nu een concrete volgende stap uit binnen hetzelfde vrije werkgebied.";
     }
     return prompt;
   }
@@ -906,8 +895,8 @@
     if (!queueId) problems.push("missing-queue-id");
     if (!(Number.isInteger(slot) && slot >= 1)) problems.push("bad-global-slot");
     if (!(Number.isInteger(total) && total >= slot)) problems.push("bad-global-count");
-    if (queueId && !prompt.includes("VPS_QUEUE_ASSIGNMENT id=" + queueId)) problems.push("prompt-missing-queue-line");
-    if (!prompt.includes("Jij bent Worker " + slot + "/" + total + ".")) problems.push("prompt-missing-worker-line");
+    if (!prompt.startsWith("Werk verder aan ")) problems.push("prompt-missing-project-instruction");
+    if (!prompt.includes("Kijk in Notion in welke fase het project zit")) problems.push("prompt-missing-notion-phase");
     return problems.join(",");
   }
 

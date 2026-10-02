@@ -47,9 +47,8 @@ for (const marker of [
   "target.replacement_handoff = handoff",
   "await setReplacementHandoffTag(tab.id, handoff)",
   "await getReplacementHandoffTag(tabId)",
-  "BEWUSTE WORKER-HANDOFF",
-  "Neem GEEN nieuwe taakclaim",
-  "Een ontbrekende claim is geen reden om na statuscontrole te stoppen",
+  "Ga verder met hetzelfde vrije werkgebied",
+  "neem geen werk over dat al door een andere worker wordt uitgevoerd",
   "runner-replacement-handoff-consumed",
   "worker-replacement-handoff-consumed",
   "let BASE_PROMPT = cfg.prompt",
@@ -66,8 +65,8 @@ for (const marker of [
   "assignment-refresh-failed",
   "async function syncRunnerConfig",
   "runnerConfigChanged(previous, target)",
-  "VPS_QUEUE_ASSIGNMENT id=",
-  "Jij bent Worker ",
+  "Werk verder aan ",
+  "Kijk in Notion in welke fase het project zit",
 ]) {
   assert.ok(background.includes(marker), "missing recovery contract marker: " + marker);
 }

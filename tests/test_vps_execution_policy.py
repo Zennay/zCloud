@@ -26,12 +26,14 @@ class VpsExecutionPolicyTests(unittest.TestCase):
     def test_server_has_no_implicit_vps_policy_fallback(self):
         self.assertFalse(hasattr(server, "_VPS_EXECUTION_POLICY_FALLBACK"))
 
-    def test_every_project_prompt_contains_the_short_shared_execution_directive(self):
+    def test_every_project_prompt_stays_project_first_and_excludes_route_details(self):
         for project_id, project in server.PROJECT_INDEX.items():
             prompt = server.project_runner_prompt(project_id, project["name"])
-            self.assertIn("self-hosted vps-bb300bba", prompt)
-            self.assertIn("workflow_run_id", prompt)
-            self.assertLess(len(prompt), 900)
+            self.assertTrue(prompt.startswith("Werk verder aan "))
+            self.assertIn("Kijk in Notion in welke fase het project zit", prompt)
+            self.assertNotIn("self-hosted vps-bb300bba", prompt)
+            self.assertNotIn("workflow_run_id", prompt)
+            self.assertLess(len(prompt), 250)
 
     def test_worker_prompt_keeps_the_route_when_assignment_is_added(self):
         prompt = server.project_worker_prompt(
@@ -42,8 +44,10 @@ class VpsExecutionPolicyTests(unittest.TestCase):
             1,
             {"queue_id": "probe", "project_id": "zssh", "priority": "P0", "title": "probe"},
         )
-        self.assertIn("self-hosted vps-bb300bba", prompt)
-        self.assertIn("VPS_QUEUE_ASSIGNMENT id=probe", prompt)
+        self.assertTrue(prompt.startswith("Werk verder aan zSSH."))
+        self.assertIn("Kijk in Notion in welke fase het project zit", prompt)
+        self.assertNotIn("self-hosted vps-bb300bba", prompt)
+        self.assertNotIn("VPS_QUEUE_ASSIGNMENT", prompt)
         self.assertNotIn("old persisted prompt", prompt)
 
 
