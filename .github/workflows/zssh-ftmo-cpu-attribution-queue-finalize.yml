@@ -1,0 +1,103 @@
+name: Finalize zSSH FTMO CPU attribution queue item
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-ftmo-cpu-attribution-queue-finalize.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Finalize exact SQLite queue assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import importlib.util
+          import json
+          import sqlite3
+          import sys
+          from pathlib import Path
+
+          queue_id = "zssh-ftmo-cpu-attribution-proof"
+          expected_project = "zssh"
+          live_root = Path("/home/ubuntu/zennay-cloud")
+          server_path = live_root / "server.py"
+          db_path = live_root / "history.db"
+          if not server_path.is_file() or not db_path.is_file():
+              raise SystemExit("live zCloud server/history.db missing")
+
+          sys.path.insert(0, str(live_root))
+          spec = importlib.util.spec_from_file_location("zcloud_live_server", server_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("cannot load live zCloud server module")
+          server = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(server)
+          server.DB = db_path
+
+          with sqlite3.connect(db_path) as c:
+              c.row_factory = sqlite3.Row
+              row = c.execute(
+                  "SELECT queue_id,project_id,title,status,eligible,worker_slot,evidence,updated_at "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+
+          if row is None:
+              raise SystemExit("queue item missing")
+          item = dict(row)
+          print("QUEUE_BEFORE=" + json.dumps(item, sort_keys=True))
+          if item["project_id"] != expected_project:
+              raise SystemExit(f"project mismatch: {item['project_id']}")
+
+          evidence = (
+              "FTMO top-level CPU attribution completion proven: "
+              "canonical runtime 1b85e412703f966a2b92d98cfd45cb0ffc47b51e "
+              "descends from 0acfac83eff1136bdce1bfbde6e52b6905ccf1fc; "
+              "dedicated deploy run 36944877718; "
+              "final zCloud VPS proof/rescue run 36945640437 SUCCESS; "
+              "durable receipt commit 1aa046560cbd7be4b1265459d9536efca0912776; "
+              "service active/running CPUWeight=10000 CPUQuota=500%; "
+              "fresh sealed provider retry with outcomes_executed=false and broker/live false; "
+              "zSSH proof concurrency race fixed in b239427db16fb7505181361cc0ae877ad48df978."
+          )
+
+          if item["status"] == "done":
+              print("QUEUE_ALREADY_DONE=1")
+          elif item["status"] in {"claimed", "running", "verifying"} and item["worker_slot"] is not None:
+              result = server.portfolio_queue_finish(
+                  int(item["worker_slot"]),
+                  queue_id,
+                  "DONE",
+                  evidence,
+              )
+              print("QUEUE_FINISH_RESULT=" + json.dumps(result, sort_keys=True, default=str))
+              if not result.get("updated"):
+                  raise SystemExit("portfolio_queue_finish refused active assignment")
+          else:
+              raise SystemExit(
+                  "refusing nonstandard queue mutation; "
+                  f"status={item['status']} worker_slot={item['worker_slot']}"
+              )
+
+          with sqlite3.connect(db_path) as c:
+              c.row_factory = sqlite3.Row
+              after = c.execute(
+                  "SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+          final = dict(after) if after else None
+          print("QUEUE_AFTER=" + json.dumps(final, sort_keys=True))
+          if not final or final["status"] != "done" or int(final["eligible"] or 0) != 0:
+              raise SystemExit("queue final state is not done/eligible=0")
+          print("ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1")
+          PY
