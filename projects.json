@@ -440,5 +440,63 @@
     "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8",
     "queue_mode": "execution",
     "lane_profile": "platform"
+  },
+  {
+    "id": "whitelab",
+    "name": "WhiteLab",
+    "eyebrow": "AI-ASSISTED DEFENSIVE SECURITY LAB",
+    "goal": "Build an authorization-first AI security lab that can later coordinate broad adversarial testing against owned or explicitly authorized systems, with evidence, remediation and retest as the output.",
+    "icon": "shield",
+    "accent": "#8bd3a8",
+    "repo": "/home/ubuntu/zennay-cloud/whitelab",
+    "repo_ref": "origin/main",
+    "repo_url": "https://github.com/Zennay/zCloud/tree/main/whitelab",
+    "notion_url": "https://app.notion.com/p/3ed9e19ac9558117b639f2254fe0e165",
+    "handoff_url": "https://app.notion.com/p/3ed9e19ac955816fab67ef27ab10a44e",
+    "phase": "M0 · Genesis + guardrails · infrastructure only",
+    "status": "active",
+    "priority": "normal",
+    "next_step": "Finish the plan-only orchestration, authorization/scope contracts, local lab harness, evidence store and CI; do not enable active target interaction until an explicit activation decision is recorded.",
+    "milestone_revision": "whitelab-v1-genesis",
+    "progress_basis": "Infrastructure progress only. Offensive capability is not counted as active until explicit activation and authorized lab validation.",
+    "milestones": [
+      {
+        "title": "M0 · Genesis + guardrails",
+        "done": false,
+        "progress": 70
+      },
+      {
+        "title": "M1 · Safe assessment MVP",
+        "done": false,
+        "progress": 10
+      },
+      {
+        "title": "M2 · Reproducible local lab",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · Findings + remediation workflow",
+        "done": false,
+        "progress": 15
+      },
+      {
+        "title": "M4 · Defensive CI",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M5 · Authorized pentest playbooks",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M6 · Detection + hardening loop",
+        "done": false,
+        "progress": 0
+      }
+    ],
+    "queue_mode": "execution",
+    "lane_profile": "security-lab"
   }
 ]
