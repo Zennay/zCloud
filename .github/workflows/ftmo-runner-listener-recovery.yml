@@ -25,53 +25,6 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Ensure Worker5 zSSH recovery assignment exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
-          python3 - <<'PY'
-          import importlib.util
-          import json
-          from pathlib import Path
-
-          queue_id = "zssh-ftmo-worker5-runner-recovery-20261002"
-          server_path = Path("/home/ubuntu/zennay-cloud/server.py")
-          spec = importlib.util.spec_from_file_location("zcloud_server", server_path)
-          server = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(server)
-          server.DB = Path("/home/ubuntu/zennay-cloud/history.db")
-          server.init_db()
-
-          with server.connect() as conn:
-              row = conn.execute(
-                  "SELECT id,project_id,priority,status,eligible,worker_slot FROM portfolio_queue WHERE id=?",
-                  (queue_id,),
-              ).fetchone()
-          if row is None:
-              result = server.portfolio_queue_enqueue(
-                  "zssh",
-                  "Recover FTMO Actions listener for Worker5 deployment",
-                  "P0",
-                  "On vps-bb300bba recover only the FTMO GitHub Actions listener so queued deploy run 37036478118 for SHA 756e00da4712af0612ac7a4fe2640c3fbd0af058 can execute; preserve active Runner.Worker jobs; prove listener active after recovery.",
-                  "https://github.com/Zennay/Ftmo/actions/runs/37036478118",
-                  None,
-                  queue_id,
-              )
-              print("WORKER5_RECOVERY_QUEUE_ENQUEUE=" + json.dumps(result, sort_keys=True, default=str))
-          with server.connect() as conn:
-              item = conn.execute(
-                  "SELECT id,project_id,priority,status,eligible,worker_slot FROM portfolio_queue WHERE id=?",
-                  (queue_id,),
-              ).fetchone()
-          if item is None:
-              raise SystemExit("Worker5 recovery queue assignment missing")
-          item = dict(item)
-          if item["project_id"] != "zssh" or item["priority"] != "P0":
-              raise SystemExit("Worker5 recovery queue assignment ownership/priority mismatch")
-          print("WORKER5_RECOVERY_QUEUE_READY=" + json.dumps(item, sort_keys=True, default=str))
-          PY
-
       - name: Verify live zSSH recovery assignment
         shell: bash
         run: |
@@ -81,7 +34,6 @@ jobs:
           import urllib.request
 
           queue_ids = (
-              "zssh-ftmo-worker5-runner-recovery-20261002",
               "zssh-ftmo-verify72-runner-recovery-20261002",
               "zssh-ftmo-runner-recovery-20261002",
               "zssh-ftmo-safe-gate-3b512f56",
@@ -305,4 +257,3 @@ jobs:
 
 # verify72 terminal recovery trigger 2026-10-02T11:19Z
 
-# Worker5 deploy recovery trigger for FTMO run 37036478118
