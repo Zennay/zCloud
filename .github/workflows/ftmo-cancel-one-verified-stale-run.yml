@@ -10,9 +10,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ftmo-cancel-one-verified-stale-run
+  cancel-in-progress: true
+
 jobs:
   cancel:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Cancel merged PR 423 stale test run only if identity still matches
