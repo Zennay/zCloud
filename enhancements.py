@@ -59,13 +59,23 @@ def _json(path, sudo=False):
         return None
 
 def load_resource_policy():
-    default = {
-        "haxlab": {"priority": "background"},
-        "ftmo": {"priority": "turbo"},
-        "supa": {"priority": "normal"},
-        "raiseai": {"priority": "normal"},
-        "cloud": {"priority": "normal"},
-    }
+    try:
+        contracts = project_runtime.load_contracts()
+        default = {
+            pid: {"priority": str((contract.get("compute") or {}).get("priority") or "normal")}
+            for pid, contract in contracts["projects"].items()
+        }
+    except Exception:
+        default = {
+            "haxlab": {"priority": "background"},
+            "ftmo": {"priority": "turbo"},
+            "supa": {"priority": "normal"},
+            "raiseai": {"priority": "normal"},
+            "cloud": {"priority": "normal"},
+            "ulab": {"priority": "normal"},
+            "zssh": {"priority": "high"},
+            "lightup": {"priority": "normal"},
+        }
     try:
         raw = json.loads(RESOURCE_FILE.read_text())
     except Exception:
