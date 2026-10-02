@@ -20,6 +20,12 @@ jobs:
     env:
       FTMO_ROOT: /opt/ftmo-autonomous
     steps:
+      - name: Check out exact zCloud main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
       - name: Prove and rescue FTMO useful CPU
         shell: bash
         run: |
