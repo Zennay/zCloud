@@ -45,8 +45,9 @@ jobs:
                   "Then inspect queued/pending FTMO runs and cancel only runs whose associated "
                   "PR is closed/merged or whose head SHA is no longer the latest head of its "
                   "still-open PR. Never cancel current main runs and never cancel any run tied "
-                  "to the latest head of an open PR, including the current Worker-5 PR #436 "
-                  "head ee3b66b10b2d470409e9c4f652d2e57b6d2cb701. Record exact cancelled "
+                  "to the latest head of an open PR. Explicitly preserve merged main commit "
+                  "150ccd1b5deb4388ed1b1c6c29ac7138074ead51 and its runs 37003576188, "
+                  "37003576200 and 37003581840. Record exact cancelled "
                   "run IDs, deliberately kept run IDs, before/after queue counts and GitHub "
                   "API results. This is CI queue cleanup only: do not change FTMO code, data, "
                   "preregistration, provider acceptance, walk-forward, holdout, live/broker "
@@ -54,17 +55,60 @@ jobs:
               ),
               "source_url": "https://github.com/Zennay/Ftmo/pull/436",
           }
-          request = urllib.request.Request(
-              base + "/api/portfolio-queue",
-              data=json.dumps(payload).encode(),
-              method="POST",
-              headers={"Content-Type": "application/json"},
+          def post(path, body):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  result = json.load(response)
+                  if response.status >= 300:
+                      raise RuntimeError(f"{path} failed: HTTP {response.status}")
+              return result
+
+          enqueue = post("/api/portfolio-queue", payload)
+          if not enqueue.get("ok"):
+              raise RuntimeError(f"queue enqueue failed: {enqueue}")
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("QUEUE_ENQUEUE_RESPONSE", json.dumps(enqueue, sort_keys=True))
+          print("ZSSH_START", json.dumps(start, sort_keys=True))
+          print("ZSSH_PUSH", json.dumps(push, sort_keys=True))
+
+          command_ids = {
+              int(value)
+              for value in (start.get("command_id"), push.get("command_id"))
+              if value
+          }
+          if not command_ids:
+              raise RuntimeError("zSSH cleanup start/push did not return command ids")
+
+          import time
+          deadline = time.monotonic() + 75
+          pending = set(command_ids)
+          while pending and time.monotonic() < deadline:
+              with urllib.request.urlopen(
+                  base + "/api/runner-commands?limit=200", timeout=10
+              ) as response:
+                  live_commands = json.load(response).get("commands") or []
+              pending = {
+                  int(row.get("id"))
+                  for row in live_commands
+                  if row.get("id") is not None and int(row.get("id")) in command_ids
+              }
+              if pending:
+                  time.sleep(5)
+          if pending:
+              raise RuntimeError(
+                  "zSSH browser worker did not consume cleanup commands: "
+                  + ",".join(str(value) for value in sorted(pending))
+              )
+          print(
+              "ZSSH_CLEANUP_COMMANDS_CONSUMED",
+              json.dumps({"command_ids": sorted(command_ids)}, sort_keys=True),
           )
-          with urllib.request.urlopen(request, timeout=10) as response:
-              body = json.load(response)
-              if response.status != 200 or not body.get("ok"):
-                  raise RuntimeError(f"queue enqueue failed: HTTP {response.status} {body}")
-          print("QUEUE_ENQUEUE_RESPONSE", json.dumps(body, sort_keys=True))
           PY
 
           git fetch origin main
