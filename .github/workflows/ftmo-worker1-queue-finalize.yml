@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ftmo-worker1-queue-finalize
@@ -272,3 +272,81 @@ jobs:
               raise SystemExit("queue final state is not done/eligible=0/worker_slot=None")
           print("ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1")
           PY
+
+      - name: Persist finalizer receipt
+        if: always()
+        env:
+          FINALIZER_RESULT: ${{ job.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="/tmp/ftmo-${QUEUE_ID}-finalizer-${GITHUB_RUN_ID}.json"
+          python3 - <<'PY' > "$receipt"
+          import json, os, sqlite3
+          from pathlib import Path
+
+          queue=None
+          db=Path("/home/ubuntu/zennay-cloud/history.db")
+          if db.is_file():
+              try:
+                  with sqlite3.connect(db) as c:
+                      c.row_factory=sqlite3.Row
+                      row=c.execute(
+                          "SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at "
+                          "FROM portfolio_queue WHERE queue_id=?",
+                          (os.environ["QUEUE_ID"],),
+                      ).fetchone()
+                      queue=dict(row) if row else None
+              except Exception as exc:
+                  queue={"receipt_error":repr(exc)}
+
+          runtime=None
+          status_path=Path(os.environ["FTMO_ROOT"])/".scratch/autonomy/status.json"
+          if status_path.is_file() and not status_path.is_symlink():
+              try:
+                  status=json.loads(status_path.read_text(encoding="utf-8"))
+                  research=status.get("research") or {}
+                  controller=status.get("research_controller") or {}
+                  loop=controller.get("generation_loop") or {}
+                  runtime={
+                      "runtime_revision":status.get("runtime_revision"),
+                      "deployment_workflow_run_id":status.get("deployment_workflow_run_id"),
+                      "generation_number":research.get("generation_number"),
+                      "stage":research.get("next_stage"),
+                      "development_access_allowed":research.get("development_access_allowed"),
+                      "walk_forward_access_allowed":research.get("walk_forward_access_allowed"),
+                      "final_holdout_access_allowed":research.get("final_holdout_access_allowed"),
+                      "live_trading_allowed":status.get("live_trading_allowed"),
+                      "broker_order_submission_allowed":status.get("broker_order_submission_allowed"),
+                      "provider_foundation_progress_made":loop.get("provider_foundation_progress_made"),
+                      "partial_progress_providers":loop.get("partial_progress_providers"),
+                      "autonomous_cloud_budget_usd":status.get("autonomous_cloud_budget_usd"),
+                  }
+              except Exception as exc:
+                  runtime={"receipt_error":repr(exc)}
+
+          print(json.dumps({
+              "project":"ftmo",
+              "queue_id":os.environ["QUEUE_ID"],
+              "result":os.environ["FINALIZER_RESULT"],
+              "workflow_run_id":os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],
+              "exact_head":os.environ["EXACT_HEAD"],
+              "merge_sha":os.environ["MERGE_SHA"],
+              "proof_runs":{
+                  "full_test":os.environ["FULL_TEST_RUN"],
+                  "provider_publication":os.environ["PUBLICATION_RUN"],
+                  "cache_integrity":os.environ["CACHE_RUN"],
+              },
+              "deploy_run":os.environ.get("DEPLOY_RUN"),
+              "deploy_head":os.environ.get("DEPLOY_HEAD"),
+              "queue_readback":queue,
+              "runtime":runtime,
+          },sort_keys=True,default=str))
+          PY
+          encoded="$(base64 -w0 "$receipt")"
+          path="runtime-evidence/ftmo-${QUEUE_ID}-finalizer-${GITHUB_RUN_ID}.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$path" \
+            -f message="Record FTMO PR448 finalizer run ${GITHUB_RUN_ID}" \
+            -f content="$encoded" >/dev/null
+          echo "FTMO_PR448_FINALIZER_RECEIPT=$path"
