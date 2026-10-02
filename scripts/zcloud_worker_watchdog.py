@@ -39,6 +39,7 @@ ACTION_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_ACTION_COOLDOWN_SE
 NEW_CHAT_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_NEW_CHAT_COOLDOWN_SECONDS", "300"))
 GLOBAL_RECOVERY_AFTER_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GLOBAL_RECOVERY_AFTER_SECONDS", "900"))
 GLOBAL_RECOVERY_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GLOBAL_RECOVERY_COOLDOWN_SECONDS", "900"))
+FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS", "120"))
 GENERATION_PROTECT_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GENERATION_PROTECT_SECONDS", "1200"))
 PROMPT_STALE_REFRESH_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_PROMPT_STALE_REFRESH_SECONDS", "300"))
 
@@ -368,6 +369,59 @@ def run_once(
     allocation = targets.get("global_allocation") or {}
     selected = allocation.get("workers") or []
     selected_keys = {worker_key(item) for item in selected if worker_key(item)}
+    memory_guard = (runtime.get("dynamic_workers") or {}).get("memory_guard") or {}
+    firefox = runtime.get("chatgpt_firefox") or {}
+
+    # A kernel OOM kill can remove the Firefox host in one instant, long before
+    # per-worker stall timers fire. Recover the browser runtime immediately and
+    # let the next watchdog tick resume worker-level commands.
+    if selected_keys and not bool(firefox.get("active")):
+        global_state = state.setdefault("global", {})
+        last_restart_age = seconds_since(global_state.get("last_firefox_restart_at"), now)
+        global_action = None
+        if last_restart_age >= FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS:
+            if dry_run:
+                global_action = {
+                    "action": "restart_firefox",
+                    "reason": "firefox-runtime-inactive",
+                    "ok": True,
+                    "dry_run": True,
+                }
+            else:
+                status_code, payload = api_call(
+                    base_url,
+                    "POST",
+                    "/api/runner-control",
+                    {"project_id": "", "action": "restart_firefox"},
+                )
+                accepted = status_code < 300 and bool(payload.get("ok"))
+                global_action = {
+                    "action": "restart_firefox",
+                    "reason": "firefox-runtime-inactive",
+                    "ok": accepted,
+                    "http_status": status_code,
+                    "response": payload,
+                }
+                if accepted:
+                    global_state["last_firefox_restart_at"] = now.isoformat()
+        state["updated_at"] = now.isoformat()
+        state["version"] = 1
+        if not dry_run:
+            save_state(state_path, state)
+        return {
+            "ok": True,
+            "checked_at": now.isoformat(),
+            "allocated_workers": sorted(selected_keys),
+            "worker_count": len(selected_keys),
+            "workers": [],
+            "global_action": global_action,
+            "firefox": firefox,
+            "memory_guard": memory_guard,
+            "reason": "firefox-runtime-inactive",
+            "thresholds": {
+                "firefox_runtime_restart_cooldown_seconds": FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS,
+            },
+        }
 
     # Drop old worker state once it is no longer allocated.
     for key in list((state.get("workers") or {}).keys()):
@@ -538,6 +592,8 @@ def run_once(
         "worker_count": len(selected_keys),
         "workers": reports,
         "global_action": global_action,
+        "firefox": firefox,
+        "memory_guard": memory_guard,
         "thresholds": {
             "push_after_seconds": PUSH_AFTER_SECONDS,
             "restart_after_seconds": RESTART_AFTER_SECONDS,
@@ -546,6 +602,7 @@ def run_once(
             "generation_protect_seconds": GENERATION_PROTECT_SECONDS,
             "prompt_stale_refresh_seconds": PROMPT_STALE_REFRESH_SECONDS,
             "global_recovery_after_seconds": GLOBAL_RECOVERY_AFTER_SECONDS,
+            "firefox_runtime_restart_cooldown_seconds": FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS,
         },
     }
 

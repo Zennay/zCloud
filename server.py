@@ -1,9 +1,9 @@
 """zCloud: read-only project monitoring; stdlib only."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from datetime import datetime, timezone, timedelta
-import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib
+import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, logging, hmac, secrets, re, hashlib, signal
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
@@ -38,6 +38,16 @@ DYNAMIC_WORKER_CHECK_INTERVAL_MS = 5000
 DYNAMIC_WORKER_TICK_INTERVAL_MS = 1500
 DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS = 30000
 DYNAMIC_WORKER_GENERATION_TIMEOUT_MS = 120000
+# Browser workers are memory-heavy (Firefox content processes can exceed multiple GiB).
+# Keep real RAM headroom before claiming *new* worker slots; existing work is left intact.
+WORKER_MEMORY_HEADROOM_MB = max(1536, int(os.environ.get('ZCLOUD_WORKER_MEMORY_HEADROOM_MB', '2048')))
+WORKER_MEMORY_PER_NEW_SLOT_MB = max(512, int(os.environ.get('ZCLOUD_WORKER_MEMORY_PER_NEW_SLOT_MB', '1536')))
+WORKER_MEMORY_WARN_MB = max(1024, int(os.environ.get('ZCLOUD_WORKER_MEMORY_WARN_MB', '2048')))
+WORKER_MEMORY_CRITICAL_MB = max(512, int(os.environ.get('ZCLOUD_WORKER_MEMORY_CRITICAL_MB', '1024')))
+WORKER_SWAP_MIN_TOTAL_MB = max(0, int(os.environ.get('ZCLOUD_WORKER_SWAP_MIN_TOTAL_MB', '1024')))
+WORKER_SWAP_MIN_FREE_MB = max(0, int(os.environ.get('ZCLOUD_WORKER_SWAP_MIN_FREE_MB', '512')))
+WORKER_OOM_RECOVERY_HOLD_SECONDS = max(60, int(os.environ.get('ZCLOUD_WORKER_OOM_RECOVERY_HOLD_SECONDS', '180')))
+WORKER_OOM_RECOVERY_HOLD_KEY = 'worker_oom_recovery_hold_until'
 DYNAMIC_WORKER_SETTING_KEY = 'dynamic_worker_limit'
 DYNAMIC_WORKER_SETTING_KEYS = {
     'chatgpt_count':'dynamic_worker_chatgpt_count',
@@ -195,17 +205,298 @@ def user_systemctl(*args):
     env=os.environ.copy()
     env.update({'XDG_RUNTIME_DIR':'/run/user/1000','DBUS_SESSION_BUS_ADDRESS':'unix:path=/run/user/1000/bus'})
     return subprocess.check_output(['systemctl','--user',*args], text=True, stderr=subprocess.STDOUT, timeout=12, env=env).strip()
-def firefox_runner_status():
+FIREFOX_LEGACY_DISABLE_FILE = Path.home() / '.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf'
+
+def _violentmonkey_only_mode():
     try:
-        try: state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
-        except subprocess.CalledProcessError as e: state=(e.output or '').strip() or 'inactive'
+        text=FIREFOX_LEGACY_DISABLE_FILE.read_text(encoding='utf-8').lower()
+        return 'violentmonkey only' in text and 'execcondition=/bin/false' in text
+    except OSError:
+        return False
+
+def _standalone_firefox_pids():
+    try:
+        proc=subprocess.run(
+            ['pgrep','-u',str(os.getuid()),'-f',r'/snap/firefox/.*/usr/lib/firefox/firefox'],
+            text=True,capture_output=True,check=False,timeout=5,
+        )
+        return [int(value) for value in proc.stdout.split() if value.isdigit()]
+    except Exception:
+        return []
+
+def _firefox_session_env(primary_pid=None):
+    allowed={
+        'DISPLAY','XAUTHORITY','WAYLAND_DISPLAY','DBUS_SESSION_BUS_ADDRESS',
+        'XDG_RUNTIME_DIR','HOME','USER','LOGNAME',
+    }
+    values={}
+    if primary_pid:
+        try:
+            for item in Path(f'/proc/{int(primary_pid)}/environ').read_bytes().split(b'\0'):
+                if b'=' not in item:
+                    continue
+                key,value=item.split(b'=',1)
+                name=key.decode('utf-8','replace')
+                if name in allowed:
+                    values[name]=value.decode('utf-8','replace')
+        except OSError:
+            pass
+    if not values:
+        try:
+            raw=user_systemctl('show-environment')
+            for line in raw.splitlines():
+                if '=' not in line:
+                    continue
+                key,value=line.split('=',1)
+                if key in allowed:
+                    values[key]=value
+        except Exception:
+            pass
+    env=os.environ.copy()
+    env.pop('RUNNER_TRACKING_ID',None)
+    env.update(values)
+    if not env.get('DISPLAY'):
+        sockets=sorted(
+            (Path('/tmp/.X11-unix').glob('X*') if Path('/tmp/.X11-unix').exists() else []),
+            key=lambda p:(p.name!='X10',p.name),
+        )
+        env['DISPLAY']=(':'+sockets[0].name[1:]+'.0') if sockets else ':10.0'
+    env.setdefault('XDG_RUNTIME_DIR',f'/run/user/{os.getuid()}')
+    env.setdefault('DBUS_SESSION_BUS_ADDRESS','unix:path='+env['XDG_RUNTIME_DIR']+'/bus')
+    return env
+
+def _firefox_bootstrap_urls():
+    urls=[]
+    try:
+        with connect() as c:
+            rows=c.execute(
+                """SELECT s.project_id,s.worker_slot,COALESCE(w.provider,'chatgpt') provider
+                   FROM ai_global_slots s
+                   LEFT JOIN runner_workers w
+                     ON w.project_id=s.project_id AND w.worker_slot=s.worker_slot
+                   ORDER BY s.slot"""
+            ).fetchall()
+        for row in rows:
+            worker=f"{row['project_id']}::w{int(row['worker_slot'] or 1)}"
+            provider='claude' if str(row['provider'] or '').lower()=='claude' else 'chatgpt'
+            base='https://claude.ai/new' if provider=='claude' else 'https://chatgpt.com/'
+            urls.append(base+('&' if '?' in base else '?')+'zcloud_worker='+quote(worker,safe=''))
+    except Exception:
+        logging.exception('Could not build standalone Firefox bootstrap URLs')
+    return urls
+
+def firefox_runner_status():
+    standalone=_standalone_firefox_pids()
+    try:
+        try: service_state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
+        except subprocess.CalledProcessError as e: service_state=(e.output or '').strip() or 'inactive'
         raw=user_systemctl('show',FIREFOX_RUNNER_SERVICE,'-p','MainPID','-p','ActiveEnterTimestamp','-p','NRestarts','-p','Restart')
         fields=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
-        return {'state':state,'active':state=='active','main_pid':int(fields.get('MainPID') or 0),
-                'active_since':fields.get('ActiveEnterTimestamp') or None,'restarts':int(fields.get('NRestarts') or 0),
-                'auto_restart':fields.get('Restart') or 'unknown'}
     except Exception as e:
-        return {'state':'unknown','active':False,'main_pid':0,'active_since':None,'restarts':0,'auto_restart':'unknown','error':str(e)[:200]}
+        service_state='unknown'
+        fields={}
+        service_error=str(e)[:200]
+    else:
+        service_error=None
+    service_active=service_state=='active'
+    active=service_active or bool(standalone)
+    runtime_mode='systemd' if service_active else ('standalone' if standalone else ('violentmonkey-only' if _violentmonkey_only_mode() else 'none'))
+    result={
+        'state':'active' if active else service_state,
+        'service_state':service_state,
+        'active':active,
+        'runtime_mode':runtime_mode,
+        'main_pid':(int(fields.get('MainPID') or 0) if service_active else (standalone[0] if standalone else 0)),
+        'standalone_pids':standalone[:20],
+        'active_since':fields.get('ActiveEnterTimestamp') or None,
+        'restarts':int(fields.get('NRestarts') or 0),
+        'auto_restart':('watchdog' if runtime_mode=='standalone' else (fields.get('Restart') or 'unknown')),
+    }
+    if service_error and not active:
+        result['error']=service_error
+    return result
+
+def restart_firefox_runtime():
+    """Recover either the managed systemd Firefox or the standalone VM runtime."""
+    existing=_standalone_firefox_pids()
+    current=firefox_runner_status()
+    browser_was_dead=not bool(current.get('active'))
+    recovery_guard=None
+    released=[]
+    if browser_was_dead:
+        recovery_guard=worker_memory_status()
+        safe_capacity=max(0,int(recovery_guard.get('new_worker_capacity') or 0))
+        if safe_capacity <= 0:
+            return {
+                **current,
+                'recovery_deferred':'memory-pressure',
+                'memory_guard':recovery_guard,
+                'released_slots':[],
+            }
+        released=_trim_dead_browser_allocations_for_recovery(safe_capacity)
+        _set_worker_recovery_hold()
+        _persist_global_worker_allocation(portfolio_queue_allocation())
+
+    if _violentmonkey_only_mode():
+        old_pids=existing
+        env=_firefox_session_env(old_pids[0] if old_pids else None)
+        for pid in old_pids:
+            try: os.kill(pid,signal.SIGTERM)
+            except ProcessLookupError: pass
+        deadline=time.time()+10
+        alive=list(old_pids)
+        while alive and time.time()<deadline:
+            time.sleep(0.5)
+            next_alive=[]
+            for pid in alive:
+                try: os.kill(pid,0);next_alive.append(pid)
+                except ProcessLookupError: pass
+            alive=next_alive
+        for pid in alive:
+            try: os.kill(pid,signal.SIGKILL)
+            except ProcessLookupError: pass
+        log_path=Path('/tmp/zcloud-firefox-recovery.log')
+        with log_path.open('ab',buffering=0) as log:
+            subprocess.Popen(
+                ['/usr/bin/firefox',*_firefox_bootstrap_urls()],
+                stdin=subprocess.DEVNULL,stdout=log,stderr=log,
+                env=env,start_new_session=True,close_fds=True,
+            )
+        deadline=time.time()+20
+        while time.time()<deadline:
+            current=_standalone_firefox_pids()
+            fresh=[pid for pid in current if pid not in old_pids]
+            if fresh or (not old_pids and current):
+                status=firefox_runner_status()
+                status['memory_guard']=recovery_guard or worker_memory_status()
+                status['released_slots']=released
+                return status
+            time.sleep(1)
+        status=firefox_runner_status()
+        status['recovery_error']='standalone Firefox did not become active before timeout'
+        status['memory_guard']=recovery_guard or worker_memory_status()
+        status['released_slots']=released
+        return status
+
+    for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
+        try: user_systemctl('reset-failed',dependency)
+        except Exception: pass
+        user_systemctl('start',dependency)
+    try: user_systemctl('reset-failed',FIREFOX_RUNNER_SERVICE)
+    except Exception: pass
+    user_systemctl('restart',FIREFOX_RUNNER_SERVICE)
+    deadline=time.time()+15
+    status=firefox_runner_status()
+    while not status.get('active') and time.time()<deadline:
+        time.sleep(1)
+        status=firefox_runner_status()
+    status['memory_guard']=recovery_guard or worker_memory_status()
+    status['released_slots']=released
+    return status
+
+def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
+    """Return host RAM/swap admission state for browser workers.
+
+    MemAvailable already accounts for reclaimable cache and current Firefox usage,
+    so new_worker_capacity is intentionally a *new claim* budget for this scheduler
+    pass. Existing claimed/running workers are not preempted by this guard.
+    """
+    values={}
+    try:
+        for line in Path(meminfo_path).read_text(encoding='utf-8').splitlines():
+            if ':' not in line:
+                continue
+            key,raw=line.split(':',1)
+            match=re.search(r'([0-9]+)',raw)
+            if match:
+                values[key.strip()]=int(match.group(1)) // 1024
+    except Exception as exc:
+        return {
+            'available_mb':None,'total_mb':None,'swap_total_mb':None,'swap_free_mb':None,
+            'headroom_mb':WORKER_MEMORY_HEADROOM_MB,'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,
+            'new_worker_capacity':0,'pressure':'unknown','healthy_for_new_worker':False,
+            'swap_healthy':False,'error':str(exc)[:200],
+        }
+    total=max(0,int(values.get('MemTotal') or 0))
+    available=max(0,int(values.get('MemAvailable') or values.get('MemFree') or 0))
+    swap_total=max(0,int(values.get('SwapTotal') or 0))
+    swap_free=max(0,int(values.get('SwapFree') or 0))
+    reserve=WORKER_MEMORY_HEADROOM_MB
+    # Swap is a last-resort shock absorber, not worker capacity. With no useful
+    # swap configured, preserve an extra 512 MiB of real RAM before admitting tabs.
+    swap_healthy=(swap_total >= WORKER_SWAP_MIN_TOTAL_MB and swap_free >= min(WORKER_SWAP_MIN_FREE_MB,swap_total))
+    effective_reserve=reserve + (0 if swap_healthy else 512)
+    capacity=max(0,(available-effective_reserve)//WORKER_MEMORY_PER_NEW_SLOT_MB)
+    if available < WORKER_MEMORY_CRITICAL_MB:
+        pressure='critical'
+    elif available < WORKER_MEMORY_WARN_MB:
+        pressure='warning'
+    elif capacity <= 0:
+        pressure='guarded'
+    else:
+        pressure='ok'
+    return {
+        'available_mb':available,'total_mb':total,'swap_total_mb':swap_total,'swap_free_mb':swap_free,
+        'headroom_mb':reserve,'effective_headroom_mb':effective_reserve,
+        'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,'new_worker_capacity':int(capacity),
+        'pressure':pressure,'healthy_for_new_worker':bool(capacity > 0),'swap_healthy':bool(swap_healthy),
+    }
+
+def _worker_recovery_hold_until():
+    try:
+        with connect() as c:
+            row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(WORKER_OOM_RECOVERY_HOLD_KEY,)).fetchone()
+        if not row or not row['value']:
+            return None
+        until=datetime.fromisoformat(str(row['value']).replace('Z','+00:00')).astimezone(timezone.utc)
+        return until if until > datetime.now(timezone.utc) else None
+    except Exception:
+        return None
+
+def _set_worker_recovery_hold(seconds=WORKER_OOM_RECOVERY_HOLD_SECONDS):
+    until=datetime.now(timezone.utc)+timedelta(seconds=max(60,int(seconds)))
+    try:
+        with connect() as c:
+            c.execute(
+                """INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor""",
+                (WORKER_OOM_RECOVERY_HOLD_KEY,until.isoformat(),now(),'oom-recovery'),
+            )
+    except Exception:
+        logging.exception('Could not persist worker OOM recovery hold')
+    return until
+
+def _trim_dead_browser_allocations_for_recovery(capacity):
+    """Release excess queue slots only after the browser host is already gone."""
+    cap=max(0,min(int(GLOBAL_CHATGPT_WORKER_LIMIT),int(capacity or 0)))
+    ts=now()
+    released=[]
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        rows=c.execute(
+            """SELECT queue_id,worker_slot,project_id FROM portfolio_queue
+               WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                 AND worker_slot IS NOT NULL AND worker_slot>?
+               ORDER BY worker_slot DESC""",
+            (cap,),
+        ).fetchall()
+        released=[dict(row) for row in rows]
+        if released:
+            c.execute(
+                """UPDATE portfolio_queue
+                   SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                   WHERE eligible=1 AND status IN ('claimed','running','verifying')
+                     AND worker_slot IS NOT NULL AND worker_slot>?""",
+                (ts,cap),
+            )
+        c.execute('DELETE FROM ai_global_slots WHERE slot>?',(cap,))
+    if released:
+        logging.warning(
+            'OOM recovery released %s browser slot(s) above safe capacity=%s: %s',
+            len(released),cap,','.join(str(item.get('queue_id')) for item in released),
+        )
+    return released
+
 def git(path, *args): return cmd(['git', '-c', 'safe.directory='+path, '-C', path, *args])
 DB_BUSY_TIMEOUT_SECONDS = 15
 DB_BUSY_TIMEOUT_MS = DB_BUSY_TIMEOUT_SECONDS * 1000
@@ -396,7 +687,8 @@ def dynamic_worker_settings():
         'heartbeat_interval_ms':int(DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS),
         'generation_start_timeout_ms':int(DYNAMIC_WORKER_GENERATION_TIMEOUT_MS),
         'scheduler_interval_seconds':int(AUTONOMY_TICK_SECONDS),
-        'policy':'per_worker_rate_limit_only',
+        'memory_guard':worker_memory_status(),
+        'policy':'per_worker_rate_limit_plus_memory_admission',
     }
 
 def set_dynamic_worker_settings(payload,actor='dashboard'):
@@ -2318,6 +2610,14 @@ def portfolio_queue_allocate():
     ts=ts_dt.isoformat()
     lease_until=(ts_dt+timedelta(seconds=PORTFOLIO_QUEUE_LEASE_SECONDS)).isoformat()
     selected=[]
+    memory_guard=worker_memory_status()
+    # Capacity applies only to fresh browser-worker claims in this pass. Existing
+    # claims already contribute to MemAvailable and are deliberately preserved.
+    # After an OOM recovery we briefly hold fresh allocations so Firefox can
+    # settle and MemAvailable reflects the relaunched tabs before scaling again.
+    recovery_hold_until=_worker_recovery_hold_until()
+    new_worker_capacity=0 if recovery_hold_until else max(0,int(memory_guard.get('new_worker_capacity') or 0))
+    new_workers_claimed=0
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2369,6 +2669,8 @@ def portfolio_queue_allocate():
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
+            if new_workers_claimed >= new_worker_capacity:
+                continue
             if not lane_candidates:
                 continue
 
@@ -2406,6 +2708,7 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
+            new_workers_claimed += 1
     return selected
 
 def portfolio_queue_drop(queue_id,evidence=''):
@@ -2564,6 +2867,10 @@ def portfolio_queue_allocation():
         },
         'provider_counts':_dynamic_provider_counts(),
         'dispatch_rule':'vps_queue_claim_then_execute',
+        'memory_guard':{
+            **worker_memory_status(),
+            'recovery_hold_until':(_worker_recovery_hold_until().isoformat() if _worker_recovery_hold_until() else None),
+        },
     }
 
 def reconcile_dynamic_worker_limit():
@@ -3311,16 +3618,7 @@ class Handler(BaseHTTPRequestHandler):
                 action=str(payload.get('action') or '')
                 if action=='restart_firefox':
                     try:
-                        # Recover the full user-service dependency chain. Restarting
-                        # Firefox alone can stay inactive when display/openbox failed.
-                        for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
-                            try: user_systemctl('reset-failed',dependency)
-                            except Exception: pass
-                            user_systemctl('start',dependency)
-                        try: user_systemctl('reset-failed',FIREFOX_RUNNER_SERVICE)
-                        except Exception: pass
-                        user_systemctl('restart',FIREFOX_RUNNER_SERVICE)
-                        status=firefox_runner_status()
+                        status=restart_firefox_runtime()
                         return self.reply({'ok':bool(status.get('active')),'status':status},200 if status.get('active') else 503)
                     except Exception as e:
                         logging.exception('Firefox runner restart failed')

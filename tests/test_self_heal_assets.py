@@ -50,6 +50,14 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn('user_systemctl enable "${service}"', text)
         self.assertIn('runuser -u "${RUNTIME_USER}"', text)
         self.assertIn('RUNTIME_USER="${ZCLOUD_RUNTIME_USER:-ubuntu}"', text)
+        self.assertIn("legacy_violentmonkey_only()", text)
+        self.assertIn("ExecCondition=/bin/false", text)
+        self.assertIn('if [[ "${service}" == "chatgpt-firefox.service" ]] && legacy_violentmonkey_only; then', text)
+        self.assertIn("heal_worker_progress", text)
+        self.assertLess(
+            text.index('if [[ "${service}" == "chatgpt-firefox.service" ]] && legacy_violentmonkey_only; then'),
+            text.index("heal_worker_progress()"),
+        )
 
 if __name__ == "__main__":
     unittest.main()

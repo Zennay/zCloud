@@ -75,9 +75,24 @@ user_systemctl() {
   fi
 }
 
+legacy_violentmonkey_only() {
+  local runtime_home
+  runtime_home="$(getent passwd "${RUNTIME_USER}" 2>/dev/null | cut -d: -f6 || true)"
+  [[ -n "${runtime_home}" ]] || runtime_home="/home/${RUNTIME_USER}"
+  local marker="${runtime_home}/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
+  [[ -f "${marker}" ]] &&
+    grep -qi 'violentmonkey only' "${marker}" &&
+    grep -q 'ExecCondition=/bin/false' "${marker}"
+}
+
 heal_user_unit() {
   local service="$1"
   runtime_disabled "${service}" && return 0
+  # In userscript-only mode the systemd Firefox unit is intentionally disabled.
+  # The worker-progress watchdog owns liveness/restart of the standalone browser.
+  if [[ "${service}" == "chatgpt-firefox.service" ]] && legacy_violentmonkey_only; then
+    return 0
+  fi
   user_systemctl cat "${service}" >/dev/null 2>&1 || return 0
 
   if ! user_systemctl is-enabled --quiet "${service}" 2>/dev/null; then

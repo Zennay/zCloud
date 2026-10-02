@@ -29,6 +29,14 @@ class RunnerSmokeTests(unittest.TestCase):
         # These tests intentionally simulate the legacy multi-worker pool; production remains one slot.
         self.original_global_limit = server.GLOBAL_CHATGPT_WORKER_LIMIT
         self.original_max_workers = server.MAX_CHATGPT_WORKERS
+        self.original_worker_memory_status = server.worker_memory_status
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 16384, "total_mb": 32768,
+            "swap_total_mb": 4096, "swap_free_mb": 4096,
+            "headroom_mb": 2048, "effective_headroom_mb": 2048,
+            "per_new_slot_mb": 1536, "new_worker_capacity": 8,
+            "pressure": "ok", "healthy_for_new_worker": True, "swap_healthy": True,
+        }
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
         server.MAX_CHATGPT_WORKERS = 2
         self.original_cache = server.CACHE
@@ -49,6 +57,7 @@ class RunnerSmokeTests(unittest.TestCase):
         self.thread.join(timeout=2)
         server.GLOBAL_CHATGPT_WORKER_LIMIT = self.original_global_limit
         server.MAX_CHATGPT_WORKERS = self.original_max_workers
+        server.worker_memory_status = self.original_worker_memory_status
         server.DB = self.original_db
         server.CACHE = self.original_cache
         server.LAYOUT_FILE = self.original_layout_file
