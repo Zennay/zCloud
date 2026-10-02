@@ -1,0 +1,18 @@
+{
+  "queue": {
+    "eligible": true,
+    "priority": "P0",
+    "project_id": "zssh",
+    "queue_id": "zssh-ftmo-pr444-exact-head-proof-20261002-worker5",
+    "status": "queued",
+    "updated_at": "2026-10-02T12:28:13.736892+00:00",
+    "worker_slot": null
+  },
+  "receipt_base_sha": "2471206a711b2ee01e7c90868f7f70663cbf6d79",
+  "schema_version": 1,
+  "scope": "ftmo-pr444-zssh-exact-head-proof-queue",
+  "target_exact_head_sha": "a156246682bd836c071b461f66009e7d620c00b4",
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "37006060661",
+  "workflow_source_sha": "1dbf54081dab7bafc254b4f6abdd68a810b0c257"
+}
