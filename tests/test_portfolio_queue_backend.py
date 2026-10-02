@@ -97,7 +97,21 @@ class VpsPortfolioQueueTests(unittest.TestCase):
 
         selected = server.portfolio_queue_allocate()
 
-        self.assertEqual(5, len(selected))
+        self.assertEqual(
+            5,
+            len(selected),
+            {
+                "selected": [(item["project_id"], item["title"]) for item in selected],
+                "items": [
+                    (item["project_id"], item["title"], item["status"], item["worker_slot"])
+                    for item in server.portfolio_queue_items(True)
+                ],
+                "lanes": [
+                    (lane["project_id"], lane["lane_id"], lane["queue_id"], lane["status"])
+                    for lane in server.portfolio_execution_lanes()
+                ],
+            },
+        )
         projects = [item["project_id"] for item in selected]
         self.assertEqual(3, projects.count("ftmo"))
         self.assertIn("zssh", projects)
