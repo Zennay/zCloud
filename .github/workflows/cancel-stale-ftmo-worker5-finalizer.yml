@@ -1,0 +1,36 @@
+name: Cancel stale FTMO Worker5 queue finalizer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cancel-stale-ftmo-worker5-finalizer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Cancel only stale queue finalizer
+        shell: bash
+        env:
+          TARGET_RUN: "36995584467"
+          TARGET_SHA: "14c54e9bcc678bbb5ee07baddcb18c86c828e2e7"
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          raw="$(gh api "repos/Zennay/Ftmo/actions/runs/$TARGET_RUN")"
+          status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$raw")"
+          sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$raw")"
+          name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' <<<"$raw")"
+          test "$sha" = "$TARGET_SHA"
+          test "$name" = "Worker5 SQLite queue finalizer"
+          if [ "$status" = "queued" ] || [ "$status" = "in_progress" ]; then
+            gh api --method POST "repos/Zennay/Ftmo/actions/runs/$TARGET_RUN/cancel"
+            echo "STALE_FINALIZER_CANCEL_REQUESTED=1"
+          else
+            echo "STALE_FINALIZER_ALREADY_TERMINAL=$status"
+          fi
