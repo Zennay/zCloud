@@ -1,4 +1,4 @@
-name: Worker FTMO marathon observer recovery
+name: Worker FTMO queue source-of-truth proof
 
 on:
   push:
@@ -11,52 +11,72 @@ permissions:
   contents: read
 
 concurrency:
-  group: worker-ftmo-marathon-observer-recovery
+  group: worker-ftmo-queue-proof
   cancel-in-progress: true
 
 jobs:
-  recover:
+  prove:
     runs-on: self-hosted
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
-      - name: Classify FTMO crash loop without exposing errors
+      - name: Read FTMO SQLite queue source of truth
         shell: bash
         run: |
           set -euo pipefail
-          ROOT=/opt/ftmo-autonomous
-          SERVICE=ftmo-autonomous-marathon.service
-          PY="$ROOT/.venv/bin/python"
-          PV="$ROOT/src/prop_trading_ai/research/provider_validation.py"
-          EXPECTED_PV_BLOB=91c2784fda0c316516e018c6e65998db9104eda5
-
-          systemctl show "$SERVICE" -p ActiveState -p SubState -p NRestarts -p ExecMainStatus --no-pager
-          if test -f "$PV" && test ! -L "$PV"; then
-            actual="$(git hash-object "$PV")"
-            echo "provider_validation_exists=yes"
-            echo "provider_validation_matches_deployed_revision=$([[ "$actual" == "$EXPECTED_PV_BLOB" ]] && echo yes || echo no)"
-            echo "provider_validation_blob=$actual"
-          else
-            echo "provider_validation_exists=no"
-            echo "provider_validation_matches_deployed_revision=no"
+          TARGET=ftmo-7ee077e0b88278da
+          DB=""
+          for candidate in /opt/zcloud/history.db /opt/zCloud/history.db "$HOME/zCloud/history.db"; do
+            if test -r "$candidate"; then
+              DB="$candidate"
+              break
+            fi
+          done
+          if test -z "$DB"; then
+            DB="$(find /opt "$HOME" -maxdepth 4 -type f -name history.db -readable 2>/dev/null | head -n 1 || true)"
           fi
+          test -n "$DB"
+          echo "queue_db_found=yes"
 
-          "$PY" - <<'PY'
+          python3 - "$DB" "$TARGET" <<'PY'
           import json
-          from pathlib import Path
+          import sqlite3
+          import sys
 
-          root = Path("/opt/ftmo-autonomous")
-          status = json.loads((root / ".scratch/autonomy/status.json").read_text(encoding="utf-8"))
-          error = status.get("error")
-          text = error if isinstance(error, str) else ""
-          classes = {
-              "mentions_provider_validation": "provider_validation" in text,
-              "mentions_missing_file": any(x in text for x in ("No such file", "FileNotFoundError")),
-              "mentions_import_error": any(x in text for x in ("ImportError", "ModuleNotFoundError")),
-              "mentions_provider_unavailable": any(x in text.lower() for x in ("provider unavailable", "dukascop", "fxcm")),
-              "mentions_secondary_validation": "secondary-feed validation did not pass" in text,
-              "mentions_command_failed": "command failed" in text,
-              "mentions_integrity": any(x in text.lower() for x in ("hash", "canonical", "integrity", "validation")),
-          }
-          print("FTMO_ERROR_CLASSES", json.dumps(classes, sort_keys=True))
-          print("FTMO_ERROR_LENGTH", len(text))
+          db, target = sys.argv[1:3]
+          con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+          con.row_factory = sqlite3.Row
+
+          def safe(row):
+              if row is None:
+                  return None
+              keys = set(row.keys())
+              keep = (
+                  "queue_id", "project_id", "priority", "status", "eligible",
+                  "worker_slot", "created_at", "updated_at", "claimed_at",
+                  "claim_expires", "source",
+              )
+              return {key: row[key] for key in keep if key in keys}
+
+          row = con.execute(
+              "SELECT * FROM portfolio_queue WHERE queue_id=?",
+              (target,),
+          ).fetchone()
+          print("FTMO_QUEUE_TARGET", json.dumps(safe(row), sort_keys=True))
+
+          rows = con.execute(
+              """SELECT * FROM portfolio_queue
+                 WHERE project_id='ftmo'
+                 ORDER BY
+                   CASE status
+                     WHEN 'running' THEN 0
+                     WHEN 'verifying' THEN 1
+                     WHEN 'claimed' THEN 2
+                     WHEN 'queued' THEN 3
+                     ELSE 4
+                   END,
+                   priority ASC,
+                   updated_at DESC
+                 LIMIT 12"""
+          ).fetchall()
+          print("FTMO_QUEUE_HEAD", json.dumps([safe(item) for item in rows], sort_keys=True))
           PY
