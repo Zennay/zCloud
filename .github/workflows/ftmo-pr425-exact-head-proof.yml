@@ -1,0 +1,87 @@
+name: FTMO PR425 exact-head Jetta framing proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr425-exact-head-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr425-exact-head-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: e9d50b4e5c542af3b740008e3d1a94f52630b5cd
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
+      FTMO_ALLOW_PAID_AWS: ""
+    steps:
+      - name: Fetch exact FTMO PR425 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr425-proof"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR425_EXACT_SHA=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr425-proof"
+          venv="$RUNNER_TEMP/ftmo-pr425-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile Jetta provider boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr425-proof"
+          venv="$RUNNER_TEMP/ftmo-pr425-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q             src/prop_trading_ai/data/market/providers/dukascopy_jetta.py
+          echo "FTMO_PR425_COMPILE_GREEN=1"
+
+      - name: Prove Jetta transport and decoder integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr425-proof"
+          venv="$RUNNER_TEMP/ftmo-pr425-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q tests/test_dukascopy_jetta.py
+          echo "FTMO_PR425_JETTA_GREEN=1"
+
+      - name: Prove adjacent provider retry and zero-cost boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr425-proof"
+          venv="$RUNNER_TEMP/ftmo-pr425-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q             tests/test_autonomous_provider_retry.py             tests/test_zero_cost_workflow_boundary.py
+          echo "FTMO_PR425_ADJACENT_GREEN=1"
+
+      - name: Collect full suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr425-proof"
+          venv="$RUNNER_TEMP/ftmo-pr425-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest --collect-only -q >/tmp/ftmo-pr425-collect.txt
+          tail -n 2 /tmp/ftmo-pr425-collect.txt
+          echo "FTMO_PR425_COLLECTION_GREEN=1"
