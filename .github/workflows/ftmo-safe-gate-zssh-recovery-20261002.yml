@@ -1,0 +1,136 @@
+name: Enqueue FTMO safe-gate recovery on zSSH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ftmo-safe-gate-zssh-recovery-20261002.yml
+
+permissions:
+  contents: write
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Enqueue exact FTMO persistent-runtime recovery proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-safe-gate-3b512f56"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Recover and prove FTMO persistent safe progression",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba reconcile /opt/ftmo-autonomous to exact Ftmo main "
+                  "3b512f5631984a46072495727214bb7bf03a02ba if the normal FTMO self-hosted "
+                  "deploy run has not already done so. Do not invoke v1_autonomous_tick "
+                  "manually and do not act as the normal generation loop. Preserve mutable "
+                  "research_machine generation state, provider provenance, preregistration, "
+                  "walk-forward and final-holdout separation. Ensure ftmo-autonomous-marathon.service "
+                  "is active using the deployed runtime and prove a fresh autonomous research_cycle_ok "
+                  "heartbeat whose runtime_revision equals 3b512f5631984a46072495727214bb7bf03a02ba, "
+                  "with controller compute healthy, generation loop enabled, live_trading_allowed=false, "
+                  "broker_order_submission_allowed=false, and no WF/final-holdout access unless its "
+                  "corresponding deterministic gate is open. If the FTMO Actions lane is unhealthy, "
+                  "repair only the concrete runner/service cause needed to restore it. Record exact "
+                  "service/runtime/workflow evidence and the resulting autonomous controller action."
+              ),
+              "source_url": "https://github.com/Zennay/Ftmo/pull/386",
+          }
+          req = urllib.request.Request(
+              base + "/api/portfolio-queue",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req, timeout=10) as response:
+              body = json.load(response)
+              if response.status != 200:
+                  raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
+          print("FTMO_SAFE_GATE_ZSSH_ENQUEUE", json.dumps(body, sort_keys=True))
+          PY
+
+          git fetch origin main
+          git reset --hard origin/main
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import urllib.request
+          from pathlib import Path
+
+          queue_id = "zssh-ftmo-safe-gate-3b512f56"
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10) as response:
+              live = json.load(response)
+
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get("queue_id") == queue_id:
+                      return value
+                  for child in value.values():
+                      found = find(child)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found:
+                          return found
+              return None
+
+          item = find(live)
+          if not item:
+              raise SystemExit(f"{queue_id} missing from live SQLite queue")
+          if str(item.get("priority") or "").upper() != "P0":
+              raise SystemExit(f"{queue_id} priority mismatch")
+          if str(item.get("project_id") or "").lower() != "zssh":
+              raise SystemExit(f"{queue_id} project mismatch")
+
+          receipt = {
+              "schema_version": 1,
+              "scope": "ftmo-safe-gate-zssh-recovery-queue",
+              "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+              "workflow_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "workflow_source_sha": os.environ.get("GITHUB_SHA"),
+              "receipt_base_sha": subprocess.check_output(["git","rev-parse","HEAD"], text=True).strip(),
+              "ftmo_required_main_sha": "3b512f5631984a46072495727214bb7bf03a02ba",
+              "queue": {
+                  "queue_id": item.get("queue_id"),
+                  "project_id": item.get("project_id"),
+                  "priority": item.get("priority"),
+                  "status": item.get("status"),
+                  "eligible": item.get("eligible"),
+                  "worker_slot": item.get("worker_slot"),
+                  "updated_at": item.get("updated_at"),
+              },
+          }
+          print("FTMO_SAFE_GATE_ZSSH_QUEUE_GREEN", json.dumps(receipt, sort_keys=True))
+          target = Path("artifacts/ops/ftmo-safe-gate-zssh-recovery-queue.json")
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add artifacts/ops/ftmo-safe-gate-zssh-recovery-queue.json
+          if git diff --cached --quiet; then
+            echo "Queue receipt unchanged"
+          else
+            git commit -m "Record FTMO safe-gate zSSH recovery queue"
+            git push origin HEAD:main
+          fi
