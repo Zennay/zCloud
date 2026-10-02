@@ -84,6 +84,104 @@ jobs:
           python3 scripts/zcloud_vps_deploylane_coordination.py release \
             | tee -a "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
 
+      - name: Finalize FTMO Worker5 queue item after current-main deploy
+        if: github.event_name == 'pull_request' && github.head_ref == 'worker/ftmo-w5-finalize-9c518-20261002'
+        env:
+          QUEUE_ID: ftmo-9c518045b0d66472
+          FTMO_DEPLOY_RUN: "37038143107"
+          FTMO_DEPLOY_SHA: 325cc2524596a6c936ee24c5f384a23a2965d721
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          gate_green=0
+          for _ in $(seq 1 120); do
+            payload="$(gh api "repos/Zennay/Ftmo/actions/runs/$FTMO_DEPLOY_RUN")"
+            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$payload")"
+            conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion"))' <<<"$payload")"
+            sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$payload")"
+            echo "FTMO_W5_DEPLOY_GATE run=$FTMO_DEPLOY_RUN status=$status conclusion=$conclusion sha=$sha"
+            test "$sha" = "$FTMO_DEPLOY_SHA"
+            if [[ "$status" == "completed" ]]; then
+              test "$conclusion" = "success"
+              gate_green=1
+              break
+            fi
+            sleep 5
+          done
+          test "$gate_green" = "1"
+
+          python3 - <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+
+          queue_id = os.environ["QUEUE_ID"]
+          root = Path("/home/ubuntu/zennay-cloud")
+          spec = importlib.util.spec_from_file_location("zcloud_live_server", root / "server.py")
+          if spec is None or spec.loader is None:
+              raise SystemExit("cannot load live zCloud server")
+          server = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(server)
+          server.DB = root / "history.db"
+
+          with server.connect() as conn:
+              row = conn.execute(
+                  "SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+          if row is None:
+              raise SystemExit("FTMO Worker5 queue item missing")
+          before = dict(row)
+          print("FTMO_W5_QUEUE_BEFORE=" + json.dumps(before, sort_keys=True, default=str))
+          if before["project_id"] != "ftmo":
+              raise SystemExit("queue project mismatch")
+
+          evidence = (
+              "Worker5 substantial FTMO provider-foundation package complete: "
+              "PR451 merge 0e85da2cf53f846a6f21f13f8e5eadbedc6f825f with exact-head provider gate run 37035342356 SUCCESS; "
+              "PR453 merge 756e00da4712af0612ac7a4fe2640c3fbd0af058 with exact-head self-hosted deploy-lockstep proof run 37036370074 SUCCESS; "
+              "current-main autonomous VPS deploy run 37038143107 SUCCESS at 325cc2524596a6c936ee24c5f384a23a2965d721; "
+              "runner recovery proof 37037498698 SUCCESS without interrupting active Runner.Worker. "
+              "Generation boundaries remained sealed at provider_foundation; no development/walk-forward/final-holdout/live/paid-cloud boundary was opened."
+          )
+
+          if before["status"] == "done" and int(before["eligible"] or 0) == 0 and before["worker_slot"] is None:
+              print("FTMO_W5_QUEUE_ALREADY_DONE=1")
+          elif before["status"] in {"claimed","running","verifying","in_progress"} and before["worker_slot"] is not None:
+              result = server.portfolio_queue_finish(
+                  int(before["worker_slot"]), queue_id, "DONE", evidence
+              )
+              print("FTMO_W5_QUEUE_FINISH=" + json.dumps(result, sort_keys=True, default=str))
+              if not result.get("updated"):
+                  raise SystemExit("portfolio_queue_finish refused active FTMO Worker5 assignment")
+          else:
+              raise SystemExit(
+                  f"refusing nonstandard queue finalization: status={before['status']} "
+                  f"eligible={before['eligible']} worker_slot={before['worker_slot']}"
+              )
+
+          with server.connect() as conn:
+              row = conn.execute(
+                  "SELECT queue_id,project_id,status,eligible,worker_slot,evidence,updated_at "
+                  "FROM portfolio_queue WHERE queue_id=?",
+                  (queue_id,),
+              ).fetchone()
+          after = dict(row) if row else None
+          print("FTMO_W5_QUEUE_AFTER=" + json.dumps(after, sort_keys=True, default=str))
+          if (
+              not after
+              or after["status"] != "done"
+              or int(after["eligible"] or 0) != 0
+              or after["worker_slot"] is not None
+          ):
+              raise SystemExit("FTMO Worker5 queue final state is not done/ineligible/unclaimed")
+          print("FTMO_W5_SQLITE_DONE_GREEN=1")
+          PY
+
       - name: Upload sanitized deploylane evidence
         if: always()
         uses: actions/upload-artifact@v4
