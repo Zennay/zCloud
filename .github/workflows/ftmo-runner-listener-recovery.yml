@@ -200,6 +200,20 @@ jobs:
                "grep -Eai 'out of memory|oom|killed process|memory cgroup' | tail -40"],
               text=True, capture_output=True
           ).stdout.strip().splitlines()
+          workers = subprocess.run(
+              ["bash", "-lc",
+               "ps -o pid=,ppid=,lstart=,etime=,cmd= -u ftmo-runner | "
+               "grep -E 'Runner\\.(Worker|Listener)|runsvc\\.sh' || true"],
+              text=True, capture_output=True
+          ).stdout.strip().splitlines()
+          diag = subprocess.run(
+              ["bash", "-lc",
+               "latest=$(ls -1t /opt/ftmo-runner/_diag/Runner_*.log 2>/dev/null | head -1); "
+               "if [ -n \"$latest\" ]; then echo DIAG_FILE=$latest; "
+               "grep -Eai 'running job|job request|listening for jobs|assigned|shutdown|signal|session|message queue' "
+               "\"$latest\" | tail -160; fi"],
+              text=True, capture_output=True
+          ).stdout.strip().splitlines()
           receipt = {
               "schema_version": 1,
               "queue_id": "zssh-ftmo-verify72-runner-recovery-20261002",
@@ -219,6 +233,8 @@ jobs:
                    "-p MainPID --value); tr '\\0' ' ' < /proc/$pid/cmdline"],
                   text=True
               ).strip(),
+              "runner_processes": workers,
+              "runner_diag_tail": diag,
               "fresh_oom_evidence": oom,
           }
           target = Path("artifacts/ops/zssh-ftmo-verify72-runner-recovery.json")
