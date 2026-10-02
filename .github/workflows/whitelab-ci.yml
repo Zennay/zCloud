@@ -1,0 +1,59 @@
+name: WhiteLab CI
+
+on:
+  pull_request:
+    paths:
+      - "whitelab/**"
+      - ".github/workflows/whitelab-ci.yml"
+      - "projects.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: whitelab-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: WhiteLab plan-only safety tests
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: whitelab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python version
+        run: python3 --version
+
+      - name: Compile
+        run: python3 -m compileall -q src tests
+
+      - name: Unit tests
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Fail-closed public target canary
+        env:
+          PYTHONPATH: src
+        run: |
+          set +e
+          python3 -m whitelab.cli scope-check 203.0.113.10 > /tmp/whitelab-scope.json
+          code=$?
+          set -e
+          cat /tmp/whitelab-scope.json
+          test "$code" -eq 2
+          grep -q '"allowed": false' /tmp/whitelab-scope.json
+
+      - name: Local lab plan canary
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 -m whitelab.cli plan 127.0.0.1 > /tmp/whitelab-plan.json
+          cat /tmp/whitelab-plan.json
+          grep -q '"execution_enabled": false' /tmp/whitelab-plan.json
