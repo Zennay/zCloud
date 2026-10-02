@@ -1,0 +1,48 @@
+name: Prove FTMO dedicated runner self-health
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-runner-self-health-proof-20261002.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-runner-self-health-proof-20261002
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 3
+    steps:
+      - name: Prove dedicated listener is healthy and preserve it
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
+          state="$(systemctl is-active "$SERVICE" || true)"
+          pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+          result="$(systemctl show "$SERVICE" -p Result --value || true)"
+          restarts="$(systemctl show "$SERVICE" -p NRestarts --value || true)"
+          test "$state" = "active"
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+          echo "FTMO_RUNNER_SELF_HEALTH service=$SERVICE state=$state pid=$pid result=$result restarts=$restarts action=preserve-active-runner runner=$RUNNER_NAME"
+          systemctl show "$SERVICE" -p ActiveState -p SubState -p MainPID -p NRestarts -p Result --no-pager
+          echo "FTMO_RUNNER_PROCESSES_BEGIN"
+          ps -o pid=,ppid=,lstart=,etime=,cmd= -u ftmo-runner | grep -E "Runner\\.(Worker|Listener)|runsvc\\.sh" || true
+          echo "FTMO_RUNNER_PROCESSES_END"
+          echo "FTMO_KERNEL_OOM_FRESH_BEGIN"
+          (sudo -n journalctl -k --since "-60 min" --no-pager 2>/dev/null || journalctl -k --since "-60 min" --no-pager 2>/dev/null || true) | grep -Eai "out of memory|oom|killed process|memory cgroup" | tail -120 || true
+          echo "FTMO_KERNEL_OOM_FRESH_END"
+          echo "FTMO_RUNNER_DIAG_FRESH_BEGIN"
+          latest="$(ls -1t /opt/ftmo-runner/_diag/Runner_*.log 2>/dev/null | head -1 || true)"
+          if [ -n "$latest" ]; then
+            echo "DIAG_FILE=$latest"
+            grep -Eai "running job|job request|listening for jobs|assigned|shutdown|signal|session|message queue" "$latest" | tail -160 || true
+          fi
+          echo "FTMO_RUNNER_DIAG_FRESH_END"
