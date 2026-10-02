@@ -1,0 +1,173 @@
+name: Finalize stale FTMO PR430/432 zSSH queue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-ftmo-pr430-432-queue-finalize-20261002.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - name: Verify exact stale/protected runs and finalize SQLite queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, subprocess, time, urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-cancel-stale-pr430-432-ci-20261002"
+          stale_expected = {
+              37000234497: "521a34d413de96a57a4785601598e02cc591355a",
+              37000234650: "521a34d413de96a57a4785601598e02cc591355a",
+              37000234499: "521a34d413de96a57a4785601598e02cc591355a",
+              37000325165: "f0a372ee08a8e7e6c3af2467604ac3e21495a9d6",
+              37000325166: "f0a372ee08a8e7e6c3af2467604ac3e21495a9d6",
+              37000325149: "f0a372ee08a8e7e6c3af2467604ac3e21495a9d6",
+              37000325172: "f0a372ee08a8e7e6c3af2467604ac3e21495a9d6",
+              37000325179: "f0a372ee08a8e7e6c3af2467604ac3e21495a9d6",
+          }
+          protected_ids = [37000518099,37000518102,37000518123,37000518148,37000518171]
+
+          def gh_run(run_id):
+              raw = subprocess.check_output(
+                  ["gh","api",f"repos/Zennay/Ftmo/actions/runs/{run_id}"],
+                  text=True,
+              )
+              return json.loads(raw)
+
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=10) as r:
+                  return json.load(r)
+
+          def post(path, payload):
+              req = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode(),
+                  method="POST",
+                  headers={"Content-Type":"application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=10) as r:
+                  return json.load(r)
+
+          stale = {}
+          cancelled_now = []
+          for run_id, expected_sha in stale_expected.items():
+              data = gh_run(run_id)
+              if data.get("head_sha") != expected_sha:
+                  raise SystemExit(f"STALE_SHA_MISMATCH run={run_id} got={data.get('head_sha')}")
+              status = str(data.get("status") or "")
+              conclusion = data.get("conclusion")
+              print("STALE_BEFORE", json.dumps({
+                  "run_id":run_id,"status":status,"conclusion":conclusion,"head_sha":data.get("head_sha")
+              }, sort_keys=True))
+              if status in {"queued","pending","in_progress"}:
+                  subprocess.check_call(
+                      ["gh","api","--method","POST",f"repos/Zennay/Ftmo/actions/runs/{run_id}/cancel"],
+                      stdout=subprocess.DEVNULL,
+                  )
+                  cancelled_now.append(run_id)
+              stale[run_id] = {"status":status,"conclusion":conclusion,"head_sha":data.get("head_sha")}
+
+          if cancelled_now:
+              deadline = time.time() + 90
+              pending = set(cancelled_now)
+              while pending and time.time() < deadline:
+                  for run_id in list(pending):
+                      data = gh_run(run_id)
+                      if str(data.get("status") or "") == "completed":
+                          pending.remove(run_id)
+                          stale[run_id] = {
+                              "status":data.get("status"),
+                              "conclusion":data.get("conclusion"),
+                              "head_sha":data.get("head_sha"),
+                          }
+                  if pending:
+                      time.sleep(3)
+              if pending:
+                  raise SystemExit("STALE_CANCEL_TIMEOUT " + ",".join(map(str,sorted(pending))))
+
+          # Re-read every permitted target and require terminal state.
+          for run_id, expected_sha in stale_expected.items():
+              data = gh_run(run_id)
+              if data.get("head_sha") != expected_sha:
+                  raise SystemExit(f"STALE_SHA_CHANGED run={run_id}")
+              if str(data.get("status") or "") != "completed":
+                  raise SystemExit(f"STALE_NOT_TERMINAL run={run_id} status={data.get('status')}")
+              stale[run_id] = {
+                  "status":data.get("status"),
+                  "conclusion":data.get("conclusion"),
+                  "head_sha":data.get("head_sha"),
+              }
+              print("STALE_AFTER", json.dumps({"run_id":run_id, **stale[run_id]}, sort_keys=True))
+
+          protected = {}
+          for run_id in protected_ids:
+              data = gh_run(run_id)
+              protected[run_id] = {
+                  "status":data.get("status"),
+                  "conclusion":data.get("conclusion"),
+                  "head_sha":data.get("head_sha"),
+              }
+              print("PROTECTED", json.dumps({"run_id":run_id, **protected[run_id]}, sort_keys=True))
+
+          live = get("/api/portfolio-queue?all=1")
+          item = next((x for x in live.get("items",[]) if x.get("queue_id") == queue_id), None)
+          if not item:
+              raise SystemExit("QUEUE_MISSING")
+          print("QUEUE_BEFORE", json.dumps({
+              k:item.get(k) for k in ("queue_id","project_id","priority","status","eligible","worker_slot","attempts","updated_at")
+          }, sort_keys=True))
+          if str(item.get("project_id") or "").lower() != "zssh":
+              raise SystemExit("QUEUE_PROJECT_MISMATCH")
+
+          evidence = (
+              "Exact stale-run gate verified on vps-bb300bba; "
+              f"cancelled_now={cancelled_now}; "
+              "all 8 permitted targets terminal; protected IDs read-only verified; "
+              "no FTMO files/research/runtime/live-trading state modified."
+          )
+
+          status = str(item.get("status") or "").lower()
+          if status == "done" and not bool(item.get("eligible")) and item.get("worker_slot") is None:
+              print("QUEUE_ALREADY_DONE=1")
+          elif status in {"claimed","running","verifying"} and item.get("worker_slot") is not None:
+              result = post("/api/portfolio-queue", {
+                  "action":"result",
+                  "worker_slot":int(item["worker_slot"]),
+                  "queue_id":queue_id,
+                  "result":"DONE",
+                  "evidence":evidence,
+              })
+              print("QUEUE_DONE_WRITE", json.dumps(result, sort_keys=True))
+              if not result.get("ok"):
+                  raise SystemExit("QUEUE_DONE_WRITE_REJECTED")
+          else:
+              raise SystemExit(
+                  f"REFUSING_QUEUE_MUTATION status={item.get('status')} eligible={item.get('eligible')} worker_slot={item.get('worker_slot')}"
+              )
+
+          verify = get("/api/portfolio-queue?all=1")
+          final = next((x for x in verify.get("items",[]) if x.get("queue_id") == queue_id), None)
+          print("QUEUE_AFTER", json.dumps(final, sort_keys=True))
+          if (
+              not final
+              or str(final.get("status") or "").lower() != "done"
+              or bool(final.get("eligible"))
+              or final.get("worker_slot") is not None
+          ):
+              raise SystemExit("QUEUE_DONE_NOT_PERSISTED")
+
+          print("ZCLOUD_SQLITE_QUEUE_DONE_GREEN=1")
+          print("CANCELLED_NOW=" + json.dumps(cancelled_now))
+          print("STALE_FINAL=" + json.dumps(stale, sort_keys=True))
+          print("PROTECTED_FINAL=" + json.dumps(protected, sort_keys=True))
+          PY
