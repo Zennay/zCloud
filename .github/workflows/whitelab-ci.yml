@@ -43,7 +43,7 @@ jobs:
           PYTHONPATH: src
         run: |
           set +e
-          python3 -m whitelab.cli scope-check 203.0.113.10 > /tmp/whitelab-scope.json
+          python3 -m whitelab.cli scope-check 8.8.8.8 > /tmp/whitelab-scope.json
           code=$?
           set -e
           cat /tmp/whitelab-scope.json
