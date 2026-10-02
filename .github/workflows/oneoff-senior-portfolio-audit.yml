@@ -1,0 +1,43 @@
+name: One-off Senior Team OS portfolio audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/oneoff-senior-portfolio-audit.yml"
+
+jobs:
+  senior-portfolio-audit:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Verify live zCloud audit route
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
+          test -f /home/ubuntu/zennay-cloud/history.db
+          echo "runner=$(hostname)"
+          echo "audit_route=Senior Team OS / Portfolio Bird's-eye Review"
+
+      - name: Trigger bounded senior review now
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ZCLOUD_ROOT=/home/ubuntu/zennay-cloud
+          export ZCLOUD_DB=/home/ubuntu/zennay-cloud/history.db
+          export ZCLOUD_BIRDSEYE_WINDOW_HOURS=12
+          export ZCLOUD_BIRDSEYE_MIN_INTERVAL_HOURS=0
+          export ZCLOUD_BIRDSEYE_WAIT_TIMEOUT=120
+          /home/ubuntu/zennay-cloud/scripts/birds_eye_review.sh
+
+      - name: Prove reviewer dispatch state
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB=/home/ubuntu/zennay-cloud/history.db
+          echo "== latest bounded review =="
+          sqlite3 -header -column "$DB"             "SELECT ts,status,projects FROM daily_review_runs ORDER BY ts DESC LIMIT 1;"
+          echo "== reviewer commands =="
+          sqlite3 -header -column "$DB"             "SELECT id,action,status,created_at,updated_at,substr(COALESCE(result,''),1,180) AS result FROM runner_commands WHERE project_id='portfolio-review' ORDER BY id DESC LIMIT 8;"
+          echo "== reviewer events =="
+          sqlite3 -header -column "$DB"             "SELECT id,ts,event,substr(COALESCE(reason,''),1,180) AS reason,substr(COALESCE(error,''),1,180) AS error FROM runner_events WHERE project_id='portfolio-review' ORDER BY id DESC LIMIT 20;"
