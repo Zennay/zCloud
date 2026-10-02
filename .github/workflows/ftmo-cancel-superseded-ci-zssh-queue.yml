@@ -1,0 +1,90 @@
+name: Enqueue superseded FTMO CI cancellation on zSSH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ftmo-cancel-superseded-ci-zssh-queue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Enqueue exact superseded FTMO CI cancellations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-cancel-superseded-ci-v2-20261002"
+          stale = [
+              36941119482,  # PR #380 closed/superseded
+              36941462749,  # PR #383 closed/superseded
+              36945491297,  # PR #387 closed/superseded
+              36946253651,  # PR #388 closed/superseded
+              36947322610,  # PR #389 closed/superseded
+              36947457589,  # PR #390 closed/superseded
+          ]
+          protected = 36947540556
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Cancel superseded FTMO CI backlog",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba cancel only GitHub Actions runs "
+                  + ", ".join(str(item) for item in stale)
+                  + " in Zennay/Ftmo, and only while each run is still queued, pending, or in_progress. "
+                  "These exact runs belong to closed/superseded PRs #380, #383, #387, #388, #389, and #390. "
+                  f"Never cancel protected current exact-head PR386 run {protected}, any run newer than it, "
+                  "or any run whose identity/status no longer matches this instruction. Use existing authorized "
+                  "GitHub credentials available to the zSSH lane; never print credentials. Verify each requested "
+                  "run is completed/cancelled or already terminal, then report protected run status. Do not modify "
+                  "repository files, provider evidence, research artifacts, preregistration, development, "
+                  "walk-forward, final holdout, broker, or live-trading state."
+              ),
+              "source_url": "https://github.com/Zennay/Ftmo/pull/386",
+          }
+
+          def post(path, body):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  result = json.load(response)
+                  if response.status >= 300:
+                      raise RuntimeError(f"{path} failed: HTTP {response.status}")
+                  return result
+
+          queued = post("/api/portfolio-queue", payload)
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("FTMO_SUPERSEDED_CI_CANCEL_QUEUE", json.dumps({
+              "queue_id": queue_id,
+              "backend": queued.get("backend"),
+              "queue_status": (queued.get("item") or {}).get("status"),
+              "worker_slot": (queued.get("item") or {}).get("worker_slot"),
+              "protected_run_id": protected,
+              "stale_run_ids": stale,
+              "start_ok": start.get("ok"),
+              "push_ok": push.get("ok"),
+          }, sort_keys=True))
+          PY
