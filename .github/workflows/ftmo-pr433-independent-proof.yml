@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-pr443-independent-proof.yml"
+      - ".github/workflows/ftmo-pr433-independent-proof.yml"
 
 permissions:
   contents: read
