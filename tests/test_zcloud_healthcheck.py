@@ -216,12 +216,33 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
 
-    def test_violentmonkey_only_mode_accepts_intentionally_inactive_firefox(self):
+    def test_violentmonkey_only_requires_live_standalone_firefox(self):
         status, targets = self.sample()
         status["chatgpt_firefox"] = {
             "active": False,
             "state": "inactive",
+            "runtime_mode": "violentmonkey-only",
             "main_pid": 0,
+        }
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=False,
+            source_runtime_match=True,
+            legacy_violentmonkey_only=True,
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual("problem", result["summary"]["firefox_automation"])
+
+    def test_violentmonkey_only_accepts_live_standalone_firefox(self):
+        status, targets = self.sample()
+        status["chatgpt_firefox"] = {
+            "active": True,
+            "state": "active",
+            "runtime_mode": "standalone",
+            "main_pid": 123,
         }
         result = health.evaluate(
             status,
