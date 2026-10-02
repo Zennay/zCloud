@@ -42,7 +42,7 @@ jobs:
           import sys
           from pathlib import Path
 
-          queue_id = "zssh-ftmo-runner-recovery-20261002"
+          queue_id = "zssh-ftmo-verify72-runner-recovery-20261002"
           expected_project = "zssh"
           live_root = Path("/home/ubuntu/zennay-cloud")
           server_path = live_root / "server.py"
@@ -74,23 +74,26 @@ jobs:
               raise SystemExit(f"project mismatch: {item['project_id']}")
 
           evidence = (
-              "Dedicated FTMO Actions runner recovery completed without touching FTMO strategy state or protected runs. "
-              "Service actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service verified active/running with a live Runner.Listener. "
-              "Diagnostic recovery commit 0e9f3780231bcf78ff6dcdd11b64b4f7249cc1fe triggered zCloud workflow 36967000662, "
-              "which completed SUCCESS on the zcloud,vps runner. "
-              "Pre/post state was active with MainPID 377147; recovery action preserve-healthy-listener. "
-              "Kernel evidence at 2026-10-02T01:25:19Z proves global OOM killed FTMO python PID 364620 "
-              "and Firefox Isolated Web Co PID 217273 immediately before GitHub logged the runner shutdown signal. "
-              "No runner restart was performed because the FTMO listener was already healthy."
+              "FTMO runner recovery itself is proven healthy, but the historical scheduling acceptance is no longer satisfiable. "
+              "Service actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service verified active with MainPID 718454 and live /opt/ftmo-runner/runsvc.sh; "
+              "zCloud recovery workflow 36991093705 completed SUCCESS and chose preserve-active-worker. "
+              "Runner diagnostic workflow 36991921149 proved GitHub session creation, Listening for Jobs, successful cache-integrity execution, "
+              "and immediate acceptance of subsequent test jobs. Fresh kernel evidence proves the 09:15-09:17 UTC global OOM episode, including "
+              "FTMO runner-cgroup python PID 694940. Historical run 36987947126 attempt 1 ran on vps-bb300bba-ftmo: deploy, compile and systemd "
+              "handoff were successful before observer exit 137 and runner shutdown signal. Attempts 2, 3 and 4 were cancelled with zero steps "
+              "and no runner assignment by workflow concurrency, not runner health. Attempt 4 was cancelled at 09:54:45 UTC exactly as the newest "
+              "same-workflow run 36991608063 attempt 2 became queued; deploy-autonomous-vps.yml uses concurrency group ftmo-autonomous-vps-verify "
+              "with cancel-in-progress true. No FTMO strategy outcomes, provider evidence, preregistration, development, walk-forward, final holdout, "
+              "broker/live permission, paid-cloud boundary, protected run, or secrets were modified."
           )
 
-          if item["status"] == "done":
-              print("QUEUE_ALREADY_DONE=1")
+          if item["status"] == "queued" and int(item["eligible"] or 0) == 1:
+              print("QUEUE_ALREADY_CONTINUED=1")
           elif item["status"] in {"claimed", "running", "verifying", "in_progress"} and item["worker_slot"] is not None:
               result = server.portfolio_queue_finish(
                   int(item["worker_slot"]),
                   queue_id,
-                  "DONE",
+                  "CONTINUE",
                   evidence,
               )
               print("QUEUE_FINISH_RESULT=" + json.dumps(result, sort_keys=True, default=str))
@@ -111,7 +114,7 @@ jobs:
               ).fetchone()
           final = dict(after) if after else None
           print("QUEUE_AFTER=" + json.dumps(final, sort_keys=True))
-          if not final or final["status"] != "done" or int(final["eligible"] or 0) != 0:
-              raise SystemExit("queue final state is not done/eligible=0")
-          print("ZCLOUD_SQLITE_QUEUE_FINALIZE_GREEN=1")
+          if not final or final["status"] != "queued" or int(final["eligible"] or 0) != 1 or final["worker_slot"] is not None:
+              raise SystemExit("queue final state is not queued/eligible=1/unclaimed")
+          print("ZCLOUD_SQLITE_QUEUE_CONTINUE_GREEN=1")
           PY
