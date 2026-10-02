@@ -20,6 +20,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn('class="overview-advanced"', overview)
         self.assertIn("Automation settings", overview)
         self.assertIn("System controls", overview)
+        self.assertIn('data-disclosure="automation-settings"', overview)
+        self.assertIn('data-disclosure="system-controls"', overview)
 
     def test_project_detail_keeps_primary_action_above_context_and_hides_worker_detail(self):
         app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
@@ -31,6 +33,9 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn("project-worker-advanced", detail)
         self.assertIn("Worker details", detail)
         self.assertIn("worker-count-only", app)
+        self.assertIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
+        self.assertIn("openDisclosures", app)
+        self.assertIn("details[data-disclosure][open]", app)
 
     def test_dashboard_uses_consistent_action_surface_and_new_asset_revision(self):
         css = (ROOT / "public" / "enhancements.css").read_text(encoding="utf-8")
