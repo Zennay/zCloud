@@ -21,6 +21,50 @@ jobs:
     env:
       FTMO_HEAD: c7587dec3e826585870d22a59265d33ebdbdff6d
     steps:
+      - name: Cancel only proven stale FTMO runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import subprocess
+
+          stale = {
+              37036093663: ("cfd62e3eccbabd0da50a5b83308768571248e996", 453),
+              37036745305: ("a1bcba2758e59540237cd6ccdee393cea3c36745", 455),
+              37036745503: ("a1bcba2758e59540237cd6ccdee393cea3c36745", 455),
+          }
+
+          def gh(path, method=None):
+              cmd = ["gh", "api"]
+              if method:
+                  cmd += ["--method", method]
+              cmd.append(path)
+              raw = subprocess.check_output(cmd, text=True)
+              return json.loads(raw) if raw.strip() else {}
+
+          for run_id, (expected_head, pr_number) in stale.items():
+              pr = gh(f"repos/Zennay/Ftmo/pulls/{pr_number}")
+              if not pr.get("merged_at") or (pr.get("head") or {}).get("sha") != expected_head:
+                  raise SystemExit(f"refusing stale cancellation for PR {pr_number}")
+              run = gh(f"repos/Zennay/Ftmo/actions/runs/{run_id}")
+              if run.get("head_sha") != expected_head:
+                  raise SystemExit(f"run {run_id} head mismatch")
+              if run.get("status") in {"queued", "in_progress", "pending", "waiting"}:
+                  gh(f"repos/Zennay/Ftmo/actions/runs/{run_id}/cancel", method="POST")
+                  print(f"cancelled_stale_run={run_id}")
+              else:
+                  print(f"stale_run_already_terminal={run_id}:{run.get('conclusion')}")
+          PY
+
+          # This temporary diagnostic belongs to this worker and is superseded by PR456.
+          raw="$(gh api repos/Zennay/Ftmo/actions/runs/37035353068)"
+          status="$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["head_sha"]=="c579b632fa1a076baa9c13510bd89efc9c92280c"; print(d["status"])' <<<"$raw")"
+          if [[ "$status" == "queued" || "$status" == "in_progress" || "$status" == "pending" || "$status" == "waiting" ]]; then
+            gh api --method POST repos/Zennay/Ftmo/actions/runs/37035353068/cancel
+            echo "cancelled_stale_run=37035353068"
+          fi
+
       - name: Prove exact FTMO observer head
         shell: bash
         run: |
