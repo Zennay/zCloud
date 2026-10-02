@@ -42,7 +42,9 @@ jobs:
           current_head = (pr.get("head") or {}).get("sha")
           run = gh_json(f"repos/Zennay/zCloud/actions/runs/{stale_run_id}")
           if current_head == stale_sha:
-              raise SystemExit("Worker1 proof is still current; refusing cancellation")
+              print("WORKER1_PROOF_STILL_CURRENT=1")
+              print(f"FTMO_PR406_CURRENT_HEAD={current_head}")
+              raise SystemExit(0)
           if run.get("head_sha") != "be9cb7fa3af8d49b0bddce8ecfced3271b762522":
               raise SystemExit("Worker1 proof run identity changed")
           if run.get("status") != "completed":
