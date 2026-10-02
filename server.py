@@ -3499,18 +3499,6 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
                 return self.reply({'ok':True,'feature_flag':result,'time':now()})
-            if u.path=='/api/project-state-receipts':
-            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
-            project_id=str(q.get('project',[''])[0] or '').strip().lower()
-            with connect() as c:
-                receipts=project_runtime.latest_receipts(c)
-            if project_id:
-                return self.reply({'project_id':project_id,'receipt':receipts.get(project_id),'time':now()})
-            return self.reply({'receipts':receipts,'time':now()})
-        if u.path=='/api/resource-governor':
-            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
-            with connect() as c:
-                return self.reply(project_runtime.resource_status(c))
         if u.path=='/api/dynamic-workers':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
@@ -3600,6 +3588,18 @@ class Handler(BaseHTTPRequestHandler):
             logging.exception('POST failed');self.reply({'error':'Opslaan mislukt'},500)
     def route(self):
         u=urlparse(self.path);q=parse_qs(u.query)
+        if u.path=='/api/project-state-receipts':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            with connect() as c:
+                receipts=project_runtime.latest_receipts(c)
+            if project_id:
+                return self.reply({'project_id':project_id,'receipt':receipts.get(project_id),'time':now()})
+            return self.reply({'receipts':receipts,'time':now()})
+        if u.path=='/api/resource-governor':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            with connect() as c:
+                return self.reply(project_runtime.resource_status(c))
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
