@@ -1,0 +1,88 @@
+name: FTMO PR412 exact-head day-cache integrity proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr412-exact-head-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr412-exact-head-day-cache-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    env:
+      TARGET_SHA: d2ab9dcf8be9fa670351878dee8046ce5bca7574
+    steps:
+      - name: Fetch exact FTMO PR412 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/ftmo-pr412-proof"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_PR412_EXACT_SHA=$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr412-proof"
+          venv="$RUNNER_TEMP/ftmo-pr412-proof-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Compile day-cache provider stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr412-proof"
+          venv="$RUNNER_TEMP/ftmo-pr412-proof-venv"
+          cd "$src"
+          "$venv/bin/python" -m compileall -q \
+            src/prop_trading_ai/data/market/dukascopy_resume_cache.py \
+            src/prop_trading_ai/data/market/dukascopy_tick_resume_cache.py \
+            src/prop_trading_ai/data/market/dukascopy_public_ingest.py
+          echo "FTMO_PR412_COMPILE_GREEN=1"
+
+      - name: Prove day-cache filesystem and temporal gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr412-proof"
+          venv="$RUNNER_TEMP/ftmo-pr412-proof-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_group_writable_day_entry \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_symlink_substitution_for_day_entry \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_native_snapshot_retrieved_before_cached_bar_close \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_load_rejects_rehashed_impossible_native_retrieval_timing \
+            tests/test_dukascopy_jetta_m1.py::test_resume_cache_rejects_tick_snapshot_retrieved_before_source_hour_completion
+          echo "FTMO_PR412_NEW_GATES_GREEN=1"
+
+      - name: Prove relevant provider-foundation and sealed-boundary regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr412-proof"
+          venv="$RUNNER_TEMP/ftmo-pr412-proof-venv"
+          cd "$src"
+          "$venv/bin/python" -m pytest -q \
+            tests/test_dukascopy_jetta_m1.py \
+            tests/test_dukascopy_tick_resume_cache.py \
+            tests/test_autonomous_provider_retry.py \
+            tests/test_zero_cost_workflow_boundary.py \
+            tests/test_autonomous_deploy_lockstep.py
+          echo "FTMO_PR412_RELEVANT_SUITE_GREEN=1"
