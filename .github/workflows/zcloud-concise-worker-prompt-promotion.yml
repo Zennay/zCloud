@@ -56,6 +56,7 @@ jobs:
           set -euo pipefail
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
+            --path projects.json \
             --path server.py \
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
@@ -89,6 +90,8 @@ jobs:
 
           targets = get("/api/runner-targets")
           projects = targets.get("projects") or {}
+          with open("projects.json", encoding="utf-8") as fh:
+              project_names = {str(p["id"]): str(p["name"]) for p in json.load(fh)}
           active_ftmo = []
           checked = 0
           for key, cfg in projects.items():
@@ -97,13 +100,16 @@ jobs:
               if not cfg.get("active"):
                   continue
               prompt = str(cfg.get("prompt") or "")
-              if not prompt.startswith("Werk verder aan "):
-                  raise SystemExit(f"long/legacy prompt still live for {key}: {prompt[:160]!r}")
-              if "Kijk in Notion in welke fase het project zit" not in prompt:
-                  raise SystemExit(f"Notion phase instruction missing for {key}")
-              for forbidden in ("VPS_QUEUE_ASSIGNMENT", "ZCLOUD_QUEUE_RESULT", "Jij bent Worker", "Ga door met de queue"):
-                  if forbidden in prompt:
-                      raise SystemExit(f"legacy prompt marker {forbidden!r} still live for {key}")
+              base_id = str(cfg.get("base_project_id") or "")
+              project_name = project_names.get(base_id)
+              if not project_name:
+                  raise SystemExit(f"unknown base project for {key}: {base_id!r}")
+              expected = (
+                  f"Werk verder aan {project_name}. "
+                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+              )
+              if prompt != expected:
+                  raise SystemExit(f"worker prompt is not exact for {key}: {prompt!r} != {expected!r}")
               checked += 1
               if str(cfg.get("base_project_id") or "").lower() == "ftmo":
                   active_ftmo.append(key)
