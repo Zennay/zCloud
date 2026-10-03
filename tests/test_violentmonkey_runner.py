@@ -77,8 +77,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             self.assertIn("c: scored", source)
         self.assertIn('"thinking-effort-unavailable"', userscript)
         self.assertIn('diagnostic: diagnostic', userscript)
-        self.assertIn('"high-thinking-required|" + diagnostic', background)
-        self.assertIn('error: diagnostic', background)
+        self.assertIn('"thinking-effort-unavailable"', background)
+        self.assertIn('diagnostic: diagnostic', background)
+        self.assertNotIn('"high-thinking-required|" + diagnostic', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
