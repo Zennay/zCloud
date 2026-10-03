@@ -1,6 +1,8 @@
 name: Push all zCloud workers now
 
 on:
+  schedule:
+    - cron: "0 * * * *"
   push:
     branches: [main]
     paths:
@@ -15,7 +17,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
-      - name: Force push every active worker
+      - name: Force push every saved running worker
         shell: bash
         run: |
           set -euo pipefail
@@ -60,7 +62,7 @@ jobs:
           print("ACTIVE_WORKERS=" + json.dumps(active, sort_keys=True))
           # Supersede recovery-era pending commands first. They are stale control
           # intents from the browser restart and must not interrupt a worker after
-          # this explicit manual push-all request.
+          # this scheduled/manual push-all request.
           with sqlite3.connect(DB, timeout=10) as conn:
               conn.row_factory = sqlite3.Row
               conn.execute("PRAGMA busy_timeout=10000")
@@ -79,7 +81,7 @@ jobs:
                       conn.execute(
                           "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
                           "WHERE id=? AND status='pending'",
-                          (ts, "manual push-all superseded stale pending control command", int(row["id"])),
+                          (ts, "scheduled/manual push-all superseded stale pending control command", int(row["id"])),
                       )
           print("SUPERSEDED_PENDING=" + json.dumps(superseded, sort_keys=True))
 
