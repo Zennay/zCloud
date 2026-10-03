@@ -193,6 +193,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "project_runtime.py",
             "lane_generator.py",
             "scripts/zcloud_recovery.py",
+            "scripts/zcloud_runtime_project_schema_repair.py",
             "autonomy-policy.json",
             "portfolio_queue.seed.json",
             "firefox-extension/background.js",
@@ -255,6 +256,16 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("--allow-recent-ancestor-prechange-drift", core)
         self.assertNotIn("--reconcile-known-live-sha server.py=", core)
 
+    def test_deploy_repairs_only_legacy_runtime_project_schema_before_promotion(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        repair = "Repair legacy runtime project schema"
+        promote = "Promote backend runtime core"
+        self.assertIn(repair, text)
+        self.assertIn("scripts/zcloud_runtime_project_schema_repair.py", text)
+        self.assertIn('--candidate "$GITHUB_WORKSPACE"', text)
+        self.assertLess(text.index(repair), text.index(promote))
+        self.assertNotIn("--path projects.json", text)
+
     def test_backend_backlog_is_promoted_in_bounded_transactions(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         core = text[
@@ -268,7 +279,13 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
         self.assertEqual(1, core.count("scripts/zcloud_transactional_promote.py"))
         self.assertEqual(1, policy.count("scripts/zcloud_transactional_promote.py"))
-        for path in ("server.py", "project_runtime.py", "lane_generator.py", "scripts/zcloud_recovery.py"):
+        for path in (
+            "server.py",
+            "project_runtime.py",
+            "lane_generator.py",
+            "scripts/zcloud_recovery.py",
+            "scripts/zcloud_runtime_project_schema_repair.py",
+        ):
             self.assertIn(f"--path {path}", core)
             self.assertNotIn(f"--path {path}", policy)
         for path in ("autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
