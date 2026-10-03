@@ -1,0 +1,268 @@
+name: zCloud extension fallback push canary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-extension-fallback-canary.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-browser-consumer-repair
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          clean: true
+          fetch-depth: 64
+
+      - name: Validate extension fallback source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          node --check firefox-extension/background.js
+          grep -Fq 'function portfolioAssignmentReady(target)' firefox-extension/background.js
+          grep -Fq 'prompt.startsWith("Werk verder aan ")' firefox-extension/background.js
+          grep -Fq 'prompt.includes("Kijk in Notion in welke fase het project zit")' firefox-extension/background.js
+          ! grep -Fq 'prompt-missing-worker-line' firefox-extension/background.js
+          ! grep -Fq 'prompt-missing-queue-line' firefox-extension/background.js
+          grep -Fq 'legacy-extension-runner-temporarily-retained' firefox-extension/background.js
+          echo "EXTENSION_FALLBACK_SOURCE_GREEN=1"
+
+      - name: Snapshot current browser runtime
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup="$HOME/.local/state/zcloud/extension-fallback-canary/$GITHUB_RUN_ID"
+          mkdir -p "$backup"
+          echo "path=$backup" >> "$GITHUB_OUTPUT"
+          if [[ -d /home/ubuntu/zennay-cloud/firefox-extension ]]; then
+            cp -a /home/ubuntu/zennay-cloud/firefox-extension "$backup/firefox-extension"
+          fi
+          dropin="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
+          if [[ -f "$dropin" ]]; then
+            mkdir -p "$backup/dropin"
+            cp -a "$dropin" "$backup/dropin/10-legacy-disabled.conf"
+            echo "had_dropin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "had_dropin=false" >> "$GITHUB_OUTPUT"
+          fi
+          enabled="$(systemctl --user is-enabled chatgpt-firefox.service 2>/dev/null || true)"
+          echo "was_enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_RUNTIME_SNAPSHOT=$backup"
+
+      - name: Install current extension source and switch consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          sudo -n systemctl is-active --quiet zennay-cloud.service
+          curl -fsS --max-time 5 http://127.0.0.1:8765/ >/dev/null
+
+          rsync -a --delete --exclude='*.bak-*' "$GITHUB_WORKSPACE/firefox-extension/" "$root/firefox-extension/"
+
+          systemctl --user stop chatgpt-firefox.service || true
+          python3 - <<'PY'
+          import os, signal, subprocess, time
+          from pathlib import Path
+          proc=subprocess.run(
+              ["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+              text=True,capture_output=True,check=False,
+          )
+          main=[]
+          for raw in proc.stdout.split():
+              if not raw.isdigit(): continue
+              pid=int(raw)
+              try:
+                  cmd=Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0",b" ").decode("utf-8","replace")
+              except OSError:
+                  continue
+              if " -contentproc " not in f" {cmd} " and "/usr/lib/firefox/firefox" in cmd:
+                  main.append(pid)
+          for pid in main:
+              try: os.kill(pid, signal.SIGTERM)
+              except ProcessLookupError: pass
+          deadline=time.time()+12
+          while time.time()<deadline:
+              alive=[]
+              for pid in main:
+                  try: os.kill(pid,0); alive.append(pid)
+                  except ProcessLookupError: pass
+              if not alive: break
+              time.sleep(.5)
+          for pid in alive if 'alive' in locals() else []:
+              try: os.kill(pid,signal.SIGKILL)
+              except ProcessLookupError: pass
+          print("STALE_VM_FIREFOX_STOPPED="+",".join(map(str,main)))
+          PY
+
+          dropin="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
+          rm -f "$dropin"
+          install -D -m 0644 "$GITHUB_WORKSPACE/deploy/chatgpt-firefox.service" "$HOME/.config/systemd/user/chatgpt-firefox.service"
+          install -D -m 0755 "$GITHUB_WORKSPACE/deploy/chatgpt-firefox-prestart.sh" "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          systemctl --user daemon-reload
+          systemctl --user reset-failed chatgpt-display.service chatgpt-openbox.service chatgpt-firefox.service || true
+          systemctl --user start chatgpt-display.service
+          systemctl --user start chatgpt-openbox.service
+          systemctl --user enable --now chatgpt-firefox.service
+
+          for _ in $(seq 1 35); do
+            if systemctl --user is-active --quiet chatgpt-firefox.service; then
+              echo "EXTENSION_FIREFOX_ACTIVE=1"
+              exit 0
+            fi
+            sleep 1
+          done
+          systemctl --user --no-pager --full status chatgpt-firefox.service || true
+          journalctl --user -u chatgpt-firefox.service -n 120 --no-pager || true
+          exit 1
+
+      - name: Wait for extension fallback binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sqlite3,time,json
+          db="/home/ubuntu/zennay-cloud/history.db"
+          deadline=time.time()+90
+          last=[]
+          while time.time()<deadline:
+              with sqlite3.connect(db,timeout=5) as con:
+                  con.row_factory=sqlite3.Row
+                  rows=con.execute(
+                      "SELECT ts,event,project_id,worker_slot,reason,error "
+                      "FROM runner_events WHERE project_id='cloud' "
+                      "ORDER BY id DESC LIMIT 20"
+                  ).fetchall()
+              last=[dict(r) for r in rows]
+              recent=[r for r in last if r["event"] in {
+                  "violentmonkey-missing-fallback","injection-success",
+                  "runner-started","heartbeat","target-tab-opening","target-tab-recovered"
+              }]
+              if any(r["event"] in {"injection-success","runner-started","heartbeat"} for r in recent):
+                  print("EXTENSION_FALLBACK_BOUND=1")
+                  print(json.dumps(recent[:10],sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(3)
+          raise SystemExit("EXTENSION_FALLBACK_BIND_TIMEOUT "+json.dumps(last[:10],sort_keys=True))
+          PY
+
+      - name: Push cloud worker canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,sqlite3,time,urllib.request
+          from datetime import datetime,timezone
+
+          API="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+
+          def get(path):
+              with urllib.request.urlopen(API+path,timeout=8) as r:
+                  return json.load(r)
+          def post(path,payload):
+              req=urllib.request.Request(
+                  API+path,data=json.dumps(payload).encode(),method="POST",
+                  headers={"Content-Type":"application/json"},
+              )
+              with urllib.request.urlopen(req,timeout=12) as r:
+                  return json.load(r)
+
+          targets=get("/api/runner-targets").get("projects") or {}
+          worker="cloud::w1"
+          cfg=targets.get(worker) or {}
+          required={
+              "active": cfg.get("active"),
+              "assignment_ready": cfg.get("assignment_ready"),
+              "global_worker_slot": cfg.get("global_worker_slot"),
+              "global_worker_count": cfg.get("global_worker_count"),
+              "queue_id": str((cfg.get("queue_item") or {}).get("queue_id") or ""),
+              "queue_worker_slot": (cfg.get("queue_item") or {}).get("worker_slot"),
+              "prompt": cfg.get("prompt"),
+          }
+          print("CANARY_ASSIGNMENT="+json.dumps(required,ensure_ascii=False,sort_keys=True))
+          if cfg.get("active") is not True or cfg.get("assignment_ready") is not True:
+              raise SystemExit("cloud::w1 not assignment-ready")
+
+          before=datetime.now(timezone.utc).isoformat()
+          out=post("/api/runner-control",{"project_id":worker,"action":"push"})
+          command_id=int(out.get("command_id") or 0)
+          if command_id < 1:
+              raise SystemExit("push returned no command id: "+json.dumps(out,sort_keys=True))
+          print(f"CANARY_COMMAND_ID={command_id}")
+
+          deadline=time.time()+120
+          last={}
+          while time.time()<deadline:
+              with sqlite3.connect(DB,timeout=5) as con:
+                  con.row_factory=sqlite3.Row
+                  cmd=con.execute(
+                      "SELECT id,status,result,updated_at FROM runner_commands WHERE id=?",
+                      (command_id,),
+                  ).fetchone()
+                  events=con.execute(
+                      "SELECT ts,event,reason,error FROM runner_events "
+                      "WHERE project_id='cloud' AND worker_slot=1 AND ts>=? "
+                      "ORDER BY id DESC LIMIT 12",
+                      (before,),
+                  ).fetchall()
+              last={"command":dict(cmd) if cmd else None,"events":[dict(e) for e in events]}
+              for e in events:
+                  if e["event"]=="send-blocked":
+                      raise SystemExit("CANARY_SEND_BLOCKED "+json.dumps(last,ensure_ascii=False,sort_keys=True))
+                  if e["event"] in {"prompt-sent","generation-started","generation-finished"}:
+                      print("CANARY_PUSH_GREEN=1")
+                      print(json.dumps(last,ensure_ascii=False,sort_keys=True))
+                      raise SystemExit(0)
+              if cmd and cmd["status"]=="failed":
+                  raise SystemExit("CANARY_COMMAND_FAILED "+json.dumps(last,ensure_ascii=False,sort_keys=True))
+              time.sleep(3)
+          raise SystemExit("CANARY_PUSH_TIMEOUT "+json.dumps(last,ensure_ascii=False,sort_keys=True))
+          PY
+
+      - name: Keep fallback active
+        shell: bash
+        run: |
+          set -euo pipefail
+          systemctl --user is-active --quiet chatgpt-firefox.service
+          systemctl --user is-enabled --quiet chatgpt-firefox.service
+          echo "EXTENSION_FALLBACK_PERSISTENT_GREEN=1"
+
+      - name: Roll back browser consumer on failure
+        if: failure()
+        shell: bash
+        env:
+          BACKUP: ${{ steps.snapshot.outputs.path }}
+          HAD_DROPIN: ${{ steps.snapshot.outputs.had_dropin }}
+          WAS_ENABLED: ${{ steps.snapshot.outputs.was_enabled }}
+        run: |
+          set -euo pipefail
+          systemctl --user stop chatgpt-firefox.service || true
+          if [[ -d "$BACKUP/firefox-extension" ]]; then
+            rm -rf /home/ubuntu/zennay-cloud/firefox-extension
+            cp -a "$BACKUP/firefox-extension" /home/ubuntu/zennay-cloud/firefox-extension
+          fi
+          dropin="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
+          if [[ "$HAD_DROPIN" == "true" ]]; then
+            install -D -m 0644 "$BACKUP/dropin/10-legacy-disabled.conf" "$dropin"
+          fi
+          systemctl --user daemon-reload
+          if [[ "$WAS_ENABLED" != "enabled" ]]; then
+            systemctl --user disable chatgpt-firefox.service || true
+          fi
+          echo "EXTENSION_FALLBACK_ROLLED_BACK=1"
