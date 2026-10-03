@@ -433,7 +433,6 @@ jobs:
             --path project_runtime.py \
             --path lane_generator.py \
             --path scripts/zcloud_recovery.py \
-            --path scripts/zcloud_runtime_project_schema_repair.py \
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
