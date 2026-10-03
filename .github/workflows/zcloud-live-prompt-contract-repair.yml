@@ -217,21 +217,153 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json
-          import urllib.request
+          import os
+          import signal
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.parse
+          from pathlib import Path
 
-          body = json.dumps({"action": "restart_firefox"}).encode()
-          req = urllib.request.Request(
-              "http://127.0.0.1:8765/api/runner-control",
-              data=body,
-              method="POST",
-              headers={"Content-Type": "application/json"},
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+
+          with sqlite3.connect(DB, timeout=5) as conn:
+              conn.row_factory = sqlite3.Row
+              rows = conn.execute(
+                  "SELECT s.project_id,s.worker_slot,COALESCE(w.provider,'chatgpt') provider "
+                  "FROM ai_global_slots s "
+                  "LEFT JOIN runner_workers w "
+                  "ON w.project_id=s.project_id AND w.worker_slot=s.worker_slot "
+                  "ORDER BY s.slot"
+              ).fetchall()
+
+          urls = []
+          for row in rows:
+              worker = f"{row['project_id']}::w{int(row['worker_slot'] or 1)}"
+              marker = urllib.parse.quote(worker, safe="")
+              provider = str(row["provider"] or "chatgpt").lower()
+              base = "https://claude.ai/new" if provider == "claude" else "https://chatgpt.com/"
+              sep = "&" if "?" in base else "?"
+              urls.append(base + sep + "zcloud_worker=" + marker)
+
+          proc = subprocess.run(
+              ["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+              text=True,capture_output=True,check=False,
           )
-          with urllib.request.urlopen(req, timeout=45) as r:
-              payload = json.load(r)
-          if not payload.get("ok"):
-              raise SystemExit(f"Firefox recycle failed: {payload!r}")
+          pids = [int(x) for x in proc.stdout.split() if x.isdigit()]
+          primary = pids[0] if pids else None
+          prior_env = {}
+          if primary:
+              try:
+                  raw = Path(f"/proc/{primary}/environ").read_bytes().split(b"\0")
+              except OSError:
+                  raw = []
+              for item in raw:
+                  if b"=" not in item:
+                      continue
+                  k,v = item.split(b"=",1)
+                  key = k.decode("utf-8","replace")
+                  if key in {
+                      "DISPLAY","XAUTHORITY","WAYLAND_DISPLAY",
+                      "DBUS_SESSION_BUS_ADDRESS","XDG_RUNTIME_DIR",
+                      "HOME","USER","LOGNAME",
+                  }:
+                      prior_env[key] = v.decode("utf-8","replace")
+
+          if not prior_env:
+              env_probe = subprocess.run(
+                  ["systemctl","--user","show-environment"],
+                  text=True,capture_output=True,check=False,
+              )
+              for line in env_probe.stdout.splitlines():
+                  if "=" not in line:
+                      continue
+                  key,value = line.split("=",1)
+                  if key in {
+                      "DISPLAY","XAUTHORITY","WAYLAND_DISPLAY",
+                      "DBUS_SESSION_BUS_ADDRESS","XDG_RUNTIME_DIR",
+                      "HOME","USER","LOGNAME",
+                  }:
+                      prior_env[key] = value
+
+          for pid in pids:
+              try:
+                  os.kill(pid, signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
+          deadline = time.time() + 12
+          while time.time() < deadline:
+              alive = []
+              for pid in pids:
+                  try:
+                      os.kill(pid, 0)
+                      alive.append(pid)
+                  except ProcessLookupError:
+                      pass
+              if not alive:
+                  break
+              time.sleep(.5)
+          for pid in alive if 'alive' in locals() else []:
+              try:
+                  os.kill(pid, signal.SIGKILL)
+              except ProcessLookupError:
+                  pass
+
+          env = os.environ.copy()
+          env.pop("RUNNER_TRACKING_ID", None)
+          env.update(prior_env)
+          if not env.get("DISPLAY"):
+              sockets = sorted(
+                  Path("/tmp/.X11-unix").glob("X*"),
+                  key=lambda p:(p.name!="X10",p.name),
+              ) if Path("/tmp/.X11-unix").exists() else []
+              env["DISPLAY"] = (":" + sockets[0].name[1:] + ".0") if sockets else ":10.0"
+          env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+          env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
+
+          log_path = Path("/tmp/zcloud-prompt-contract-firefox.log")
+          with log_path.open("ab", buffering=0) as log:
+              subprocess.Popen(
+                  ["/usr/bin/firefox", *urls],
+                  stdin=subprocess.DEVNULL,
+                  stdout=log,
+                  stderr=log,
+                  env=env,
+                  start_new_session=True,
+                  close_fds=True,
+              )
+
+          new_pid = None
+          deadline = time.time() + 30
+          while time.time() < deadline:
+              probe = subprocess.run(
+                  ["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+                  text=True,capture_output=True,check=False,
+              )
+              candidates = [
+                  int(x) for x in probe.stdout.split()
+                  if x.isdigit() and int(x) not in pids
+              ]
+              if candidates:
+                  new_pid = candidates[0]
+                  break
+              time.sleep(1)
+          if not new_pid:
+              tail = ""
+              try:
+                  tail = "\n".join(log_path.read_text(errors="replace").splitlines()[-40:])
+              except Exception:
+                  pass
+              raise SystemExit("standalone Firefox failed to start\n" + tail)
+
           print("FIREFOX_RECYCLE_GREEN=1")
-          print(json.dumps(payload.get("status") or {}, sort_keys=True))
+          print(json.dumps({
+              "old_pid": primary,
+              "new_pid": new_pid,
+              "display": env.get("DISPLAY"),
+              "bootstrap_count": len(urls),
+          }, sort_keys=True))
+          time.sleep(12)
           PY
 
       - name: Push one worker canary and prove dispatch
