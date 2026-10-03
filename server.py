@@ -998,9 +998,14 @@ def collect():
     try:
         with connect() as c:
             state_receipts=project_runtime.latest_receipts(c)
+            receipt_coverage=project_runtime.receipt_coverage(
+                c,
+                [p.get('id') for p in projects if str(p.get('status') or 'active')!='archived'],
+            )
     except Exception:
         logging.exception('Could not read project state receipts')
         state_receipts={}
+        receipt_coverage={'ready':False,'error':'unavailable','missing':[],'invalid':[],'stale':[]}
     try: states=service_states()
     except Exception: states={}; errors.append('Servicestatus tijdelijk niet beschikbaar')
     try: user_states=user_service_states()
@@ -1096,7 +1101,7 @@ def collect():
     except Exception:
         logging.exception('Resource governor status unavailable')
         governor={'time':now(),'pools':{},'leases':[],'error':'unavailable'}
-    data={'version':4,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'resource_governor':governor,'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam','attention_needed':portfolio_attention_items(),'portfolio_queue_health':portfolio_queue_health()}
+    data={'version':5,'time':now(),'host':host_metrics(),'resource_summary':resources.get('_summary',{}),'resource_governor':governor,'state_receipt_coverage':receipt_coverage,'projects':projects,'errors':errors,'sampling':{'host_seconds':15,'projects_seconds':60,'history_seconds':300},'timezone':'Europe/Amsterdam','attention_needed':portfolio_attention_items(),'portfolio_queue_health':portfolio_queue_health()}
     try: enhancements.evaluate_alerts(data,runner_status(),DB)
     except Exception: logging.exception('Alert evaluation failed')
     return data
