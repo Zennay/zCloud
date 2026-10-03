@@ -41,6 +41,27 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json
           test "$(hostname)" = "vps-bb300bba"
 
+      - name: Recover zCloud control plane if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          service="zennay-cloud.service"
+          url="http://127.0.0.1:8765/"
+          healthy() {
+            systemctl is-active --quiet "$service" &&
+              curl -fsS --max-time 4 "$url" >/dev/null
+          }
+          if ! healthy; then
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl restart "$service"
+            for _ in $(seq 1 25); do
+              healthy && break
+              sleep 1
+            done
+          fi
+          healthy
+          echo "ZCLOUD_CONTROL_PLANE_GREEN=1"
+
       - name: Acquire deploylane coordination
         id: claim
         env:
