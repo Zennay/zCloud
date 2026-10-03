@@ -129,3 +129,34 @@ jobs:
               echo "UI_TOOL=$tool:MISSING"
             fi
           done
+
+
+      - name: Print focused Violentmonkey confirm page contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, zipfile
+
+          xpi=Path("/home/ubuntu/snap/firefox/common/.mozilla/firefox/vn6i5j5p.default/extensions/{aecec67f-0d10-4fa7-b7c7-609a2db280cf}.xpi")
+          out=[]
+          with zipfile.ZipFile(xpi) as z:
+              for name in z.namelist():
+                  if not name.startswith("confirm/"):
+                      continue
+                  if not name.endswith((".html",".js",".css")):
+                      continue
+                  data=z.read(name)
+                  if len(data)>2*1024*1024:
+                      continue
+                  text=data.decode("utf-8","replace")
+                  anchors=[]
+                  for term in ("buttonInstall","buttonClose","buttonCancel","install","Install","confirm","ConfirmInstall","UpdateScript","class=","id="):
+                      pos=text.find(term)
+                      if pos>=0:
+                          anchors.append({"term":term,"snippet":text[max(0,pos-1200):pos+3000].replace("\n","\\n")})
+                  out.append({"file":name,"anchors":anchors[:20]})
+          print("VM_CONFIRM_CONTRACT="+json.dumps(out,ensure_ascii=False))
+          PY
