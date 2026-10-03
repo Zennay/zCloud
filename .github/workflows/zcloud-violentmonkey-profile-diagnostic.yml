@@ -255,3 +255,60 @@ jobs:
           PY
 
 # push-test diagnostic 2026-10-04
+
+      - name: Inspect zCloud userscript record only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+
+          db=Path.home()/ "snap/firefox/common/.mozilla/firefox/vn6i5j5p.default/storage/default/moz-extension+++1e84f8a6-6cfe-433a-91a0-8d757fdc30bb^userContextId=4294967295/idb/3647222921wleabcEoxlt-eengsairo.sqlite"
+          if not db.exists():
+              raise SystemExit("Violentmonkey IDB not found")
+          markers=[
+              "zCloud Dynamic Worker",
+              "@version",
+              "prompt-missing-worker-line",
+              "VPS_QUEUE_ASSIGNMENT",
+              "Jij bent Worker",
+              "prompt-missing-project-instruction",
+              "Kijk in Notion in welke fase het project zit",
+          ]
+          con=sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+          out=[]
+          for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+              try:
+                  cols=[r[1] for r in con.execute(f'PRAGMA table_info("{table}")')]
+                  rows=con.execute(f'SELECT rowid,* FROM "{table}"').fetchall()
+              except Exception:
+                  continue
+              for row in rows:
+                  hits=[]
+                  for idx,val in enumerate(row):
+                      if isinstance(val, bytes):
+                          variants=[]
+                          for enc in ("utf-8","utf-16le","utf-16be"):
+                              try: variants.append((enc,val.decode(enc,errors="ignore")))
+                              except Exception: pass
+                      elif isinstance(val,str):
+                          variants=[("text",val)]
+                      else:
+                          continue
+                      for enc,s in variants:
+                          low=s.lower()
+                          found=[m for m in markers if m.lower() in low]
+                          if found:
+                              snippets=[]
+                              for m in found:
+                                  i=low.find(m.lower())
+                                  snippets.append(s[max(0,i-180):i+360].replace("\n","\\n"))
+                              hits.append({"column": cols[idx-1] if idx>0 and idx-1<len(cols) else "rowid","encoding":enc,"markers":found,"snippets":snippets})
+                  if hits:
+                      out.append({"table":table,"rowid":row[0],"hits":hits})
+          print("ZCLOUD_VM_RECORDS="+json.dumps(out,ensure_ascii=False))
+          if not out:
+              raise SystemExit("zCloud userscript record not found")
+          PY
+
