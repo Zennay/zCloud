@@ -105,5 +105,20 @@ jobs:
               json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
           ]
           subprocess.run(command, check=True)
+
+          import sqlite3
+          with sqlite3.connect("/home/ubuntu/zennay-cloud/history.db", timeout=15) as conn:
+              row = conn.execute(
+                  "SELECT id,ci_status,source FROM project_state_receipts "
+                  "WHERE project_id=? ORDER BY id DESC LIMIT 1",
+                  ("haxlab",),
+              ).fetchone()
+          if not row:
+              raise RuntimeError("HaxLab receipt readback missing after write")
+          if row[1] != "success":
+              raise RuntimeError("HaxLab receipt readback has non-success CI status")
+          if row[2] != "github-actions:haxlab-state-receipt-backfill":
+              raise RuntimeError("HaxLab receipt readback source mismatch: " + str(row[2]))
+          print("HAXLAB_STATE_RECEIPT_READBACK_GREEN", row[0])
           print("HAXLAB_STATE_RECEIPT_BACKFILL_GREEN")
           PY
