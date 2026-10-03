@@ -856,15 +856,9 @@
   }
 
   function promptWithHandoffAndRecovery(basePrompt) {
-    let prompt = String(basePrompt || "");
-    const handoff = target?.replacement_handoff || null;
-    if (handoff && !handoffAlreadyConsumed()) {
-      prompt += "\n\nGa verder met hetzelfde vrije werkgebied van deze worker; neem geen werk over dat al door een andere worker wordt uitgevoerd.";
-    }
-    if (qualityRetryPending) {
-      prompt += "\n\nWerk verder aan het project en voer nu een concrete volgende stap uit binnen hetzelfde vrije werkgebied.";
-    }
-    return prompt;
+    // The worker message must be byte-for-byte the canonical backend prompt.
+    // Handoff/retry state is telemetry/control-plane context, never prompt text.
+    return String(basePrompt || "");
   }
 
   function markHandoffConsumed() {
