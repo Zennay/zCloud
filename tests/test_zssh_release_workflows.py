@@ -61,6 +61,19 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         match = re.search(r"ZSSH_RELEASE_SHA:\s*([0-9a-f]{40})", text)
         self.assertIsNotNone(match)
 
+    def test_vps_release_records_evidence_backed_zssh_receipt(self):
+        text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
+        self.assertIn("Record evidence-backed zSSH release state receipt", text)
+        self.assertIn("--project zssh", text)
+        self.assertIn('--commit "$ZSSH_RELEASE_SHA"', text)
+        self.assertIn("--ci-status success", text)
+        self.assertIn('"live_marker": "ZSSH_STANDALONE_M1_LIVE_GREEN"', text)
+        self.assertIn('"public_listing_marker": "ZSSH_PUBLIC_LISTING_SITE_VPS_GREEN"', text)
+        self.assertIn('--source "github-actions:zssh-standalone-vps-release"', text)
+        receipt_pos = text.index("Record evidence-backed zSSH release state receipt")
+        release_pos = text.index("Release coordination claim")
+        self.assertLess(receipt_pos, release_pos)
+
 
 if __name__ == "__main__":
     unittest.main()
