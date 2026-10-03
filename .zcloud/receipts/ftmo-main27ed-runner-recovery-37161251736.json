@@ -1,0 +1,27 @@
+{
+  "main_sha": "27ed1bf808d97e168a200c301f820d16894516b4",
+  "post_pid": "",
+  "pre_pid": "",
+  "pre_state": "",
+  "protected_runs": [
+    {
+      "conclusion": "cancelled",
+      "head_sha": "27ed1bf808d97e168a200c301f820d16894516b4",
+      "name": "Verify autonomous VPS runtime",
+      "run_id": 37160939790,
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "head_sha": "27ed1bf808d97e168a200c301f820d16894516b4",
+      "name": "Test suite",
+      "run_id": 37160939832,
+      "status": "completed"
+    }
+  ],
+  "recovery_action": "",
+  "runner_name": "zcloud-vps-1",
+  "scope": "ftmo-main27ed-runner-recovery",
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "37161251736"
+}
