@@ -252,7 +252,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(4, text.count("--preserve-schema-validated-runtime-config"))
         core = text[
             text.index("- name: Promote backend runtime core"):
-            text.index("- name: Promote runtime contracts, autonomy policies and queue seed")
+            text.index("- name: Promote autonomy policies and queue seed")
         ]
         self.assertIn("--preserve-schema-validated-runtime-config", core)
         self.assertIn("--allow-recent-ancestor-prechange-drift", core)
@@ -265,7 +265,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn(repair, text)
         self.assertIn("scripts/zcloud_runtime_project_schema_repair.py", text)
         self.assertIn('--candidate "$GITHUB_WORKSPACE"', text)
-        core = text[text.index("- name: Promote backend runtime core"):text.index("- name: Promote runtime contracts, autonomy policies and queue seed")]
+        core = text[text.index("- name: Promote backend runtime core"):text.index("- name: Promote autonomy policies and queue seed")]
         self.assertNotIn("--path scripts/zcloud_runtime_project_schema_repair.py", core)
         self.assertLess(text.index(repair), text.index(promote))
         self.assertNotIn("--path projects.json", text)
@@ -274,10 +274,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         core = text[
             text.index("- name: Promote backend runtime core"):
-            text.index("- name: Promote runtime contracts, autonomy policies and queue seed")
+            text.index("- name: Promote autonomy policies and queue seed")
         ]
         policy = text[
-            text.index("- name: Promote runtime contracts, autonomy policies and queue seed"):
+            text.index("- name: Promote autonomy policies and queue seed"):
             text.index("- name: Promote Violentmonkey worker")
         ]
 
@@ -286,12 +286,13 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         for path in (
             "server.py",
             "project_runtime.py",
+            "project-contracts.json",
             "lane_generator.py",
             "scripts/zcloud_recovery.py",
         ):
             self.assertIn(f"--path {path}", core)
             self.assertNotIn(f"--path {path}", policy)
-        for path in ("project-contracts.json", "autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
+        for path in ("autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
             self.assertIn(f"--path {path}", policy)
             self.assertNotIn(f"--path {path}", core)
         self.assertNotIn("high_blast_radius_promotion", core + policy)
