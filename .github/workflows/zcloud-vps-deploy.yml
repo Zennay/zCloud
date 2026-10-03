@@ -358,19 +358,6 @@ jobs:
           echo "FIREFOX_AUTOMATION_SERVICE=failed"
           exit 1
 
-      - name: Bootstrap validated project catalog
-        if: steps.prewrite.outputs.deploy == 'true'
-        run: |
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path projects.json \
-            --preserve-prechange-drift public/zcloud-worker.user.js \
-            --preserve-prechange-drift firefox-extension/background.js \
-            --allow-recent-ancestor-prechange-drift \
-            --reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0 \
-            --actor "github-actions-vps-deploy" \
-            --json
-
       - name: Promote backend runtime core
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
@@ -383,6 +370,7 @@ jobs:
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
             --reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0 \
+            --preserve-schema-validated-runtime-config \
             --actor "github-actions-vps-deploy" \
             --json
 
@@ -396,6 +384,7 @@ jobs:
             --path portfolio_queue.seed.json \
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
+            --preserve-schema-validated-runtime-config \
             --actor "github-actions-vps-deploy" \
             --json
 
@@ -417,6 +406,7 @@ jobs:
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
             "${worker_paths[@]}" \
+            --preserve-schema-validated-runtime-config \
             --actor "github-actions-vps-deploy" \
             --json
 
@@ -430,6 +420,7 @@ jobs:
             --path public/style.css \
             --path public/enhancements.js \
             --path public/enhancements.css \
+            --preserve-schema-validated-runtime-config \
             --actor "github-actions-vps-deploy" \
             --json
 
