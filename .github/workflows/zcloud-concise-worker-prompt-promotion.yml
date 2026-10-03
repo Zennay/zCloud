@@ -1,5 +1,5 @@
 name: Promote concise worker prompts
-# retrigger: enforce exact project-first prompt runtime 2026-10-03
+# retrigger: sync concise prompt validators to live runtime 2026-10-04
 
 on:
   push:
