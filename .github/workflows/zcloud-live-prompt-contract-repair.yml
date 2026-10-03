@@ -397,8 +397,23 @@ jobs:
                   return json.load(r)
 
           targets = get("/api/runner-targets").get("projects") or {}
+          readiness = {
+              key: {
+                  "active": cfg.get("active"),
+                  "assignment_ready": cfg.get("assignment_ready"),
+                  "global_worker_slot": cfg.get("global_worker_slot"),
+                  "queue_id": str((cfg.get("queue_item") or {}).get("queue_id") or ""),
+                  "queue_worker_slot": (cfg.get("queue_item") or {}).get("worker_slot"),
+              }
+              for key, cfg in targets.items()
+              if cfg.get("active") is True and not cfg.get("reviewer_mode")
+          }
+          print("CANARY_ASSIGNMENTS=" + json.dumps(readiness, sort_keys=True))
           preferred = "cloud::w1"
-          if targets.get(preferred, {}).get("active") is True:
+          if (
+              targets.get(preferred, {}).get("active") is True
+              and targets.get(preferred, {}).get("assignment_ready") is True
+          ):
               worker = preferred
           else:
               worker = next(
