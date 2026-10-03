@@ -1,0 +1,66 @@
+name: zSSH scoped sudo proof via zCloud VPS
+
+on:
+  push:
+    branches:
+      - ops/zssh-scoped-sudo-proof-20261003
+    paths:
+      - .github/workflows/zssh-scoped-sudo-proof-20261003.yml
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      ZSSH_TARGET_SHA: e737371426ebff5f449267996bb83724542b136c
+    steps:
+      - name: Verify VPS host
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "ZSSH_PROOF_HOST=$(hostname)"
+      - name: Checkout exact zSSH head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_TARGET_SHA }}
+          path: zssh-proof
+          fetch-depth: 1
+      - name: Prove exact checkout
+        shell: bash
+        working-directory: zssh-proof
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$ZSSH_TARGET_SHA"
+          echo "ZSSH_SCOPED_SUDO_EXACT_HEAD=$ZSSH_TARGET_SHA"
+      - name: Install dependencies
+        working-directory: zssh-proof
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Run scoped sudo tests
+        working-directory: zssh-proof
+        run: node --test test/scoped-sudo.test.mjs
+      - name: Run full zSSH suite
+        working-directory: zssh-proof
+        run: npm test
+      - name: Validate installer and sudoers syntax
+        shell: bash
+        working-directory: zssh-proof
+        run: |
+          set -Eeuo pipefail
+          bash -n deploy/install-scoped-sudo.sh
+          node --check scripts/render-scoped-sudoers.mjs
+          policy="$(node scripts/render-scoped-sudoers.mjs             --user zssh             --inspect-service nginx.service             --restart-service my-app.service)"
+          grep -F '/usr/bin/systemctl status nginx.service --no-pager' <<<"$policy"
+          grep -F '/usr/bin/systemctl restart my-app.service' <<<"$policy"
+          ! grep -Eq 'NOPASSWD:[[:space:]]*ALL|[?*\[\]]|/bin/(ba)?sh' <<<"$policy"
+          if command -v visudo >/dev/null 2>&1; then
+            tmp="$(mktemp)"
+            trap 'rm -f "$tmp"' EXIT
+            printf '%s\n' "$policy" > "$tmp"
+            visudo -cf "$tmp"
+          fi
+          echo "ZSSH_SCOPED_SUDO_VPS_PROOF_GREEN=1"
