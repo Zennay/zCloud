@@ -104,6 +104,7 @@ CREATABLE_PATHS = {
     # lane_generator.py was introduced after the original VPS install and is
     # promoted by the guarded backend allowlist; bootstrap only this exact path.
     "lane_generator.py",
+    "project-contracts.json",
     "autonomy-policy.json",
     "portfolio_queue.seed.json",
     # This policy is part of the deploy allowlist and may be bootstrapped on
@@ -967,6 +968,7 @@ def run_config_validation(
         "--projects", str(effective("projects.json")),
         "--layout", str(effective("project-layout.json")),
         "--resource-policy", str(effective("resource-policy.json")),
+        "--project-contracts", str(effective("project-contracts.json")),
         "--server", str(effective("server.py")),
         "--enhancements", str(effective("enhancements.py")),
         "--db", str(root / "history.db"),
