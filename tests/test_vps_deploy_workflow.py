@@ -50,6 +50,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         )
         self.assertIn("--allow-recent-ancestor-prechange-drift", backend)
         self.assertIn("--path project_runtime.py", backend)
+        self.assertIn("--path project-contracts.json", backend)
         self.assertIn("--path lane_generator.py", backend)
         recovery = (ROOT / "scripts/zcloud_recovery.py").read_text(encoding="utf-8")
         prechange = (ROOT / "scripts/zcloud_prechange_guard.py").read_text(encoding="utf-8")
@@ -64,22 +65,25 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
 
-    def test_deploy_bootstraps_missing_project_runtime_only_for_exact_candidate_server(self):
+    def test_deploy_bootstraps_backend_dependencies_only_for_exact_candidate_server(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        bootstrap = "Bootstrap aligned backend dependency before health gate"
+        bootstrap = "Bootstrap aligned backend dependencies before health gate"
         recover = "Recover zCloud health before guarded promotion"
         rollback = "Roll back failed pre-health dependency bootstrap"
         promote = "Promote backend runtime core"
         self.assertIn(bootstrap, text)
-        self.assertIn('live_dep="$root/project_runtime.py"', text)
-        self.assertIn('candidate_dep="$GITHUB_WORKSPACE/project_runtime.py"', text)
+        self.assertIn('"project_runtime.py:runtime"', text)
+        self.assertIn('"project-contracts.json:contract"', text)
         self.assertIn('if [[ "$live_server_sha" != "$candidate_server_sha" ]]', text)
         self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP=skipped_server_not_candidate", text)
-        self.assertIn('install -m 0644 "$candidate_dep" "$stage"', text)
-        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP=aligned", text)
+        self.assertIn('candidate="$GITHUB_WORKSPACE/$rel"', text)
+        self.assertIn('install -m 0644 "$candidate" "$stage"', text)
+        self.assertIn("BACKEND_DEPENDENCY_${label^^}=aligned", text)
         self.assertIn(rollback, text)
-        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP_ROLLBACK=restored", text)
-        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP_ROLLBACK=removed", text)
+        self.assertIn("HAD_LIVE_RUNTIME", text)
+        self.assertIn("HAD_LIVE_CONTRACT", text)
+        self.assertIn("BACKEND_DEPENDENCY_${label^^}_ROLLBACK=restored", text)
+        self.assertIn("BACKEND_DEPENDENCY_${label^^}_ROLLBACK=removed", text)
         self.assertLess(text.index(bootstrap), text.index(recover))
         self.assertLess(text.index(recover), text.index(promote))
 
