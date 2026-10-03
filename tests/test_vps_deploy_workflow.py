@@ -176,7 +176,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]', core)
         self.assertIn("--reconcile-known-live-sha", core)
         self.assertIn(f'"server.py={known_sha}"', core)
-        self.assertIn('"\${reconcile_args[@]}"', core)
+        self.assertIn('"${reconcile_args[@]}"', core)
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
 
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
