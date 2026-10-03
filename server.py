@@ -3513,7 +3513,7 @@ def worker_debug_report():
     except Exception as exc: firefox = {'active': None, 'error': str(exc)[:120]}
     return {'time': now(), 'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
             'commands_15m': cmds, 'firefox': firefox,
-            'contract': {'worker_line': 'Jij bent Worker <slot>/<total>.', 'queue_line': 'VPS_QUEUE_ASSIGNMENT id=<queue_id>'}}
+            'contract': {'prompt': 'project-first', 'queue_binding': 'structured-metadata', 'text_boilerplate_required': False}}
 
 def dynamic_force_push():
     # Pool-level force push: enqueue a push for every active worker, bypassing the per-worker cooldown.
