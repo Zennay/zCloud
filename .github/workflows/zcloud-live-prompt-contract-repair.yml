@@ -1,0 +1,317 @@
+name: Repair live prompt contract
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-live-prompt-contract-repair.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Check out exact repair revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          fetch-depth: 128
+
+      - name: Validate new prompt contract source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/zcloud-worker.user.js
+          grep -Fq '// @version      1.3.4' public/zcloud-worker.user.js
+          grep -Fq 'const SCRIPT_VERSION = "1.3.4";' public/zcloud-worker.user.js
+          grep -Fq 'prompt.startsWith("Werk verder aan ")' public/zcloud-worker.user.js
+          grep -Fq 'Kijk in Notion in welke fase het project zit' public/zcloud-worker.user.js
+          ! grep -Fq 'prompt-missing-queue-line' public/zcloud-worker.user.js
+          ! grep -Fq 'prompt-missing-worker-line' public/zcloud-worker.user.js
+          ! grep -Fq 'prompt-missing-queue-line' server.py
+          ! grep -Fq 'prompt-missing-worker-line' server.py
+          grep -Fq "'text_boilerplate_required': False" server.py
+          echo "PROMPT_CONTRACT_SOURCE_GREEN=1"
+
+      - name: Patch only live prompt contract logic and served userscript
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          backup="$HOME/.local/state/zcloud/prompt-contract-repair/${GITHUB_RUN_ID}"
+          mkdir -p "$backup"
+          cp -a "$root/server.py" "$backup/server.py"
+          cp -a "$root/public/zcloud-worker.user.js" "$backup/zcloud-worker.user.js"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          import os
+          import shutil
+
+          root = Path("/home/ubuntu/zennay-cloud")
+          candidate = Path.cwd()
+          live_server = root / "server.py"
+          candidate_server = candidate / "server.py"
+
+          live = live_server.read_text(encoding="utf-8")
+          desired = candidate_server.read_text(encoding="utf-8")
+
+          def span(source, name):
+              tree = ast.parse(source)
+              node = next(
+                  (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name),
+                  None,
+              )
+              if node is None:
+                  raise SystemExit(f"{name} missing")
+              lines = source.splitlines(keepends=True)
+              return lines, node.lineno - 1, node.end_lineno
+
+          desired_lines, d_start, d_end = span(desired, "worker_contract_failures")
+          replacement = "".join(desired_lines[d_start:d_end])
+
+          live_lines, l_start, l_end = span(live, "worker_contract_failures")
+          live_lines[l_start:l_end] = [replacement]
+          patched = "".join(live_lines)
+
+          old_meta = (
+              "'contract': {'worker_line': 'Jij bent Worker <slot>/<total>.', "
+              "'queue_line': 'VPS_QUEUE_ASSIGNMENT id=<queue_id>'}"
+          )
+          new_meta = (
+              "'contract': {'prompt': 'project-first', "
+              "'queue_binding': 'structured-metadata', "
+              "'text_boilerplate_required': False}"
+          )
+          if old_meta in patched:
+              patched = patched.replace(old_meta, new_meta, 1)
+          elif new_meta not in patched:
+              raise SystemExit("live worker_debug_report contract metadata is not recognized")
+
+          if "prompt-missing-queue-line" in patched or "prompt-missing-worker-line" in patched:
+              raise SystemExit("legacy prompt boilerplate validator still present after patch")
+          ast.parse(patched)
+
+          stage = root / f".server.py.prompt-contract-repair.{os.getpid()}"
+          stage.write_text(patched, encoding="utf-8")
+          os.chmod(stage, 0o644)
+          os.replace(stage, live_server)
+
+          candidate_user = candidate / "public/zcloud-worker.user.js"
+          user_text = candidate_user.read_text(encoding="utf-8")
+          if "// @version      1.3.4" not in user_text:
+              raise SystemExit("candidate userscript version is not 1.3.4")
+          if "prompt-missing-queue-line" in user_text or "prompt-missing-worker-line" in user_text:
+              raise SystemExit("candidate userscript still requires legacy boilerplate")
+          live_user = root / "public/zcloud-worker.user.js"
+          stage_user = live_user.with_name(live_user.name + f".prompt-contract-repair.{os.getpid()}")
+          shutil.copy2(candidate_user, stage_user)
+          os.chmod(stage_user, 0o644)
+          os.replace(stage_user, live_user)
+
+          print("LIVE_PROMPT_CONTRACT_SURGICAL_PATCHED=1")
+          PY
+
+          python3 -m py_compile "$root/server.py"
+          if ! sudo -n systemctl restart zennay-cloud.service; then
+            install -m 0644 "$backup/server.py" "$root/server.py"
+            install -m 0644 "$backup/zcloud-worker.user.js" "$root/public/zcloud-worker.user.js"
+            sudo -n systemctl restart zennay-cloud.service || true
+            exit 1
+          fi
+
+          for _ in $(seq 1 30); do
+            if systemctl is-active --quiet zennay-cloud.service && curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null; then
+              echo "ZCLOUD_AFTER_PROMPT_PATCH_GREEN=1"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          install -m 0644 "$backup/server.py" "$root/server.py"
+          install -m 0644 "$backup/zcloud-worker.user.js" "$root/public/zcloud-worker.user.js"
+          sudo -n systemctl restart zennay-cloud.service || true
+          echo "PROMPT_PATCH_ROLLED_BACK=1"
+          exit 1
+
+      - name: Prove live server and served userscript no longer require boilerplate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/worker-debug", timeout=8) as r:
+              debug = json.load(r)
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=8) as r:
+              targets = json.load(r)
+          with urllib.request.urlopen("http://127.0.0.1:8765/zcloud-worker.user.js", timeout=8) as r:
+              served = r.read()
+
+          contract = debug.get("contract") or {}
+          if contract.get("text_boilerplate_required") is not False:
+              raise SystemExit(f"live contract still advertises text boilerplate: {contract!r}")
+          bad = []
+          for row in debug.get("workers") or []:
+              failures = row.get("contract_failures") or []
+              legacy = [x for x in failures if x in {"prompt-missing-queue-line", "prompt-missing-worker-line"}]
+              if legacy:
+                  bad.append({"worker": row.get("worker"), "legacy": legacy})
+          if bad:
+              raise SystemExit(f"legacy live contract failures remain: {bad}")
+
+          active = [
+              (key, cfg)
+              for key, cfg in (targets.get("projects") or {}).items()
+              if cfg.get("active") is True and not cfg.get("reviewer_mode")
+          ]
+          if not active:
+              raise SystemExit("no active worker available for canary")
+          for key, cfg in active:
+              prompt = str(cfg.get("prompt") or "")
+              if not prompt.startswith("Werk verder aan "):
+                  raise SystemExit(f"non canonical prompt for {key}: {prompt!r}")
+              if "Kijk in Notion in welke fase het project zit" not in prompt:
+                  raise SystemExit(f"missing Notion phase instruction for {key}: {prompt!r}")
+
+          text = served.decode("utf-8", "replace")
+          if "// @version      1.3.4" not in text:
+              raise SystemExit("served userscript is not 1.3.4")
+          if "prompt-missing-queue-line" in text or "prompt-missing-worker-line" in text:
+              raise SystemExit("served userscript still contains legacy boilerplate validator")
+
+          live_sha = hashlib.sha256(served).hexdigest()
+          candidate_sha = hashlib.sha256(Path("public/zcloud-worker.user.js").read_bytes()).hexdigest()
+          if live_sha != candidate_sha:
+              raise SystemExit(f"served userscript mismatch live={live_sha} candidate={candidate_sha}")
+
+          print("LIVE_PROMPT_CONTRACT_GREEN=1")
+          print("SERVED_USERSCRIPT_VERSION=1.3.4")
+          print("ACTIVE_WORKERS=" + ",".join(key for key, _ in active))
+          PY
+
+      - name: Recycle standalone Firefox without queue fanout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          body = json.dumps({"action": "restart_firefox"}).encode()
+          req = urllib.request.Request(
+              "http://127.0.0.1:8765/api/runner-control",
+              data=body,
+              method="POST",
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req, timeout=45) as r:
+              payload = json.load(r)
+          if not payload.get("ok"):
+              raise SystemExit(f"Firefox recycle failed: {payload!r}")
+          print("FIREFOX_RECYCLE_GREEN=1")
+          print(json.dumps(payload.get("status") or {}, sort_keys=True))
+          PY
+
+      - name: Push one worker canary and prove dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          API = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+
+          def get(path):
+              with urllib.request.urlopen(API + path, timeout=8) as r:
+                  return json.load(r)
+
+          def post(path, payload):
+              data = json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  API + path,
+                  data=data,
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return json.load(r)
+
+          targets = get("/api/runner-targets").get("projects") or {}
+          preferred = "cloud::w1"
+          if targets.get(preferred, {}).get("active") is True:
+              worker = preferred
+          else:
+              worker = next(
+                  (
+                      key for key, cfg in targets.items()
+                      if cfg.get("active") is True
+                      and not cfg.get("reviewer_mode")
+                      and cfg.get("assignment_ready") is True
+                  ),
+                  None,
+              )
+          if not worker:
+              raise SystemExit("no active assignment-ready worker for canary")
+
+          before = datetime.now(timezone.utc).isoformat()
+          response = post("/api/runner-control", {"project_id": worker, "action": "push"})
+          command_id = int(response.get("command_id") or 0)
+          if command_id < 1:
+              raise SystemExit(f"push did not return a command id: {response!r}")
+          print(f"CANARY_WORKER={worker}")
+          print(f"CANARY_COMMAND_ID={command_id}")
+
+          deadline = time.time() + 100
+          last = None
+          while time.time() < deadline:
+              with sqlite3.connect(DB, timeout=4) as conn:
+                  conn.row_factory = sqlite3.Row
+                  row = conn.execute(
+                      "SELECT id,status,result,updated_at FROM runner_commands WHERE id=?",
+                      (command_id,),
+                  ).fetchone()
+                  base = worker.split("::w", 1)[0]
+                  slot = int(worker.split("::w", 1)[1]) if "::w" in worker else 1
+                  event = conn.execute(
+                      "SELECT ts,event,reason,error FROM runner_events "
+                      "WHERE project_id=? AND worker_slot=? AND ts>=? "
+                      "ORDER BY id DESC LIMIT 1",
+                      (base, slot, before),
+                  ).fetchone()
+              last = {
+                  "command": dict(row) if row else None,
+                  "event": dict(event) if event else None,
+              }
+              if row and row["status"] == "completed":
+                  if event and event["event"] in {
+                      "prompt-sent", "generation-started", "generation-finished", "heartbeat"
+                  }:
+                      print("CANARY_DISPATCH_GREEN=1")
+                      print(json.dumps(last, ensure_ascii=False, sort_keys=True))
+                      raise SystemExit(0)
+              if row and row["status"] == "failed":
+                  raise SystemExit("CANARY_FAILED " + json.dumps(last, ensure_ascii=False, sort_keys=True))
+              if event and event["event"] == "send-blocked":
+                  reason = str(event["reason"] or "")
+                  if "prompt-missing-queue-line" in reason or "prompt-missing-worker-line" in reason:
+                      raise SystemExit("LEGACY_PROMPT_CONTRACT_STILL_ACTIVE " + json.dumps(last, ensure_ascii=False, sort_keys=True))
+              time.sleep(3)
+
+          raise SystemExit("CANARY_TIMEOUT " + json.dumps(last, ensure_ascii=False, sort_keys=True))
+          PY
