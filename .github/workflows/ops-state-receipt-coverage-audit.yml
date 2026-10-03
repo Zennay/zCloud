@@ -1,0 +1,47 @@
+name: Audit live zCloud state receipt coverage
+
+on:
+  push:
+    branches: [ops/haxlab-receipt-direct-20261003]
+    paths:
+      - .github/workflows/ops-state-receipt-coverage-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit live receipt coverage from VPS source of truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          from pathlib import Path
+          import project_runtime
+
+          root=Path("/home/ubuntu/zennay-cloud")
+          projects=json.loads((root/"projects.json").read_text(encoding="utf-8"))
+          active=[p.get("id") for p in projects if str(p.get("status") or "active")!="archived"]
+          with sqlite3.connect(root/"history.db",timeout=15) as conn:
+              conn.row_factory=sqlite3.Row
+              coverage=project_runtime.receipt_coverage(conn,active,max_age_seconds=7200)
+              latest=project_runtime.latest_receipts(conn)
+          print("STATE_RECEIPT_COVERAGE="+json.dumps(coverage,sort_keys=True,separators=(",",":")))
+          print("STATE_RECEIPT_LATEST="+json.dumps({
+              k:{
+                  "id":v.get("id"),
+                  "observed_at":v.get("observed_at"),
+                  "source":v.get("source"),
+                  "ci_status":v.get("ci_status"),
+                  "phase":v.get("phase"),
+              }
+              for k,v in latest.items()
+          },sort_keys=True,separators=(",",":")))
+          PY
