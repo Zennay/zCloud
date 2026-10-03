@@ -415,6 +415,15 @@ jobs:
           echo "FIREFOX_AUTOMATION_SERVICE=failed"
           exit 1
 
+      - name: Repair legacy runtime project schema
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_runtime_project_schema_repair.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --json
+
       - name: Promote backend runtime core
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
@@ -424,6 +433,7 @@ jobs:
             --path project_runtime.py \
             --path lane_generator.py \
             --path scripts/zcloud_recovery.py \
+            --path scripts/zcloud_runtime_project_schema_repair.py \
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
