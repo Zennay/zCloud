@@ -2,7 +2,7 @@ name: Backfill HaxLab project state receipt
 
 on:
   push:
-    branches: [main]
+    branches: [ops/haxlab-receipt-direct-20261003]
     paths:
       - .github/workflows/haxlab-state-receipt-backfill.yml
   workflow_dispatch:
@@ -12,13 +12,18 @@ permissions:
 
 jobs:
   backfill:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify permanent zCloud VPS runner
-        run: python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Verify exact VPS host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test -f /home/ubuntu/zennay-cloud/history.db
+          test -f /home/ubuntu/zennay-cloud/projects.json
 
       - name: Record evidence-backed HaxLab state receipt
         shell: bash
