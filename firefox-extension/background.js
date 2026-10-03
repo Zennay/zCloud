@@ -795,15 +795,15 @@ function runProject(cfg) {
     try {
       const highReady = await ensureHighThinking();
       if (!highReady) {
-        // Think Hard is a hard UI gate. Prompt wording is not a substitute for
-        // selecting and verifying the ChatGPT control.
+        // Keep trying/verifying High, but do not deadlock portfolio work when
+        // ChatGPT changes the thinking-effort control. This matches the
+        // primary Violentmonkey runner's fail-soft behavior.
         const diagnostic = lastThinkingDiagnostic || compactThinkingDiagnostic("high-unverified");
-        status("send-blocked", {
-          reason: ("high-thinking-required|" + diagnostic).slice(0, 240),
-          error: diagnostic,
+        status("thinking-effort-unavailable", {
+          diagnostic: diagnostic,
+          reason: "high-thinking-picker-unavailable",
           required: REQUIRED_THINKING_EFFORT
         });
-        return false;
       }
       const ok = draft === PROMPT || await fill(PROMPT);
       if (!ok) { status("send-blocked", {reason: "composer-missing"}); return false; }
