@@ -29,8 +29,10 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           src="$RUNNER_TEMP/ftmo-pr462-zcloud-proof"
           rm -rf "$src"
-          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
-          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          git init -q "$src"
+          git -C "$src" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$src" -c protocol.version=2 fetch -q --depth=1 origin "$TARGET_SHA"
+          git -C "$src" checkout -q --detach FETCH_HEAD
           test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
           echo "FTMO_PR462_EXACT_SHA=$TARGET_SHA"
 
