@@ -383,4 +383,4 @@ jobs:
           print("VM_DIAGNOSTIC_RESTART_GREEN="+str(new))
           PY
 
-# push-test diagnostic 2026-10-04
+# push-test diagnostic rerun after prompt-contract repair 2026-10-04
