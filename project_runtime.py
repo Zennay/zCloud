@@ -207,6 +207,59 @@ def latest_receipts(connection: sqlite3.Connection) -> dict[str, dict]:
     return {str(row["project_id"]): _receipt_payload(row) for row in rows}
 
 
+def receipt_coverage(
+    connection: sqlite3.Connection,
+    project_ids,
+    *,
+    max_age_seconds: int = 24 * 3600,
+    now_value: str | None = None,
+) -> dict:
+    """Return a fail-closed freshness audit for active project state receipts."""
+    project_ids = sorted({str(project_id).strip() for project_id in project_ids if str(project_id).strip()})
+    max_age_seconds = max(60, int(max_age_seconds or 24 * 3600))
+    try:
+        reference = datetime.fromisoformat(str(now_value)).astimezone(timezone.utc) if now_value else datetime.now(timezone.utc)
+    except Exception as exc:
+        raise ValueError("invalid receipt coverage reference time") from exc
+    receipts = latest_receipts(connection)
+    missing = []
+    invalid = []
+    stale = []
+    current = []
+    receipt_ids = {}
+    for project_id in project_ids:
+        if project_id not in receipts:
+            missing.append(project_id)
+            continue
+        receipt = receipts.get(project_id)
+        if not receipt:
+            invalid.append(project_id)
+            continue
+        try:
+            observed = datetime.fromisoformat(str(receipt.get("observed_at") or "")).astimezone(timezone.utc)
+        except Exception:
+            invalid.append(project_id)
+            continue
+        age_seconds = max(0, int((reference - observed).total_seconds()))
+        receipt_ids[project_id] = receipt.get("id")
+        if age_seconds > max_age_seconds:
+            stale.append({"project_id": project_id, "age_seconds": age_seconds, "receipt_id": receipt.get("id")})
+        else:
+            current.append(project_id)
+    return {
+        "ready": not missing and not invalid and not stale,
+        "time": reference.isoformat(),
+        "max_age_seconds": max_age_seconds,
+        "project_count": len(project_ids),
+        "current_count": len(current),
+        "current": current,
+        "missing": missing,
+        "invalid": invalid,
+        "stale": stale,
+        "receipt_ids": receipt_ids,
+    }
+
+
 def apply_receipt(project: dict, receipt: dict | None) -> dict:
     if not receipt:
         project["state_source"] = "registry"

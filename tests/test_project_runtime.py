@@ -124,6 +124,55 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertEqual("registry next", project["next_step"])
         self.assertEqual("registry", project["state_source"])
 
+    def test_receipt_coverage_reports_missing_stale_and_current_projects(self):
+        runtime.record_receipt(
+            self.conn,
+            "cloud",
+            observed_at="2026-10-03T22:30:00+00:00",
+            action="fresh cloud evidence",
+            source="test",
+        )
+        runtime.record_receipt(
+            self.conn,
+            "ftmo",
+            observed_at="2026-10-03T18:00:00+00:00",
+            action="old ftmo evidence",
+            source="test",
+        )
+        coverage = runtime.receipt_coverage(
+            self.conn,
+            ["cloud", "ftmo", "haxlab"],
+            max_age_seconds=7200,
+            now_value="2026-10-03T23:00:00+00:00",
+        )
+        self.assertFalse(coverage["ready"])
+        self.assertEqual(["cloud"], coverage["current"])
+        self.assertEqual(["haxlab"], coverage["missing"])
+        self.assertEqual("ftmo", coverage["stale"][0]["project_id"])
+        self.assertEqual(3, coverage["project_count"])
+        self.assertEqual(1, coverage["current_count"])
+
+    def test_receipt_coverage_treats_malformed_latest_evidence_as_invalid(self):
+        self.conn.execute(
+            """INSERT INTO project_state_receipts(
+                project_id,phase,action,commit_sha,ci_status,blocker,next_gate,source,
+                observed_at,evidence_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "cloud", "phase", "action", "", "success", "", "", "test",
+                "2026-10-03T22:30:00+00:00", '{"broken":', "2026-10-03T22:30:00+00:00",
+            ),
+        )
+        coverage = runtime.receipt_coverage(
+            self.conn,
+            ["cloud"],
+            max_age_seconds=7200,
+            now_value="2026-10-03T23:00:00+00:00",
+        )
+        self.assertFalse(coverage["ready"])
+        self.assertEqual(["cloud"], coverage["invalid"])
+        self.assertEqual([], coverage["missing"])
+
     def test_heavy_pool_allows_only_one_concurrent_project(self):
         first = runtime.acquire_resource(self.conn, "ftmo", "run-1")
         second = runtime.acquire_resource(self.conn, "haxlab", "run-2")
