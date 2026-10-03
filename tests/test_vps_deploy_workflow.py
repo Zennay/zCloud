@@ -49,15 +49,37 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             backend,
         )
         self.assertIn("--allow-recent-ancestor-prechange-drift", backend)
+        self.assertIn("--path project_runtime.py", backend)
         self.assertIn("--path lane_generator.py", backend)
         recovery = (ROOT / "scripts/zcloud_recovery.py").read_text(encoding="utf-8")
         prechange = (ROOT / "scripts/zcloud_prechange_guard.py").read_text(encoding="utf-8")
+        self.assertIn('"project_runtime.py"', recovery)
+        self.assertIn('"project_runtime.py"', prechange)
         self.assertIn('"lane_generator.py"', recovery)
         self.assertIn('"lane_generator.py"', prechange)
         self.assertEqual(
             1,
             text.count("--allow-recent-ancestor-prechange-drift"),
         )
+
+    def test_deploy_bootstraps_missing_project_runtime_only_for_exact_candidate_server(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        bootstrap = "Bootstrap aligned backend dependency before health gate"
+        recover = "Recover zCloud health before guarded promotion"
+        rollback = "Roll back failed pre-health dependency bootstrap"
+        promote = "Promote backend runtime core"
+        self.assertIn(bootstrap, text)
+        self.assertIn('live_dep="$root/project_runtime.py"', text)
+        self.assertIn('candidate_dep="$GITHUB_WORKSPACE/project_runtime.py"', text)
+        self.assertIn('if [[ "$live_server_sha" != "$candidate_server_sha" ]]', text)
+        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP=skipped_server_not_candidate", text)
+        self.assertIn('install -m 0644 "$candidate_dep" "$stage"', text)
+        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP=aligned", text)
+        self.assertIn(rollback, text)
+        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP_ROLLBACK=restored", text)
+        self.assertIn("BACKEND_DEPENDENCY_BOOTSTRAP_ROLLBACK=removed", text)
+        self.assertLess(text.index(bootstrap), text.index(recover))
+        self.assertLess(text.index(recover), text.index(promote))
 
     def test_deploy_recovers_unhealthy_zcloud_before_freezing_self_heal(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
@@ -123,20 +145,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("worker_paths+=(--path firefox-extension/background.js)", block)
         self.assertIn("\"${worker_paths[@]}\"", block)
 
-    def test_one_time_live_server_migration_is_exactly_reviewed(self):
+    def test_stale_live_server_sha_allowance_is_removed(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        marker = (
-            "--reconcile-known-live-sha "
-            "server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0"
-        )
-        self.assertIn(marker, text)
-        self.assertEqual(1, text.count("--reconcile-known-live-sha server.py="))
-        core = text[
-            text.index("- name: Promote backend runtime core"):
-            text.index("- name: Promote autonomy policies and queue seed")
-        ]
-        self.assertIn(marker, core)
+        self.assertNotIn("--reconcile-known-live-sha server.py=", text)
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
+
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         guard = "Enforce permanent zCloud VPS runner identity"
@@ -177,6 +190,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
+            "project_runtime.py",
             "lane_generator.py",
             "scripts/zcloud_recovery.py",
             "autonomy-policy.json",
@@ -239,10 +253,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         ]
         self.assertIn("--preserve-schema-validated-runtime-config", core)
         self.assertIn("--allow-recent-ancestor-prechange-drift", core)
-        self.assertIn(
-            "--reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0",
-            core,
-        )
+        self.assertNotIn("--reconcile-known-live-sha server.py=", core)
 
     def test_backend_backlog_is_promoted_in_bounded_transactions(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
@@ -257,7 +268,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
         self.assertEqual(1, core.count("scripts/zcloud_transactional_promote.py"))
         self.assertEqual(1, policy.count("scripts/zcloud_transactional_promote.py"))
-        for path in ("server.py", "lane_generator.py", "scripts/zcloud_recovery.py"):
+        for path in ("server.py", "project_runtime.py", "lane_generator.py", "scripts/zcloud_recovery.py"):
             self.assertIn(f"--path {path}", core)
             self.assertNotIn(f"--path {path}", policy)
         for path in ("autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
