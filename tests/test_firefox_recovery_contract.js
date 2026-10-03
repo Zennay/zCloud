@@ -47,8 +47,6 @@ for (const marker of [
   "target.replacement_handoff = handoff",
   "await setReplacementHandoffTag(tab.id, handoff)",
   "await getReplacementHandoffTag(tabId)",
-  "Ga verder met hetzelfde vrije werkgebied",
-  "neem geen werk over dat al door een andere worker wordt uitgevoerd",
   "runner-replacement-handoff-consumed",
   "worker-replacement-handoff-consumed",
   "let BASE_PROMPT = cfg.prompt",
@@ -71,6 +69,14 @@ for (const marker of [
   assert.ok(background.includes(marker), "missing recovery contract marker: " + marker);
 }
 
+
+for (const forbidden of [
+  "Ga verder met hetzelfde vrije werkgebied",
+  "neem geen werk over dat al door een andere worker wordt uitgevoerd",
+  "Werk verder aan het project en voer nu een concrete volgende stap uit",
+]) {
+  assert.ok(!background.includes(forbidden), "worker prompt augmentation must stay removed: " + forbidden);
+}
 
 const directRemoveCalls = background.match(/browser\.tabs\.remove\(/g) || [];
 assert.equal(
