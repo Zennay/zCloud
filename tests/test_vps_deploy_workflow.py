@@ -274,6 +274,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         )
         self.assertIn("MAIN_MOVED_BEFORE_VPS_WRITE", text)
 
+    def test_live_deploy_diagnostics_use_permanent_zcloud_vps_runner(self):
+        text = (ROOT / ".github/workflows/zcloud-live-debug.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertNotIn("runs-on: self-hosted\n", text)
+
     def test_execution_probe_uploads_sanitized_prechange_evidence(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
         self.assertIn("Inspect sanitized deploy pre-change evidence", text)
