@@ -151,9 +151,32 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("worker_paths+=(--path firefox-extension/background.js)", block)
         self.assertIn("\"${worker_paths[@]}\"", block)
 
-    def test_stale_live_server_sha_allowance_is_removed(self):
+    def test_known_live_server_reconcile_is_one_shot_and_lkg_bound(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertNotIn("--reconcile-known-live-sha server.py=", text)
+        authorize = text[
+            text.index("- name: Authorize one-shot known live server reconciliation"):
+            text.index("- name: Promote backend runtime core")
+        ]
+        core = text[
+            text.index("- name: Promote backend runtime core"):
+            text.index("- name: Promote autonomy policies and queue seed")
+        ]
+        known_sha = "66f51bda39a722d79745c74e852e32a43afe8085928eab6d415c988d231d49be"
+        known_lkg = "20261002T105256Z-a57439eb"
+        self.assertIn(f'expected_live_sha="{known_sha}"', authorize)
+        self.assertIn(f'expected_lkg="{known_lkg}"', authorize)
+        self.assertIn('last-known-good.json', authorize)
+        self.assertIn('sha256sum "$root/server.py"', authorize)
+        self.assertIn(
+            'if [[ "$live_sha" == "$expected_live_sha" && "$current_lkg" == "$expected_lkg" ]]',
+            authorize,
+        )
+        self.assertIn('echo "enabled=true" >> "$GITHUB_OUTPUT"', authorize)
+        self.assertIn("KNOWN_LIVE_SERVER_RECONCILE=authorized", authorize)
+        self.assertIn('if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]', core)
+        self.assertIn("--reconcile-known-live-sha", core)
+        self.assertIn(f'"server.py={known_sha}"', core)
+        self.assertIn('"\${reconcile_args[@]}"', core)
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
 
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
@@ -260,7 +283,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         ]
         self.assertIn("--preserve-schema-validated-runtime-config", core)
         self.assertIn("--allow-recent-ancestor-prechange-drift", core)
-        self.assertNotIn("--reconcile-known-live-sha server.py=", core)
+        self.assertIn("--reconcile-known-live-sha", core)
+        self.assertIn("steps.server_drift_reconcile.outputs.enabled", core)
 
     def test_deploy_repairs_only_legacy_runtime_project_schema_before_promotion(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
