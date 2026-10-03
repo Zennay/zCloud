@@ -94,7 +94,7 @@ jobs:
           xpi = Path("/home/ubuntu/snap/firefox/common/.mozilla/firefox/vn6i5j5p.default/extensions/{aecec67f-0d10-4fa7-b7c7-609a2db280cf}.xpi")
           terms = [
               "ConfirmInstall", "confirm/index", "confirm-install", "btnInstall",
-              "button", "Install", "Update", "Close", "cmd:"", "cmd:'",
+              "button", "Install", "Update", "Close", "cmd",
               "InstallScript", "ParseScript", "UpdateScript",
           ]
           out=[]
