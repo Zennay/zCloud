@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent
 CONTRACT_FILE = ROOT / "project-contracts.json"
 
 _ALLOWED_AUTONOMY = {"ai_worker", "zcloud_stopgate", "haxlab_status", "ftmo_status", "external_gate", "manual"}
+_MAX_RECEIPT_EVIDENCE_BYTES = 12000
 
 
 def _now() -> str:
@@ -116,15 +117,36 @@ def init_tables(connection: sqlite3.Connection) -> None:
     )
 
 
+def _serialize_receipt_evidence(evidence: dict | None) -> str:
+    if evidence is None:
+        evidence = {}
+    if not isinstance(evidence, dict):
+        raise ValueError("receipt evidence must be an object")
+    payload = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) > _MAX_RECEIPT_EVIDENCE_BYTES:
+        raise ValueError(
+            f"receipt evidence exceeds {_MAX_RECEIPT_EVIDENCE_BYTES} UTF-8 bytes"
+        )
+    return payload
+
+
 def _receipt_payload(row) -> dict | None:
     if not row:
         return None
     item = dict(row)
+    raw_evidence = item.pop("evidence_json") or "{}"
     try:
-        item["evidence"] = json.loads(item.pop("evidence_json") or "{}")
-    except Exception:
-        item["evidence"] = {}
-        item.pop("evidence_json", None)
+        evidence = json.loads(raw_evidence)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(evidence, dict):
+        return None
+    item["evidence"] = evidence
     return item
 
 
@@ -148,6 +170,7 @@ def record_receipt(
         raise ValueError("unsupported ci_status")
     observed_at = str(observed_at or _now())
     created_at = _now()
+    evidence_json = _serialize_receipt_evidence(evidence)
     cursor = connection.execute(
         """INSERT INTO project_state_receipts(
             project_id,phase,action,commit_sha,ci_status,blocker,next_gate,source,
@@ -163,7 +186,7 @@ def record_receipt(
             str(next_gate or "")[:1000],
             str(source or "")[:300],
             observed_at,
-            json.dumps(evidence or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:12000],
+            evidence_json,
             created_at,
         ),
     )
