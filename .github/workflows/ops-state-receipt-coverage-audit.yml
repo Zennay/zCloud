@@ -1,4 +1,5 @@
 name: Audit live zCloud state receipt coverage
+# One-shot source-of-truth coverage proof
 
 on:
   push:
