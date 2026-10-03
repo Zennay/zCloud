@@ -130,17 +130,13 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0"
         )
         self.assertIn(marker, text)
-        self.assertEqual(2, text.count("--reconcile-known-live-sha server.py="))
-        catalog = text[
-            text.index("- name: Bootstrap validated project catalog"):
-            text.index("- name: Promote backend runtime core")
-        ]
+        self.assertEqual(1, text.count("--reconcile-known-live-sha server.py="))
         core = text[
             text.index("- name: Promote backend runtime core"):
             text.index("- name: Promote autonomy policies and queue seed")
         ]
-        self.assertIn(marker, catalog)
         self.assertIn(marker, core)
+        self.assertNotIn("- name: Bootstrap validated project catalog", text)
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         guard = "Enforce permanent zCloud VPS runner identity"
@@ -178,7 +174,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        self.assertEqual(5, text.count("scripts/zcloud_transactional_promote.py"))
+        self.assertEqual(4, text.count("scripts/zcloud_transactional_promote.py"))
         for path in (
             "server.py",
             "lane_generator.py",
@@ -192,7 +188,6 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "public/enhancements.js",
             "public/enhancements.css",
             "public/zcloud-worker.user.js",
-            "projects.json",
         ):
             self.assertIn(f"--path {path}", text)
         self.assertIn("deploy/chatgpt-firefox.service", text)
@@ -211,6 +206,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("Install aligned self-heal probe", text)
         self.assertIn('sudo -n install -m 0755 "$GITHUB_WORKSPACE/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal', text)
         self.assertIn("systemctl --user set-property --runtime chatgpt-firefox.service CPUWeight=100", text)
+        self.assertNotIn("--path projects.json", text)
+        self.assertNotIn("--path project-layout.json", text)
+        self.assertEqual(4, text.count("--preserve-schema-validated-runtime-config"))
         for forbidden in ("runner-control", "action: start", "chatgpt.com"):
             self.assertNotIn(forbidden, text)
 
@@ -229,26 +227,22 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.freshness.outputs.deploy_sha", text)
         self.assertNotIn("DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}", text)
 
-    def test_project_catalog_bootstraps_before_backend_schema_validation(self):
+    def test_code_deploy_preserves_runtime_owned_project_catalog(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        catalog = text[
-            text.index("- name: Bootstrap validated project catalog"):
-            text.index("- name: Promote backend runtime core")
+        self.assertNotIn("- name: Bootstrap validated project catalog", text)
+        self.assertNotIn("--path projects.json", text)
+        self.assertNotIn("--path project-layout.json", text)
+        self.assertEqual(4, text.count("--preserve-schema-validated-runtime-config"))
+        core = text[
+            text.index("- name: Promote backend runtime core"):
+            text.index("- name: Promote autonomy policies and queue seed")
         ]
-        self.assertLess(
-            text.index("- name: Bootstrap validated project catalog"),
-            text.index("- name: Promote backend runtime core"),
-        )
-        self.assertIn("--path projects.json", catalog)
-        self.assertIn("--preserve-prechange-drift public/zcloud-worker.user.js", catalog)
-        self.assertIn("--preserve-prechange-drift firefox-extension/background.js", catalog)
-        self.assertIn("--allow-recent-ancestor-prechange-drift", catalog)
+        self.assertIn("--preserve-schema-validated-runtime-config", core)
+        self.assertIn("--allow-recent-ancestor-prechange-drift", core)
         self.assertIn(
             "--reconcile-known-live-sha server.py=fb3af74f2b1f77127f2fbbda0f29efab0f65308e6a98f6b357d30a8acd26dbe0",
-            catalog,
+            core,
         )
-        self.assertEqual(1, catalog.count("scripts/zcloud_transactional_promote.py"))
-        self.assertNotIn("- name: Promote translated project catalog", text)
 
     def test_backend_backlog_is_promoted_in_bounded_transactions(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
