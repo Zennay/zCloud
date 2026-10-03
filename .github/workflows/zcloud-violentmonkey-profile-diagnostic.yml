@@ -256,46 +256,104 @@ jobs:
 
 # push-test diagnostic 2026-10-04
 
-      - name: Inspect zCloud userscript record only
+      - name: Snapshot installed zCloud userscript safely
         shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, sqlite3
+          import json, os, shutil, signal, sqlite3, subprocess, time
           from pathlib import Path
 
-          db=Path.home()/ "snap/firefox/common/.mozilla/firefox/vn6i5j5p.default/storage/default/moz-extension+++1e84f8a6-6cfe-433a-91a0-8d757fdc30bb^userContextId=4294967295/idb/3647222921wleabcEoxlt-eengsairo.sqlite"
+          home=Path.home()
+          profile=home/"snap/firefox/common/.mozilla/firefox/vn6i5j5p.default"
+          db=profile/"storage/default/moz-extension+++1e84f8a6-6cfe-433a-91a0-8d757fdc30bb^userContextId=4294967295/idb/3647222921wleabcEoxlt-eengsairo.sqlite"
           if not db.exists():
               raise SystemExit("Violentmonkey IDB not found")
+
+          proc=subprocess.run(["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],text=True,capture_output=True,check=False)
+          pids=[]
+          main=None
+          for raw in proc.stdout.split():
+              if not raw.isdigit(): continue
+              pid=int(raw)
+              try:
+                  cmd=Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0",b" ").decode("utf-8","replace").strip()
+              except OSError:
+                  continue
+              if " -contentproc " not in f" {cmd} " and "/usr/lib/firefox/firefox" in cmd:
+                  pids.append(pid)
+                  if main is None: main=(pid,cmd)
+
+          if main is None:
+              raise SystemExit("main Firefox process not found")
+
+          pid,cmd=main
+          args=cmd.split()
+          urls=[x for x in args[1:] if x.startswith("http://") or x.startswith("https://")]
+          env=os.environ.copy()
+          env.pop("RUNNER_TRACKING_ID",None)
+          try:
+              for item in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0"):
+                  if b"=" not in item: continue
+                  k,v=item.split(b"=",1)
+                  key=k.decode("utf-8","replace")
+                  if key in {"DISPLAY","XAUTHORITY","WAYLAND_DISPLAY","DBUS_SESSION_BUS_ADDRESS","XDG_RUNTIME_DIR","HOME","USER","LOGNAME"}:
+                      env[key]=v.decode("utf-8","replace")
+          except OSError:
+              pass
+
+          for p in pids:
+              try: os.kill(p,signal.SIGTERM)
+              except ProcessLookupError: pass
+          deadline=time.time()+15
+          while time.time()<deadline:
+              alive=[]
+              for p in pids:
+                  try: os.kill(p,0); alive.append(p)
+                  except ProcessLookupError: pass
+              if not alive: break
+              time.sleep(.5)
+          for p in alive if 'alive' in locals() else []:
+              try: os.kill(p,signal.SIGKILL)
+              except ProcessLookupError: pass
+          time.sleep(2)
+
+          snap=Path(os.environ["RUNNER_TEMP"])/"violentmonkey-idb"
+          snap.mkdir(parents=True,exist_ok=True)
+          for suffix in ("","-wal","-shm"):
+              src=Path(str(db)+suffix)
+              if src.exists(): shutil.copy2(src,snap/src.name)
+
           markers=[
-              "zCloud Dynamic Worker",
-              "@version",
-              "prompt-missing-worker-line",
-              "VPS_QUEUE_ASSIGNMENT",
-              "Jij bent Worker",
+              "zCloud Dynamic Worker","@version","prompt-missing-worker-line",
+              "VPS_QUEUE_ASSIGNMENT","Jij bent Worker",
               "prompt-missing-project-instruction",
-              "Kijk in Notion in welke fase het project zit",
+              "Kijk in Notion in welke fase het project zit"
           ]
-          con=sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-          out=[]
-          for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+          con=sqlite3.connect(str(db))
+          tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+          result={"tables":[],"records":[]}
+          for table in tables:
               try:
                   cols=[r[1] for r in con.execute(f'PRAGMA table_info("{table}")')]
                   rows=con.execute(f'SELECT rowid,* FROM "{table}"').fetchall()
               except Exception:
                   continue
+              result["tables"].append({"name":table,"columns":cols,"rows":len(rows)})
               for row in rows:
                   hits=[]
-                  for idx,val in enumerate(row):
-                      if isinstance(val, bytes):
+                  for pos,val in enumerate(row):
+                      if isinstance(val,bytes):
                           variants=[]
                           for enc in ("utf-8","utf-16le","utf-16be"):
                               try: variants.append((enc,val.decode(enc,errors="ignore")))
                               except Exception: pass
                       elif isinstance(val,str):
                           variants=[("text",val)]
-                      else:
-                          continue
+                      else: continue
                       for enc,s in variants:
                           low=s.lower()
                           found=[m for m in markers if m.lower() in low]
@@ -303,12 +361,26 @@ jobs:
                               snippets=[]
                               for m in found:
                                   i=low.find(m.lower())
-                                  snippets.append(s[max(0,i-180):i+360].replace("\n","\\n"))
-                              hits.append({"column": cols[idx-1] if idx>0 and idx-1<len(cols) else "rowid","encoding":enc,"markers":found,"snippets":snippets})
+                                  snippets.append(s[max(0,i-240):i+520].replace("\n","\\n"))
+                              hits.append({"position":pos,"column":cols[pos-1] if pos>0 and pos-1<len(cols) else "rowid","encoding":enc,"markers":found,"snippets":snippets})
                   if hits:
-                      out.append({"table":table,"rowid":row[0],"hits":hits})
-          print("ZCLOUD_VM_RECORDS="+json.dumps(out,ensure_ascii=False))
-          if not out:
-              raise SystemExit("zCloud userscript record not found")
+                      result["records"].append({"table":table,"rowid":row[0],"hits":hits})
+          print("VM_DB_INSPECT="+json.dumps(result,ensure_ascii=False))
+
+          log=Path("/tmp/zcloud-vm-diagnostic-restart.log")
+          with log.open("ab",buffering=0) as out:
+              subprocess.Popen(["/usr/bin/firefox",*urls],stdin=subprocess.DEVNULL,stdout=out,stderr=out,env=env,start_new_session=True,close_fds=True)
+          deadline=time.time()+30
+          new=None
+          while time.time()<deadline:
+              p=subprocess.run(["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],text=True,capture_output=True,check=False)
+              candidates=[int(x) for x in p.stdout.split() if x.isdigit() and int(x) not in pids]
+              if candidates:
+                  new=candidates[0]; break
+              time.sleep(1)
+          if not new:
+              raise SystemExit("Firefox failed to restart after diagnostic")
+          print("VM_DIAGNOSTIC_RESTART_GREEN="+str(new))
           PY
 
+# push-test diagnostic 2026-10-04
