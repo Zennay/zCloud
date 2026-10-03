@@ -1,4 +1,5 @@
 name: Push all zCloud workers now
+# retrigger after exact worker prompt repair 2026-10-03T21:52Z
 
 on:
   schedule:
