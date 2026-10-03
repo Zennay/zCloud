@@ -15,7 +15,6 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
       - name: Close Arena v2 P1 and claim next HaxLab write lane
         shell: bash
         run: |
@@ -114,36 +113,3 @@ jobs:
           if str(active[0].get("title") or "").startswith("Superseded"):
               raise RuntimeError("superseded HaxLab item was allocated")
           PY
-
-      - name: Record evidence-backed HaxLab Arena v2 state receipt
-        if: success()
-        shell: bash
-        env:
-          ZCLOUD_WORKFLOW_RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          evidence_json="$(python3 - <<'PY'
-          import json
-          import os
-          print(json.dumps({
-              "workflow_run_id": os.environ.get("ZCLOUD_WORKFLOW_RUN_ID"),
-              "queue_id": "haxlab-closed-loop-arena-v2-implementation",
-              "haxlab_pr": 16,
-              "haxlab_commit": "88568e6e28610d60735c6e7089997003c7e25a78",
-              "integration_run_id": 36847249847,
-              "validation_run_id": 36847704165,
-              "evidence_marker": "HAXLAB_ARENA_V2_QUEUE_ADVANCE_GREEN",
-          }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-          PY
-          )"
-          python3 scripts/zcloud_runtime.py \
-            --db /home/ubuntu/zennay-cloud/history.db \
-            receipt \
-            --project haxlab \
-            --phase "Closed-Loop Arena v2 · rollout robustness" \
-            --action "Arena v2 integration validated and next HaxLab write lane allocated" \
-            --commit "88568e6e28610d60735c6e7089997003c7e25a78" \
-            --ci-status success \
-            --next-gate "Build and validate the next Closed-Loop Arena v2 increment against the frozen multi-source evaluation suite" \
-            --source "github-actions:haxlab-arena-v2-queue-advance" \
-            --evidence-json "$evidence_json"
