@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   proof:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 35
     env:
       TARGET_SHA: 9e488119a50f55f21e4bee431354ba8cb9e9196c
