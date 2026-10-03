@@ -114,8 +114,8 @@
         "progress": 35
       }
     ],
-    "phase": "Generation 29 · provider foundation retry/backoff",
-    "next_step": "Keep the persistent ftmo-autonomous-marathon.service as the normal generation executor. Do not manually rerun closed Generation-10 validation. Only intervene on a concrete self-advance failure; preserve provider provenance plus preregistration, development, walk-forward and final-holdout seals, then prove autonomous recovery with deterministic runtime/workflow evidence.",
+    "phase": "Generation 30 · sealed future-window wait",
+    "next_step": "Keep Generation 30 outcome-free and sealed until the frozen market window ends on 2026-12-25 21:00 UTC. The marathon should remain in provider_foundation_window_not_elapsed/backoff without provider I/O. At or after that boundary, acquire fresh FXCM and Dukascopy evidence; only provider ACCEPT plus frozen split and independent QA may open preregistration and later development.",
     "status": "active",
     "priority": "normal",
     "repo_url": "https://github.com/Zennay/Ftmo",
