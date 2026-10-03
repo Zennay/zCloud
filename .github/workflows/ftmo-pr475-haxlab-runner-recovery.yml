@@ -59,3 +59,5 @@ jobs:
           [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]
 
           echo "HAXLAB_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid"
+
+# retrigger composition proof listener recovery
