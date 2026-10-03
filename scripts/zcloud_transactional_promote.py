@@ -98,6 +98,9 @@ BLOCKED_PREFIXES = (
 CREATABLE_PATHS = {
     "firefox-extension/recovery.js",
     "public/zcloud-worker.user.js",
+    # server.py imports this module on current main; older VPS installs may not
+    # have it yet, so the bounded backend transaction may create it.
+    "project_runtime.py",
     # lane_generator.py was introduced after the original VPS install and is
     # promoted by the guarded backend allowlist; bootstrap only this exact path.
     "lane_generator.py",
