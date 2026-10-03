@@ -129,6 +129,30 @@ jobs:
           ZSSH_MCP_API_KEY="" \
           ZSSH_MCP_CAPABILITY_TOKEN="$ZSSH_MCP_CAPABILITY_TOKEN" \
           node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
+      - name: Record evidence-backed zSSH release state receipt
+        if: success()
+        shell: bash
+        env:
+          RELEASE_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          evidence_json="$(python3 - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "workflow_run_id": os.environ.get("RELEASE_WORKFLOW_RUN_ID"),
+              "runner_name": os.environ.get("RUNNER_NAME"),
+              "machine": os.uname().nodename,
+              "release_sha": os.environ.get("ZSSH_RELEASE_SHA"),
+              "live_marker": "ZSSH_STANDALONE_M1_LIVE_GREEN",
+              "public_listing_marker": "ZSSH_PUBLIC_LISTING_SITE_VPS_GREEN",
+              "public_mcp_auth": "verified",
+          }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+          PY
+          )"
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · ship-ready program"             --action "Standalone VPS release and public MCP canaries succeeded"             --commit "$ZSSH_RELEASE_SHA"             --ci-status success             --next-gate "Continue the zSSH ship queue with production auth, hardening and review-ready packaging"             --source "github-actions:zssh-standalone-vps-release"             --evidence-json "$evidence_json"
+
       - name: Release coordination claim
         if: always()
         run: python3 scripts/zssh_release_coordination.py release
