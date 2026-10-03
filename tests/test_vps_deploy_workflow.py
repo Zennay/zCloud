@@ -193,7 +193,6 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "project_runtime.py",
             "lane_generator.py",
             "scripts/zcloud_recovery.py",
-            "scripts/zcloud_runtime_project_schema_repair.py",
             "autonomy-policy.json",
             "portfolio_queue.seed.json",
             "firefox-extension/background.js",
@@ -263,6 +262,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn(repair, text)
         self.assertIn("scripts/zcloud_runtime_project_schema_repair.py", text)
         self.assertIn('--candidate "$GITHUB_WORKSPACE"', text)
+        core = text[text.index("- name: Promote backend runtime core"):text.index("- name: Promote autonomy policies and queue seed")]
+        self.assertNotIn("--path scripts/zcloud_runtime_project_schema_repair.py", core)
         self.assertLess(text.index(repair), text.index(promote))
         self.assertNotIn("--path projects.json", text)
 
@@ -284,7 +285,6 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "project_runtime.py",
             "lane_generator.py",
             "scripts/zcloud_recovery.py",
-            "scripts/zcloud_runtime_project_schema_repair.py",
         ):
             self.assertIn(f"--path {path}", core)
             self.assertNotIn(f"--path {path}", policy)
