@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
     env:
-      TARGET_SHA: fc6ef3cc04ebc5324380316c33260765f36824e0
+      TARGET_SHA: 2f796c5fc2febf7ee4bd2f6c0e6d23e3ff32750d
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
       FTMO_ALLOW_PAID_AWS: ""
     steps:
