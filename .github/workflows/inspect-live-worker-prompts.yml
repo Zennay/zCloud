@@ -1,0 +1,36 @@
+name: Inspect live worker prompts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-live-worker-prompts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Print live runner prompts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=8) as r:
+              payload=json.load(r)
+          rows=[]
+          for key,cfg in (payload.get("projects") or {}).items():
+              rows.append({
+                  "key": key,
+                  "base": cfg.get("base_project_id"),
+                  "active": cfg.get("active"),
+                  "reviewer": cfg.get("reviewer_mode"),
+                  "prompt": cfg.get("prompt"),
+              })
+          print("LIVE_PROMPTS_JSON="+json.dumps(rows,ensure_ascii=False))
+          PY
