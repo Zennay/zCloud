@@ -28,6 +28,8 @@ jobs:
           printf 'protected_main_sha=%s\n' "$main_sha"
 
           branches=(
+            "worker-chatgpt/gen30-state-sync-deploy-lockstep-v2-20261003"
+            "worker-chatgpt/gen30-state-sync-deploy-lockstep-20261003"
             "worker5/day-cache-evidence-integrity-v3-20261002"
             "worker5/day-cache-evidence-integrity-v2-20261002"
             "worker5/day-cache-temporal-provenance-20261002"
