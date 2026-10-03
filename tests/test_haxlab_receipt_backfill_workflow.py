@@ -32,7 +32,7 @@ class HaxLabReceiptBackfillWorkflowTests(unittest.TestCase):
         self.assertIn("haxlab project missing from runtime-owned projects.json", text)
         self.assertIn("no HaxLab portfolio queue evidence available", text)
         self.assertIn("latest HaxLab queue state is not admissible evidence", text)
-        self.assertIn("live HaxLab phase/next_step is incomplete", text)
+        self.assertIn("runtime HaxLab phase/next_step is incomplete", text)
 
 
 if __name__ == "__main__":
