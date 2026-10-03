@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+ALLOWED_AUTONOMY_MODES = {"ai_worker", "zcloud_stopgate", "haxlab_status", "ftmo_status", "external_gate", "manual"}
 
 
 def load_json(path: Path):
@@ -138,6 +139,87 @@ def validate_layout(data, project_ids: set[str], errors: list[str]) -> None:
         add(errors, not unknown, f"project-layout.json.{key}: unknown project ids {unknown}")
 
 
+def validate_project_contracts(
+    data,
+    project_ids: set[str],
+    priorities: set[str],
+    errors: list[str],
+) -> dict:
+    summary = {"project_count": 0, "resource_pools": []}
+    if not isinstance(data, dict):
+        errors.append("project-contracts.json: object required")
+        return summary
+    add(errors, data.get("schema_version") == 1, "project-contracts.json: schema_version must be 1")
+    pools = data.get("resource_pools")
+    contracts = data.get("projects")
+    if not isinstance(pools, dict) or not pools:
+        errors.append("project-contracts.json.resource_pools: non-empty object required")
+        pools = {}
+    else:
+        for pool_name, pool in pools.items():
+            prefix = f"project-contracts.json.resource_pools.{pool_name}"
+            if not isinstance(pool, dict):
+                errors.append(f"{prefix}: object required")
+                continue
+            slots = pool.get("slots")
+            add(
+                errors,
+                isinstance(slots, int) and not isinstance(slots, bool) and slots >= 0,
+                f"{prefix}.slots: non-negative integer required",
+            )
+
+    if not isinstance(contracts, dict) or not contracts:
+        errors.append("project-contracts.json.projects: non-empty object required")
+        contracts = {}
+
+    contract_ids = {str(pid) for pid in contracts}
+    missing = sorted(project_ids - contract_ids)
+    unknown = sorted(contract_ids - project_ids)
+    add(errors, not missing, f"project-contracts.json: missing project contracts {missing}")
+    add(errors, not unknown, f"project-contracts.json: unknown project contracts {unknown}")
+
+    for pid, contract in contracts.items():
+        prefix = f"project-contracts.json.projects.{pid}"
+        if not isinstance(contract, dict):
+            errors.append(f"{prefix}: object required")
+            continue
+        add(errors, isinstance(contract.get("queue_mode"), str) and bool(contract.get("queue_mode", "").strip()), f"{prefix}.queue_mode: non-empty string required")
+        add(errors, isinstance(contract.get("lane_profile"), str) and bool(contract.get("lane_profile", "").strip()), f"{prefix}.lane_profile: non-empty string required")
+        cap = contract.get("ai_worker_cap")
+        add(errors, isinstance(cap, int) and not isinstance(cap, bool) and cap >= 1, f"{prefix}.ai_worker_cap: integer >= 1 required")
+
+        autonomy = contract.get("autonomy")
+        if not isinstance(autonomy, dict):
+            errors.append(f"{prefix}.autonomy: object required")
+            autonomy = {}
+        add(errors, autonomy.get("mode") in ALLOWED_AUTONOMY_MODES, f"{prefix}.autonomy.mode: unsupported mode")
+        add(errors, isinstance(autonomy.get("auto_start"), bool), f"{prefix}.autonomy.auto_start: boolean required")
+
+        compute = contract.get("compute")
+        if not isinstance(compute, dict):
+            errors.append(f"{prefix}.compute: object required")
+            compute = {}
+        add(errors, isinstance(compute.get("class"), str) and bool(compute.get("class", "").strip()), f"{prefix}.compute.class: non-empty string required")
+        pool_name = compute.get("pool")
+        add(errors, isinstance(pool_name, str) and pool_name in pools, f"{prefix}.compute.pool: known resource pool required")
+        cpu = compute.get("cpu_soft_cores")
+        add(errors, isinstance(cpu, (int, float)) and not isinstance(cpu, bool) and cpu >= 0, f"{prefix}.compute.cpu_soft_cores: non-negative number required")
+        memory = compute.get("memory_soft_mb")
+        add(errors, isinstance(memory, int) and not isinstance(memory, bool) and memory >= 0, f"{prefix}.compute.memory_soft_mb: non-negative integer required")
+        add(errors, compute.get("priority") in priorities, f"{prefix}.compute.priority: expected one of {sorted(priorities)}")
+        add(errors, isinstance(compute.get("protected"), bool), f"{prefix}.compute.protected: boolean required")
+
+        if contract.get("queue_mode") == "human-gated":
+            add(errors, autonomy.get("auto_start") is False, f"{prefix}: human-gated project must not auto-start")
+            add(errors, autonomy.get("mode") in {"external_gate", "manual"}, f"{prefix}: human-gated autonomy must be external_gate or manual")
+            pool_cfg = pools.get(pool_name) if isinstance(pool_name, str) else None
+            add(errors, isinstance(pool_cfg, dict) and pool_cfg.get("slots") == 0, f"{prefix}: human-gated project must use a disabled resource pool")
+
+    summary["project_count"] = len(contract_ids)
+    summary["resource_pools"] = sorted(str(name) for name in pools)
+    return summary
+
+
 def validate_resource_policy(
     data,
     project_ids: set[str],
@@ -215,6 +297,7 @@ def validate(
     projects_path: Path,
     layout_path: Path,
     resource_path: Path,
+    project_contracts_path: Path,
     server_path: Path,
     enhancements_path: Path,
     db_path: Path | None,
@@ -246,12 +329,19 @@ def validate(
         projects = load_json(projects_path)
         layout = load_json(layout_path)
         resources = load_json(resource_path)
+        project_contracts = load_json(project_contracts_path)
     except ValueError as exc:
         errors.append(str(exc))
         return {"ok": False, "errors": errors}
 
     project_ids = validate_projects(projects, errors)
     validate_layout(layout, project_ids, errors)
+    runtime_contracts = validate_project_contracts(
+        project_contracts,
+        project_ids,
+        set(priority_weights) if isinstance(priority_weights, dict) else set(),
+        errors,
+    )
     validate_resource_policy(
         resources,
         project_ids,
@@ -272,6 +362,7 @@ def validate(
             "max_workers": max_workers,
             "priorities": sorted(priority_weights) if isinstance(priority_weights, dict) else [],
             "resource_projects": sorted(project_units) if isinstance(project_units, dict) else [],
+            "project_runtime": runtime_contracts,
             "worker_state": worker_state,
         },
     }
@@ -282,6 +373,7 @@ def main(argv=None) -> int:
     parser.add_argument("--projects", type=Path, required=True)
     parser.add_argument("--layout", type=Path, required=True)
     parser.add_argument("--resource-policy", type=Path, required=True)
+    parser.add_argument("--project-contracts", type=Path, required=True)
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--enhancements", type=Path, required=True)
     parser.add_argument("--db", type=Path)
@@ -291,6 +383,7 @@ def main(argv=None) -> int:
         projects_path=args.projects.resolve(),
         layout_path=args.layout.resolve(),
         resource_path=args.resource_policy.resolve(),
+        project_contracts_path=args.project_contracts.resolve(),
         server_path=args.server.resolve(),
         enhancements_path=args.enhancements.resolve(),
         db_path=args.db.resolve() if args.db else None,

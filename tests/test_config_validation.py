@@ -19,6 +19,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.projects = self.root / "projects.json"
         self.layout = self.root / "project-layout.json"
         self.resources = self.root / "resource-policy.json"
+        self.project_contracts = self.root / "project-contracts.json"
         self.server = self.root / "server.py"
         self.enhancements = self.root / "enhancements.py"
         self.db = self.root / "history.db"
@@ -36,6 +37,29 @@ class ConfigValidationTests(unittest.TestCase):
         }]))
         self.layout.write_text(json.dumps({"order": ["cloud"], "archived": []}))
         self.resources.write_text(json.dumps({"cloud": {"priority": "normal"}}))
+        self.project_contracts.write_text(json.dumps({
+            "schema_version": 1,
+            "resource_pools": {
+                "protected": {"slots": 2},
+                "disabled": {"slots": 0},
+            },
+            "projects": {
+                "cloud": {
+                    "queue_mode": "execution",
+                    "lane_profile": "platform",
+                    "ai_worker_cap": 1,
+                    "autonomy": {"mode": "zcloud_stopgate", "auto_start": True},
+                    "compute": {
+                        "class": "control-plane",
+                        "pool": "protected",
+                        "cpu_soft_cores": 1,
+                        "memory_soft_mb": 512,
+                        "priority": "normal",
+                        "protected": True,
+                    },
+                },
+            },
+        }))
         self.server.write_text("MAX_CHATGPT_WORKERS = 8\n")
         self.enhancements.write_text(
             "PRIORITY_WEIGHTS = {'background':100,'normal':400,'high':800,'turbo':3000}\n"
@@ -56,6 +80,7 @@ class ConfigValidationTests(unittest.TestCase):
             projects_path=self.projects,
             layout_path=self.layout,
             resource_path=self.resources,
+            project_contracts_path=self.project_contracts,
             server_path=self.server,
             enhancements_path=self.enhancements,
             db_path=self.db,
@@ -105,6 +130,37 @@ class ConfigValidationTests(unittest.TestCase):
         result = self.validate()
         self.assertFalse(result["ok"])
         self.assertTrue(any("no resource-control contract" in x for x in result["errors"]))
+
+    def test_blocks_missing_project_runtime_contract(self):
+        data = json.loads(self.projects.read_text())
+        data.append({
+            "id": "supa",
+            "name": "Supa",
+            "status": "active",
+            "milestone_revision": "v1",
+            "progress_basis": "checkpoints",
+            "priority": "normal",
+            "milestones": [{"title": "Core", "done": False, "progress": 50}],
+        })
+        self.projects.write_text(json.dumps(data))
+        result = self.validate()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("missing project contracts ['supa']" in x for x in result["errors"]))
+
+    def test_blocks_invalid_human_gated_runtime_contract(self):
+        contracts = json.loads(self.project_contracts.read_text())
+        contracts["projects"]["cloud"]["queue_mode"] = "human-gated"
+        contracts["projects"]["cloud"]["autonomy"] = {
+            "mode": "ai_worker",
+            "auto_start": True,
+        }
+        contracts["projects"]["cloud"]["compute"]["pool"] = "protected"
+        self.project_contracts.write_text(json.dumps(contracts))
+        result = self.validate()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("human-gated project must not auto-start" in x for x in result["errors"]))
+        self.assertTrue(any("human-gated autonomy" in x for x in result["errors"]))
+        self.assertTrue(any("disabled resource pool" in x for x in result["errors"]))
 
     def test_allows_inactive_legacy_worker_slot(self):
         with sqlite3.connect(self.db) as conn:

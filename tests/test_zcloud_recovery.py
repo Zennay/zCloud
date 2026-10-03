@@ -53,6 +53,7 @@ class RecoveryTests(unittest.TestCase):
         (self.root / "projects.json").write_text('{"v":1}\n')
         (self.root / "project-layout.json").write_text('{"order":[]}\n')
         (self.root / "resource-policy.json").write_text('{"cloud":{"priority":"normal"}}\n')
+        (self.root / "project-contracts.json").write_text('{"schema_version":1,"projects":{"cloud":{}}}\n')
         (self.root / "public" / "app.js").write_text("ui-one\n")
         (self.root / "scripts" / "job.py").write_text("job-one\n")
         (self.root / ".watch-token").write_text("secret-token\n")
@@ -98,6 +99,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue((self.state / "last-known-good.json").exists())
         snap = self.state / "snapshots" / manifest["snapshot_id"] / "files"
         self.assertTrue((snap / "server.py").exists())
+        self.assertTrue((snap / "project-contracts.json").exists())
+        self.assertIn("project-contracts.json", manifest["config_hashes"])
         self.assertFalse((snap / "history.db").exists())
         self.assertFalse((snap / ".watch-token").exists())
         self.assertTrue(manifest["mapping_fingerprint"]["available"])

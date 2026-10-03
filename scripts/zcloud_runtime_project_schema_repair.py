@@ -59,6 +59,7 @@ def validate_candidate(*, validator: Path, staged_projects: Path, root: Path, ca
         "--projects", str(staged_projects),
         "--layout", str(root / "project-layout.json"),
         "--resource-policy", str(root / "resource-policy.json"),
+        "--project-contracts", str(candidate / "project-contracts.json"),
         "--server", str(candidate / "server.py"),
         "--enhancements", str(candidate / "enhancements.py"),
         "--db", str(db),

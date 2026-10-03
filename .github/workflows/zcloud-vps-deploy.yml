@@ -207,7 +207,7 @@ jobs:
             echo "SELF_HEAL_GUARD=created"
           fi
 
-      - name: Bootstrap aligned backend dependency before health gate
+      - name: Bootstrap aligned backend dependencies before health gate
         id: backend_dependency_bootstrap
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
@@ -216,11 +216,10 @@ jobs:
           root="/home/ubuntu/zennay-cloud"
           live_server="$root/server.py"
           candidate_server="$GITHUB_WORKSPACE/server.py"
-          live_dep="$root/project_runtime.py"
-          candidate_dep="$GITHUB_WORKSPACE/project_runtime.py"
 
           echo "changed=false" >> "$GITHUB_OUTPUT"
-          echo "had_live=false" >> "$GITHUB_OUTPUT"
+          echo "had_live_runtime=false" >> "$GITHUB_OUTPUT"
+          echo "had_live_contract=false" >> "$GITHUB_OUTPUT"
 
           live_server_sha="$(sha256sum "$live_server" | awk '{print $1}')"
           candidate_server_sha="$(sha256sum "$candidate_server" | awk '{print $1}')"
@@ -229,22 +228,40 @@ jobs:
             exit 0
           fi
 
-          candidate_dep_sha="$(sha256sum "$candidate_dep" | awk '{print $1}')"
-          if [[ -f "$live_dep" ]]; then
-            live_dep_sha="$(sha256sum "$live_dep" | awk '{print $1}')"
-            if [[ "$live_dep_sha" == "$candidate_dep_sha" ]]; then
-              echo "BACKEND_DEPENDENCY_BOOTSTRAP=already_aligned"
-              exit 0
-            fi
-            cp -p "$live_dep" "$RUNNER_TEMP/project_runtime.py.prehealth.bak"
-            echo "had_live=true" >> "$GITHUB_OUTPUT"
-          fi
+          changed=false
+          for spec in \
+            "project_runtime.py:runtime" \
+            "project-contracts.json:contract"
+          do
+            rel="${spec%%:*}"
+            label="${spec##*:}"
+            live="$root/$rel"
+            candidate="$GITHUB_WORKSPACE/$rel"
+            backup="$RUNNER_TEMP/$rel.prehealth.bak"
 
-          stage="$root/.project_runtime.py.zcloud-bootstrap.$"
-          install -m 0644 "$candidate_dep" "$stage"
-          mv -f "$stage" "$live_dep"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "BACKEND_DEPENDENCY_BOOTSTRAP=aligned sha=$candidate_dep_sha"
+            candidate_sha="$(sha256sum "$candidate" | awk '{print $1}')"
+            if [[ -f "$live" ]]; then
+              live_sha="$(sha256sum "$live" | awk '{print $1}')"
+              if [[ "$live_sha" == "$candidate_sha" ]]; then
+                echo "BACKEND_DEPENDENCY_${label^^}=already_aligned"
+                continue
+              fi
+              cp -p "$live" "$backup"
+              echo "had_live_$label=true" >> "$GITHUB_OUTPUT"
+            fi
+
+            stage="$root/.$rel.zcloud-bootstrap.$$"
+            install -m 0644 "$candidate" "$stage"
+            mv -f "$stage" "$live"
+            changed=true
+            echo "BACKEND_DEPENDENCY_${label^^}=aligned sha=$candidate_sha"
+          done
+
+          if [[ "$changed" == "true" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "BACKEND_DEPENDENCY_BOOTSTRAP=already_aligned"
+          fi
 
       - name: Recover zCloud health before guarded promotion
         if: steps.prewrite.outputs.deploy == 'true'
@@ -295,18 +312,29 @@ jobs:
         if: failure() && steps.backend_dependency_bootstrap.outputs.changed == 'true'
         shell: bash
         env:
-          HAD_LIVE: ${{ steps.backend_dependency_bootstrap.outputs.had_live }}
+          HAD_LIVE_RUNTIME: ${{ steps.backend_dependency_bootstrap.outputs.had_live_runtime }}
+          HAD_LIVE_CONTRACT: ${{ steps.backend_dependency_bootstrap.outputs.had_live_contract }}
         run: |
           set -euo pipefail
-          live="/home/ubuntu/zennay-cloud/project_runtime.py"
-          backup="$RUNNER_TEMP/project_runtime.py.prehealth.bak"
-          if [[ "$HAD_LIVE" == "true" ]]; then
-            install -m 0644 "$backup" "$live"
-            echo "BACKEND_DEPENDENCY_BOOTSTRAP_ROLLBACK=restored"
-          else
-            rm -f "$live"
-            echo "BACKEND_DEPENDENCY_BOOTSTRAP_ROLLBACK=removed"
-          fi
+          root="/home/ubuntu/zennay-cloud"
+          for spec in \
+            "project_runtime.py:runtime:$HAD_LIVE_RUNTIME" \
+            "project-contracts.json:contract:$HAD_LIVE_CONTRACT"
+          do
+            rel="${spec%%:*}"
+            rest="${spec#*:}"
+            label="${rest%%:*}"
+            had_live="${rest##*:}"
+            live="$root/$rel"
+            backup="$RUNNER_TEMP/$rel.prehealth.bak"
+            if [[ "$had_live" == "true" ]]; then
+              install -m 0644 "$backup" "$live"
+              echo "BACKEND_DEPENDENCY_${label^^}_ROLLBACK=restored"
+            else
+              rm -f "$live"
+              echo "BACKEND_DEPENDENCY_${label^^}_ROLLBACK=removed"
+            fi
+          done
           sudo -n systemctl restart zennay-cloud.service || true
 
       - name: Quarantine stale non-runtime userscript backups before guarded promotion
@@ -431,6 +459,7 @@ jobs:
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
             --path project_runtime.py \
+            --path project-contracts.json \
             --path lane_generator.py \
             --path scripts/zcloud_recovery.py \
             --preserve-prechange-drift public/zcloud-worker.user.js \
