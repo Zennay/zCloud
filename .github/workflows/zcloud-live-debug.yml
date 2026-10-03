@@ -116,6 +116,7 @@ jobs:
               print("served_userscript_error", repr(e))
           PY
           echo "=== DEPLOY DRIFT PROVENANCE ==="
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' --depth=512 || true
           python3 - <<'PY'
           from pathlib import Path
           import hashlib, json, sqlite3, subprocess
@@ -129,9 +130,9 @@ jobs:
               path=Path(path)
               return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
-          def ancestor_match(rel, live_sha):
+          def commit_match(rel, live_sha, rev_args):
               proc=subprocess.run(
-                  ["git","rev-list","--first-parent","--max-count=512","HEAD"],
+                  ["git","rev-list",*rev_args],
                   text=True,capture_output=True,check=False,
               )
               for commit in proc.stdout.splitlines():
@@ -142,6 +143,12 @@ jobs:
                   if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == live_sha:
                       return commit
               return None
+
+          def ancestor_match(rel, live_sha):
+              return commit_match(rel, live_sha, ["--first-parent","--max-count=512","HEAD"])
+
+          def any_ref_match(rel, live_sha):
+              return commit_match(rel, live_sha, ["--all","--max-count=5000"])
 
           report={}
           for rel in ("server.py","resource-policy.json"):
@@ -154,6 +161,7 @@ jobs:
                   "candidate_sha256":candidate_sha,
                   "equal":bool(live_sha and live_sha == candidate_sha),
                   "recent_first_parent_match":ancestor_match(rel, live_sha) if live_sha else None,
+                  "recent_any_ref_match":any_ref_match(rel, live_sha) if live_sha else None,
               }
 
           try:
