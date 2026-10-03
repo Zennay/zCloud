@@ -613,6 +613,72 @@ jobs:
           rm -f /home/ubuntu/zennay-cloud/.disable-self-heal
           echo "SELF_HEAL_GUARD=released"
 
+      - name: Record evidence-backed production state receipt
+        if: success() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
+          REGRESSION_RUN_ID: ${{ steps.freshness.outputs.regression_run_id }}
+        run: |
+          set -euo pipefail
+          deploy_evidence="$RUNNER_TEMP/zcloud-production-deploy-evidence.json"
+          evidence_json="$(python3 - "$deploy_evidence" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          deployment = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          payload = {
+              "workflow_run_id": deployment.get("workflow_run_id"),
+              "regression_run_id": os.environ.get("REGRESSION_RUN_ID"),
+              "runner_name": deployment.get("runner_name"),
+              "machine": deployment.get("machine"),
+              "lkg_snapshot_id": deployment.get("lkg_snapshot_id"),
+              "lkg_updated_at": deployment.get("lkg_updated_at"),
+              "production_status": "HEALTH_GREEN+POSTDEPLOY_GREEN",
+          }
+          print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+          PY
+          )"
+          python3 scripts/zcloud_runtime.py \
+            --db /home/ubuntu/zennay-cloud/history.db \
+            receipt \
+            --project cloud \
+            --phase "Runtime control-plane rollout" \
+            --action "Guarded VPS production deploy succeeded" \
+            --commit "$DEPLOY_SHA" \
+            --ci-status success \
+            --next-gate "Finish project receipt backfill and remaining runtime-control-plane rollout gates" \
+            --source "github-actions:zcloud-vps-deploy" \
+            --evidence-json "$evidence_json"
+
+          python3 - "$DEPLOY_SHA" <<'PY'
+          import json
+          import sys
+          import urllib.request
+
+          expected_sha = sys.argv[1]
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/status", timeout=10) as response:
+              payload = json.load(response)
+          project = next((item for item in payload.get("projects", []) if item.get("id") == "cloud"), None)
+          if not project:
+              raise SystemExit("cloud project missing from live /api/status")
+          state = project.get("execution_state") or {}
+          if project.get("state_source") != "evidence_receipt":
+              raise SystemExit("cloud live state is not receipt-backed")
+          if state.get("commit_sha") != expected_sha:
+              raise SystemExit(
+                  f"cloud receipt commit mismatch expected={expected_sha} actual={state.get('commit_sha')}"
+              )
+          if state.get("ci_status") != "success":
+              raise SystemExit("cloud receipt does not report successful production state")
+          print(
+              "ZCLOUD_PRODUCTION_RECEIPT_GREEN "
+              f"receipt_id={state.get('receipt_id')} sha={expected_sha}"
+          )
+          PY
+
       - name: Publish production deploy result
         if: always() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'
         shell: bash

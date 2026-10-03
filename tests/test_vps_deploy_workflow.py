@@ -301,6 +301,28 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             self.assertNotIn(f"--path {path}", core)
         self.assertNotIn("high_blast_radius_promotion", core + policy)
 
+    def test_successful_deploy_records_and_verifies_live_state_receipt(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        step = "Record evidence-backed production state receipt"
+        self.assertIn(step, text)
+        receipt = text[text.index("- name: " + step):text.index("- name: Publish production deploy result")]
+        self.assertIn("if: success()", receipt)
+        self.assertIn("scripts/zcloud_runtime.py", receipt)
+        self.assertIn("--db /home/ubuntu/zennay-cloud/history.db", receipt)
+        self.assertIn("receipt \\", receipt)
+        self.assertIn("--project cloud", receipt)
+        self.assertIn('--commit "$DEPLOY_SHA"', receipt)
+        self.assertIn("--ci-status success", receipt)
+        self.assertIn('github-actions:zcloud-vps-deploy', receipt)
+        self.assertIn("lkg_snapshot_id", receipt)
+        self.assertIn("REGRESSION_RUN_ID", receipt)
+        self.assertIn("http://127.0.0.1:8765/api/status", receipt)
+        self.assertIn('project.get("state_source") != "evidence_receipt"', receipt)
+        self.assertIn('state.get("commit_sha") != expected_sha', receipt)
+        self.assertIn("ZCLOUD_PRODUCTION_RECEIPT_GREEN", receipt)
+        self.assertLess(text.index("Resume external self-heal"), text.index(step))
+        self.assertLess(text.index(step), text.index("Publish production deploy result"))
+
     def test_publish_status_requires_actual_prewrite_confirmation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         publish = text[text.index("- name: Publish production deploy result"):]
