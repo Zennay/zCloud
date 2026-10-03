@@ -86,6 +86,11 @@ class TransactionalPromotionTests(unittest.TestCase):
         self._write(self.candidate, "project_runtime.py", "print('runtime')\n")
         self._write(
             self.candidate,
+            "project-contracts.json",
+            '{"schema_version":1,"resource_pools":{"disabled":{"slots":0}},"projects":{}}\n',
+        )
+        self._write(
+            self.candidate,
             "autonomy-policy.json",
             '{"schema_version":1,"default":{"auto_start":false}}\n',
         )
@@ -102,6 +107,7 @@ class TransactionalPromotionTests(unittest.TestCase):
                 "firefox-extension/recovery.js",
                 "project_runtime.py",
                 "lane_generator.py",
+                "project-contracts.json",
                 "autonomy-policy.json",
                 "portfolio_queue.seed.json",
                 "vps-execution-policy.json",
@@ -110,6 +116,7 @@ class TransactionalPromotionTests(unittest.TestCase):
         self.assertIn("firefox-extension/recovery.js", result)
         self.assertIn("project_runtime.py", result)
         self.assertIn("lane_generator.py", result)
+        self.assertIn("project-contracts.json", result)
         self.assertIn("autonomy-policy.json", result)
         self.assertIn("portfolio_queue.seed.json", result)
         self.assertIn("vps-execution-policy.json", result)
