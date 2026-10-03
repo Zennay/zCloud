@@ -1,4 +1,5 @@
 name: Inspect live worker prompts
+# retrigger: verify live backend prompt contract 2026-10-04
 
 on:
   push:
