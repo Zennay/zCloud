@@ -80,3 +80,52 @@ jobs:
           }, ensure_ascii=False))
           print("VM_XPI_UPDATE_HITS=" + json.dumps(hits, ensure_ascii=False))
           PY
+
+
+      - name: Inspect deterministic userscript install UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re, zipfile
+
+          xpi = Path("/home/ubuntu/snap/firefox/common/.mozilla/firefox/vn6i5j5p.default/extensions/{aecec67f-0d10-4fa7-b7c7-609a2db280cf}.xpi")
+          terms = [
+              "ConfirmInstall", "confirm/index", "confirm-install", "btnInstall",
+              "button", "Install", "Update", "Close", "cmd:"", "cmd:'",
+              "InstallScript", "ParseScript", "UpdateScript",
+          ]
+          out=[]
+          with zipfile.ZipFile(xpi) as z:
+              names=z.namelist()
+              candidates=[n for n in names if re.search(r"(confirm|install|options|background).*\.(?:js|html)$",n,re.I)]
+              for name in candidates:
+                  try: text=z.read(name).decode("utf-8","replace")
+                  except Exception: continue
+                  low=text.lower()
+                  snippets=[]
+                  matched=[]
+                  for term in terms:
+                      pos=low.find(term.lower())
+                      if pos>=0:
+                          matched.append(term)
+                          snippets.append(text[max(0,pos-900):pos+2200].replace("\n","\\n"))
+                  if matched:
+                      out.append({"file":name,"matches":matched,"snippets":snippets[:12]})
+          print("VM_INSTALL_UI=" + json.dumps(out,ensure_ascii=False))
+          PY
+
+      - name: Check available Firefox UI automation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          for tool in xdotool wmctrl xprop import scrot; do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "UI_TOOL=$tool:$(command -v "$tool")"
+            else
+              echo "UI_TOOL=$tool:MISSING"
+            fi
+          done
