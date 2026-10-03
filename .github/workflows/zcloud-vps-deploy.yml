@@ -21,7 +21,7 @@ jobs:
       # Exact-green revisions are serialized; stale revisions self-skip before
       # any VPS write, leaving only current main eligible for promotion.
       cancel-in-progress: false
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     steps:
       - name: Check out current main candidate
