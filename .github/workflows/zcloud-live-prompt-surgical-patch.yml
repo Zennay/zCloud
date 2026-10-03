@@ -1,0 +1,157 @@
+name: Recover and patch live worker prompt
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-live-prompt-surgical-patch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Restore compatible live backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          backup="$root/.prompt-reconcile-backups/37156252099/server.py"
+          test -f "$backup"
+          python3 -m py_compile "$backup"
+          install -m 0644 "$backup" "$root/server.py"
+          sudo -n systemctl reset-failed zennay-cloud.service || true
+          sudo -n systemctl restart zennay-cloud.service
+          for _ in $(seq 1 40); do
+            if systemctl is-active --quiet zennay-cloud.service && curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null; then
+              echo "ZCLOUD_COMPAT_BACKEND_RESTORED=1"
+              exit 0
+            fi
+            sleep 1
+          done
+          sudo -n journalctl -u zennay-cloud.service -n 120 --no-pager || true
+          exit 1
+
+      - name: Inspect live prompt producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("/home/ubuntu/zennay-cloud/server.py")
+          s=p.read_text()
+          needles=[
+              "def project_runner_prompt",
+              "def project_worker_prompt",
+              "zCloud worker:",
+              "VPS_QUEUE_ASSIGNMENT",
+              "Jij bent Worker",
+          ]
+          for needle in needles:
+              print("NEEDLE", repr(needle), "COUNT", s.count(needle))
+              i=s.find(needle)
+              if i >= 0:
+                  print(s[max(0,i-500):i+3500])
+          PY
+
+      - name: Patch only live prompt builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          cp -a "$root/server.py" "$root/.prompt-reconcile-backups/37156252099/server.before-surgical-patch.py"
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+
+          path=Path("/home/ubuntu/zennay-cloud/server.py")
+          source=path.read_text()
+          tree=ast.parse(source)
+          target=None
+          for node in tree.body:
+              if isinstance(node, ast.FunctionDef) and node.name == "project_worker_prompt":
+                  target=node
+                  break
+          if target is None:
+              raise SystemExit("project_worker_prompt not found in live server")
+
+          start=target.lineno-1
+          end=target.end_lineno
+          lines=source.splitlines(keepends=True)
+          replacement=(
+              "def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):\n"
+              "    return (\n"
+              "        f'Werk verder aan {name}. '\n"
+              "        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'\n"
+              "    )\n"
+          )
+          lines[start:end]=[replacement]
+          patched="".join(lines)
+          ast.parse(patched)
+          path.write_text(patched)
+          print("SURGICAL_PROJECT_WORKER_PROMPT_PATCHED=1")
+          PY
+          python3 -m py_compile "$root/server.py"
+          sudo -n systemctl restart zennay-cloud.service
+          for _ in $(seq 1 40); do
+            if systemctl is-active --quiet zennay-cloud.service && curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null; then
+              echo "ZCLOUD_SURGICAL_PATCH_RESTART_GREEN=1"
+              exit 0
+            fi
+            sleep 1
+          done
+          sudo -n journalctl -u zennay-cloud.service -n 120 --no-pager || true
+          exit 1
+
+      - name: Prove exact live prompts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=10) as response:
+              payload=json.load(response)
+
+          checked=0
+          evidence=[]
+          for key,cfg in (payload.get("projects") or {}).items():
+              if cfg.get("reviewer_mode") or not cfg.get("active"):
+                  continue
+              name=str(cfg.get("name") or "")
+              # Runtime worker names may be decorated, so derive canonical project
+              # name from the exact prompt prefix/suffix contract instead of metadata.
+              actual=str(cfg.get("prompt") or "")
+              prefix="Werk verder aan "
+              suffix=". Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+              if not actual.startswith(prefix) or not actual.endswith(suffix):
+                  raise SystemExit(f"PROMPT_NOT_CANONICAL {key}: {actual!r}")
+              project_name=actual[len(prefix):-len(suffix)]
+              expected=f"{prefix}{project_name}{suffix}"
+              if actual != expected or not project_name.strip():
+                  raise SystemExit(f"PROMPT_NOT_EXACT {key}: {actual!r}")
+              for forbidden in (
+                  "VPS_QUEUE_ASSIGNMENT",
+                  "ZCLOUD_QUEUE_ITEM",
+                  "ZCLOUD_QUEUE_RESULT",
+                  "Jij bent Worker",
+                  "Ga verder met de VPS queue",
+                  "Ga verder met hetzelfde vrije werkgebied",
+                  "Werk verder aan het project en voer nu een concrete volgende stap uit",
+              ):
+                  if forbidden in actual:
+                      raise SystemExit(f"FORBIDDEN_PROMPT_TEXT {key}: {forbidden}")
+              checked += 1
+              evidence.append({"worker":key,"prompt":actual})
+
+          if checked < 1:
+              raise SystemExit("no active normal workers to verify")
+          print("EXACT_WORKER_PROMPT_GREEN=1")
+          print(json.dumps(evidence,ensure_ascii=False))
+          PY
