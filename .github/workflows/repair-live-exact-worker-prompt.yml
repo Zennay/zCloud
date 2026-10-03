@@ -28,11 +28,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          live=/home/ubuntu/zennay-cloud/server.py
+          root=/home/ubuntu/zennay-cloud
+          live="$root/server.py"
+          failed_reconcile_backup="$root/.prompt-reconcile-backups/37156252099/server.py"
           backup="$RUNNER_TEMP/server.py.before-exact-worker-prompt"
+          candidate="$RUNNER_TEMP/server.py.exact-worker-prompt"
+
           cp -a "$live" "$backup"
 
-          python3 - "$live" <<'PY'
+          if systemctl is-active --quiet zennay-cloud.service && curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null; then
+            cp -a "$live" "$candidate"
+            echo "PROMPT_REPAIR_BASE=current_live_green"
+          elif [[ -f "$failed_reconcile_backup" ]]; then
+            cp -a "$failed_reconcile_backup" "$candidate"
+            echo "PROMPT_REPAIR_BASE=pre_failed_reconcile_backup"
+          else
+            echo "No known-good pre-reconcile backup is available" >&2
+            exit 1
+          fi
+
+          python3 - "$candidate" <<'PY'
           from pathlib import Path
           import sys
 
@@ -58,11 +73,10 @@ jobs:
           path.write_text(updated, encoding="utf-8")
           PY
 
-          if ! python3 -m py_compile "$live"; then
-            cp -a "$backup" "$live"
-            exit 1
-          fi
+          python3 -m py_compile "$candidate"
+          install -m 0644 "$candidate" "$live"
 
+          sudo -n systemctl reset-failed zennay-cloud.service || true
           sudo -n systemctl restart zennay-cloud.service
 
           healthy=0
@@ -75,11 +89,17 @@ jobs:
           done
 
           if [[ "$healthy" != "1" ]]; then
-            cp -a "$backup" "$live"
+            if [[ -f "$failed_reconcile_backup" ]]; then
+              install -m 0644 "$failed_reconcile_backup" "$live"
+            else
+              cp -a "$backup" "$live"
+            fi
             sudo -n systemctl restart zennay-cloud.service
             echo "LIVE_PROMPT_REPAIR_ROLLED_BACK=health_failed"
+            sudo -n journalctl -u zennay-cloud.service -n 120 --no-pager || true
             exit 1
           fi
+          echo "LIVE_PROMPT_RUNTIME_GREEN=1"
 
       - name: Prove exact live prompts
         shell: bash
