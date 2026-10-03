@@ -18,6 +18,9 @@ class HaxLabReceiptBackfillWorkflowTests(unittest.TestCase):
         self.assertIn('"haxlab"', text)
         self.assertIn('"github-actions:haxlab-state-receipt-backfill"', text)
         self.assertIn("HAXLAB_STATE_RECEIPT_BACKFILL_GREEN", text)
+        self.assertIn("HAXLAB_STATE_RECEIPT_READBACK_GREEN", text)
+        self.assertIn("SELECT id,ci_status,source FROM project_state_receipts", text)
+        self.assertIn("HaxLab receipt readback missing after write", text)
         self.assertNotIn('action":"result"', text)
         self.assertNotIn("portfolio_queue_finish", text)
 
