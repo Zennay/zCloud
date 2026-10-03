@@ -1,0 +1,57 @@
+name: Recover FTMO runner for PR475
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr475-dedicated-runner-recovery.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr475-dedicated-runner-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Recover dedicated FTMO Actions listener
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+          RUN_USER=ftmo-runner
+
+          state="$(systemctl is-active "$SERVICE" || true)"
+          pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+          worker=0
+          if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            worker=1
+          fi
+
+          if [ "$state" != "active" ]; then
+            sudo -n systemctl reset-failed "$SERVICE" || true
+            sudo -n systemctl start "$SERVICE"
+            action=start-inactive-listener
+          elif [ "$worker" -eq 1 ]; then
+            action=preserve-active-worker
+          else
+            sudo -n systemctl restart "$SERVICE"
+            action=restart-idle-listener
+          fi
+
+          for _ in $(seq 1 20); do
+            post="$(systemctl is-active "$SERVICE" || true)"
+            [ "$post" = "active" ] && break
+            sleep 2
+          done
+          test "$post" = "active"
+          post_pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+          [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]
+          echo "FTMO_RUNNER_RECOVERY action=$action pre_state=$state pre_pid=$pid post_state=$post post_pid=$post_pid"
