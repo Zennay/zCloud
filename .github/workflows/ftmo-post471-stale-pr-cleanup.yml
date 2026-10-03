@@ -1,0 +1,51 @@
+name: FTMO post-471 stale PR cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-post471-stale-pr-cleanup.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      CURRENT_FTMO_MAIN: 5335e0e17d3a1c35a40698cd2beebebdcdb26f8b
+    steps:
+      - name: Cancel only superseded PR471 branch runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          current="$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)"
+          test "$current" = "$CURRENT_FTMO_MAIN"
+
+          cancel_if_live() {
+            run_id="$1"
+            expected_name="$2"
+            expected_sha="$3"
+            payload="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id")"
+            name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' <<<"$payload")"
+            sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$payload")"
+            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$payload")"
+            test "$name" = "$expected_name"
+            test "$sha" = "$expected_sha"
+            if [[ "$status" == "queued" || "$status" == "pending" || "$status" == "in_progress" ]]; then
+              gh api --method POST "repos/Zennay/Ftmo/actions/runs/$run_id/cancel" >/dev/null
+              echo "CANCELLED_STALE_PR471_RUN=$run_id"
+            else
+              echo "ALREADY_TERMINAL=$run_id:$status"
+            fi
+          }
+
+          pr_sha=5594b2a1d310fd967b187ae637296727bfc3a8c7
+          cancel_if_live 37161062940 "Test suite" "$pr_sha"
+          cancel_if_live 37161062966 "Provider foundation publication integrity proof" "$pr_sha"
+          cancel_if_live 37161062903 "Dukascopy resume-cache integrity proof" "$pr_sha"
+
+          canonical="$(gh api repos/Zennay/Ftmo/actions/runs/37161253628 --jq '{name:.name,head_sha:.head_sha,status:.status}')"
+          echo "CANONICAL_VERIFY=$canonical"
