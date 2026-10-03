@@ -21,6 +21,7 @@ jobs:
     env:
       TARGET_SHA: eec48986ab3e08952660416356ae7306d4c1076e
       TARGET_PR: "477"
+      EXPECTED_MAIN_SHA: c7aba84919e2aea9d941c90e2da407f4d2bea85c
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
       FTMO_ALLOW_PAID_AWS: ""
     steps:
@@ -139,6 +140,24 @@ jobs:
           assert live["broker_order_submission_allowed"] is False
           print("FTMO_PR477_LIVE_GEN30=verified")
           PY
+
+      - name: Merge exact FTMO head after green proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main="$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)"
+          test "$current_main" = "$EXPECTED_MAIN_SHA"
+          current_head="$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)"
+          current_base="$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)"
+          current_state="$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)"
+          test "$current_head" = "$TARGET_SHA"
+          test "$current_base" = "$EXPECTED_MAIN_SHA"
+          test "$current_state" = "open"
+          result="$(gh api --method PUT "repos/Zennay/Ftmo/pulls/$TARGET_PR/merge" \
+            -f merge_method=squash \
+            -f sha="$TARGET_SHA")"
+          test "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged")).lower())' <<<"$result")" = "true"
+          echo "FTMO_PR477_MERGED=1"
 
       - name: Persist durable proof receipt
         shell: bash
