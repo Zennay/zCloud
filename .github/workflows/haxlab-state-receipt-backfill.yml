@@ -1,0 +1,109 @@
+name: Backfill HaxLab project state receipt
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/haxlab-state-receipt-backfill.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Record evidence-backed HaxLab state receipt
+        shell: bash
+        env:
+          ZCLOUD_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=15) as response:
+                  return json.load(response)
+
+          status = get("/api/status")
+          projects = status.get("projects") or []
+          project = next((item for item in projects if item.get("id") == "haxlab"), None)
+          if not project:
+              raise RuntimeError("haxlab project missing from live /api/status")
+          if str(project.get("status") or "").lower() == "archived":
+              raise RuntimeError("haxlab is archived; refusing receipt backfill")
+
+          queue = get("/api/portfolio-queue?all=1")
+          items = [item for item in (queue.get("items") or []) if item.get("project_id") == "haxlab"]
+          if not items:
+              raise RuntimeError("no HaxLab portfolio queue evidence available")
+          items.sort(
+              key=lambda item: str(
+                  item.get("updated_at")
+                  or item.get("finished_at")
+                  or item.get("claimed_at")
+                  or item.get("created_at")
+                  or ""
+              ),
+              reverse=True,
+          )
+          latest = items[0]
+          latest_status = str(latest.get("status") or "").lower()
+          if latest_status not in {"done", "claimed", "running", "verifying", "queued"}:
+              raise RuntimeError("latest HaxLab queue state is not admissible evidence: " + latest_status)
+
+          phase = str(project.get("phase") or "").strip()
+          next_gate = str(project.get("next_step") or "").strip()
+          if not phase or not next_gate:
+              raise RuntimeError("live HaxLab phase/next_step is incomplete")
+
+          evidence = {
+              "workflow_run_id": os.environ.get("ZCLOUD_WORKFLOW_RUN_ID"),
+              "live_status_time": status.get("time"),
+              "state_source_before_backfill": project.get("state_source"),
+              "project_health": project.get("health"),
+              "project_progress": project.get("progress"),
+              "queue_id": latest.get("queue_id"),
+              "queue_status": latest.get("status"),
+              "queue_title": latest.get("title"),
+              "queue_evidence": latest.get("evidence"),
+              "evidence_marker": "HAXLAB_STATE_RECEIPT_BACKFILL_GREEN",
+          }
+
+          command = [
+              "python3",
+              "scripts/zcloud_runtime.py",
+              "--db",
+              "/home/ubuntu/zennay-cloud/history.db",
+              "receipt",
+              "--project",
+              "haxlab",
+              "--phase",
+              phase,
+              "--action",
+              "Backfilled HaxLab execution state from live zCloud project and queue evidence",
+              "--ci-status",
+              "success",
+              "--next-gate",
+              next_gate,
+              "--source",
+              "github-actions:haxlab-state-receipt-backfill",
+              "--evidence-json",
+              json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+          ]
+          subprocess.run(command, check=True)
+          print("HAXLAB_STATE_RECEIPT_BACKFILL_GREEN")
+          PY
