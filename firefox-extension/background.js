@@ -235,15 +235,12 @@ function runProject(cfg) {
   let lastThinkingDiagnostic = "";
   const QUALITY_RETRY_LIMIT = "unbounded";
   function promptWithReplacementHandoff(basePrompt) {
-    return replacementHandoffPending && REPLACEMENT_HANDOFF
-      ? basePrompt + "\n\nGa verder met hetzelfde vrije werkgebied van deze worker; neem geen werk over dat al door een andere worker wordt uitgevoerd."
-      : basePrompt;
+    // Handoff metadata must never change the worker message.
+    return String(basePrompt || "");
   }
   function promptWithQualityRecovery(basePrompt) {
-    const prompt = promptWithReplacementHandoff(basePrompt);
-    return qualityRetryPending
-      ? prompt + "\n\nWerk verder aan het project en voer nu een concrete volgende stap uit binnen hetzelfde vrije werkgebied."
-      : prompt;
+    // Quality retries reuse the exact canonical backend prompt.
+    return String(basePrompt || "");
   }
   let PROMPT = promptWithQualityRecovery(BASE_PROMPT);
   const BASE_PROJECT = cfg.base_project_id || cfg.projectId;
