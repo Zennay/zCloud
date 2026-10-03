@@ -1,5 +1,5 @@
 name: Promote concise worker prompts
-# retrigger: exact project-first prompt promotion
+# retrigger: enforce exact project-first prompt runtime 2026-10-03
 
 on:
   push:
