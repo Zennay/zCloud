@@ -43,6 +43,7 @@ MANAGED_PATHS = (
     "projects.json",
     "project-layout.json",
     "resource-policy.json",
+    "project-contracts.json",
     "portfolio_queue.seed.json",
     "public",
     "firefox-extension",
@@ -291,7 +292,7 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
         "service": svc,
         "browser_service": browser,
         "mapping_fingerprint": mapping_fingerprint(root / "history.db"),
-        "config_hashes": {rel: sha256_file(root / rel) for rel in ("projects.json", "project-layout.json", "resource-policy.json") if (root / rel).is_file()},
+        "config_hashes": {rel: sha256_file(root / rel) for rel in ("projects.json", "project-layout.json", "resource-policy.json", "project-contracts.json") if (root / rel).is_file()},
     }
     write_json_atomic(tmp / "manifest.json", manifest)
     final.parent.mkdir(parents=True, exist_ok=True)
