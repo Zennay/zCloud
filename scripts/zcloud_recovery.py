@@ -37,6 +37,7 @@ LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS = float(
 
 MANAGED_PATHS = (
     "server.py",
+    "project_runtime.py",
     "lane_generator.py",
     "enhancements.py",
     "projects.json",

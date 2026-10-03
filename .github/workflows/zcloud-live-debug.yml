@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   inspect:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
