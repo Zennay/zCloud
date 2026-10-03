@@ -51,6 +51,12 @@ jobs:
           ))
           assert pr["state"] == "open"
           assert pr["head"]["sha"] == os.environ["TARGET_SHA"]
+          assert pr["base"]["sha"] == os.environ["EXPECTED_MAIN_SHA"]
+          main=subprocess.check_output(
+              ["gh","api","repos/Zennay/Ftmo/commits/main","--jq",".sha"],
+              text=True,
+          ).strip()
+          assert main == os.environ["EXPECTED_MAIN_SHA"]
           print("FTMO_PR477_IDENTITY=verified")
           PY
 
@@ -70,6 +76,7 @@ jobs:
             tests/test_project_telemetry.py \
             tests/test_project_telemetry_cli.py \
             tests/test_project_telemetry_runtime_status.py \
+            tests/test_autonomous_provider_retry.py \
             tests/test_zero_cost_workflow_boundary.py
 
           stable="/opt/ftmo-autonomous"
@@ -158,6 +165,20 @@ jobs:
             -f sha="$TARGET_SHA")"
           test "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged")).lower())' <<<"$result")" = "true"
           echo "FTMO_PR477_MERGED=1"
+
+      - name: Merge exact green FTMO PR477
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)" = "$TARGET_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)" = "open"
+          result="$(gh api --method PUT "repos/Zennay/Ftmo/pulls/$TARGET_PR/merge" \
+            -f merge_method=squash \
+            -f sha="$TARGET_SHA")"
+          test "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged")).lower())' <<<"$result")" = "true"
+          echo "FTMO_PR477_ZCLOUD_MERGE_GREEN=1"
 
       - name: Persist durable proof receipt
         shell: bash
