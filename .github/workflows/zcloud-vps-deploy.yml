@@ -440,11 +440,12 @@ jobs:
             --actor "github-actions-vps-deploy" \
             --json
 
-      - name: Promote autonomy policies and queue seed
+      - name: Promote runtime contracts, autonomy policies and queue seed
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
+            --path project-contracts.json \
             --path autonomy-policy.json \
             --path vps-execution-policy.json \
             --path portfolio_queue.seed.json \
