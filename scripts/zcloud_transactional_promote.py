@@ -1207,6 +1207,15 @@ def promote(
     root = root.resolve()
     state = state.resolve()
     normalized = [validate_relpath(rel) for rel in paths]
+    if preserve_schema_validated_runtime_config:
+        selected_runtime_config = sorted(
+            set(normalized) & SCHEMA_VALIDATED_RUNTIME_CONFIG_DRIFT
+        )
+        if selected_runtime_config:
+            raise PromotionError(
+                "schema-validated runtime config preservation cannot select files "
+                "for promotion: " + ",".join(selected_runtime_config)
+            )
     explicit_prechange_drift = list(dict.fromkeys(
         validate_relpath(str(rel)) for rel in prechange_allow_changes
     ))
@@ -1266,14 +1275,6 @@ def promote(
     )
     runtime_config_prechange_drift: list[str] = []
     if preserve_schema_validated_runtime_config:
-        selected_runtime_config = sorted(
-            set(normalized) & SCHEMA_VALIDATED_RUNTIME_CONFIG_DRIFT
-        )
-        if selected_runtime_config:
-            raise PromotionError(
-                "schema-validated runtime config preservation cannot select files "
-                "for promotion: " + ",".join(selected_runtime_config)
-            )
         # run_config_validation above validated the live values because these
         # paths are deliberately unselected. Only now may pre-change treat
         # their managed drift as preserved runtime state.
