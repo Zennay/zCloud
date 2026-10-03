@@ -1,0 +1,82 @@
+name: Inspect Violentmonkey update path
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-violentmonkey-update-path.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Guard VPS and inspect installed Violentmonkey XPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re, zipfile
+
+          xpi = Path("/home/ubuntu/snap/firefox/common/.mozilla/firefox/vn6i5j5p.default/extensions/{aecec67f-0d10-4fa7-b7c7-609a2db280cf}.xpi")
+          if not xpi.is_file():
+              raise SystemExit("Violentmonkey XPI not found")
+
+          needles = [
+              "CheckUpdate", "checkUpdate", "UpdateScript", "updateScript",
+              "Install", "install", "confirmInstall", "ConfirmInstall",
+              "parseMeta", "updateURL", "downloadURL", "options/index",
+              "commands", "browser.runtime.onMessage", "messageHandlers",
+          ]
+          preferred = re.compile(r"(background|common|options|confirm|install|update|message|command|db|script).*\.(?:js|html|json)$", re.I)
+          hits = []
+          manifest = None
+          with zipfile.ZipFile(xpi) as z:
+              names = z.namelist()
+              if "manifest.json" in names:
+                  manifest = json.loads(z.read("manifest.json").decode("utf-8", "replace"))
+              for name in names:
+                  if not preferred.search(name):
+                      continue
+                  try:
+                      raw = z.read(name)
+                  except Exception:
+                      continue
+                  if len(raw) > 4 * 1024 * 1024:
+                      continue
+                  text = raw.decode("utf-8", "replace")
+                  low = text.lower()
+                  matched = []
+                  snippets = []
+                  for needle in needles:
+                      pos = low.find(needle.lower())
+                      if pos < 0:
+                          continue
+                      matched.append(needle)
+                      snippets.append(text[max(0, pos-500):pos+1200].replace("\n", "\\n"))
+                  if matched:
+                      hits.append({
+                          "file": name,
+                          "matches": matched,
+                          "snippets": snippets[:8],
+                      })
+                  if len(hits) >= 80:
+                      break
+
+          print("VM_MANIFEST=" + json.dumps({
+              "manifest_version": (manifest or {}).get("manifest_version"),
+              "version": (manifest or {}).get("version"),
+              "background": (manifest or {}).get("background"),
+              "browser_action": (manifest or {}).get("browser_action"),
+              "action": (manifest or {}).get("action"),
+              "options_ui": (manifest or {}).get("options_ui"),
+              "permissions": (manifest or {}).get("permissions"),
+          }, ensure_ascii=False))
+          print("VM_XPI_UPDATE_HITS=" + json.dumps(hits, ensure_ascii=False))
+          PY
