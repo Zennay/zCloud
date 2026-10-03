@@ -1,0 +1,109 @@
+name: Reconcile exact worker prompt now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-exact-worker-prompt-reconcile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          clean: true
+          fetch-depth: 32
+
+      - name: Validate prompt sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py
+          node --check public/zcloud-worker.user.js
+          node --check firefox-extension/background.js
+          ! grep -Fq "Ga verder met hetzelfde vrije werkgebied" public/zcloud-worker.user.js
+          ! grep -Fq "Werk verder aan het project en voer nu een concrete volgende stap uit" public/zcloud-worker.user.js
+          ! grep -Fq "Ga verder met hetzelfde vrije werkgebied" firefox-extension/background.js
+          ! grep -Fq "Werk verder aan het project en voer nu een concrete volgende stap uit" firefox-extension/background.js
+          grep -Fq "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit." server.py
+
+      - name: Reconcile only worker prompt runtime files
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          backup="$root/.prompt-reconcile-backups/$GITHUB_RUN_ID"
+          runtime_bg="$HOME/snap/firefox/common/chatgpt-project-extension/background.js"
+          mkdir -p "$backup/public" "$backup/firefox-extension"
+          cp -a "$root/server.py" "$backup/server.py"
+          cp -a "$root/public/zcloud-worker.user.js" "$backup/public/zcloud-worker.user.js"
+          cp -a "$root/firefox-extension/background.js" "$backup/firefox-extension/background.js"
+          if [[ -f "$runtime_bg" ]]; then
+            cp -a "$runtime_bg" "$backup/runtime-background.js"
+          fi
+
+          install -m 0644 server.py "$root/server.py"
+          install -m 0644 public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
+          install -m 0644 firefox-extension/background.js "$root/firefox-extension/background.js"
+          if [[ -f "$runtime_bg" ]]; then
+            install -m 0644 firefox-extension/background.js "$runtime_bg"
+          fi
+
+          sudo -n systemctl reset-failed zennay-cloud.service || true
+          sudo -n systemctl restart zennay-cloud.service
+          for _ in $(seq 1 30); do
+            if systemctl is-active --quiet zennay-cloud.service && curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null; then
+              echo "ZCLOUD_PROMPT_RUNTIME_RESTART_GREEN=1"
+              exit 0
+            fi
+            sleep 1
+          done
+          systemctl --no-pager --full status zennay-cloud.service || true
+          exit 1
+
+      - name: Prove live prompt is exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=10) as response:
+              payload = json.load(response)
+
+          with open("/home/ubuntu/zennay-cloud/projects.json", encoding="utf-8") as fh:
+              names = {str(item["id"]): str(item["name"]) for item in json.load(fh)}
+
+          checked = 0
+          evidence = []
+          for key, cfg in (payload.get("projects") or {}).items():
+              if cfg.get("reviewer_mode") or not cfg.get("active"):
+                  continue
+              base = str(cfg.get("base_project_id") or "")
+              name = names.get(base)
+              if not name:
+                  raise SystemExit(f"unknown project name for {key}: {base}")
+              expected = (
+                  f"Werk verder aan {name}. "
+                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+              )
+              actual = str(cfg.get("prompt") or "")
+              if actual != expected:
+                  raise SystemExit(f"PROMPT_MISMATCH {key}: {actual!r} != {expected!r}")
+              checked += 1
+              evidence.append({"worker": key, "prompt": actual})
+
+          if checked < 1:
+              raise SystemExit("no active normal workers available for exact-prompt proof")
+          print("EXACT_WORKER_PROMPT_GREEN=1")
+          print(json.dumps(evidence, ensure_ascii=False))
+          PY
