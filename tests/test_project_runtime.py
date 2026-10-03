@@ -85,6 +85,45 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertEqual("evidence_receipt", project["state_source"])
         self.assertEqual(receipt["id"], project["execution_state"]["receipt_id"])
 
+    def test_oversized_receipt_evidence_is_rejected_without_partial_row(self):
+        with self.assertRaisesRegex(ValueError, "receipt evidence exceeds"):
+            runtime.record_receipt(
+                self.conn,
+                "cloud",
+                phase="Evidence runtime",
+                evidence={"blob": "é" * 6001},
+            )
+        count = self.conn.execute("SELECT COUNT(*) FROM project_state_receipts").fetchone()[0]
+        self.assertEqual(0, count)
+
+    def test_malformed_stored_receipt_fails_closed_to_registry_state(self):
+        self.conn.execute(
+            """INSERT INTO project_state_receipts(
+                project_id,phase,action,commit_sha,ci_status,blocker,next_gate,source,
+                observed_at,evidence_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "cloud",
+                "untrusted phase",
+                "untrusted action",
+                "abc123",
+                "success",
+                "",
+                "untrusted next gate",
+                "corrupt-fixture",
+                "2026-10-03T22:00:00+00:00",
+                '{"broken":',
+                "2026-10-03T22:00:00+00:00",
+            ),
+        )
+        latest = runtime.latest_receipts(self.conn)["cloud"]
+        self.assertIsNone(latest)
+        project = {"id": "cloud", "phase": "registry phase", "next_step": "registry next"}
+        runtime.apply_receipt(project, latest)
+        self.assertEqual("registry phase", project["phase"])
+        self.assertEqual("registry next", project["next_step"])
+        self.assertEqual("registry", project["state_source"])
+
     def test_heavy_pool_allows_only_one_concurrent_project(self):
         first = runtime.acquire_resource(self.conn, "ftmo", "run-1")
         second = runtime.acquire_resource(self.conn, "haxlab", "run-2")
