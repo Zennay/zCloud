@@ -452,9 +452,45 @@ jobs:
             --candidate "$GITHUB_WORKSPACE" \
             --json
 
+      - name: Authorize one-shot known live server reconciliation
+        id: server_drift_reconcile
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/home/ubuntu/zennay-cloud"
+          pointer="$HOME/.local/state/zcloud/recovery/last-known-good.json"
+          expected_live_sha="66f51bda39a722d79745c74e852e32a43afe8085928eab6d415c988d231d49be"
+          expected_lkg="20261002T105256Z-a57439eb"
+          live_sha="$(sha256sum "$root/server.py" | awk '{print $1}')"
+          current_lkg="$(python3 - "$pointer" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["snapshot_id"])
+          PY
+          )"
+
+          if [[ "$live_sha" == "$expected_live_sha" && "$current_lkg" == "$expected_lkg" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "KNOWN_LIVE_SERVER_RECONCILE=authorized live_sha=$live_sha lkg=$current_lkg"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "KNOWN_LIVE_SERVER_RECONCILE=not_applicable live_sha=$live_sha lkg=$current_lkg"
+          fi
+
       - name: Promote backend runtime core
         if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
         run: |
+          set -euo pipefail
+          reconcile_args=()
+          if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]; then
+            reconcile_args+=(
+              --reconcile-known-live-sha
+              "server.py=66f51bda39a722d79745c74e852e32a43afe8085928eab6d415c988d231d49be"
+            )
+          fi
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
@@ -466,6 +502,7 @@ jobs:
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
             --preserve-schema-validated-runtime-config \
+            "${reconcile_args[@]}" \
             --actor "github-actions-vps-deploy" \
             --json
 
