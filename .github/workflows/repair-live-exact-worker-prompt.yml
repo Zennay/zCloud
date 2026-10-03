@@ -1,0 +1,150 @@
+name: Repair live exact worker prompt
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/repair-live-exact-worker-prompt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce VPS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test -f /home/ubuntu/zennay-cloud/server.py
+
+      - name: Surgically replace live worker prompt builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          live=/home/ubuntu/zennay-cloud/server.py
+          backup="$RUNNER_TEMP/server.py.before-exact-worker-prompt"
+          cp -a "$live" "$backup"
+
+          python3 - "$live" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
+          start = text.index("def project_runner_prompt(project_id, name):")
+          end = text.index("RUNNER_DEFAULTS = {", start)
+
+          replacement = """def project_runner_prompt(project_id, name):
+              return (
+                  f'Werk verder aan {name}. '
+                  'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'
+              )
+
+
+          def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
+              return project_runner_prompt(project_id, name)
+
+
+          """
+
+          updated = text[:start] + replacement + text[end:]
+          path.write_text(updated, encoding="utf-8")
+          PY
+
+          if ! python3 -m py_compile "$live"; then
+            cp -a "$backup" "$live"
+            exit 1
+          fi
+
+          sudo -n systemctl restart zennay-cloud.service
+
+          healthy=0
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$healthy" != "1" ]]; then
+            cp -a "$backup" "$live"
+            sudo -n systemctl restart zennay-cloud.service
+            echo "LIVE_PROMPT_REPAIR_ROLLED_BACK=health_failed"
+            exit 1
+          fi
+
+      - name: Prove exact live prompts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=8) as r:
+              targets = json.load(r)
+
+          catalog = {
+              str(p["id"]): str(p["name"])
+              for p in json.loads(Path("/home/ubuntu/zennay-cloud/projects.json").read_text(encoding="utf-8"))
+          }
+
+          checked = []
+          ftmo = []
+          for key, cfg in (targets.get("projects") or {}).items():
+              if cfg.get("reviewer_mode"):
+                  continue
+              base_id = str(cfg.get("base_project_id") or "")
+              name = catalog.get(base_id)
+              if not name:
+                  raise SystemExit(f"unknown base project for {key}: {base_id!r}")
+              expected = (
+                  f"Werk verder aan {name}. "
+                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+              )
+              actual = str(cfg.get("prompt") or "")
+              if actual != expected:
+                  raise SystemExit(f"PROMPT_MISMATCH {key}: {actual!r} != {expected!r}")
+              checked.append(key)
+              if base_id == "ftmo":
+                  ftmo.append({"worker": key, "prompt": actual, "active": bool(cfg.get("active"))})
+
+          if not checked:
+              raise SystemExit("no worker prompts checked")
+          if not ftmo:
+              raise SystemExit("no FTMO worker target found")
+
+          print("LIVE_EXACT_WORKER_PROMPTS_GREEN=" + str(len(checked)))
+          print("FTMO_LIVE=" + json.dumps(ftmo, ensure_ascii=False))
+          PY
+
+      - name: Push current prompt to active workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          req = urllib.request.Request(
+              "http://127.0.0.1:8765/api/dynamic-workers/force-push",
+              data=b"{}",
+              method="POST",
+              headers={
+                  "Content-Type": "application/json",
+                  "X-ZCloud-Actor": "exact-worker-prompt-repair",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=12) as r:
+              payload = json.load(r)
+          print("FORCE_PUSH_RESULT=" + json.dumps(payload, ensure_ascii=False))
+          PY
