@@ -1,0 +1,170 @@
+name: Recover FTMO runner for main 27ed verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-main27ed-runner-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-main27ed-runner-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      MAIN_SHA: 27ed1bf808d97e168a200c301f820d16894516b4
+      VERIFY_RUN: '37160939790'
+      TEST_RUN: '37160939832'
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+    steps:
+      - name: Prove current main and protected run identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$MAIN_SHA"
+          for rid in "$VERIFY_RUN" "$TEST_RUN"; do
+            test "$(gh api repos/Zennay/Ftmo/actions/runs/$rid --jq .head_sha)" = "$MAIN_SHA"
+            event="$(gh api repos/Zennay/Ftmo/actions/runs/$rid --jq .event)"
+            test "$event" = "push"
+          done
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$VERIFY_RUN --jq .name)" = "Verify autonomous VPS runtime"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$TEST_RUN --jq .name)" = "Test suite"
+          echo "FTMO_MAIN27ED_IDENTITIES=verified"
+
+      - name: Diagnose and conservatively recover dedicated listener
+        id: recover
+        shell: bash
+        run: |
+          set -euo pipefail
+          pre_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+          pre_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+          worker=0
+          pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1 && worker=1 || true
+          listener=0
+          listener_cmd=""
+          if [[ "$pre_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pre_pid/cmdline"; then
+            listener_cmd="$(tr '\0' ' ' < "/proc/$pre_pid/cmdline")"
+            [[ "$listener_cmd" == *"Runner.Listener"* || "$listener_cmd" == *"runsvc.sh"* ]] && listener=1 || true
+          fi
+
+          echo "FTMO_RUNNER_PRE state=$pre_state pid=$pre_pid worker=$worker listener=$listener"
+          echo "FTMO_RUNNER_PROCESSES_BEGIN"
+          ps -o pid=,ppid=,lstart=,etime=,cmd= -u "$FTMO_RUN_USER" | grep -E 'Runner\.(Worker|Listener)|runsvc\.sh' || true
+          echo "FTMO_RUNNER_PROCESSES_END"
+          latest="$(ls -1t /opt/ftmo-runner/_diag/Runner_*.log 2>/dev/null | head -1 || true)"
+          if [[ -n "$latest" ]]; then
+            echo "FTMO_RUNNER_DIAG=$latest"
+            grep -Eai 'running job|job request|listening for jobs|assigned|shutdown|signal|session|message queue' "$latest" | tail -120 || true
+          fi
+
+          if [[ "$worker" -eq 1 ]]; then
+            action=preserve-active-worker
+          elif [[ "$pre_state" == "active" && "$listener" -eq 1 ]]; then
+            # A listener that has remained healthy-looking while current-main work
+            # stays queued can have a stale GitHub session. Restart is safe only
+            # because there is no Runner.Worker process.
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-idle-listener
+          else
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-unhealthy-listener
+          fi
+
+          post_state=""
+          post_pid=""
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+            post_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+            if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              post_cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+              if [[ "$post_cmd" == *"Runner.Listener"* || "$post_cmd" == *"runsvc.sh"* ]]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$post_state" = "active"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          test -r "/proc/$post_pid/cmdline"
+          post_cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+          [[ "$post_cmd" == *"Runner.Listener"* || "$post_cmd" == *"runsvc.sh"* ]]
+          echo "FTMO_RUNNER_RECOVERY_ACTION=$action"
+          echo "FTMO_RUNNER_POST state=$post_state pid=$post_pid"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "pre_state=$pre_state" >> "$GITHUB_OUTPUT"
+          echo "pre_pid=$pre_pid" >> "$GITHUB_OUTPUT"
+          echo "post_pid=$post_pid" >> "$GITHUB_OUTPUT"
+
+      - name: Prove current-main work starts scheduling
+        shell: bash
+        run: |
+          set -euo pipefail
+          scheduled=""
+          for _ in $(seq 1 36); do
+            for rid in "$VERIFY_RUN" "$TEST_RUN"; do
+              status="$(gh api repos/Zennay/Ftmo/actions/runs/$rid --jq .status)"
+              conclusion="$(gh api repos/Zennay/Ftmo/actions/runs/$rid --jq '.conclusion // ""')"
+              echo "FTMO_PROTECTED_RUN run=$rid status=$status conclusion=$conclusion"
+              case "$status" in
+                in_progress|completed) scheduled="$rid" ;;
+              esac
+            done
+            [[ -n "$scheduled" ]] && break
+            sleep 5
+          done
+          test -n "$scheduled"
+          echo "FTMO_MAIN27ED_SCHEDULING_GREEN=$scheduled"
+
+      - name: Persist runner recovery receipt
+        if: always()
+        env:
+          RECOVERY_ACTION: ${{ steps.recover.outputs.action }}
+          PRE_STATE: ${{ steps.recover.outputs.pre_state }}
+          PRE_PID: ${{ steps.recover.outputs.pre_pid }}
+          POST_PID: ${{ steps.recover.outputs.post_pid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > /tmp/ftmo-main27ed-runner-recovery.json
+          import json, os, subprocess
+          runs=[]
+          for key in ("VERIFY_RUN","TEST_RUN"):
+              rid=os.environ[key]
+              d=json.loads(subprocess.check_output(
+                  ["gh","api",f"repos/Zennay/Ftmo/actions/runs/{rid}"], text=True
+              ))
+              runs.append({
+                  "run_id":int(rid),
+                  "name":d.get("name"),
+                  "status":d.get("status"),
+                  "conclusion":d.get("conclusion"),
+                  "head_sha":d.get("head_sha"),
+              })
+          print(json.dumps({
+              "scope":"ftmo-main27ed-runner-recovery",
+              "main_sha":os.environ["MAIN_SHA"],
+              "workflow_run_id":os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_name":os.environ.get("RUNNER_NAME"),
+              "recovery_action":os.environ.get("RECOVERY_ACTION"),
+              "pre_state":os.environ.get("PRE_STATE"),
+              "pre_pid":os.environ.get("PRE_PID"),
+              "post_pid":os.environ.get("POST_PID"),
+              "protected_runs":runs,
+          }, sort_keys=True, indent=2))
+          PY
+          encoded="$(base64 -w0 /tmp/ftmo-main27ed-runner-recovery.json)"
+          dest=".zcloud/receipts/ftmo-main27ed-runner-recovery-$GITHUB_RUN_ID.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$dest"             -f message="Record FTMO main27ed runner recovery $GITHUB_RUN_ID"             -f content="$encoded" >/dev/null
+          echo "FTMO_RUNNER_RECOVERY_RECEIPT=$dest"
