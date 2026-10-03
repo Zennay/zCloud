@@ -83,6 +83,7 @@ class TransactionalPromotionTests(unittest.TestCase):
 
     def test_only_explicit_bootstrap_files_may_be_created(self):
         self._write(self.candidate, "lane_generator.py", "print('lane')\n")
+        self._write(self.candidate, "project_runtime.py", "print('runtime')\n")
         self._write(
             self.candidate,
             "autonomy-policy.json",
@@ -99,6 +100,7 @@ class TransactionalPromotionTests(unittest.TestCase):
             self.root,
             [
                 "firefox-extension/recovery.js",
+                "project_runtime.py",
                 "lane_generator.py",
                 "autonomy-policy.json",
                 "portfolio_queue.seed.json",
@@ -106,6 +108,7 @@ class TransactionalPromotionTests(unittest.TestCase):
             ],
         )
         self.assertIn("firefox-extension/recovery.js", result)
+        self.assertIn("project_runtime.py", result)
         self.assertIn("lane_generator.py", result)
         self.assertIn("autonomy-policy.json", result)
         self.assertIn("portfolio_queue.seed.json", result)
@@ -814,6 +817,38 @@ class TransactionalPromotionTests(unittest.TestCase):
                 )
         finally:
             promote.run = original_run
+
+    def test_schema_validated_runtime_config_preservation_rejects_config_writes(self):
+        for rel in ("projects.json", "project-layout.json"):
+            with self.subTest(rel=rel):
+                with self.assertRaisesRegex(
+                    promote.PromotionError,
+                    "schema-validated runtime config preservation cannot select files",
+                ):
+                    promote.promote(
+                        self.candidate,
+                        self.root,
+                        Path(self.tmp.name) / "state",
+                        [rel],
+                        preserve_schema_validated_runtime_config=True,
+                    )
+
+    def test_schema_validated_runtime_config_preservation_stays_read_only(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "zcloud_transactional_promote.py"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            {"projects.json", "project-layout.json"},
+            set(promote.SCHEMA_VALIDATED_RUNTIME_CONFIG_DRIFT),
+        )
+        validation = source.index("config_validation = run_config_validation")
+        allowance = source.index("runtime_config_prechange_drift = sorted")
+        guard = source.index("pre = run_prechange(")
+        self.assertLess(validation, allowance)
+        self.assertLess(allowance, guard)
+        self.assertIn("--preserve-schema-validated-runtime-config", source)
 
     def test_explicit_prechange_drift_rejects_non_replaceable_paths(self):
         with self.assertRaises(promote.PromotionError):
