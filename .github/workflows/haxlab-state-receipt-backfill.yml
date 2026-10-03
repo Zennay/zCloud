@@ -1,0 +1,123 @@
+name: Backfill HaxLab project state receipt
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/haxlab-state-receipt-backfill.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Record evidence-backed HaxLab state receipt
+        shell: bash
+        env:
+          ZCLOUD_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sqlite3
+          import subprocess
+          from pathlib import Path
+
+          root = Path("/home/ubuntu/zennay-cloud")
+          db_path = root / "history.db"
+          projects_path = root / "projects.json"
+
+          projects = json.loads(projects_path.read_text(encoding="utf-8"))
+          project = next((item for item in projects if item.get("id") == "haxlab"), None)
+          if not project:
+              raise RuntimeError("haxlab project missing from runtime-owned projects.json")
+          if str(project.get("status") or "").lower() == "archived":
+              raise RuntimeError("haxlab is archived; refusing receipt backfill")
+
+          with sqlite3.connect(db_path, timeout=15) as conn:
+              conn.row_factory = sqlite3.Row
+              columns = {
+                  row["name"] for row in conn.execute("PRAGMA table_info(portfolio_queue)").fetchall()
+              }
+              if not columns:
+                  raise RuntimeError("portfolio_queue table missing from live SQLite state")
+              order_column = "updated_at" if "updated_at" in columns else "created_at"
+              row = conn.execute(
+                  f"SELECT * FROM portfolio_queue WHERE project_id=? "
+                  f"ORDER BY {order_column} DESC LIMIT 1",
+                  ("haxlab",),
+              ).fetchone()
+          if not row:
+              raise RuntimeError("no HaxLab portfolio queue evidence available")
+          latest = dict(row)
+          latest_status = str(latest.get("status") or "").lower()
+          if latest_status not in {"done", "claimed", "running", "verifying", "queued"}:
+              raise RuntimeError("latest HaxLab queue state is not admissible evidence: " + latest_status)
+
+          phase = str(project.get("phase") or "").strip()
+          next_gate = str(project.get("next_step") or "").strip()
+          if not phase or not next_gate:
+              raise RuntimeError("runtime HaxLab phase/next_step is incomplete")
+
+          evidence = {
+              "workflow_run_id": os.environ.get("ZCLOUD_WORKFLOW_RUN_ID"),
+              "project_catalog": str(projects_path),
+              "queue_database": str(db_path),
+              "project_milestone_revision": project.get("milestone_revision"),
+              "project_priority": project.get("priority"),
+              "queue_id": latest.get("queue_id"),
+              "queue_status": latest.get("status"),
+              "queue_title": latest.get("title"),
+              "queue_evidence": latest.get("evidence"),
+              "queue_blocker": latest.get("blocker"),
+              "evidence_marker": "HAXLAB_STATE_RECEIPT_BACKFILL_GREEN",
+          }
+
+          command = [
+              "python3",
+              "scripts/zcloud_runtime.py",
+              "--db",
+              str(db_path),
+              "receipt",
+              "--project",
+              "haxlab",
+              "--phase",
+              phase,
+              "--action",
+              "Backfilled HaxLab execution state from runtime-owned project catalog and SQLite queue evidence",
+              "--ci-status",
+              "success",
+              "--next-gate",
+              next_gate,
+              "--source",
+              "github-actions:haxlab-state-receipt-backfill",
+              "--evidence-json",
+              json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+          ]
+          subprocess.run(command, check=True)
+
+          with sqlite3.connect(db_path, timeout=15) as conn:
+              receipt = conn.execute(
+                  "SELECT id,ci_status,source FROM project_state_receipts "
+                  "WHERE project_id=? ORDER BY id DESC LIMIT 1",
+                  ("haxlab",),
+              ).fetchone()
+          if not receipt:
+              raise RuntimeError("HaxLab receipt readback missing after write")
+          if receipt[1] != "success":
+              raise RuntimeError("HaxLab receipt readback has non-success CI status")
+          if receipt[2] != "github-actions:haxlab-state-receipt-backfill":
+              raise RuntimeError("HaxLab receipt readback source mismatch: " + str(receipt[2]))
+          print("HAXLAB_STATE_RECEIPT_READBACK_GREEN", receipt[0])
+          print("HAXLAB_STATE_RECEIPT_BACKFILL_GREEN")
+          PY
