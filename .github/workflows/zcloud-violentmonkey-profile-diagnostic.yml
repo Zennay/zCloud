@@ -254,4 +254,4 @@ jobs:
           print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
           PY
 
-# push-all recovery diagnostic
+# push-test diagnostic 2026-10-04
