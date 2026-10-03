@@ -34,6 +34,7 @@ DEFAULT_FIREFOX_LEGACY_DISABLE = Path(os.environ.get(
 ))
 MANAGED_PATHS = (
     "server.py",
+    "project_runtime.py",
     "lane_generator.py",
     "enhancements.py",
     "projects.json",
