@@ -10,11 +10,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-live-prompt-contract-repair
+  cancel-in-progress: true
+
 jobs:
   repair:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 8
     steps:
+      - name: Enforce VPS host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test -d /home/ubuntu/zennay-cloud
+          echo "VPS_HOST_GREEN=1"
+
       - name: Check out exact repair revision
         uses: actions/checkout@v4
         with:
