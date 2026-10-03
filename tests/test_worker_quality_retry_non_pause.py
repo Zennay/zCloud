@@ -10,7 +10,7 @@ class WorkerQualityRetryNonPauseTests(unittest.TestCase):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
         for source in (background, userscript):
-            self.assertIn("Werk verder aan het project en voer nu een concrete volgende stap uit", source)
+            self.assertNotIn("Werk verder aan het project en voer nu een concrete volgende stap uit", source)
             self.assertNotIn("ZCLOUD_QUALITY_RETRY #", source)
             self.assertNotIn("ANDERE veilige uitvoeringsroute", source)
             self.assertIn("quality-retry-cleared", source)
