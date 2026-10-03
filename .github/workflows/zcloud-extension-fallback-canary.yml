@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zcloud-extension-fallback-canary.yml"
+      - "firefox-extension/background.js"
   workflow_dispatch:
 
 permissions:
