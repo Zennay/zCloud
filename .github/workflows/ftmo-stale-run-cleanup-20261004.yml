@@ -1,0 +1,76 @@
+name: FTMO stale exact-head run cleanup 20261004
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-stale-run-cleanup-20261004.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Cancel only superseded FTMO runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          current_main="$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)"
+          open_heads="$(gh api 'repos/Zennay/Ftmo/pulls?state=open&per_page=100' --jq '.[].head.sha')"
+          test -n "$current_main"
+
+          cat > "$RUNNER_TEMP/ftmo-stale-runs.txt" <<'EOF'
+          37164349260 e3bc33925dd9f1b283d013f8a5c0b82fb1fbc673
+          37164956657 496a7e21ff22a783c80d9738fab6737d0db53445
+          37164734240 90035d1634dd9fa4770c97968b53fa9bb4219896
+          37164509426 346a5b233e72cf9f264f073c3ec0913333ff4a36
+          37164509439 346a5b233e72cf9f264f073c3ec0913333ff4a36
+          37164349273 e3bc33925dd9f1b283d013f8a5c0b82fb1fbc673
+          37164195007 1c2e54dfc85d80f3b9ba2b9f9e729af4977ed79d
+          37163828353 7b84d9f7b079c3233b7f7b41349739cf742d5ba1
+          37163828344 7b84d9f7b079c3233b7f7b41349739cf742d5ba1
+          37163828377 7b84d9f7b079c3233b7f7b41349739cf742d5ba1
+          37163828337 7b84d9f7b079c3233b7f7b41349739cf742d5ba1
+          37163828346 7b84d9f7b079c3233b7f7b41349739cf742d5ba1
+          37163828356 7b84d9f7b079c3233b7f7b41349739cf742d5ba1
+          37163558758 dd155a80246730d2673715f6f32fb951959c3923
+          37163377821 df912b152218952023d184a84204dcad7a72e305
+          37162951886 e763d57eb978295b2f15f5ed83eb83635c7aa926
+          37156472855 3621e3e24bf017148263fb36288c85e98c6061bb
+          37156064557 1d1b27e53c3ed7789f6f1cecb1313f73d2248404
+          EOF
+
+          cancelled=0
+          skipped=0
+          while read -r run_id expected_sha; do
+            run_json="$(gh api "repos/Zennay/Ftmo/actions/runs/$run_id")"
+            actual_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$run_json")"
+            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$run_json")"
+            test "$actual_sha" = "$expected_sha"
+
+            if [[ "$actual_sha" = "$current_main" ]] || grep -Fxq "$actual_sha" <<<"$open_heads"; then
+              echo "protected run=$run_id sha=$actual_sha status=$status"
+              skipped=$((skipped+1))
+              continue
+            fi
+
+            case "$status" in
+              queued|in_progress|pending|waiting|requested)
+                gh api --method POST "repos/Zennay/Ftmo/actions/runs/$run_id/cancel" >/dev/null
+                echo "cancelled run=$run_id sha=$actual_sha status=$status"
+                cancelled=$((cancelled+1))
+                ;;
+              *)
+                echo "already-terminal run=$run_id sha=$actual_sha status=$status"
+                skipped=$((skipped+1))
+                ;;
+            esac
+          done < "$RUNNER_TEMP/ftmo-stale-runs.txt"
+
+          echo "FTMO_STALE_RUNS_CANCELLED=$cancelled"
+          echo "FTMO_STALE_RUNS_SKIPPED=$skipped"
