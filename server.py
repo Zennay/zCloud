@@ -2652,6 +2652,29 @@ def portfolio_queue_allocate():
                 used_counts[pid]=used_counts.get(pid,0)+1
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
+                # A claimed queue item is already being handed to the browser once a
+                # worker command exists. Do not rebalance that claim underneath the
+                # in-flight command: the userscript validates the live queue assignment
+                # before it sends anything, so moving the claim here creates a
+                # start/new_chat -> "assignment missing" race.
+                local_slot=used_counts.get(row_project,0)+1
+                worker_key=f'{row_project}::w{local_slot}'
+                command_inflight=c.execute(
+                    """SELECT id FROM runner_commands
+                       WHERE project_id=?
+                         AND action IN ('start','new_chat','push')
+                         AND status='pending'
+                       ORDER BY id DESC LIMIT 1""",
+                    (worker_key,),
+                ).fetchone()
+                if command_inflight:
+                    c.execute(
+                        'UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
+                        (lease_until,ts,row['queue_id']),
+                    )
+                    row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
+                    selected.append(_portfolio_queue_row(row))
+                    continue
                 row_mode=str((_autonomy_config(row_project) or {}).get('mode') or 'manual').lower()
                 if row_mode in {'external_gate','manual'}:
                     c.execute("""UPDATE portfolio_queue
