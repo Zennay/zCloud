@@ -1,4 +1,5 @@
 name: FTMO TASK-37 readiness CLI focused proof
+# Retrigger exact-head proof for FTMO 13af122a after native suite success.
 
 on:
   push:
