@@ -42,6 +42,7 @@ GLOBAL_RECOVERY_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GLOBAL_RE
 FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS", "120"))
 GENERATION_PROTECT_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GENERATION_PROTECT_SECONDS", "1200"))
 PROMPT_STALE_REFRESH_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_PROMPT_STALE_REFRESH_SECONDS", "300"))
+STALE_PENDING_COMMAND_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_STALE_PENDING_COMMAND_SECONDS", "300"))
 
 HUMAN_GATE_STATUSES = {"wait_human", "waiting_human", "human_gate", "needs_human", "approval_required"}
 
@@ -208,11 +209,16 @@ def material_signal(
 def clear_stale_pending_commands(
     db_path: Path,
     *,
-    project_id: str,
+    project_id: str | None = None,
     now: datetime,
     min_age_seconds: int = OFFLINE_RESTART_AFTER_SECONDS,
 ) -> list[int]:
-    """Fail stale pending browser commands so a fresh recovery command can be accepted."""
+    """Fail stale pending browser commands so a fresh recovery command can be accepted.
+
+    With project_id=None this is the global health reconciliation path. It uses the
+    caller's age threshold and deliberately includes old project-level commands,
+    because those otherwise sit outside worker-key recovery forever.
+    """
     if not db_path.exists():
         return []
     cleared: list[int] = []
@@ -221,10 +227,15 @@ def clear_stale_pending_commands(
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA busy_timeout=5000")
-            rows = conn.execute(
-                "SELECT id,created_at FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id",
-                (project_id,),
-            ).fetchall()
+            if project_id:
+                rows = conn.execute(
+                    "SELECT id,created_at FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id",
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id,created_at FROM runner_commands WHERE status='pending' ORDER BY id"
+                ).fetchall()
             for row in rows:
                 created = parse_time(row["created_at"])
                 if created is None or (now - created).total_seconds() >= min_age_seconds:
@@ -352,6 +363,12 @@ def run_once(
 ) -> dict[str, Any]:
     now = now or utc_now()
     state = load_state(state_path)
+    stale_commands_cleared = [] if dry_run else clear_stale_pending_commands(
+        db_path,
+        project_id=None,
+        now=now,
+        min_age_seconds=STALE_PENDING_COMMAND_SECONDS,
+    )
 
     targets_status, targets = api_call(base_url, "GET", "/api/runner-targets")
     runtime_status, runtime = api_call(base_url, "GET", "/api/status")
@@ -418,8 +435,10 @@ def run_once(
             "firefox": firefox,
             "memory_guard": memory_guard,
             "reason": "firefox-runtime-inactive",
+            "stale_commands_cleared": stale_commands_cleared,
             "thresholds": {
                 "firefox_runtime_restart_cooldown_seconds": FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS,
+                "stale_pending_command_seconds": STALE_PENDING_COMMAND_SECONDS,
             },
         }
 
@@ -594,6 +613,7 @@ def run_once(
         "global_action": global_action,
         "firefox": firefox,
         "memory_guard": memory_guard,
+        "stale_commands_cleared": stale_commands_cleared,
         "thresholds": {
             "push_after_seconds": PUSH_AFTER_SECONDS,
             "restart_after_seconds": RESTART_AFTER_SECONDS,
@@ -603,6 +623,7 @@ def run_once(
             "prompt_stale_refresh_seconds": PROMPT_STALE_REFRESH_SECONDS,
             "global_recovery_after_seconds": GLOBAL_RECOVERY_AFTER_SECONDS,
             "firefox_runtime_restart_cooldown_seconds": FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS,
+            "stale_pending_command_seconds": STALE_PENDING_COMMAND_SECONDS,
         },
     }
 
@@ -613,8 +634,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--clear-stale-pending-only", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.clear_stale_pending_only:
+        cleared = clear_stale_pending_commands(
+            args.db,
+            project_id=None,
+            now=utc_now(),
+            min_age_seconds=STALE_PENDING_COMMAND_SECONDS,
+        )
+        result = {
+            "ok": True,
+            "cleared_command_ids": cleared,
+            "threshold_seconds": STALE_PENDING_COMMAND_SECONDS,
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2 if args.json else None, sort_keys=True))
+        return 0
 
     result = run_once(
         db_path=args.db,

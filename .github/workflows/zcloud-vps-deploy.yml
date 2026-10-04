@@ -330,6 +330,13 @@ jobs:
             echo "BACKEND_DEPENDENCY_BOOTSTRAP=already_aligned"
           fi
 
+      - name: Reconcile stale browser commands before health gate
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_worker_watchdog.py             --db /home/ubuntu/zennay-cloud/history.db             --clear-stale-pending-only             --json             | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-stale-command-reconcile.json"
+
       - name: Recover zCloud health before guarded promotion
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash

@@ -1,5 +1,7 @@
 import importlib.util
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 
@@ -100,6 +102,52 @@ class WorkerWatchdogDecisionTests(unittest.TestCase):
             watchdog.material_fingerprint(first),
             watchdog.material_fingerprint(second),
         )
+
+
+class WorkerWatchdogStaleCommandTests(unittest.TestCase):
+    def test_global_cleanup_includes_old_project_level_commands_only(self):
+        now = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "history.db"
+            conn = sqlite3.connect(db)
+            conn.execute("""CREATE TABLE runner_commands(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT,
+                action TEXT,
+                status TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                result TEXT
+            )""")
+            old = (now - timedelta(seconds=601)).isoformat()
+            recent = (now - timedelta(seconds=30)).isoformat()
+            conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                ("raiseai", "start", "pending", old, old),
+            )
+            conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                ("cloud::w1", "push", "pending", recent, recent),
+            )
+            conn.commit()
+            conn.close()
+
+            cleared = watchdog.clear_stale_pending_commands(
+                db,
+                project_id=None,
+                now=now,
+                min_age_seconds=300,
+            )
+            self.assertEqual([1], cleared)
+
+            conn = sqlite3.connect(db)
+            rows = conn.execute(
+                "SELECT id,status,result FROM runner_commands ORDER BY id"
+            ).fetchall()
+            conn.close()
+            self.assertEqual("failed", rows[0][1])
+            self.assertIn("superseded stale pending command", rows[0][2])
+            self.assertEqual("pending", rows[1][1])
 
 
 class WorkerWatchdogRuntimeRecoveryTests(unittest.TestCase):
