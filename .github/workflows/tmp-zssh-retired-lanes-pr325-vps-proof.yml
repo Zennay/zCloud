@@ -1,4 +1,4 @@
-name: zSSH retired lanes PR325 VPS proof
+name: zSSH retired lanes canonical VPS proof
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zssh-retired-lanes-pr325-vps-proof
+  group: zssh-retired-lanes-canonical-vps-proof
   cancel-in-progress: true
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      TARGET_ZCLOUD_SHA: a39ee320da7d7fc63d168c8ae217d6cc41fabdaf
+      TARGET_ZCLOUD_SHA: 7412d866d567658e85422212fec8f1788d8ba167
     steps:
       - name: Check out proof control plane
         uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
 
-      - name: Check out exact zCloud PR325 head
+      - name: Check out exact zCloud PR328 head
         uses: actions/checkout@v4
         with:
           repository: Zennay/zCloud
