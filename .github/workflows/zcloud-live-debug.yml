@@ -26,10 +26,25 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          fetch-depth: 512
+      - name: Manual checkout diagnostic candidate
+        shell: bash
+        env:
+          TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [[ ! -d "$GITHUB_WORKSPACE/.git" ]]; then
+            mkdir -p "$GITHUB_WORKSPACE"
+            git -C "$GITHUB_WORKSPACE" init
+            git -C "$GITHUB_WORKSPACE" remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          else
+            git -C "$GITHUB_WORKSPACE" remote set-url origin "https://github.com/$GITHUB_REPOSITORY.git"
+          fi
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune --depth=512 origin "$TARGET_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --force --detach FETCH_HEAD
+          git -C "$GITHUB_WORKSPACE" clean -ffdx
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "ZCLOUD_MANUAL_CHECKOUT_GREEN sha=$TARGET_SHA"
 
       - name: Read live canary and worker state
         shell: bash
