@@ -21,7 +21,6 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
-      ZSSH_SHA: e362d8c2d053d99ed7acac8a74d6de0889397ef3
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
@@ -41,19 +40,22 @@ jobs:
           test "$(id -un)" = "ubuntu"
           test "$(id -u)" -ne 0
 
-      - name: Require pinned zSSH revision to equal current canonical main
+      - name: Resolve current canonical zSSH main
+        id: zssh_target
         shell: bash
         run: |
           set -Eeuo pipefail
-          live_main="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
-          test "$live_main" = "$ZSSH_SHA"
-          echo "ZSSH_CANONICAL_MAIN_EXACT sha=$ZSSH_SHA"
+          zssh_sha="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          [[ "$zssh_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$zssh_sha" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_SHA=$zssh_sha" >> "$GITHUB_ENV"
+          echo "ZSSH_CANONICAL_MAIN_RESOLVED sha=$zssh_sha"
 
       - name: Check out exact canonical zSSH revision
         uses: actions/checkout@v4
         with:
           repository: Zennay/zSSH
-          ref: ${{ env.ZSSH_SHA }}
+          ref: ${{ steps.zssh_target.outputs.sha }}
           path: zssh-source
           persist-credentials: false
 
@@ -128,6 +130,10 @@ jobs:
           test "$after_active" = "$before_active"
           test "$after_enabled" = "$before_enabled"
 
+          live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main_after" = "$ZSSH_SHA"
+          echo "ZSSH_CANONICAL_MAIN_RECONFIRMED sha=$ZSSH_SHA"
+
           receipt="$RUNNER_TEMP/zssh-public-gateway-vps-preflight.json"
           export RECEIPT="$receipt"
           export TARGET_ID="$target_id"
@@ -153,6 +159,7 @@ jobs:
             coordination_repository: process.env.GITHUB_REPOSITORY,
             coordination_commit_sha: process.env.GITHUB_SHA,
             zssh_commit_sha: process.env.ZSSH_SHA,
+            zssh_main_reconfirmed: true,
             workflow_run_id: process.env.GITHUB_RUN_ID,
             workflow_run_attempt: process.env.GITHUB_RUN_ATTEMPT,
             runner_name: process.env.RUNNER_NAME,
@@ -210,6 +217,7 @@ jobs:
               "proof": receipt["proof"],
               "mode": receipt["mode"],
               "zssh_commit_sha": receipt["zssh_commit_sha"],
+              "zssh_main_reconfirmed": receipt["zssh_main_reconfirmed"],
               "target_id": receipt["target_id"],
               "public_key_sha256": receipt["public_key_sha256"],
               "public_gateway_state_unchanged": (
