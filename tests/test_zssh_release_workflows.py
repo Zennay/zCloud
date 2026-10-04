@@ -370,5 +370,35 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("cat ~/.config", text)
 
 
+    def test_auth0_reviewer_metadata_probe_reads_names_only_and_never_secret_values(self):
+        text = (ROOT / ".github/workflows/zssh-auth0-reviewer-metadata-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
+        self.assertIn("actions/secrets?per_page=100", text)
+        self.assertIn("actions/variables?per_page=100", text)
+        self.assertIn("environments/{encoded}/secrets?per_page=100", text)
+        self.assertIn("environments/{encoded}/variables?per_page=100", text)
+        self.assertIn("AUTH0_MANAGEMENT_API_TOKEN", text)
+        self.assertIn("AUTH0_MANAGEMENT_BASE_URL", text)
+        self.assertIn("ZSSH_OAUTH_ISSUER", text)
+        self.assertIn("ZSSH_PLUGIN_MCP_URL", text)
+        self.assertIn("ZSSH_REVIEW_ACCESS_TOKEN", text)
+        self.assertIn("ZSSH_REVIEW_LOGIN_URL", text)
+        self.assertIn("ZSSH_REVIEW_FILE", text)
+        self.assertIn("ZSSH_REVIEW_WRITE_FILE", text)
+        self.assertIn("ZSSH_PLUGIN_DEMO_RECORDING_URL", text)
+        self.assertIn('"secret_values_read": False', text)
+        self.assertIn('"mutation_attempted": False', text)
+        self.assertIn("openai_production_auth0_missing", text)
+        self.assertIn("openai_production_reviewer_missing", text)
+        self.assertNotIn("gh secret set", text)
+        self.assertNotIn("gh variable set", text)
+        self.assertNotIn("--method PUT", text)
+        self.assertNotIn("--method PATCH", text)
+        self.assertNotIn("--method POST", text)
+        self.assertNotIn("cat ~/.config", text)
+
+
 if __name__ == "__main__":
     unittest.main()
