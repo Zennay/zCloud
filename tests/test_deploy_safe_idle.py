@@ -122,6 +122,46 @@ class DeploySafeIdleTests(unittest.TestCase):
         self.assertTrue(restored["ok"])
         self.assertEqual("running", self.state_of())
 
+    def test_enter_supersedes_pending_push_before_drain(self):
+        created = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            push_id = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) "
+                "VALUES(?,?,?,?,?,NULL)",
+                ("cloud::w1", "push", "pending", created, created),
+            ).lastrowid
+        self.add_event(age_seconds=600, generating=0, sending=0)
+
+        result = safe_idle.enter_safe_idle(
+            self.db,
+            self.state,
+            timeout_seconds=0.5,
+            poll_seconds=0.01,
+            stable_seconds=0.02,
+            offline_after_seconds=300,
+        )
+
+        self.assertTrue(result["safe_idle"])
+        self.assertIn(push_id, result["superseded_push_command_ids"])
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?",
+                (push_id,),
+            ).fetchone()
+        self.assertEqual("failed", row[0])
+        self.assertIn("superseded pre-deploy pending push", row[1])
+
+        restored = safe_idle.restore_safe_idle(self.db, self.state)
+        self.assertTrue(restored["ok"])
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(
+                "failed",
+                conn.execute(
+                    "SELECT status FROM runner_commands WHERE id=?",
+                    (push_id,),
+                ).fetchone()[0],
+            )
+
     def test_missing_allocated_worker_state_fails_closed_without_creating_mapping(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute(
