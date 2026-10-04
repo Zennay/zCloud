@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ftmo-task37-readiness-cli-proof
@@ -66,9 +66,35 @@ jobs:
           "$FTMO_VENV/bin/python" -m pytest -q tests/test_research_readiness_cli.py
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
+      - name: Publish successful proof receipt
+        shell: bash
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/ftmo-task37-proof-receipt.json"
+          cat >"$receipt" <<EOF
+{
+  "schema_version": 1,
+  "scope": "ftmo-task37-readiness-cli-proof",
+  "target_sha": "$TARGET_SHA",
+  "runner_host": "$(hostname)",
+  "workflow_run_id": "$GITHUB_RUN_ID",
+  "workflow_run_attempt": "$GITHUB_RUN_ATTEMPT",
+  "result": "success",
+  "focused_test": "tests/test_research_readiness_cli.py"
+}
+EOF
+          content="$(base64 -w0 "$receipt")"
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task37-readiness-cli-proof.json \
+            -f message="Record FTMO TASK-37 VPS proof" \
+            -f content="$content" \
+            -f branch=main >/dev/null
+
       - name: Cleanup
         if: always()
         shell: bash
         run: |
           rm -rf "$RUNNER_TEMP/ftmo-task37-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-                 "$RUNNER_TEMP/ftmo-task37-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+                 "$RUNNER_TEMP/ftmo-task37-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+                 "$RUNNER_TEMP/ftmo-task37-proof-receipt.json"
