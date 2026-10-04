@@ -24,6 +24,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ZCLOUD_RUN_STATE_DIR: /home/ubuntu/.local/state/zcloud/actions/${{ github.run_id }}-${{ github.run_attempt }}
+
 concurrency:
   group: zcloud-vps-execution-probe-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -55,12 +58,19 @@ jobs:
           test "$checked_out" = "$TARGET_SHA"
           echo "ZCLOUD_MANUAL_CHECKOUT_GREEN sha=$checked_out"
 
+      - name: Prepare stable probe state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$ZCLOUD_RUN_STATE_DIR"
+          echo "ZCLOUD_STABLE_STATE_READY path=$ZCLOUD_RUN_STATE_DIR"
+
       - name: Enforce permanent zCloud VPS runner identity
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/zcloud_vps_runner_guard.py --json \
-            | tee "$RUNNER_TEMP/zcloud-vps-runner-guard.json"
+            | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-vps-runner-guard.json"
 
       - name: Acquire cloud deploylane coordination claim
         id: claim
@@ -70,7 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/zcloud_vps_deploylane_coordination.py acquire \
-            | tee "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
+            | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-deploylane-claim.jsonl"
 
       - name: Verify portfolio queue allocator on VPS runner
         run: |
@@ -82,13 +92,13 @@ jobs:
           set -euo pipefail
           python3 scripts/zcloud_prechange_evidence.py \
             --candidate "$GITHUB_WORKSPACE" \
-            | tee "$RUNNER_TEMP/zcloud-prechange-evidence.json"
+            | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-prechange-evidence.json"
 
       - name: Probe shared VPS execution capabilities
         run: |
           set -euo pipefail
           bash scripts/zcloud_vps_execution_probe.sh \
-            | tee "$RUNNER_TEMP/zcloud-vps-execution-probe.log"
+            | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-vps-execution-probe.log"
 
       - name: Verify cloud deploylane claim is still exact
         if: github.event_name != 'pull_request'
@@ -97,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/zcloud_vps_deploylane_coordination.py verify \
-            | tee -a "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
+            | tee -a "$ZCLOUD_RUN_STATE_DIR/zcloud-deploylane-claim.jsonl"
 
       - name: Release cloud deploylane coordination claim
         if: always() && github.event_name != 'pull_request' && steps.claim.outcome == 'success'
@@ -105,7 +115,32 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/zcloud_vps_deploylane_coordination.py release \
-            | tee -a "$RUNNER_TEMP/zcloud-deploylane-claim.jsonl"
+            | tee -a "$ZCLOUD_RUN_STATE_DIR/zcloud-deploylane-claim.jsonl"
+
+      - name: Diagnose runner workspace isolation
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          out="$ZCLOUD_RUN_STATE_DIR/zcloud-runner-topology.txt"
+          {
+            echo "RUNNER_NAME=$RUNNER_NAME"
+            echo "RUNNER_TEMP=$RUNNER_TEMP"
+            echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+            echo "HOST=$(hostname)"
+            echo "=== ACTIONS RUNNER UNITS ==="
+            systemctl --no-pager --all --type=service | grep -F 'actions.runner.' || true
+            echo "=== RUNNER PROCESSES ==="
+            ps -eo pid=,ppid=,user=,lstart=,cmd= | grep -E 'Runner\.(Listener|Worker)|runsvc\.sh' | grep -v grep || true
+            echo "=== RUNNER CWD ==="
+            for pid in $(pgrep -f 'Runner\.(Listener|Worker)|runsvc\.sh' || true); do
+              printf 'pid=%s cwd=' "$pid"
+              readlink -f "/proc/$pid/cwd" || true
+            done
+            echo "=== TEMP PRESENCE ==="
+            test -d "$RUNNER_TEMP" && echo "runner_temp=present" || echo "runner_temp=missing"
+            test -d "$ZCLOUD_RUN_STATE_DIR" && echo "stable_state=present" || echo "stable_state=missing"
+          } | tee "$out"
 
       - name: Upload sanitized deploylane evidence
         if: always()
@@ -115,7 +150,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
-            ${{ runner.temp }}/zcloud-deploylane-claim.jsonl
-            ${{ runner.temp }}/zcloud-vps-execution-probe.log
-            ${{ runner.temp }}/zcloud-vps-runner-guard.json
-            ${{ runner.temp }}/zcloud-prechange-evidence.json
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-deploylane-claim.jsonl
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-vps-execution-probe.log
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-vps-runner-guard.json
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-prechange-evidence.json
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-runner-topology.txt
+
+      - name: Cleanup stable probe state
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "$ZCLOUD_RUN_STATE_DIR" in
+            /home/ubuntu/.local/state/zcloud/actions/*) ;;
+            *) echo "Refusing unsafe cleanup path: $ZCLOUD_RUN_STATE_DIR" >&2; exit 2 ;;
+          esac
+          rm -rf -- "$ZCLOUD_RUN_STATE_DIR"
