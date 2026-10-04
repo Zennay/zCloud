@@ -13,6 +13,8 @@ on:
       - scripts/zcloud_vps_runner_guard.py
       - scripts/zcloud_vps_deploylane_coordination.py
       - scripts/zcloud_transactional_promote.py
+      - scripts/zcloud_deploy_safe_idle.py
+      - tests/test_deploy_safe_idle.py
       - tests/test_transactional_promote.py
       - tests/test_vps_runner_guard.py
       - server.py
