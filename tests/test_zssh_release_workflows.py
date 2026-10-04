@@ -372,6 +372,13 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
     def test_auth0_reviewer_metadata_probe_reads_names_only_and_never_secret_values(self):
         text = (ROOT / ".github/workflows/zssh-auth0-reviewer-metadata-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn(".github/zssh-auth0-reviewer-probe-trigger", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
+        self.assertIn("PROBE_ZSSH_AUTH0_REVIEWER_METADATA", text)
+        self.assertIn("ZSSH_AUTH0_REVIEWER_PROBE_MERGED_PR_ACTIVATION_GREEN", text)
+        self.assertNotIn("\n  push:\n", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
