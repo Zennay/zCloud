@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: dispatch-ftmo-post514-state-sync
+  cancel-in-progress: true
+
 jobs:
   dispatch:
     runs-on: [self-hosted, zcloud, vps]
@@ -25,20 +29,23 @@ jobs:
           test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$EXPECTED_MAIN"
           test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .merged)" = "true"
 
-          before="$(gh api 'repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs?event=workflow_dispatch&per_page=1' --jq '.workflow_runs[0].id // 0')"
-          gh api --method POST repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/dispatches -f ref=main >/dev/null
+          gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
 
           found=""
           for _ in $(seq 1 30); do
-            row="$(gh api 'repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs?event=workflow_dispatch&per_page=5' --jq --arg sha "$EXPECTED_MAIN" '[.workflow_runs[] | select(.head_sha==$sha)][0] | [.id,.status] | @tsv')"
+            runs_json="$(gh run list               --repo Zennay/Ftmo               --workflow sync-autonomous-research-state.yml               --event workflow_dispatch               --branch main               --limit 10               --json databaseId,headSha,status)"
+            row="$(printf '%s' "$runs_json" | python3 -c '
+import json, os, sys
+sha = os.environ["EXPECTED_MAIN"]
+for run in json.load(sys.stdin):
+    if run.get("headSha") == sha:
+        print(f"{run.get("databaseId")}\t{run.get("status")}")
+        break
+')"
             if [[ -n "$row" ]]; then
-              run_id="${row%%$'\t'*}"
-              status="${row#*$'\t'}"
-              if [[ "$run_id" != "$before" ]]; then
-                found=1
-                echo "FTMO_POST514_SYNC_RUN=$run_id status=$status"
-                break
-              fi
+              echo "FTMO_POST514_SYNC=$row"
+              found=1
+              break
             fi
             sleep 2
           done
