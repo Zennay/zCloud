@@ -97,6 +97,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(text.index(bootstrap), text.index(recover))
         self.assertLess(text.index(recover), text.index(promote))
 
+    def test_deploy_reconciles_stale_browser_commands_before_health_and_promotion(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        reconcile = "Reconcile stale browser commands before health gate"
+        recover = "Recover zCloud health before guarded promotion"
+        promote = "Promote backend runtime core"
+        self.assertIn(reconcile, text)
+        self.assertIn("scripts/zcloud_worker_watchdog.py", text)
+        self.assertIn("--clear-stale-pending-only", text)
+        self.assertIn("zcloud-stale-command-reconcile.json", text)
+        self.assertLess(text.index(reconcile), text.index(recover))
+        self.assertLess(text.index(reconcile), text.index(promote))
+
     def test_deploy_recovers_unhealthy_zcloud_before_freezing_self_heal(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         recover = "Recover zCloud health before guarded promotion"
