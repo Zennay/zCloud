@@ -1,0 +1,293 @@
+name: Supa PLUS rendered listings evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/supa-plus-listings-render.yml"
+
+concurrency:
+  group: supa-plus-listings-render-evidence
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  render-plus-listings:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      SUPA_SHA: 2378d34e36ed199505bd3a535458d7869a3a5b4e
+    steps:
+      - name: Verify bounded browser route
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test -x /usr/bin/firefox
+          command -v geckodriver
+          firefox --version
+          geckodriver --version > /tmp/supa-plus-listings-geckodriver-version.txt
+          sed -n '1p' /tmp/supa-plus-listings-geckodriver-version.txt
+          echo "runner=${RUNNER_NAME:-unknown}"
+          echo "supa_sha=$SUPA_SHA"
+
+      - name: Check out exact current Supa M1 stacked head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Supa
+          ref: 2378d34e36ed199505bd3a535458d7869a3a5b4e
+          path: supa-exact
+          persist-credentials: false
+
+      - name: Verify exact Supa source identity
+        shell: bash
+        working-directory: supa-exact
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "expected=$SUPA_SHA"
+          echo "actual=$actual"
+          test "$actual" = "$SUPA_SHA"
+
+      - name: Render two fixed public PLUS listing pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/plus-listings-rendered-evidence"
+          mkdir -p "$out"
+
+          geckodriver --port 4444 --log debug >"$out/geckodriver.log" 2>&1 &
+          driver_pid=$!
+          cleanup() {
+            kill "$driver_pid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4444/status >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4444/status >"$out/webdriver-status.json"
+
+          cat >"$out/render.mjs" <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { writeFile } from 'node:fs/promises'
+
+          const base = 'http://127.0.0.1:4444'
+          const out = process.env.RENDER_OUT
+          const targets = [
+            {
+              id: 'plus-catalog',
+              kind: 'catalog',
+              url: 'https://www.plus.nl/producten',
+            },
+            {
+              id: 'plus-offers',
+              kind: 'offers',
+              url: 'https://www.plus.nl/aanbiedingen',
+            },
+          ]
+
+          async function request(path, options = {}) {
+            const response = await fetch(base + path, {
+              ...options,
+              headers: {
+                'content-type': 'application/json',
+                ...(options.headers || {}),
+              },
+            })
+            const text = await response.text()
+            let body
+            try { body = JSON.parse(text) } catch { body = { raw: text } }
+            if (!response.ok || body?.value?.error) {
+              throw new Error(`WebDriver ${path} failed: ${response.status} ${text}`)
+            }
+            return body
+          }
+
+          const created = await request('/session', {
+            method: 'POST',
+            body: JSON.stringify({
+              capabilities: {
+                alwaysMatch: {
+                  browserName: 'firefox',
+                  acceptInsecureCerts: false,
+                  'moz:firefoxOptions': { args: ['-headless'] },
+                },
+              },
+            }),
+          })
+          const sessionId = created.value?.sessionId
+          if (!sessionId) throw new Error('No WebDriver session id')
+
+          const pages = []
+          try {
+            for (const target of targets) {
+              await request(`/session/${sessionId}/url`, {
+                method: 'POST',
+                body: JSON.stringify({ url: target.url }),
+              })
+
+              const samples = []
+              let lastSignature = ''
+              let stable = 0
+              for (let i = 0; i < 20; i += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 1000))
+                const state = await request(`/session/${sessionId}/execute/sync`, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    script: `
+                      return {
+                        readyState: document.readyState,
+                        href: location.href,
+                        title: document.title,
+                        htmlLength: document.documentElement?.outerHTML?.length || 0,
+                        textLength: document.body?.innerText?.length || 0,
+                        jsonLdCount: document.querySelectorAll('script[type="application/ld+json"]').length,
+                        applicationJsonCount: document.querySelectorAll('script[type="application/json"]').length,
+                        productLinkCount: Array.from(document.links || []).filter((a) => /\\/product\\//.test(a.pathname || '')).length,
+                        textPreview: (document.body?.innerText || '').slice(0, 1200)
+                      }
+                    `,
+                    args: [],
+                  }),
+                })
+                const value = state.value || {}
+                samples.push({ second: i + 1, ...value })
+                const signature = [
+                  value.readyState,
+                  value.htmlLength,
+                  value.textLength,
+                  value.jsonLdCount,
+                  value.productLinkCount,
+                ].join(':')
+                if (value.readyState === 'complete' && signature === lastSignature) stable += 1
+                else stable = 0
+                lastSignature = signature
+                if (stable >= 2 && i >= 5) break
+              }
+
+              const current = await request(`/session/${sessionId}/url`)
+              const finalUrl = current.value
+              const parsed = new URL(finalUrl)
+              if (parsed.protocol !== 'https:' || parsed.hostname !== 'www.plus.nl') {
+                throw new Error(`PLUS render escaped allowed host: ${finalUrl}`)
+              }
+
+              const sourceResponse = await request(`/session/${sessionId}/source`)
+              const screenshotResponse = await request(`/session/${sessionId}/screenshot`)
+              const html = sourceResponse.value
+              const screenshot = Buffer.from(screenshotResponse.value, 'base64')
+              const capturedAt = new Date().toISOString()
+              const sha256 = createHash('sha256').update(html, 'utf8').digest('hex')
+
+              await writeFile(`${out}/${target.id}.html`, html, 'utf8')
+              await writeFile(`${out}/${target.id}.png`, screenshot)
+
+              pages.push({
+                ...target,
+                finalUrl,
+                capturedAt,
+                renderedHtmlSha256: sha256,
+                renderedHtmlBytes: Buffer.byteLength(html, 'utf8'),
+                screenshotBytes: screenshot.length,
+                samples,
+              })
+            }
+
+            const metadata = {
+              schemaVersion: 1,
+              evidenceType: 'browser-rendered-public-listings',
+              supermarket: 'plus',
+              browser: 'Firefox 157.0',
+              driver: 'geckodriver 0.37.1',
+              supaSha: process.env.SUPA_SHA,
+              safety: {
+                login: false,
+                credentials: false,
+                privateApiCalls: false,
+                networkInterception: false,
+                antiBotBypass: false,
+                recursiveCrawl: false,
+                targetCount: targets.length,
+              },
+              pages,
+            }
+            await writeFile(
+              `${out}/metadata.json`,
+              JSON.stringify(metadata, null, 2) + '\n',
+              'utf8',
+            )
+            console.log(JSON.stringify(metadata, null, 2))
+          } finally {
+            await request(`/session/${sessionId}`, { method: 'DELETE' }).catch(() => {})
+          }
+          NODE
+
+          RENDER_OUT="$out" node "$out/render.mjs"
+
+      - name: Inspect rendered structures without source selectors
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/plus-listings-rendered-evidence"
+          node - "$out" <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+
+          const out = process.argv[2]
+          const pages = ['plus-catalog', 'plus-offers']
+          const inspection = { schemaVersion: 1, pages: [] }
+
+          for (const id of pages) {
+            const html = readFileSync(`${out}/${id}.html`, 'utf8')
+            const visible = html
+              .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+              .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/\s+/g, ' ')
+              .trim()
+
+            const jsonLd = [...html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)]
+              .map((match) => {
+                try { return JSON.parse(match[1].trim()) }
+                catch { return { __parseError: true } }
+              })
+
+            const applicationJson = [...html.matchAll(/<script\b[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi)]
+            const productLinks = [...html.matchAll(/href=["']([^"']*\/product\/[^"']+)["']/gi)]
+              .map((match) => match[1])
+
+            inspection.pages.push({
+              id,
+              htmlBytes: Buffer.byteLength(html, 'utf8'),
+              visibleTextLength: visible.length,
+              visibleTextPreview: visible.slice(0, 4000),
+              jsonLdCount: jsonLd.length,
+              jsonLdTopLevelTypes: jsonLd.map((value) => value?.['@type'] ?? null),
+              applicationJsonCount: applicationJson.length,
+              productLinkCount: productLinks.length,
+              uniqueProductLinkCount: new Set(productLinks).size,
+              firstProductLinks: [...new Set(productLinks)].slice(0, 20),
+            })
+          }
+
+          writeFileSync(
+            `${out}/inspection.json`,
+            JSON.stringify(inspection, null, 2) + '\n',
+          )
+          console.log(JSON.stringify(inspection, null, 2))
+          NODE
+
+      - name: Upload PLUS listings rendered evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supa-plus-listings-rendered-evidence
+          path: plus-listings-rendered-evidence/
+          if-no-files-found: error
+          retention-days: 14
