@@ -56,36 +56,30 @@ jobs:
             api_count="$(gh api repos/Zennay/Supa/actions/runners --jq '.total_count')"
             test "$api_count" = "0"
 
-            source_dir="/home/ubuntu/actions-runner-zcloud"
             target_dir="/home/ubuntu/actions-runner-supa"
-            test -x "$source_dir/config.sh"
-
-            if [[ -e "$target_dir/.runner" ]]; then
-              echo "SUPA_RUNNER_REGISTER=unexpected-local-registration"
-              exit 4
-            fi
+            runner_version="2.337.0"
+            asset_name="actions-runner-linux-x64-${runner_version}.tar.gz"
+            asset_url="$(gh api "repos/actions/runner/releases/tags/v${runner_version}" --jq ".assets[] | select(.name==\"${asset_name}\") | .browser_download_url")"
+            asset_digest="$(gh api "repos/actions/runner/releases/tags/v${runner_version}" --jq ".assets[] | select(.name==\"${asset_name}\") | (.digest // \"\")")"
+            test -n "$asset_url"
 
             rm -rf "$target_dir"
             mkdir -p "$target_dir"
-            (
-              cd "$source_dir"
-              tar \
-                --exclude='.runner' \
-                --exclude='.credentials' \
-                --exclude='.credentials_rsaparams' \
-                --exclude='.service' \
-                --exclude='_work' \
-                --exclude='_diag' \
-                -cf - .
-            ) | (
-              cd "$target_dir"
-              tar -xf -
-            )
-            rm -f \
-              "$target_dir/.runner" \
-              "$target_dir/.credentials" \
-              "$target_dir/.credentials_rsaparams" \
-              "$target_dir/.service"
+            archive="/tmp/$asset_name"
+            curl -fsSL "$asset_url" -o "$archive"
+
+            if [[ "$asset_digest" == sha256:* ]]; then
+              expected="${asset_digest#sha256:}"
+              actual="$(sha256sum "$archive" | awk '{print $1}')"
+              test "$actual" = "$expected"
+              echo "SUPA_RUNNER_ARCHIVE_SHA256=verified"
+            else
+              echo "SUPA_RUNNER_ARCHIVE_SHA256=release-digest-unavailable"
+            fi
+
+            tar -xzf "$archive" -C "$target_dir"
+            test -x "$target_dir/config.sh"
+            test ! -e "$target_dir/.runner"
 
             token="$(gh api --method POST repos/Zennay/Supa/actions/runners/registration-token --jq '.token')"
             test -n "$token"
