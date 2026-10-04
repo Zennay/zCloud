@@ -1,0 +1,112 @@
+name: zCloud status latency diagnostic
+
+on:
+  push:
+    branches:
+      - worker/zcloud-status-latency-diag-20261004
+    paths:
+      - .github/workflows/zcloud-status-latency-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-status-latency-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Enforce permanent zCloud VPS runner identity
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Profile candidate status dependencies read-only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tmp_db="$RUNNER_TEMP/zcloud-status-latency-history.db"
+          cp /home/ubuntu/zennay-cloud/history.db "$tmp_db"
+          ZCLOUD_DIAG_DB="$tmp_db" python3 - <<'PY' | tee "$RUNNER_TEMP/zcloud-status-latency.json"
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          import server
+
+          server.DB = Path(os.environ["ZCLOUD_DIAG_DB"])
+
+          def timed(name, fn):
+              started = time.monotonic()
+              try:
+                  value = fn()
+                  ok = True
+                  error = None
+              except Exception as exc:
+                  value = None
+                  ok = False
+                  error = str(exc)[:240]
+              return {
+                  "name": name,
+                  "ok": ok,
+                  "seconds": round(time.monotonic() - started, 3),
+                  "error": error,
+                  "summary": (
+                      {
+                          "active": value.get("active"),
+                          "state": value.get("state"),
+                          "runtime_mode": value.get("runtime_mode"),
+                          "service_state": value.get("service_state"),
+                      }
+                      if name == "firefox_runner_status" and isinstance(value, dict)
+                      else {"count": len(value)} if isinstance(value, dict)
+                      else None
+                  ),
+              }
+
+          checks = [
+              timed("firefox_runner_status", server.firefox_runner_status),
+              timed("runner_targets", server.runner_targets),
+              timed("runner_statuses", server.runner_statuses),
+              timed("dynamic_worker_settings", server.dynamic_worker_settings),
+          ]
+          result = {"checks": checks, "candidate": os.environ.get("GITHUB_SHA", "")}
+          print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+          slow = [item for item in checks if not item["ok"] or item["seconds"] >= 6.0]
+          if slow:
+              print("ZCLOUD_STATUS_LATENCY_SLOW=" + json.dumps(slow, ensure_ascii=False, sort_keys=True))
+          else:
+              print("ZCLOUD_STATUS_LATENCY_COMPONENTS_GREEN")
+          PY
+
+      - name: Measure live HTTP surfaces without mutation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for path in / /api/runner-targets /api/status; do
+            out="$(mktemp)"
+            set +e
+            metrics="$(curl -sS -o "$out" --max-time 35 -w '{"http_code":%{http_code},"time_total":%{time_total}}' "http://127.0.0.1:8765$path")"
+            rc=$?
+            set -e
+            bytes="$(wc -c < "$out" | tr -d ' ')"
+            rm -f "$out"
+            printf 'ZCLOUD_HTTP_LATENCY path=%s rc=%s bytes=%s metrics=%s\n' "$path" "$rc" "$bytes" "$metrics"
+          done
+
+      - name: Upload sanitized timing evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-status-latency-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: ${{ runner.temp }}/zcloud-status-latency.json
