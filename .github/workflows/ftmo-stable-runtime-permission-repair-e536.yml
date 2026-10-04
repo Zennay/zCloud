@@ -1,0 +1,156 @@
+name: FTMO stable runtime permission repair e536
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-stable-runtime-permission-repair-e536.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-stable-runtime-permission-repair-e536
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_FTMO_MAIN: e5363979dd40097ede98234554ed49b262514fa1
+      FTMO_STABLE_ROOT: /opt/ftmo-autonomous
+    steps:
+      - name: Verify exact VPS and FTMO identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_FTMO_MAIN"
+          test -d "$FTMO_STABLE_ROOT"
+          test ! -L "$FTMO_STABLE_ROOT"
+          test "$(stat -c %u "$FTMO_STABLE_ROOT")" = "$(id -u)"
+
+      - name: Harden stable runtime permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import stat
+          from pathlib import Path
+
+          root = Path(os.environ["FTMO_STABLE_ROOT"])
+          uid = os.geteuid()
+          changes = []
+          skipped_symlinks = []
+
+          root_info = root.lstat()
+          if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+              raise SystemExit("stable runtime root is not a real directory")
+          if root_info.st_uid != uid:
+              raise SystemExit("stable runtime root is not owned by the runner user")
+
+          for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+              base = Path(dirpath)
+              clean_dirnames = []
+              for name in dirnames:
+                  path = base / name
+                  info = path.lstat()
+                  if stat.S_ISLNK(info.st_mode):
+                      skipped_symlinks.append(str(path.relative_to(root)))
+                      continue
+                  clean_dirnames.append(name)
+              dirnames[:] = clean_dirnames
+
+              for path in [base, *(base / name for name in filenames)]:
+                  try:
+                      info = path.lstat()
+                  except FileNotFoundError:
+                      continue
+                  if stat.S_ISLNK(info.st_mode) or info.st_uid != uid:
+                      continue
+                  if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                      continue
+                  old_mode = stat.S_IMODE(info.st_mode)
+                  if not (old_mode & 0o022):
+                      continue
+                  flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+                  if stat.S_ISDIR(info.st_mode):
+                      flags |= getattr(os, 'O_DIRECTORY', 0)
+                  fd = os.open(path, flags)
+                  try:
+                      bound = os.fstat(fd)
+                      if bound.st_uid != uid:
+                          raise SystemExit(f"ownership changed while hardening: {path}")
+                      new_mode = stat.S_IMODE(bound.st_mode) & ~0o022
+                      os.fchmod(fd, new_mode)
+                      confirmed = os.fstat(fd)
+                      if stat.S_IMODE(confirmed.st_mode) & 0o022:
+                          raise SystemExit(f"permission hardening failed: {path}")
+                  finally:
+                      os.close(fd)
+                  changes.append({
+                      "path": str(path.relative_to(root)) or ".",
+                      "old_mode": format(old_mode, "04o"),
+                      "new_mode": format(new_mode, "04o"),
+                  })
+
+          residual = []
+          for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+              base = Path(dirpath)
+              dirnames[:] = [
+                  name for name in dirnames
+                  if not (base / name).is_symlink()
+              ]
+              for path in [base, *(base / name for name in filenames)]:
+                  try:
+                      info = path.lstat()
+                  except FileNotFoundError:
+                      continue
+                  if info.st_uid == uid and not stat.S_ISLNK(info.st_mode) and (info.st_mode & 0o022):
+                      residual.append(str(path.relative_to(root)) or '.')
+
+          if residual:
+              raise SystemExit(f"user-owned writable entries remain: {residual[:20]}")
+
+          receipt = Path(os.environ["RUNNER_TEMP"]) / "ftmo-stable-runtime-permission-repair-e536.json"
+          receipt.write_text(json.dumps({
+              "schema_version": 1,
+              "scope": "ftmo-stable-runtime-permission-repair",
+              "expected_ftmo_main": os.environ["EXPECTED_FTMO_MAIN"],
+              "runner_host": os.uname().nodename,
+              "changed_count": len(changes),
+              "changes": changes[:300],
+              "skipped_symlink_count": len(skipped_symlinks),
+              "skipped_symlinks": skipped_symlinks[:100],
+              "result": "permissions_hardened",
+          }, sort_keys=True, indent=2) + '\n')
+          print(f"FTMO_STABLE_PERMISSION_REPAIR_CHANGED={len(changes)}")
+          PY
+
+      - name: Dispatch canonical FTMO post-repair gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_FTMO_MAIN"
+          gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
+          gh workflow run deploy-autonomous-vps.yml --repo Zennay/Ftmo --ref main
+          echo "FTMO_POST_REPAIR_GATES_DISPATCHED=1"
+
+      - name: Publish repair receipt
+        shell: bash
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/ftmo-stable-runtime-permission-repair-e536.json"
+          test -s "$receipt"
+          content="$(base64 -w0 "$receipt")"
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-stable-runtime-permission-repair-e536.json \
+            -f message="Record FTMO stable runtime permission repair" \
+            -f content="$content" \
+            -f branch=main >/dev/null
