@@ -81,6 +81,11 @@ jobs:
               cd "$target_dir"
               tar -xf -
             )
+            rm -f \
+              "$target_dir/.runner" \
+              "$target_dir/.credentials" \
+              "$target_dir/.credentials_rsaparams" \
+              "$target_dir/.service"
 
             token="$(gh api --method POST repos/Zennay/Supa/actions/runners/registration-token --jq '.token')"
             test -n "$token"
