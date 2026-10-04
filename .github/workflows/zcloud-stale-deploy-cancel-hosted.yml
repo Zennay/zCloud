@@ -1,0 +1,36 @@
+name: Cancel stale zCloud guarded deploys
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-stale-deploy-cancel-hosted.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel superseded guarded deploy runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_id in 37237440248 37237691366; do
+            state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + ":" + (.conclusion // "")' 2>/dev/null || true)"
+            echo "RUN ${run_id} state=${state:-unresolved}"
+            case "$state" in
+              queued:*|in_progress:*|pending:*|waiting:*)
+                gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" >/dev/null || true
+                echo "ZCLOUD_STALE_DEPLOY_CANCEL_REQUESTED run_id=${run_id}"
+                ;;
+              *)
+                echo "ZCLOUD_STALE_DEPLOY_ALREADY_TERMINAL run_id=${run_id}"
+                ;;
+            esac
+          done
