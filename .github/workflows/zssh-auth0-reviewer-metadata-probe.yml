@@ -1,11 +1,11 @@
 name: zSSH Auth0 and reviewer input metadata probe
 
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [closed]
     paths:
-      - ".github/workflows/zssh-auth0-reviewer-metadata-probe.yml"
-      - "tests/test_zssh_release_workflows.py"
+      - ".github/zssh-auth0-reviewer-probe-trigger"
   workflow_dispatch:
 
 permissions:
@@ -18,6 +18,7 @@ concurrency:
 jobs:
   probe:
     name: Find reusable Auth0 and reviewer input metadata without reading values
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
@@ -25,6 +26,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Require reviewed merged-PR activation
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${{ github.event.pull_request.merged }}" = "true"
+          test "${{ github.event.pull_request.base.ref }}" = "main"
+          test "$(cat .github/zssh-auth0-reviewer-probe-trigger)" = "PROBE_ZSSH_AUTH0_REVIEWER_METADATA"
+          echo "ZSSH_AUTH0_REVIEWER_PROBE_MERGED_PR_ACTIVATION_GREEN pr=${{ github.event.pull_request.number }}"
 
       - name: Enforce permanent VPS runner identity
         shell: bash
