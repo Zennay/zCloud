@@ -2,12 +2,10 @@ name: Dispatch FTMO post-PR521 receipt state sync
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - '.github/workflows/ftmo-post514-state-sync-dispatch.yml'
-
-permissions:
-  contents: write
+      - .github/workflows/ftmo-post514-state-sync-dispatch.yml
 
 concurrency:
   group: ftmo-post521-receipt-state-sync
@@ -28,15 +26,13 @@ jobs:
           gh auth status >/dev/null 2>&1
           current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
           test "$current" = "$RECEIPT_MAIN_SHA"
-
-          existing_sync="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$RECEIPT_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.RECEIPT_MAIN_SHA)] | length')"
-          if [[ "$existing_sync" == "0" ]]; then
+          existing="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$RECEIPT_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.RECEIPT_MAIN_SHA)] | length')"
+          if [[ "$existing" == "0" ]]; then
             gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
-            sync_action=dispatched
+            echo "FTMO_POST521_RECEIPT_STATE_SYNC_ACTION=dispatched"
           else
-            sync_action=existing-exact-main-run
+            echo "FTMO_POST521_RECEIPT_STATE_SYNC_ACTION=existing-exact-main-run"
           fi
-
           sync_run=""
           for _ in $(seq 1 24); do
             sync_run="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$RECEIPT_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.RECEIPT_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty')"
@@ -44,23 +40,4 @@ jobs:
             sleep 5
           done
           test -n "$sync_run"
-
-          echo "FTMO_POST521_RECEIPT_STATE_SYNC_ACTION=$sync_action"
           echo "FTMO_POST521_RECEIPT_STATE_SYNC_RUN=$sync_run"
-
-          receipt="$RUNNER_TEMP/ftmo-post521-receipt-state-sync.json"
-          cat >"$receipt" <<EOF
-{
-  "schema_version": 1,
-  "scope": "ftmo-post-pr521-receipt-state-sync",
-  "receipt_main_sha": "$RECEIPT_MAIN_SHA",
-  "state_sync_action": "$sync_action",
-  "state_sync_run_id": "$sync_run",
-  "dispatcher_run_id": "$GITHUB_RUN_ID"
-}
-EOF
-          encoded="$(base64 -w0 "$receipt")"
-          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post521-receipt-state-sync.json \
-            -f message="Record FTMO post-PR521 receipt state-sync dispatch" \
-            -f content="$encoded" \
-            -f branch=main >/dev/null
