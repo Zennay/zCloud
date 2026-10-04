@@ -7,6 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
+from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
 
 ROOT = Path(__file__).resolve().parent
@@ -3396,6 +3397,18 @@ def runner_statuses():
         result[pid]=status
     return result
 
+def worker_scaling_summary(project_id='',hours=12.0):
+    project_id=str(project_id or '').strip().lower()
+    if project_id and project_id not in PROJECT_INDEX:
+        raise KeyError(project_id)
+    try:
+        hours=float(hours)
+    except (TypeError,ValueError) as exc:
+        raise ValueError('hours must be numeric') from exc
+    if hours < 0.25 or hours > 168:
+        raise ValueError('hours must be between 0.25 and 168')
+    return worker_scaling_report.report(DB,hours,project_id or None)
+
 def watch_last_run(pid):
     aliases={'haxlab':['haxlab'],'ftmo':['ftmo'],'cloud':['zennay cloud','zennay-cloud'],'supa':['supa']}.get(pid,[pid])
     with connect() as c:
@@ -4048,6 +4061,15 @@ class Handler(BaseHTTPRequestHandler):
                 runners=runner_statuses()
                 incidents=enhancements.incident_center(DB,runners,data=data)
                 return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'dynamic_workers':dynamic_worker_settings(),'incidents':incidents})
+            if u.path=='/api/worker-scaling':
+                project_id=str(q.get('project',[''])[0] or '').strip().lower()
+                try:
+                    payload=worker_scaling_summary(project_id,q.get('hours',['12'])[0])
+                except KeyError:
+                    return self.reply({'error':'Onbekend project'},404)
+                except ValueError as exc:
+                    return self.reply({'error':str(exc)},400)
+                return self.reply(payload)
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
             if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
