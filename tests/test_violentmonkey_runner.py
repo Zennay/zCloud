@@ -31,7 +31,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('gmRequest("/runner-commands")', userscript)
         self.assertIn('gmRequest("/runner-status"', userscript)
         self.assertIn('gmRequest("/runner-command-result"', userscript)
-        self.assertIn('REQUIRED_THINKING_EFFORT = "high"', userscript)
+        self.assertIn('reportSendBlocked("push-deferred-busy")', userscript)\n        self.assertIn("generationActive() || sending || awaitingGeneration", userscript)\n        self.assertIn('REQUIRED_THINKING_EFFORT = "high"', userscript)
         self.assertIn("ensureHighThinking", userscript)
         self.assertIn('[role="slider"]', userscript)
         self.assertIn('data-testid="model-switcher-dropdown-button"', userscript)
@@ -96,13 +96,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.5", required.group(1))
+        self.assertEqual("1.3.6", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.5";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.6";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
