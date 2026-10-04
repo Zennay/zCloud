@@ -1,0 +1,128 @@
+name: One-shot zCloud VPS listener recovery
+
+on:
+  push:
+    branches:
+      - ops/recover-zcloud-vps-listener-20261004-1922
+    paths:
+      - .github/workflows/zcloud-vps-listener-recovery-ops.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Recover only stale zCloud listener
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_RUN_ID: "37227941584"
+          EXPECTED_HOST: "vps-bb300bba"
+          RUNNER_NAME_FRAGMENT: "zcloud-vps-1"
+          ZCLOUD_RUNNER_USER: "ubuntu"
+          ZCLOUD_RUNNER_ROOT: "/home/ubuntu/actions-runner-zcloud"
+        run: |
+          set -euo pipefail
+
+          actual_host="$(hostname)"
+          if [[ "$actual_host" != "$EXPECTED_HOST" ]]; then
+            echo "RECOVERY_REFUSED host=$actual_host expected=$EXPECTED_HOST"
+            exit 0
+          fi
+
+          run_status="$(python3 - <<'PY'
+          import json, os, urllib.request
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['TARGET_RUN_ID']}",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-listener-recovery",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=15) as response:
+              print(json.load(response).get("status") or "")
+          PY
+          )"
+          if [[ "$run_status" != "queued" ]]; then
+            echo "RECOVERY_NOT_NEEDED run=$TARGET_RUN_ID status=$run_status"
+            exit 0
+          fi
+
+          mapfile -t units < <(
+            systemctl list-unit-files --type=service --no-legend 'actions.runner.*' 2>/dev/null |
+              awk '{print $1}' |
+              grep -F "$RUNNER_NAME_FRAGMENT" || true
+          )
+          if [[ "${#units[@]}" -ne 1 ]]; then
+            echo "RECOVERY_REFUSED unit_matches=${#units[@]}"
+            printf 'MATCH=%s\n' "${units[@]:-}"
+            exit 1
+          fi
+          service="${units[0]}"
+
+          worker_active() {
+            pgrep -u "$ZCLOUD_RUNNER_USER" -f "$ZCLOUD_RUNNER_ROOT/.*/Runner\\.Worker|$ZCLOUD_RUNNER_ROOT/bin/Runner\\.Worker" >/dev/null
+          }
+
+          pre_state="$(systemctl is-active "$service" 2>/dev/null || true)"
+          pre_pid="$(systemctl show "$service" -p MainPID --value 2>/dev/null || true)"
+          echo "ZCLOUD_RUNNER_PRE service=$service state=$pre_state pid=${pre_pid:-0}"
+
+          if worker_active; then
+            echo "RECOVERY_PRESERVE_ACTIVE_WORKER service=$service"
+            exit 0
+          fi
+
+          sleep 5
+          if worker_active; then
+            echo "RECOVERY_PRESERVE_WORKER_APPEARED service=$service"
+            exit 0
+          fi
+
+          run_status="$(python3 - <<'PY'
+          import json, os, urllib.request
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['TARGET_RUN_ID']}",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-listener-recovery",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=15) as response:
+              print(json.load(response).get("status") or "")
+          PY
+          )"
+          if [[ "$run_status" != "queued" ]]; then
+            echo "RECOVERY_ABORTED_RUN_MOVED run=$TARGET_RUN_ID status=$run_status"
+            exit 0
+          fi
+
+          if [[ "$pre_state" == "active" ]]; then
+            sudo -n systemctl restart "$service"
+            action="restart-stale-idle-listener"
+          else
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl start "$service"
+            action="start-inactive-listener"
+          fi
+
+          for _ in $(seq 1 15); do
+            if systemctl is-active --quiet "$service"; then
+              post_pid="$(systemctl show "$service" -p MainPID --value)"
+              echo "ZCLOUD_RUNNER_RECOVERY_GREEN action=$action service=$service pid=$post_pid"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          systemctl --no-pager --full status "$service" || true
+          echo "ZCLOUD_RUNNER_RECOVERY_FAILED action=$action service=$service"
+          exit 1
