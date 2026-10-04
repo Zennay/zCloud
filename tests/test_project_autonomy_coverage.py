@@ -47,6 +47,11 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
             self.assertFalse(bool(cfg.get("auto_start")))
             self.assertEqual(0, pool.get("slots"))
 
+    def test_server_has_no_hard_coded_project_worker_cap_table(self):
+        server_source = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertNotIn("PROJECT_AI_WORKER_LIMITS", server_source)
+        self.assertIn("project_runtime.ai_worker_cap", server_source)
+
     def test_legacy_autonomy_file_cannot_drift_during_migration(self):
         canonical = self.contracts["projects"]
         legacy = self.legacy.get("projects") or {}
