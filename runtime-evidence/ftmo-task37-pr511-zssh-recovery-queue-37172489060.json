@@ -1,0 +1,33 @@
+{
+  "current_main": "77134b142952f590ba19f4666a616d0e0001621d",
+  "protected_runs": [
+    37171444603,
+    37172359837
+  ],
+  "queue": {
+    "attempts": 1,
+    "blocker": "",
+    "claim_expires": "2026-10-04T03:55:53.774293+00:00",
+    "claimed_at": "2026-10-04T02:55:34.286705+00:00",
+    "completion_criteria": "On vps-bb300bba recover only the GitHub Actions runner used by Zennay/Ftmo (service actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service, runner vps-bb300bba-ftmo). Current FTMO main is expected at 77134b142952f590ba19f4666a616d0e0001621d. Protected work is PR #511 head baac36f317348487d9c461172a17b9db0872d48c with Test suite run 37172359837 and research-state sync run 37171444603 from source main e5363979dd40097ede98234554ed49b262514fa1. Diagnose listener/service health, active Runner.Worker state and fresh OOM evidence. If no valid Runner.Worker is active and the listener is inactive/unhealthy, reset-failed/restart only that FTMO Actions runner service. If a valid worker is active, preserve it. Verify the service is active/listening and at least one protected run leaves queued state. Do not cancel or rerun protected runs. Do not modify FTMO application runtime, marathon service, strategy outcomes, provider evidence, preregistration, development, walk-forward, final holdout, broker/live permissions, paid-cloud boundary, secrets, or repository branches. Return service name, pre/post state, recovery action, OOM evidence summary, and protected-run scheduling evidence.",
+    "created_at": "2026-10-04T02:55:33.443112+00:00",
+    "eligible": true,
+    "evidence": "",
+    "metadata_json": "{}",
+    "parent_queue_id": null,
+    "priority": "P0",
+    "project_id": "zssh",
+    "queue_id": "zssh-ftmo-task37-pr511-runner-recovery-20261004",
+    "source_url": "https://github.com/Zennay/Ftmo/pull/511",
+    "status": "claimed",
+    "title": "Recover FTMO runner for TASK-37 PR511",
+    "updated_at": "2026-10-04T02:55:53.774293+00:00",
+    "worker_slot": 4
+  },
+  "queue_id": "zssh-ftmo-task37-pr511-runner-recovery-20261004",
+  "schema_version": 1,
+  "scope": "ftmo-task37-pr511-zssh-recovery-queue",
+  "target_head": "baac36f317348487d9c461172a17b9db0872d48c",
+  "target_pr": 511,
+  "workflow_run_id": "37172489060"
+}
