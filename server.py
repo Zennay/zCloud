@@ -191,9 +191,33 @@ def project_views(data):
     archived=[p for p in all_projects if p['id'] in layout['archived']]
     return visible, archived, layout
 
+def live_receipt_status(data):
+    """Overlay the latest durable receipt state without waiting for the 60s sampler."""
+    status_data={**data,'projects':[dict(project) for project in data.get('projects',[])]}
+    try:
+        with connect() as c:
+            receipts=project_runtime.latest_receipts(c)
+            coverage=project_runtime.receipt_coverage(
+                c,
+                [
+                    project.get('id')
+                    for project in status_data['projects']
+                    if str(project.get('status') or 'active')!='archived'
+                ],
+            )
+        for project in status_data['projects']:
+            project_id=str(project.get('id') or '')
+            if project_id in receipts:
+                project_runtime.apply_receipt(project,receipts.get(project_id))
+        status_data['state_receipt_coverage']=coverage
+    except Exception:
+        logging.exception('Could not refresh live project state receipts')
+    return status_data
+
 def public_status(data):
-    visible, archived, layout=project_views(data)
-    return {**data,'projects':visible,'archived_projects':archived,'project_layout':layout,'alerts':enhancements.list_alerts(DB,8,False)}
+    live_data=live_receipt_status(data)
+    visible, archived, layout=project_views(live_data)
+    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,'alerts':enhancements.list_alerts(DB,8,False)}
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def cmd(args):
