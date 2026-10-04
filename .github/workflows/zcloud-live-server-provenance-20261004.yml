@@ -1,5 +1,9 @@
 name: Diagnose live zCloud server provenance
 
+concurrency:
+  group: zcloud-live-server-provenance
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -13,7 +17,7 @@ permissions:
 
 jobs:
   diagnose:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +25,13 @@ jobs:
           fetch-depth: 512
           persist-credentials: false
 
-      - name: Verify permanent zCloud VPS runner
-        run: python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Verify exact VPS host for read-only diagnosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          echo "READ_ONLY_PROVENANCE_HOST_GREEN=1"
 
       - name: Fetch branch provenance without mutation
         shell: bash
