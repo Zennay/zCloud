@@ -291,6 +291,25 @@ jobs:
               )
               if key in settings
           }
+
+          # Owner-requested overnight burst: keep seven ChatGPT workers desired
+          # from 00:00 through 08:00 Europe/Amsterdam on 2026-10-05. The normal
+          # memory/OOM allocator remains authoritative, so this never bypasses
+          # resource safety. The first hourly run after 08:00 restores the
+          # normal two-worker default, and later runs stop overriding the count.
+          current_utc = datetime.now(timezone.utc)
+          overnight_start = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc)
+          overnight_end = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
+          restore_end = datetime(2026, 10, 5, 7, 0, tzinfo=timezone.utc)
+          if overnight_start <= current_utc < overnight_end:
+              reconcile_payload["chatgpt_count"] = 7
+              reconcile_payload["chatgpt_cooldown_seconds"] = min(
+                  int(reconcile_payload.get("chatgpt_cooldown_seconds") or 120),
+                  120,
+              )
+          elif overnight_end <= current_utc < restore_end:
+              reconcile_payload["chatgpt_count"] = 2
+
           reconcile_status, reconciled = api_call(
               "POST", "/api/dynamic-workers", reconcile_payload
           )
