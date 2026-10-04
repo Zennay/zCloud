@@ -30,6 +30,27 @@ jobs:
           runner_root="/home/ubuntu/actions-runner-zcloud"
           temp_root="$runner_root/_work/_temp"
 
+          echo "=== IDLE LISTENER RECOVERY ==="
+          cgroup="$(systemctl show "$service" -p ControlGroup --value || true)"
+          active_worker=0
+          if [[ -n "$cgroup" && -r "/sys/fs/cgroup${cgroup}/cgroup.procs" ]]; then
+            while read -r pid; do
+              [[ -r "/proc/$pid/cmdline" ]] || continue
+              cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+              if [[ "$cmd" == *"Runner.Worker"* ]]; then
+                active_worker=1
+                echo "ZCLOUD_CROSS_LANE_PRESERVE_ACTIVE_WORKER pid=$pid"
+                break
+              fi
+            done < "/sys/fs/cgroup${cgroup}/cgroup.procs"
+          fi
+          if [[ "$active_worker" -eq 0 ]]; then
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl restart "$service"
+            echo "ZCLOUD_CROSS_LANE_RESTARTED_IDLE_LISTENER"
+          fi
+          systemctl is-active --quiet "$service"
+
           echo "=== RECOVERY ==="
           recovery="$(
             systemctl list-units --all --full --plain 'zcloud-runner-listener-recovery-*.service' --no-legend \
