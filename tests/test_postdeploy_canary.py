@@ -87,7 +87,7 @@ class PostdeployCanaryTests(unittest.TestCase):
             )
         self.assertEqual([], result["errors"])
         self.assertEqual(2, fetch.call_count)
-        self.assertEqual(8.0, fetch.call_args_list[0].kwargs["timeout"])
+        self.assertEqual(30.0, fetch.call_args_list[0].kwargs["timeout"])
 
     def test_status_readiness_persistent_failure_stays_fail_closed(self):
         ticks = iter([0.0, 31.0])
