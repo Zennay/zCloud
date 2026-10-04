@@ -1,0 +1,65 @@
+name: zCloud cross-runner listener proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-runner-cross-lane-proof.yml"
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - ".github/workflows/zcloud-vps-execution-probe.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-cross-runner-listener-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 4
+    steps:
+      - name: Prove zCloud listener isolation from independent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          recovery="zcloud-runner-listener-recovery-37235763224.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+          temp_root="$runner_root/_work/_temp"
+
+          echo "=== RECOVERY ==="
+          state="$(systemctl is-active "$recovery" || true)"
+          result="$(systemctl show "$recovery" -p Result --value || true)"
+          exit_status="$(systemctl show "$recovery" -p ExecMainStatus --value || true)"
+          echo "ZCLOUD_RECOVERY state=$state result=$result exit_status=$exit_status"
+          journalctl -u "$recovery" --no-pager -n 120 || true
+          test "$state" != "active"
+          test "$state" != "activating"
+          test "$result" = "success"
+          test "$exit_status" = "0"
+
+          echo "=== LISTENERS ==="
+          cgroup="$(systemctl show "$service" -p ControlGroup --value)"
+          mapfile -t listeners < <(
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          )
+          echo "ZCLOUD_LISTENERS count=${#listeners[@]} pids=${listeners[*]:-none} cgroup=$cgroup"
+          test "${#listeners[@]}" -eq 1
+          grep -Fq "$cgroup" "/proc/${listeners[0]}/cgroup"
+          systemctl is-active --quiet "$service"
+
+          echo "=== TEMP SENTINEL ==="
+          sentinel="$temp_root/.zcloud-cross-runner-proof-$GITHUB_RUN_ID"
+          sudo -n -u ubuntu touch "$sentinel"
+          sleep 12
+          test -f "$sentinel"
+          rm -f "$sentinel"
+          echo "ZCLOUD_CROSS_RUNNER_LISTENER_GREEN listener=${listeners[0]} cgroup=$cgroup"
