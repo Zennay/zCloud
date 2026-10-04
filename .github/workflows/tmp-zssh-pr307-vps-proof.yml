@@ -1,0 +1,68 @@
+name: zSSH PR307 VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/tmp-zssh-pr307-vps-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-pr307-vps-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    name: Prove zSSH PR307 on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      ZSSH_PR_SHA: 9a81c3833242545247dc50bb1bd8524ddaafba35
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          path: zcloud-control
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 zcloud-control/scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Check out exact zSSH PR head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_PR_SHA }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Verify exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_PR_SHA"
+          git -C zssh-source diff --exit-code
+          echo "ZSSH_PR307_SOURCE_GREEN sha=$ZSSH_PR_SHA runner=$RUNNER_NAME"
+
+      - name: Run focused DNS hardening proof
+        shell: bash
+        working-directory: zssh-source
+        run: |
+          set -euo pipefail
+          node --check scripts/publish-cloudflare-dns.mjs
+          node --test test/cloudflare-dns-publish.test.mjs
+          echo "ZSSH_PR307_DNS_SCOPE_GREEN sha=$ZSSH_PR_SHA runner=$RUNNER_NAME"
