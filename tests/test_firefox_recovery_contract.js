@@ -157,6 +157,14 @@ assert.ok(
   userscript.includes('draining = target.desired_state === "draining"'),
   "Violentmonkey primary runner must remain driven by backend desired_state"
 );
+assert.ok(
+  userscript.includes('if (draining && !sawGeneration)'),
+  "an already-idle Violentmonkey worker must acknowledge backend drain state"
+);
+assert.ok(
+  userscript.includes('status("runner-drained", {reason: "already-idle"})'),
+  "idle desired-state drain must report runner-drained to the backend"
+);
 
 const refreshTargetStart = background.indexOf("async function refreshTargets");
 const refreshTargetEnd = background.indexOf("async function inject");
