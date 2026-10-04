@@ -2652,6 +2652,29 @@ def portfolio_queue_allocate():
                 used_counts[pid]=used_counts.get(pid,0)+1
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
+                # Once a browser command is pending, the queue claim is part of an
+                # in-flight handoff. Rebalancing it before Firefox consumes that
+                # command makes the userscript correctly reject the send because its
+                # current VPS assignment vanished. Pin the claim until the command
+                # leaves pending, then resume normal priority/diversity preemption.
+                local_slot=used_counts.get(row_project,0)+1
+                worker_key=f'{row_project}::w{local_slot}'
+                command_inflight=c.execute(
+                    """SELECT id FROM runner_commands
+                       WHERE project_id=?
+                         AND action IN ('start','new_chat','push')
+                         AND status='pending'
+                       ORDER BY id DESC LIMIT 1""",
+                    (worker_key,),
+                ).fetchone()
+                if command_inflight:
+                    c.execute(
+                        'UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
+                        (lease_until,ts,row['queue_id']),
+                    )
+                    row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
+                    selected.append(_portfolio_queue_row(row))
+                    continue
                 row_mode=str((_autonomy_config(row_project) or {}).get('mode') or 'manual').lower()
                 if row_mode in {'external_gate','manual'}:
                     c.execute("""UPDATE portfolio_queue
