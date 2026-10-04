@@ -51,7 +51,7 @@
     "zssh": {
       "queue_mode": "execution",
       "lane_profile": "platform",
-      "ai_worker_cap": 1,
+      "ai_worker_cap": 0,
       "autonomy": {
         "mode": "external_gate",
         "auto_start": false
