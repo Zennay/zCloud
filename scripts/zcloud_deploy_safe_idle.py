@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_DB = Path(os.environ.get("ZCLOUD_DB", "/home/ubuntu/zennay-cloud/history.db"))
+DRAIN_ACK_EVENTS = frozenset({"runner-config-updated", "runner-draining", "injection-success"})
 
 
 class SafeIdleError(RuntimeError):
@@ -67,6 +68,7 @@ def worker_observation(
     return {
         "available": True,
         "event": str(row["event"] or ""),
+        "observed_at": str(row["ts"] or ""),
         "age_seconds": age_seconds,
         "generating": bool(row["generating"]),
         "sending": bool(row["sending"]),
@@ -75,17 +77,47 @@ def worker_observation(
 
 def drain_command_state(conn: sqlite3.Connection, worker_id: str) -> dict:
     row = conn.execute(
-        "SELECT id,status,action FROM runner_commands "
+        "SELECT id,status,action,created_at FROM runner_commands "
         "WHERE project_id=? AND action='drain' ORDER BY id DESC LIMIT 1",
         (worker_id,),
     ).fetchone()
     if row is None:
-        return {"id": None, "status": None, "action": None}
+        return {"id": None, "status": None, "action": None, "created_at": None}
     return {
         "id": int(row["id"]),
         "status": str(row["status"] or ""),
         "action": str(row["action"] or ""),
+        "created_at": str(row["created_at"] or ""),
     }
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def drain_acknowledged_idle(observation: dict, command: dict) -> bool:
+    """Prove an idle worker has observed the deploy drain before auto-pausing it."""
+    if (
+        observation.get("available") is not True
+        or observation.get("generating") is not False
+        or observation.get("sending") is not False
+    ):
+        return False
+    if str(command.get("status") or "") == "completed":
+        return True
+    if str(command.get("status") or "") != "pending":
+        return False
+    if str(observation.get("event") or "") not in DRAIN_ACK_EVENTS:
+        return False
+    observed_at = _parse_timestamp(observation.get("observed_at"))
+    created_at = _parse_timestamp(command.get("created_at"))
+    return bool(observed_at and created_at and observed_at >= created_at)
 
 
 def blocking_worker_diagnostics(
@@ -285,7 +317,9 @@ def enter_safe_idle(
                             and observation.get("generating") is False
                             and observation.get("sending") is False
                         )
-                        if offline_idle:
+                        command = drain_command_state(conn, key)
+                        acknowledged_idle = drain_acknowledged_idle(observation, command)
+                        if offline_idle or acknowledged_idle:
                             conn.execute(
                                 "UPDATE runner_workers SET desired_state='paused' "
                                 "WHERE project_id=? AND worker_slot=? AND desired_state='draining'",
@@ -293,18 +327,24 @@ def enter_safe_idle(
                             )
                             command_id = record.get("drain_command_id")
                             if command_id:
+                                reason = (
+                                    "deploy safe-idle auto-quiesced acknowledged idle worker"
+                                    if acknowledged_idle
+                                    else "deploy safe-idle auto-quiesced offline idle worker"
+                                )
                                 conn.execute(
                                     "UPDATE runner_commands SET status='completed',updated_at=?,result=? "
                                     "WHERE id=? AND status='pending'",
                                     (
                                         utc_now(),
-                                        "deploy safe-idle auto-quiesced offline idle worker",
+                                        reason,
                                         int(command_id),
                                     ),
                                 )
                             desired = "paused"
                             auto_quiesced.append({
                                 "worker_id": key,
+                                "reason": "acknowledged-idle" if acknowledged_idle else "offline-idle",
                                 "last_event": observation.get("event"),
                                 "last_event_age_seconds": round(float(age), 1),
                             })
