@@ -1,0 +1,92 @@
+name: Recover FTMO listener for PR509 from zCloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-ftmo-listener-pr509.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-ftmo-listener-pr509-zcloud
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_MAIN_SHA: e5363979dd40097ede98234554ed49b262514fa1
+      EXPECTED_PR_HEAD: 278251fdfcbf778b3b159da71f5be1e921de9443
+      PR_NUMBER: "509"
+      TEST_RUN: "37171308840"
+      STATE_SYNC_RUN: "37171444603"
+      VERIFY_RUN: "37171446075"
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+    steps:
+      - name: Recover idle FTMO Actions listener and prove scheduling
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$PR_NUMBER --jq .state)" = "open"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$PR_NUMBER --jq .head.sha)" = "$EXPECTED_PR_HEAD"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$PR_NUMBER --jq .base.sha)" = "$EXPECTED_MAIN_SHA"
+
+          for spec in "$TEST_RUN:$EXPECTED_PR_HEAD" "$STATE_SYNC_RUN:$EXPECTED_MAIN_SHA" "$VERIFY_RUN:$EXPECTED_MAIN_SHA"; do
+            run_id="${spec%%:*}"
+            expected_sha="${spec##*:}"
+            test "$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq .head_sha)" = "$expected_sha"
+          done
+
+          pre_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+          pre_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+          worker=0
+          pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1 && worker=1 || true
+          echo "FTMO_RUNNER_PRE state=$pre_state pid=$pre_pid worker=$worker"
+
+          if [[ "$worker" -eq 1 ]]; then
+            action=preserve-active-worker
+          else
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-idle-listener
+          fi
+
+          state=""
+          pid=""
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+            pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+            if [[ "$state" == active && "$pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pid/cmdline"; then
+              cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+              if [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$state" = active
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+          echo "FTMO_RUNNER_RECOVERY_ACTION=$action"
+
+          scheduled=""
+          for _ in $(seq 1 48); do
+            test_status="$(gh api repos/Zennay/Ftmo/actions/runs/$TEST_RUN --jq .status)"
+            sync_status="$(gh api repos/Zennay/Ftmo/actions/runs/$STATE_SYNC_RUN --jq .status)"
+            verify_status="$(gh api repos/Zennay/Ftmo/actions/runs/$VERIFY_RUN --jq .status)"
+            echo "FTMO_TARGETS test=$test_status sync=$sync_status verify=$verify_status"
+            if [[ "$test_status" != queued || "$sync_status" != queued || "$verify_status" != queued ]]; then
+              scheduled=1
+              break
+            fi
+            sleep 5
+          done
+          test -n "$scheduled"
+          echo "FTMO_PR509_ZCLOUD_RECOVERY_GREEN=1"
