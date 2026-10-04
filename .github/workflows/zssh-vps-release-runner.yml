@@ -120,7 +120,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      ZSSH_PROOF_SHA: f5791c8983e1dc60093600f10ae3e981ec6bd7e9
+      ZSSH_PROOF_SHA: 78d019ad460198f1a891b64cc9fd5655ef9815fe
     steps:
       - name: Check out zCloud control plane for proof
         uses: actions/checkout@v4
@@ -173,4 +173,4 @@ jobs:
           bash -n deploy/install-public-gateway.sh
           bash -n deploy/install-target-agent.sh
           node --check scripts/verify-release-provenance.mjs
-          echo "ZSSH_PR274_RELEASE_PROVENANCE_VPS_PROOF_GREEN"
+          echo "ZSSH_PR280_RELEASE_PROVENANCE_VPS_PROOF_GREEN"
