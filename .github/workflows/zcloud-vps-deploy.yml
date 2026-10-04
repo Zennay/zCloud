@@ -273,6 +273,8 @@ jobs:
           echo "changed=false" >> "$GITHUB_OUTPUT"
           echo "had_live_runtime=false" >> "$GITHUB_OUTPUT"
           echo "had_live_contract=false" >> "$GITHUB_OUTPUT"
+          echo "had_live_lane=false" >> "$GITHUB_OUTPUT"
+          echo "had_live_policy=false" >> "$GITHUB_OUTPUT"
 
           live_server_sha="$(sha256sum "$live_server" | awk '{print $1}')"
           candidate_server_sha="$(sha256sum "$candidate_server" | awk '{print $1}')"
@@ -284,7 +286,9 @@ jobs:
           changed=false
           for spec in \
             "project_runtime.py:runtime" \
-            "project-contracts.json:contract"
+            "project-contracts.json:contract" \
+            "lane_generator.py:lane" \
+            "vps-execution-policy.json:policy"
           do
             rel="${spec%%:*}"
             label="${spec##*:}"
@@ -367,12 +371,16 @@ jobs:
         env:
           HAD_LIVE_RUNTIME: ${{ steps.backend_dependency_bootstrap.outputs.had_live_runtime }}
           HAD_LIVE_CONTRACT: ${{ steps.backend_dependency_bootstrap.outputs.had_live_contract }}
+          HAD_LIVE_LANE: ${{ steps.backend_dependency_bootstrap.outputs.had_live_lane }}
+          HAD_LIVE_POLICY: ${{ steps.backend_dependency_bootstrap.outputs.had_live_policy }}
         run: |
           set -euo pipefail
           root="/home/ubuntu/zennay-cloud"
           for spec in \
             "project_runtime.py:runtime:$HAD_LIVE_RUNTIME" \
-            "project-contracts.json:contract:$HAD_LIVE_CONTRACT"
+            "project-contracts.json:contract:$HAD_LIVE_CONTRACT" \
+            "lane_generator.py:lane:$HAD_LIVE_LANE" \
+            "vps-execution-policy.json:policy:$HAD_LIVE_POLICY"
           do
             rel="${spec%%:*}"
             rest="${spec#*:}"
