@@ -25,7 +25,7 @@ jobs:
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
       - name: Check out zCloud coordination
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
@@ -52,7 +52,7 @@ jobs:
           echo "ZSSH_CANONICAL_MAIN_RESOLVED sha=$zssh_sha"
 
       - name: Check out exact canonical zSSH revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: Zennay/zSSH
           ref: ${{ steps.zssh_target.outputs.sha }}
