@@ -32,25 +32,42 @@
     "Oct 04 02:39:24 vps-bb300bba systemd[1]: user@1000.service: The kernel OOM killer killed some processes in this unit.",
     "Oct 04 02:39:24 vps-bb300bba kernel: oom_reaper: reaped process 3323136 (Isolated Web Co), now anon-rss:0kB, file-rss:0kB, shmem-rss:56kB"
   ],
-  "post_pid": "3413597",
+  "post_pid": "3415916",
   "post_state": "active",
-  "pre_pid": "0",
-  "pre_state": "failed",
+  "pre_pid": "3415916",
+  "pre_state": "active",
   "queue_id": "zssh-ftmo-verify72-runner-recovery-20261002",
-  "recovery_action": "start-inactive-listener",
+  "recovery_action": "preserve-active-worker",
   "runner_diag_tail": [
-    "DIAG_FILE=/opt/ftmo-runner/_diag/Runner_20261004-024622-utc.log",
-    "[2026-10-04 02:46:23Z INFO Runner] Attempting to create session using migrated settings",
-    "[2026-10-04 02:46:23Z INFO BrokerMessageListener] Attempt to create session."
+    "DIAG_FILE=/opt/ftmo-runner/_diag/Runner_20261004-024753-utc.log",
+    "[2026-10-04 02:47:53Z INFO Runner] Attempting to create session using migrated settings",
+    "[2026-10-04 02:47:53Z INFO BrokerMessageListener] Attempt to create session.",
+    "[2026-10-04 02:47:56Z INFO BrokerMessageListener] Session created.",
+    "[2026-10-04 02:47:56Z INFO Runner] Successfully created session with migrated settings",
+    "[2026-10-04 02:47:56Z INFO Terminal] WRITE LINE: 2026-10-04 02:47:56Z: Listening for Jobs",
+    "[2026-10-04 02:47:57Z INFO JobDispatcher] Job request 0 for plan 7e8cc425-4bf7-405a-bc86-428609e566e6 job e603051a-0a46-5679-b21e-ff86471d8c48 received.",
+    "[2026-10-04 02:47:57Z INFO Terminal] WRITE LINE: 2026-10-04 02:47:57Z: Running job: verify",
+    "[2026-10-04 02:47:57Z INFO JobDispatcher] Start renew job request 0 for job e603051a-0a46-5679-b21e-ff86471d8c48.",
+    "[2026-10-04 02:47:58Z INFO JobDispatcher] Send job request message to worker for job e603051a-0a46-5679-b21e-ff86471d8c48.",
+    "[2026-10-04 02:48:27Z INFO JobDispatcher] finish job request for job e603051a-0a46-5679-b21e-ff86471d8c48 with result: Succeeded",
+    "[2026-10-04 02:48:27Z INFO JobDispatcher] Stop renew job request for job e603051a-0a46-5679-b21e-ff86471d8c48.",
+    "[2026-10-04 02:48:27Z WARN GitHubActionsService] GET request to https://broker.actions.githubusercontent.com/message?sessionId=39885425-6809-4bff-83cb-740c567a6b67&status=Busy&runnerVersion=2.337.0&os=Linux&architecture=X64&disableUpdate=false has been cancelled.",
+    "   at GitHub.Actions.RunService.WebApi.BrokerHttpClient.GetRunnerMessageAsync(Nullable`1 sessionId, String runnerVersion, Nullable`1 status, String os, String architecture, Nullable`1 disableUpdate, CancellationToken cancellationToken)",
+    "[2026-10-04 02:48:29Z INFO JobDispatcher] Job request 0 for plan 335cb2b9-e924-8c83-b48b-71fb0d6103d4 job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1 received.",
+    "[2026-10-04 02:48:29Z INFO JobDispatcher] Job request e603051a-0a46-5679-b21e-ff86471d8c48 processed succeed.",
+    "[2026-10-04 02:48:29Z INFO Terminal] WRITE LINE: 2026-10-04 02:48:29Z: Running job: snapshot",
+    "[2026-10-04 02:48:29Z INFO JobDispatcher] Start renew job request 0 for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1.",
+    "[2026-10-04 02:48:29Z INFO JobDispatcher] Send job request message to worker for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1."
   ],
   "runner_name": "zcloud-vps-1",
   "runner_processes": [
-    "3413597 Sun Oct  4 02:46:21 2026       00:02 /bin/bash /opt/ftmo-runner/runsvc.sh",
-    "3413613 Sun Oct  4 02:46:21 2026       00:02 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service"
+    "3415916 Sun Oct  4 02:47:52 2026       00:48 /bin/bash /opt/ftmo-runner/runsvc.sh",
+    "3415944 Sun Oct  4 02:47:52 2026       00:48 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service",
+    "3416830 Sun Oct  4 02:48:28 2026       00:11 /opt/ftmo-runner/bin/Runner.Worker spawnclient 161 164"
   ],
   "schema_version": 1,
   "service": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
   "workflow_run_attempt": "1",
-  "workflow_run_id": "37172065369",
-  "workflow_sha": "5dabc0c24e3b5a9e4ecf5b1e2dc8d275152e9c45"
+  "workflow_run_id": "37172178429",
+  "workflow_sha": "4f076f442aad281ce2853819fd8728e84e41d516"
 }
