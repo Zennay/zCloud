@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.6
+// @version      1.3.7
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.6";
+  const SCRIPT_VERSION = "1.3.7";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -834,13 +834,16 @@
   }
 
   async function commandResult(commandId, resultStatus, result) {
-    if (!commandId) return;
+    if (!commandId) return false;
     try {
       await gmRequest("/runner-command-result", {
         method: "POST",
         body: {command_id: commandId, status: resultStatus, result}
       });
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function handoffKey() {
@@ -1063,8 +1066,11 @@
       } else if (command.action === "drain") {
         draining = true;
         await status("runner-draining", {reason: "database-drain"});
-        await commandResult(id, "completed", "Violentmonkey worker will stop after current generation");
-        lastHandledCommandId = Math.max(lastHandledCommandId, id);
+        const acknowledged = await commandResult(id, "completed", "Violentmonkey worker will stop after current generation");
+        // Drain is idempotent. If the local acknowledgement POST times out or
+        // fails transiently, keep the command eligible for the next tick
+        // instead of stranding it pending in SQLite until the deploy times out.
+        if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);
       }
     }
   }
