@@ -25,7 +25,7 @@ jobs:
           test "$RUNNER_NAME" = "zcloud-vps-1"
           test "$(hostname)" = "vps-bb300bba"
           python3 - <<'PY'
-          import json, time, urllib.request
+          import json, time, urllib.error, urllib.request
 
           base = "http://127.0.0.1:8765"
           queue_id = "zssh-zcloud-duplicate-listener-recovery-20261004"
@@ -58,42 +58,89 @@ jobs:
               "source_url": "https://github.com/Zennay/zCloud/pull/401",
           }
 
-          def post(path, body):
-              req = urllib.request.Request(
-                  base + path,
-                  data=json.dumps(body).encode(),
-                  method="POST",
-                  headers={"Content-Type": "application/json"},
-              )
-              with urllib.request.urlopen(req, timeout=10) as response:
-                  return json.load(response)
+          def request_json(path, body=None):
+              data = None
+              method = "GET"
+              headers = {}
+              if body is not None:
+                  data = json.dumps(body).encode()
+                  method = "POST"
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as response:
+                      return response.status, json.load(response)
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read().decode("utf-8", "replace")
+                  try:
+                      payload = json.loads(raw)
+                  except Exception:
+                      payload = {"error": raw[:500]}
+                  return exc.code, payload
 
-          enqueue = post("/api/portfolio-queue", payload)
-          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
-          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
-          print("ZCLOUD_RUNNER_RECOVERY_ENQUEUE", json.dumps(enqueue, sort_keys=True))
-          print("ZSSH_START", json.dumps(start, sort_keys=True))
-          print("ZSSH_PUSH", json.dumps(push, sort_keys=True))
+          enqueue_status, enqueue = request_json("/api/portfolio-queue", payload)
+          print("ZCLOUD_RUNNER_RECOVERY_ENQUEUE", enqueue_status, json.dumps(enqueue, sort_keys=True))
+          if enqueue_status != 200:
+              raise SystemExit(f"recovery enqueue failed: HTTP {enqueue_status} {enqueue}")
+
+          start_status, start = request_json(
+              "/api/runner-control", {"project_id": "zssh", "action": "start"}
+          )
+          print("ZSSH_START", start_status, json.dumps(start, sort_keys=True))
+          if start_status not in (200, 429):
+              raise SystemExit(f"zSSH start failed: HTTP {start_status} {start}")
+
+          # Start changes desired state synchronously, but the browser worker can
+          # take a few seconds to consume the command and become telemetry-active.
+          # Do not race push admission against that transition.
+          start_deadline = time.monotonic() + 75
+          while time.monotonic() < start_deadline:
+              _, live = request_json("/api/runner-commands?limit=200")
+              pending_start = [
+                  row for row in (live.get("commands") or [])
+                  if row.get("project_id") == "zssh" and row.get("action") == "start"
+              ]
+              if not pending_start:
+                  break
+              time.sleep(3)
+          else:
+              raise SystemExit("zSSH start command was not consumed within 75s")
+
+          push = None
+          push_status = None
+          push_deadline = time.monotonic() + 75
+          while time.monotonic() < push_deadline:
+              push_status, push = request_json(
+                  "/api/runner-control", {"project_id": "zssh", "action": "push"}
+              )
+              print("ZSSH_PUSH_ATTEMPT", push_status, json.dumps(push, sort_keys=True))
+              if push_status == 200:
+                  break
+              if push_status not in (409, 429):
+                  raise SystemExit(f"zSSH push failed: HTTP {push_status} {push}")
+              time.sleep(3)
+          if push_status != 200:
+              raise SystemExit(f"zSSH worker never became push-ready: {push}")
 
           command_ids = {
               int(v) for v in (start.get("command_id"), push.get("command_id")) if v
           }
           if not command_ids:
-              raise SystemExit("zSSH start/push returned no command ids")
+              raise SystemExit("zSSH recovery trigger returned no command ids")
 
-          deadline = time.monotonic() + 60
+          deadline = time.monotonic() + 90
           pending = set(command_ids)
           while pending and time.monotonic() < deadline:
-              with urllib.request.urlopen(base + "/api/runner-commands?limit=200", timeout=10) as r:
-                  commands = json.load(r).get("commands") or []
+              _, live = request_json("/api/runner-commands?limit=200")
+              commands = live.get("commands") or []
               pending = {
-                  int(row["id"])
+                  int(row.get("id"))
                   for row in commands
-                  if row.get("id") is not None and int(row["id"]) in command_ids
+                  if row.get("id") is not None and int(row.get("id")) in command_ids
               }
               if pending:
                   time.sleep(3)
           print("ZCLOUD_RUNNER_RECOVERY_COMMANDS_PENDING", sorted(pending))
           if pending:
-              raise SystemExit("zSSH worker did not consume runner recovery command")
+              raise SystemExit("zSSH worker did not consume runner recovery commands")
           PY
