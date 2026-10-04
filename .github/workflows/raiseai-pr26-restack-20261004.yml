@@ -1,10 +1,6 @@
-name: Merge canonical main into RaiseAI PR26 stack
+name: Legacy RaiseAI PR26 restack (manual only)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/raiseai-pr26-restack-20261004.yml"
   workflow_dispatch:
 
 permissions:
