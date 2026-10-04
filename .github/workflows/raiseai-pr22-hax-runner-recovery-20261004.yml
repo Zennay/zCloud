@@ -1,0 +1,59 @@
+name: Recover HaxLab runner for RaiseAI PR22
+
+on:
+  push:
+    branches:
+      - ops/raiseai-pr22-hax-runner-recovery-20261004-0055
+    paths:
+      - ".github/workflows/raiseai-pr22-hax-runner-recovery-20261004.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-pr22-hax-runner-recovery-20261004
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Recover idle HaxLab Actions listener
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          SERVICE=actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service
+          RUN_USER=haxlab-runner
+
+          pre_state="$(systemctl is-active "$SERVICE" || true)"
+          pre_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+
+          action=none
+          if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            action=preserve-active-worker
+          elif [ "$pre_state" != "active" ]; then
+            sudo -n systemctl reset-failed "$SERVICE" || true
+            sudo -n systemctl start "$SERVICE"
+            action=start-inactive-listener
+          else
+            sudo -n systemctl restart "$SERVICE"
+            action=restart-idle-listener
+          fi
+
+          state=""
+          for _ in $(seq 1 20); do
+            state="$(systemctl is-active "$SERVICE" || true)"
+            [ "$state" = "active" ] && break
+            sleep 2
+          done
+          test "$state" = "active"
+
+          pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+          cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+          [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]
+
+          echo "RAISEAI_HAXLAB_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid"
