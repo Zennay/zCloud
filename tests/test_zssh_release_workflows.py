@@ -409,7 +409,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=workflow):
                 text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
                 remote_uses = re.findall(
-                    r"uses:\\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\\s#]+)",
+                    r"uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)",
                     text,
                 )
                 self.assertTrue(remote_uses, f"{workflow} must use at least one remote action")
