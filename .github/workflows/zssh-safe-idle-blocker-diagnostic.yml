@@ -1,0 +1,67 @@
+name: zSSH safe-idle blocker diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-safe-idle-blocker-diagnostic.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-safe-idle-blocker-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    name: Inspect live browser worker drain state
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+      - name: Read secret-safe worker drain state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          conn.row_factory = sqlite3.Row
+          rows = conn.execute("""
+            SELECT s.slot, s.project_id, s.worker_slot,
+                   COALESCE(w.desired_state, 'missing') AS desired_state
+            FROM ai_global_slots s
+            LEFT JOIN runner_workers w
+              ON w.project_id=s.project_id AND w.worker_slot=s.worker_slot
+            ORDER BY s.slot
+          """).fetchall()
+          result = []
+          for row in rows:
+              worker_id = f"{row['project_id']}::w{int(row['worker_slot'] or 1)}"
+              event = conn.execute("""
+                SELECT ts,event,generating,sending
+                FROM runner_events
+                WHERE project_id IN (?, ?)
+                ORDER BY id DESC LIMIT 1
+              """, (row["project_id"], worker_id)).fetchone()
+              result.append({
+                "global_slot": int(row["slot"]),
+                "worker_id": worker_id,
+                "desired_state": row["desired_state"],
+                "latest_event": dict(event) if event else None,
+              })
+          print(json.dumps({"allocated_workers": result}, sort_keys=True))
+          PY
