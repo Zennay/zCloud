@@ -7,6 +7,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 class ZsshDeterministicReleaseVarsTest(unittest.TestCase):
     def test_seed_lane_is_exact_non_secret_and_governance_gated(self):
         text = (ROOT / ".github/workflows/zssh-seed-deterministic-release-vars.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn(".github/zssh-seed-release-vars-trigger", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
+        self.assertIn("SEED_ZSSH_DETERMINISTIC_RELEASE_VARS", text)
+        self.assertIn("ZSSH_RELEASE_VAR_SEED_MERGED_PR_ACTIVATION_GREEN", text)
+        self.assertIn("cancel-in-progress: true", text)
+        self.assertNotIn("\n  push:\n", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
