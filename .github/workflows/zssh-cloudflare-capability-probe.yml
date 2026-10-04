@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-cloudflare-capability-probe.yml"
   workflow_dispatch:
 
 permissions:
@@ -17,6 +22,7 @@ concurrency:
 jobs:
   probe:
     name: Probe persistent VPS Cloudflare auth for zSSH
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:

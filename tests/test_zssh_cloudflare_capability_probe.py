@@ -18,6 +18,9 @@ class ZsshCloudflareCapabilityProbeTests(unittest.TestCase):
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
         self.assertIn("persist-credentials: false", text)
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
 
         self.assertIn("CLOUDFLARE_API_TOKEN", text)
         self.assertIn("CF_API_TOKEN", text)
