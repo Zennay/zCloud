@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      TARGET_SHA: 2337a6600a9e9493fa65add50345158eb79c4b4d
+      TARGET_SHA: 2c235e9e5c0ce13800c6c2ddacf30dbf49685b66
       TESTED_HEAD: 2c04e28dbf2f1f46f894f7d29f1be0b76ca895f9
       MERGE_COMMIT: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
       EXPECTED_BASE: 9145322dd71837e50777b4a1289fec80e98932b4
