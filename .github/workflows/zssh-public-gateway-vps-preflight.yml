@@ -68,6 +68,14 @@ jobs:
           test "$node_major" -ge 20
           npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
 
+      - name: Exercise zSSH public gateway rollback regression on VPS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh-source
+          node --test test/public-gateway-installer.test.mjs
+          echo "ZSSH_PUBLIC_GATEWAY_ROLLBACK_REGRESSION_GREEN sha=$ZSSH_SHA"
+
       - name: Validate public gateway configuration without mutating live public service state
         id: preflight
         shell: bash
@@ -174,6 +182,7 @@ jobs:
             public_key_sha256: process.env.FINGERPRINT,
             public_rate_limit_per_minute: Number(process.env.RATE_LIMIT_PER_MINUTE),
             public_rate_limit_max_profiles: Number(process.env.RATE_LIMIT_MAX_PROFILES),
+            public_gateway_rollback_regression_self_hosted: true,
             trust_file: process.env.TRUST_FILE,
             review_root: process.env.REVIEW_ROOT,
             public_gateway_env_before: process.env.BEFORE_ENV,
@@ -228,6 +237,7 @@ jobs:
               "public_key_sha256": receipt["public_key_sha256"],
               "public_rate_limit_per_minute": receipt["public_rate_limit_per_minute"],
               "public_rate_limit_max_profiles": receipt["public_rate_limit_max_profiles"],
+              "public_gateway_rollback_regression_self_hosted": receipt["public_gateway_rollback_regression_self_hosted"],
               "public_gateway_state_unchanged": (
                   receipt["public_gateway_env_before"] == receipt["public_gateway_env_after"]
                   and receipt["public_release_before"] == receipt["public_release_after"]
