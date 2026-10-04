@@ -1,4 +1,4 @@
-name: FTMO receipt state-sync dispatch
+# Trigger after workflow exists on parent main.\nname: FTMO receipt state-sync dispatch
 
 on:
   push:
