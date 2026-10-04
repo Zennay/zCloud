@@ -16,6 +16,8 @@ from pathlib import Path
 DEFAULT_ROOT = Path(os.environ.get("ZCLOUD_ROOT", "/home/ubuntu/zennay-cloud"))
 DEFAULT_DB = Path(os.environ.get("ZCLOUD_DB", str(DEFAULT_ROOT / "history.db")))
 DEFAULT_BASE_URL = os.environ.get("ZCLOUD_BASE_URL", "http://127.0.0.1:8765")
+DEEP_STATUS_TIMEOUT_SECONDS = 40.0
+FAST_API_TIMEOUT_SECONDS = 5.0
 DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
     "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
@@ -348,12 +350,18 @@ def live_health(
 ) -> dict:
     transport_errors = []
     try:
-        status = http_json(base_url.rstrip("/") + "/api/status")
+        status = http_json(
+            base_url.rstrip("/") + "/api/status",
+            timeout=DEEP_STATUS_TIMEOUT_SECONDS,
+        )
     except Exception as exc:
         status = {"errors": [f"status unavailable: {exc}"]}
         transport_errors.append(str(exc))
     try:
-        targets = http_json(base_url.rstrip("/") + "/api/runner-targets")
+        targets = http_json(
+            base_url.rstrip("/") + "/api/runner-targets",
+            timeout=FAST_API_TIMEOUT_SECONDS,
+        )
     except Exception as exc:
         targets = {}
         transport_errors.append(str(exc))
