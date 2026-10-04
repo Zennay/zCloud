@@ -190,6 +190,41 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertTrue(renewed["renewed"])
         self.assertEqual(1, runtime.resource_status(self.conn)["pools"]["heavy"]["used"])
 
+    def test_expired_heavy_lease_is_recovered_after_owner_crash(self):
+        first = runtime.acquire_resource(self.conn, "ftmo", "crashed-owner")
+        self.assertTrue(first["acquired"])
+        self.conn.execute(
+            "UPDATE resource_leases SET lease_until=? WHERE project_id=? AND owner_id=?",
+            ("2000-01-01T00:00:00+00:00", "ftmo", "crashed-owner"),
+        )
+
+        recovered = runtime.acquire_resource(self.conn, "haxlab", "recovery-owner")
+        self.assertTrue(recovered["acquired"])
+        self.assertFalse(recovered["renewed"])
+
+        rows = self.conn.execute(
+            "SELECT project_id,owner_id FROM resource_leases ORDER BY project_id,owner_id"
+        ).fetchall()
+        self.assertEqual(
+            [("haxlab", "recovery-owner")],
+            [(row["project_id"], row["owner_id"]) for row in rows],
+        )
+
+    def test_heavy_contention_does_not_starve_protected_control_plane(self):
+        heavy = runtime.acquire_resource(self.conn, "ftmo", "heavy-owner")
+        blocked = runtime.acquire_resource(self.conn, "haxlab", "blocked-heavy-owner")
+        protected = runtime.acquire_resource(self.conn, "cloud", "control-plane-owner")
+
+        self.assertTrue(heavy["acquired"])
+        self.assertFalse(blocked["acquired"])
+        self.assertEqual("resource_pool_busy", blocked["reason"])
+        self.assertTrue(protected["acquired"])
+
+        status = runtime.resource_status(self.conn)
+        self.assertEqual(1, status["pools"]["heavy"]["used"])
+        self.assertEqual(1, status["pools"]["protected"]["used"])
+        self.assertGreaterEqual(status["pools"]["protected"]["available"], 1)
+
     def test_human_gated_project_cannot_acquire_compute(self):
         result = runtime.acquire_resource(self.conn, "ulab", "run-1")
         self.assertFalse(result["acquired"])
