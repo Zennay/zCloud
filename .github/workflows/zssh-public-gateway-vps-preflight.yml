@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: zssh-public-gateway-vps-preflight-zcloud
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -21,7 +21,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 12
     env:
-      ZSSH_SHA: e2dee8b5e07a41c13408954348c05412b1d66e5d
+      ZSSH_SHA: e362d8c2d053d99ed7acac8a74d6de0889397ef3
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
@@ -40,6 +40,14 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(id -u)" -ne 0
+
+      - name: Require pinned zSSH revision to equal current canonical main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          live_main="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main" = "$ZSSH_SHA"
+          echo "ZSSH_CANONICAL_MAIN_EXACT sha=$ZSSH_SHA"
 
       - name: Check out exact canonical zSSH revision
         uses: actions/checkout@v4
