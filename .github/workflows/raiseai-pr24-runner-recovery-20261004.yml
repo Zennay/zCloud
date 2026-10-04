@@ -1,17 +1,13 @@
-name: Recover RaiseAI runner for active Watch gate
+name: Legacy pinned RaiseAI runner recovery (manual only)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/raiseai-pr25-runner-recovery-20261004.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: raiseai-pr25-runner-recovery-20261004
+  group: raiseai-legacy-pinned-runner-recovery-20261004
   cancel-in-progress: false
 
 jobs:
@@ -152,7 +148,7 @@ jobs:
           payload = {
               "schema_version": 1,
               "project": "raiseai",
-              "pull_request": 24,
+              "pull_request": 25,
               "target_sha": os.environ["PR_HEAD_SHA"],
               "watch_run_id": int(os.environ["WATCH_RUN_ID"]),
               "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
