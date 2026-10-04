@@ -33,13 +33,13 @@ jobs:
 
           found=""
           for _ in $(seq 1 30); do
-            runs_json="$(gh run list               --repo Zennay/Ftmo               --workflow sync-autonomous-research-state.yml               --event workflow_dispatch               --branch main               --limit 10               --json databaseId,headSha,status)"
+            runs_json="$(gh run list --repo Zennay/Ftmo --workflow sync-autonomous-research-state.yml --event workflow_dispatch --branch main --limit 10 --json databaseId,headSha,status)"
             row="$(printf '%s' "$runs_json" | python3 -c '
 import json, os, sys
 sha = os.environ["EXPECTED_MAIN"]
 for run in json.load(sys.stdin):
     if run.get("headSha") == sha:
-        print(f"{run.get("databaseId")}\t{run.get("status")}")
+        print("%s\t%s" % (run.get("databaseId"), run.get("status")))
         break
 ')"
             if [[ -n "$row" ]]; then
