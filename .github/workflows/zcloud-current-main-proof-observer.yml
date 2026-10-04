@@ -12,49 +12,57 @@ on:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 jobs:
-  observe:
+  prioritize-production:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
       GH_TOKEN: ${{ github.token }}
-      TARGET_SHA: 60fd17ccb6203f51ba9514da7f1ae1d08571d380
       REPO: ${{ github.repository }}
+      TARGET_SHA: 60fd17ccb6203f51ba9514da7f1ae1d08571d380
+      CANCEL_RUNS: "37231924254 37231924271 37231924230 37231924243"
+      DEPLOY_RUN: "37231857854"
     steps:
-      - name: Locate exact-main regression and deploy runs
+      - name: Cancel superseded PR self-hosted validations
         shell: bash
         run: |
           set -Eeuo pipefail
-          gh api "repos/$REPO/actions/workflows/zcloud-regression-smoke.yml/runs?branch=main&per_page=20" > "$RUNNER_TEMP/regression.json"
-          gh api "repos/$REPO/actions/workflows/zcloud-vps-deploy.yml/runs?branch=main&per_page=20" > "$RUNNER_TEMP/deploy.json"
+          for id in $CANCEL_RUNS; do
+            status="$(gh api "repos/$REPO/actions/runs/$id" --jq .status)"
+            conclusion="$(gh api "repos/$REPO/actions/runs/$id" --jq '.conclusion // ""')"
+            echo "PR_VALIDATION run=$id status=$status conclusion=$conclusion"
+            case "$status" in
+              queued|in_progress|pending|waiting)
+                gh api --method POST "repos/$REPO/actions/runs/$id/cancel" >/dev/null
+                echo "PR_VALIDATION_CANCEL_REQUESTED=$id"
+                ;;
+              *)
+                echo "PR_VALIDATION_ALREADY_TERMINAL=$id"
+                ;;
+            esac
+          done
+
+      - name: Reconfirm exact current-main production lane
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/actions/runs/$DEPLOY_RUN" > "$RUNNER_TEMP/deploy.json"
           python3 - <<'PY'
           import json, os
           from pathlib import Path
-
-          target=os.environ["TARGET_SHA"]
-          def pick(path):
-              payload=json.loads(Path(path).read_text())
-              rows=[]
-              for run in payload.get("workflow_runs", []):
-                  if run.get("head_sha") == target:
-                      rows.append({
-                          "id":run.get("id"),
-                          "name":run.get("name"),
-                          "event":run.get("event"),
-                          "status":run.get("status"),
-                          "conclusion":run.get("conclusion"),
-                          "head_sha":run.get("head_sha"),
-                          "run_number":run.get("run_number"),
-                          "created_at":run.get("created_at"),
-                          "updated_at":run.get("updated_at"),
-                      })
-              return rows
+          run=json.loads(Path(os.environ["RUNNER_TEMP"]+"/deploy.json").read_text())
+          expected=os.environ["TARGET_SHA"]
           result={
-              "target_sha":target,
-              "regression":pick(os.environ["RUNNER_TEMP"]+"/regression.json"),
-              "deploy":pick(os.environ["RUNNER_TEMP"]+"/deploy.json"),
+              "id":run.get("id"),
+              "status":run.get("status"),
+              "conclusion":run.get("conclusion"),
+              "head_sha":run.get("head_sha"),
+              "event":run.get("event"),
+              "run_number":run.get("run_number"),
           }
-          print("ZCLOUD_CURRENT_MAIN_PROOF="+json.dumps(result,sort_keys=True))
+          if result["head_sha"] != expected:
+              raise SystemExit("deploy target moved: "+json.dumps(result,sort_keys=True))
+          print("ZCLOUD_PRODUCTION_PRIORITY="+json.dumps(result,sort_keys=True))
           PY
