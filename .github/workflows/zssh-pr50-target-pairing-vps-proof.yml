@@ -1,9 +1,13 @@
-name: zSSH PR50 target-pairing zCloud VPS proof
+name: zSSH canonical target-pairing target-pairing zCloud VPS proof
 
 on:
   push:
     branches:
       - proof/zssh-pr50-target-pairing-20261004
+
+concurrency:
+  group: zssh-target-pairing-canonical-proof
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -17,14 +21,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/zSSH
-          ref: 163e5789409d5ff775b84563c9e5627ace9a2dfc
+          ref: 72a989898590d64f491a879ff0c9af5c184a7695
           path: zssh
 
       - name: Verify exact head and run full proof
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C zssh rev-parse HEAD)" = "163e5789409d5ff775b84563c9e5627ace9a2dfc"
+          test "$(git -C zssh rev-parse HEAD)" = "72a989898590d64f491a879ff0c9af5c184a7695"
           cd zssh
           npm install --ignore-scripts --no-audit --no-fund
           npm test
