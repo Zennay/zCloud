@@ -107,7 +107,7 @@ jobs:
           for relative in (
               "src/prop_trading_ai/research/immutable.py",
               "src/prop_trading_ai/research/research_machine.py",
-              "src/prop_trading_ai/ops/deploy_publish.py",
+              "src/prop_trading_ai/research/state_sync.py",
           ):
               payload = read_existing_file_bytes(root=root, relative=relative)
               assert payload is not None and payload, relative
