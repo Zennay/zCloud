@@ -237,5 +237,32 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("apply-main-protection", text)
 
 
+    def test_vps_github_admin_apply_lane_is_exact_provenance_gated_and_scoped(self):
+        text = (ROOT / ".github/workflows/zssh-apply-main-protection-vps.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
+        self.assertIn("gh auth status --hostname github.com", text)
+        self.assertIn("'.permissions.admin // false'", text)
+        self.assertIn('repos/$repo/commits/$main_sha/pulls', text)
+        self.assertIn('select(.merged_at != null and .base.ref == "main")', text)
+        self.assertIn('endpoint="repos/$repo/branches/$branch/protection"', text)
+        self.assertIn('gh api --method PUT "$endpoint"', text)
+        self.assertIn('"context": "test"', text)
+        self.assertIn('"app_id": 15368', text)
+        self.assertIn('"enforce_admins": true', text)
+        self.assertIn('"required_conversation_resolution": true', text)
+        self.assertIn('"allow_force_pushes": false', text)
+        self.assertIn('"allow_deletions": false', text)
+        self.assertIn('"mutation_attempted": False', text)
+        self.assertIn('"mutation_attempted": True', text)
+        self.assertIn("ZSSH_VPS_MAIN_PROTECTION_APPLIED", text)
+        self.assertNotIn("git push", text)
+        self.assertNotIn("/git/refs/", text)
+        self.assertNotIn("contents/Zennay", text)
+
+
+
 if __name__ == "__main__":
     unittest.main()
