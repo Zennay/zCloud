@@ -98,7 +98,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.7", required.group(1))
+        self.assertEqual("1.3.8", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
