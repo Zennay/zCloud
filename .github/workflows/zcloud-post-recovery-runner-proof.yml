@@ -1,0 +1,78 @@
+name: zCloud post-recovery runner proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-post-recovery-runner-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-post-recovery-runner-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Prove recovered zCloud runner without checkout
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+          temp_root="$runner_root/_work/_temp"
+
+          recovery="$(
+            systemctl list-units --all --full --plain 'zcloud-runner-listener-recovery-*.service' --no-legend \
+              | awk '{print $1}' \
+              | sort -V \
+              | tail -n 1
+          )"
+          test -n "$recovery"
+          state="$(systemctl is-active "$recovery" || true)"
+          result="$(systemctl show "$recovery" -p Result --value || true)"
+          exit_status="$(systemctl show "$recovery" -p ExecMainStatus --value || true)"
+          echo "ZCLOUD_POST_RECOVERY_UNIT unit=$recovery state=$state result=$result exit_status=$exit_status"
+          sudo -n journalctl -u "$recovery" --no-pager -n 160 || true
+          test "$state" != "active"
+          test "$state" != "activating"
+          test "$result" = "success"
+          test "$exit_status" = "0"
+
+          mapfile -t listeners < <(
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          )
+          cgroup="$(systemctl show "$service" -p ControlGroup --value)"
+          echo "ZCLOUD_POST_RECOVERY_LISTENERS count=${#listeners[@]} pids=${listeners[*]:-none} cgroup=$cgroup"
+          test "${#listeners[@]}" -eq 1
+          test -n "$cgroup"
+          test "$cgroup" != "/"
+          grep -Fq "$cgroup" "/proc/${listeners[0]}/cgroup"
+          systemctl is-active --quiet "$service"
+
+          event_before=missing
+          [[ -e "$GITHUB_EVENT_PATH" ]] && event_before=present
+          sentinel="$temp_root/.zcloud-post-recovery-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s\n' "$GITHUB_RUN_ID" > "$sentinel"
+          sleep 12
+          event_after=missing
+          [[ -e "$GITHUB_EVENT_PATH" ]] && event_after=present
+          sentinel_state=missing
+          [[ -s "$sentinel" ]] && sentinel_state=present
+          rm -f "$sentinel"
+          echo "ZCLOUD_POST_RECOVERY_TEMP event_before=$event_before event_after=$event_after sentinel=$sentinel_state"
+          test "$event_before" = "present"
+          test "$event_after" = "present"
+          test "$sentinel_state" = "present"
+          echo "ZCLOUD_POST_RECOVERY_GREEN listener=${listeners[0]} cgroup=$cgroup"
