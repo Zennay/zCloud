@@ -1,0 +1,30 @@
+name: FTMO post514 sync dispatch ac2a
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ftmo-post514-sync-dispatch-ac2a.yml
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on:
+      - self-hosted
+      - zcloud
+      - vps
+    timeout-minutes: 3
+    steps:
+      - name: Dispatch research-state sync on ac2a
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "ac2a2563283c286b66aa409280339286bc05b366"
+          test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .merged)" = "true"
+          gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
+          echo "FTMO_POST514_AC2A_SYNC_DISPATCH_REQUESTED=1"
