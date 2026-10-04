@@ -1,4 +1,4 @@
-name: FTMO post515 exact-main acceptance gates
+name: FTMO post515 exact-main acceptance gates (superseded)
 
 on:
   push:
@@ -7,116 +7,15 @@ on:
       - ".github/workflows/ftmo-post515-exact-main-gates.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ftmo-post515-exact-main-gates
   cancel-in-progress: true
 
 jobs:
-  gate:
+  superseded:
+    if: ${{ false }}
     runs-on: self-hosted
-    timeout-minutes: 20
-    env:
-      EXPECTED_MAIN: 2b9be3ed382dfa7de29470557d95fd774ec01147
     steps:
-      - name: Dispatch and verify exact-main FTMO gates
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
-          gh auth status >/dev/null 2>&1
-
-          current_main() {
-            gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha
-          }
-
-          test "$(current_main)" = "$EXPECTED_MAIN"
-
-          latest_exact_run() {
-            local workflow="$1"
-            gh api "repos/Zennay/Ftmo/actions/workflows/$workflow/runs?event=workflow_dispatch&per_page=50"               --jq --arg sha "$EXPECTED_MAIN"               '[.workflow_runs[] | select(.head_sha==$sha)] | sort_by(.created_at) | last // {}'
-          }
-
-          ensure_run() {
-            local workflow="$1"
-            local row id
-            row="$(latest_exact_run "$workflow")"
-            id="$(printf '%s' "$row" | jq -r '.id // empty')"
-            if [[ -z "$id" ]]; then
-              gh workflow run "$workflow" --repo Zennay/Ftmo --ref main
-              for _ in $(seq 1 30); do
-                sleep 2
-                row="$(latest_exact_run "$workflow")"
-                id="$(printf '%s' "$row" | jq -r '.id // empty')"
-                [[ -n "$id" ]] && break
-              done
-            fi
-            test -n "$id"
-            printf '%s\n' "$id"
-          }
-
-          sync_id="$(ensure_run sync-autonomous-research-state.yml)"
-          verify_id="$(ensure_run deploy-autonomous-vps.yml)"
-
-          wait_terminal() {
-            local id="$1"
-            local row status
-            for _ in $(seq 1 180); do
-              test "$(current_main)" = "$EXPECTED_MAIN"
-              row="$(gh api "repos/Zennay/Ftmo/actions/runs/$id")"
-              status="$(printf '%s' "$row" | jq -r .status)"
-              if [[ "$status" == "completed" ]]; then
-                printf '%s\n' "$row"
-                return 0
-              fi
-              sleep 5
-            done
-            return 1
-          }
-
-          sync_json="$(wait_terminal "$sync_id")"
-          verify_json="$(wait_terminal "$verify_id")"
-
-          receipt="$RUNNER_TEMP/ftmo-post515-exact-main-gates.json"
-          python3 - "$EXPECTED_MAIN" "$sync_json" "$verify_json" "$GITHUB_RUN_ID" >"$receipt" <<'PY'
-import json, sys
-sha, sync_raw, verify_raw, carrier = sys.argv[1:]
-def pick(raw):
-    obj = json.loads(raw)
-    return {
-        "run_id": obj.get("id"),
-        "status": obj.get("status"),
-        "conclusion": obj.get("conclusion"),
-        "head_sha": obj.get("head_sha"),
-        "event": obj.get("event"),
-        "created_at": obj.get("created_at"),
-        "updated_at": obj.get("updated_at"),
-    }
-print(json.dumps({
-    "schema_version": 1,
-    "scope": "ftmo-post515-exact-main-acceptance",
-    "expected_main_sha": sha,
-    "carrier_run_id": carrier,
-    "research_state_sync": pick(sync_raw),
-    "autonomous_vps_verify": pick(verify_raw),
-}, sort_keys=True, indent=2))
-PY
-
-          cat "$receipt"
-          encoded="$(base64 -w0 "$receipt")"
-          existing_sha="$(gh api repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post515-exact-main-gates.json?ref=main --jq .sha 2>/dev/null || true)"
-          args=(--method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post515-exact-main-gates.json
-                -f message="Record FTMO post515 exact-main acceptance gates"
-                -f content="$encoded"
-                -f branch=main)
-          if [[ -n "$existing_sha" ]]; then
-            args+=(-f sha="$existing_sha")
-          fi
-          gh api "${args[@]}" >/dev/null
-
-          test "$(printf '%s' "$sync_json" | jq -r .head_sha)" = "$EXPECTED_MAIN"
-          test "$(printf '%s' "$verify_json" | jq -r .head_sha)" = "$EXPECTED_MAIN"
-          test "$(printf '%s' "$sync_json" | jq -r .conclusion)" = "success"
-          test "$(printf '%s' "$verify_json" | jq -r .conclusion)" = "success"
-          test "$(current_main)" = "$EXPECTED_MAIN"
+      - run: echo "Superseded by canonical FTMO post-515 dispatcher; intentionally no-op."
