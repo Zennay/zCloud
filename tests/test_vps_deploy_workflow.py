@@ -149,10 +149,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(last_guarded_step, restore)
         self.assertLess(restore, evidence)
         self.assertIn("scripts/zcloud_deploy_safe_idle.py enter", text)
-        self.assertIn("--timeout-seconds 240", text)
+        self.assertIn("--timeout-seconds 480", text)
         self.assertIn("steps.safe_idle.outcome == 'success'", text)
         self.assertIn("scripts/zcloud_deploy_safe_idle.py restore", text)
         self.assertIn("zcloud-deploy-safe-idle.json", text)
+
+    def test_deploy_safe_idle_budget_covers_long_worker_generations(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        self.assertIn("timeout-minutes: 25", text)
+        self.assertIn("--timeout-seconds 480", text)
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        self.assertIn('command.action === "drain"', userscript)
+        self.assertIn('status("runner-drained"', userscript)
 
     def test_violentmonkey_only_mode_skips_inactive_firefox_extension_promotion(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
