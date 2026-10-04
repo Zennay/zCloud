@@ -1,3 +1,4 @@
+# Re-trigger note: reused for TASK-99 PR #553 host-memory listener recovery on 2026-10-04.
 name: Recover FTMO runner after TASK-98 host-memory deferral
 
 on:
