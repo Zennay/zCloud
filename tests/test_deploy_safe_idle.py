@@ -189,6 +189,43 @@ class DeploySafeIdleTests(unittest.TestCase):
         self.assertTrue(blocker["generating"])
         self.assertEqual("running", self.state_of())
 
+    def test_post_drain_idle_config_ack_is_auto_quiesced(self):
+        def acknowledge_config():
+            deadline = time.time() + 1
+            while time.time() < deadline:
+                command = self.pending_drain()
+                if self.state_of() == "draining" and command is not None:
+                    self.add_event(
+                        age_seconds=0,
+                        generating=0,
+                        sending=0,
+                        event="runner-config-updated",
+                    )
+                    return
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=acknowledge_config)
+        thread.start()
+        result = safe_idle.enter_safe_idle(
+            self.db,
+            self.state,
+            timeout_seconds=1,
+            poll_seconds=0.01,
+            stable_seconds=0.02,
+            offline_after_seconds=300,
+        )
+        thread.join(timeout=1)
+
+        self.assertTrue(result["safe_idle"])
+        self.assertEqual("paused", self.state_of())
+        payload = json.loads(self.state.read_text())
+        self.assertEqual(
+            "idle-config-ack",
+            payload["auto_quiesced_workers"][0]["reason"],
+        )
+        command = self.pending_drain()
+        self.assertEqual("completed", command[1])
+
     def test_recent_idle_worker_still_requires_browser_drain_ack(self):
         self.add_event(age_seconds=1, generating=0, sending=0)
         with self.assertRaises(safe_idle.SafeIdleError):
