@@ -1,0 +1,10 @@
+{
+  "cloud_budget_usd": "0.00",
+  "project": "ftmo",
+  "proof_scope": "provider bundle contract + existing dataset evidence regressions",
+  "pull_request": 519,
+  "result": "success",
+  "runner_host": "vps-bb300bba",
+  "target_sha": "17403b1cfc98c03aa5d6db56b6009444a4dee0ab",
+  "workflow_run_id": 37175496881
+}
