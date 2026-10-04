@@ -1,0 +1,48 @@
+name: FTMO PR514 focused runtime-private proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr514-runtime-private-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr514-runtime-private-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      FTMO_MAIN: 77134b142952f590ba19f4666a616d0e0001621d
+      PR_HEAD: 819dc14b045d7ff5d7a3cb3a08a9455cb08aaea7
+    steps:
+      - name: Prove exact PR514 runtime-private boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .state)" = "open"
+          test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .head.sha)" = "$PR_HEAD"
+          test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .base.sha)" = "$FTMO_MAIN"
+
+          work="$RUNNER_TEMP/ftmo-pr514-$GITHUB_RUN_ID"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$PR_HEAD"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$PR_HEAD"
+
+          cd "$work"
+          test "$(sed -n '4p' scripts/run-autonomous-marathon.sh)" = "# Keep every new persistent-runtime file and directory private by construction."
+          grep -q '^umask 077$' scripts/run-autonomous-marathon.sh
+          nice -n 15 /opt/ftmo-autonomous/.venv/bin/python -m pytest -q tests/test_autonomous_deploy_lockstep.py
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          echo "FTMO_PR514_FOCUSED_PROOF_GREEN=1"
