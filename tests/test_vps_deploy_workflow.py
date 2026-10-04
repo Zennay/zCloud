@@ -32,6 +32,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.freshness.outputs.deploy == 'true'", text)
         self.assertIn("steps.prewrite.outputs.deploy == 'true'", text)
         self.assertIn("fetch-depth: 513", text)
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6", text)
+        self.assertNotIn("actions/checkout@v4", text)
         self.assertLess(
             text.index("- name: Promote backend runtime core"),
             text.index("- name: Promote Violentmonkey worker"),
