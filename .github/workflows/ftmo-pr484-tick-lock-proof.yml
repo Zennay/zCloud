@@ -73,7 +73,8 @@ jobs:
           "$venv/bin/python" -m py_compile src/prop_trading_ai/ops/autonomous_runtime.py
           "$venv/bin/python" -m pytest -q \\
             tests/test_autonomous_runtime.py \\
-            tests/test_autonomous_deploy_lockstep.py
+            -k 'atomic_status_write or exclusive_lock or research_heartbeat_is_published'
+          "$venv/bin/python" -m pytest -q tests/test_autonomous_deploy_lockstep.py
           "$venv/bin/python" -m pytest -q \
             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner \
             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
