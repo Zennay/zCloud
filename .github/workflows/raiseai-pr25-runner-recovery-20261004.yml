@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
 
+# Single automatic recovery lane; the legacy PR24 workflow is manual-only.
 concurrency:
   group: raiseai-pr25-runner-recovery-20261004
   cancel-in-progress: false
