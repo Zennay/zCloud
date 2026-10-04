@@ -1,0 +1,77 @@
+name: Dispatch FTMO post-PR515 acceptance gates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ftmo-post515-gates-dispatch.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-post515-gates-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      MERGED_MAIN_SHA: 2b9be3ed382dfa7de29470557d95fd774ec01147
+    steps:
+      - name: Dispatch exact-main FTMO acceptance gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+          test "$current" = "$MERGED_MAIN_SHA"
+
+          ensure_run() {
+            workflow="$1"
+            run_id="$(gh api -X GET "repos/Zennay/Ftmo/actions/workflows/$workflow/runs"               -f head_sha="$MERGED_MAIN_SHA" -f event=workflow_dispatch -f per_page=30               --jq '[.workflow_runs[] | select(.head_sha == env.MERGED_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty')"
+            action=existing
+            if [[ -z "$run_id" ]]; then
+              gh workflow run "$workflow" --repo Zennay/Ftmo --ref main
+              action=dispatched
+              for _ in $(seq 1 30); do
+                sleep 2
+                run_id="$(gh api -X GET "repos/Zennay/Ftmo/actions/workflows/$workflow/runs"                   -f head_sha="$MERGED_MAIN_SHA" -f event=workflow_dispatch -f per_page=30                   --jq '[.workflow_runs[] | select(.head_sha == env.MERGED_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty')"
+                [[ -n "$run_id" ]] && break
+              done
+            fi
+            test -n "$run_id"
+            printf '%s|%s\n' "$action" "$run_id"
+          }
+
+          sync="$(ensure_run sync-autonomous-research-state.yml)"
+          verify="$(ensure_run deploy-autonomous-vps.yml)"
+
+          receipt="$RUNNER_TEMP/ftmo-post515-gates-dispatch.json"
+          python3 - "$MERGED_MAIN_SHA" "$sync" "$verify" "$GITHUB_RUN_ID" >"$receipt" <<'PY'
+import json, sys
+sha, sync, verify, dispatcher = sys.argv[1:]
+sync_action, sync_id = sync.split("|", 1)
+verify_action, verify_id = verify.split("|", 1)
+print(json.dumps({
+    "schema_version": 1,
+    "scope": "ftmo-post-pr515-gates-dispatch",
+    "merged_main_sha": sha,
+    "state_sync": {"action": sync_action, "run_id": int(sync_id)},
+    "vps_verify": {"action": verify_action, "run_id": int(verify_id)},
+    "dispatcher_run_id": int(dispatcher),
+}, sort_keys=True, indent=2))
+PY
+          cat "$receipt"
+          encoded="$(base64 -w0 "$receipt")"
+          existing_sha="$(gh api repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post515-gates-dispatch.json?ref=main --jq .sha 2>/dev/null || true)"
+          args=(--method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post515-gates-dispatch.json
+                -f message="Record FTMO post-PR515 gate dispatch"
+                -f content="$encoded"
+                -f branch=main)
+          if [[ -n "$existing_sha" ]]; then
+            args+=(-f sha="$existing_sha")
+          fi
+          gh api "${args[@]}" >/dev/null
