@@ -32,6 +32,96 @@ def worker_key(project_id: str, worker_slot: int) -> str:
     return f"{project_id}::w{worker_slot}"
 
 
+def worker_observation(
+    conn: sqlite3.Connection,
+    project_id: str,
+    worker_slot: int,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """Return secret-safe liveness evidence for one browser worker."""
+    current = now or datetime.now(timezone.utc)
+    try:
+        row = conn.execute(
+            "SELECT ts,event,generating,sending FROM runner_events "
+            "WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1",
+            (project_id, worker_slot),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    if row is None:
+        return {
+            "available": False,
+            "event": None,
+            "age_seconds": None,
+            "generating": None,
+            "sending": None,
+        }
+    try:
+        observed = datetime.fromisoformat(str(row["ts"]).replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        age_seconds = max(0.0, (current - observed.astimezone(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        age_seconds = None
+    return {
+        "available": True,
+        "event": str(row["event"] or ""),
+        "age_seconds": age_seconds,
+        "generating": bool(row["generating"]),
+        "sending": bool(row["sending"]),
+    }
+
+
+def drain_command_state(conn: sqlite3.Connection, worker_id: str) -> dict:
+    row = conn.execute(
+        "SELECT id,status,action FROM runner_commands "
+        "WHERE project_id=? AND action='drain' ORDER BY id DESC LIMIT 1",
+        (worker_id,),
+    ).fetchone()
+    if row is None:
+        return {"id": None, "status": None, "action": None}
+    return {
+        "id": int(row["id"]),
+        "status": str(row["status"] or ""),
+        "action": str(row["action"] or ""),
+    }
+
+
+def blocking_worker_diagnostics(
+    conn: sqlite3.Connection,
+    workers: dict[str, dict],
+) -> list[dict]:
+    diagnostics: list[dict] = []
+    for key, record in sorted(workers.items()):
+        row = conn.execute(
+            "SELECT desired_state FROM runner_workers "
+            "WHERE project_id=? AND worker_slot=?",
+            (record["project_id"], record["worker_slot"]),
+        ).fetchone()
+        desired = str(row["desired_state"] or "running") if row else "missing"
+        if desired == "paused":
+            continue
+        observation = worker_observation(
+            conn, record["project_id"], record["worker_slot"]
+        )
+        command = drain_command_state(conn, key)
+        diagnostics.append({
+            "worker_id": key,
+            "desired_state": desired,
+            "last_event": observation["event"],
+            "last_event_age_seconds": (
+                round(float(observation["age_seconds"]), 1)
+                if observation["age_seconds"] is not None else None
+            ),
+            "generating": observation["generating"],
+            "sending": observation["sending"],
+            "drain_command_id": command["id"],
+            "drain_command_status": command["status"],
+        })
+    return diagnostics
+
+
 def allocated_workers(conn: sqlite3.Connection) -> list[dict]:
     slots = conn.execute(
         "SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot"
@@ -111,6 +201,7 @@ def enter_safe_idle(
     timeout_seconds: float = 240.0,
     poll_seconds: float = 0.5,
     stable_seconds: float = 2.0,
+    offline_after_seconds: float = 300.0,
 ) -> dict:
     snapshot = {
         "schema_version": 1,
@@ -144,7 +235,9 @@ def enter_safe_idle(
                         ") VALUES(?,?,?,?,?,NULL)",
                         (key, "drain", "pending", utc_now(), utc_now()),
                     )
-                    snapshot["drain_command_ids"].append(int(command.lastrowid))
+                    command_id = int(command.lastrowid)
+                    record["drain_command_id"] = command_id
+                    snapshot["drain_command_ids"].append(command_id)
                     changed = True
                 if item["desired_state"] != "paused":
                     conn.execute(
@@ -172,6 +265,7 @@ def enter_safe_idle(
                 }
                 states = {}
                 all_paused = True
+                auto_quiesced = []
                 for key, record in by_key.items():
                     row = conn.execute(
                         "SELECT desired_state FROM runner_workers "
@@ -179,9 +273,48 @@ def enter_safe_idle(
                         (record["project_id"], record["worker_slot"]),
                     ).fetchone()
                     desired = str(row["desired_state"] or "running") if row else "missing"
+                    if key in current_allocated and desired == "draining":
+                        observation = worker_observation(
+                            conn, record["project_id"], record["worker_slot"]
+                        )
+                        age = observation.get("age_seconds")
+                        offline_idle = (
+                            observation.get("available") is True
+                            and age is not None
+                            and float(age) >= max(0.0, float(offline_after_seconds))
+                            and observation.get("generating") is False
+                            and observation.get("sending") is False
+                        )
+                        if offline_idle:
+                            conn.execute(
+                                "UPDATE runner_workers SET desired_state='paused' "
+                                "WHERE project_id=? AND worker_slot=? AND desired_state='draining'",
+                                (record["project_id"], record["worker_slot"]),
+                            )
+                            command_id = record.get("drain_command_id")
+                            if command_id:
+                                conn.execute(
+                                    "UPDATE runner_commands SET status='completed',updated_at=?,result=? "
+                                    "WHERE id=? AND status='pending'",
+                                    (
+                                        utc_now(),
+                                        "deploy safe-idle auto-quiesced offline idle worker",
+                                        int(command_id),
+                                    ),
+                                )
+                            desired = "paused"
+                            auto_quiesced.append({
+                                "worker_id": key,
+                                "last_event": observation.get("event"),
+                                "last_event_age_seconds": round(float(age), 1),
+                            })
                     states[key] = desired
                     if key in current_allocated and desired != "paused":
                         all_paused = False
+                if auto_quiesced:
+                    conn.commit()
+                    snapshot.setdefault("auto_quiesced_workers", []).extend(auto_quiesced)
+                    write_state(state_path, snapshot)
 
             if all_paused:
                 if stable_since is None:
@@ -201,12 +334,16 @@ def enter_safe_idle(
         write_state(state_path, snapshot)
         raise
 
+    with connect(db) as conn:
+        blockers = blocking_worker_diagnostics(conn, by_key)
     restore_snapshot(db, snapshot)
     snapshot["restored_after_timeout"] = True
     snapshot["worker_states"] = states if "states" in locals() else {}
+    snapshot["blocking_workers"] = blockers
     write_state(state_path, snapshot)
     raise SafeIdleError(
-        "browser workers did not reach safe-idle before deployment timeout"
+        "browser workers did not reach safe-idle before deployment timeout; "
+        + json.dumps(blockers, sort_keys=True, separators=(",", ":"))
     )
 
 
@@ -234,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout-seconds", type=float, default=240.0)
     parser.add_argument("--poll-seconds", type=float, default=0.5)
     parser.add_argument("--stable-seconds", type=float, default=2.0)
+    parser.add_argument("--offline-after-seconds", type=float, default=300.0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -245,6 +383,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_seconds=args.timeout_seconds,
                 poll_seconds=args.poll_seconds,
                 stable_seconds=args.stable_seconds,
+                offline_after_seconds=args.offline_after_seconds,
             )
             output = {
                 "ok": True,
