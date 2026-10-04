@@ -111,5 +111,34 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('--source "github-actions:zssh-public-gateway-vps-preflight"', text)
 
 
+    def test_public_gateway_activation_is_explicit_exact_main_and_mutating(self):
+        text = (ROOT / ".github/workflows/zssh-public-gateway-activate.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("ACTIVATE_ZSSH_PUBLIC_GATEWAY", text)
+        self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("expected_zssh_sha:", text)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", text)
+        self.assertIn('test "$live_main" = "$EXPECTED_ZSSH_SHA"', text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn('ref: ${{ steps.zssh_target.outputs.sha }}', text)
+        self.assertIn("node --test test/public-gateway-installer.test.mjs", text)
+        self.assertIn("scripts/render-public-caddy.mjs", text)
+        self.assertIn("reverse_proxy 127.0.0.1:8789", text)
+        self.assertNotIn("ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1", text)
+        self.assertIn('bash "$source_root/deploy/install-public-gateway.sh" "$source_root"', text)
+        self.assertIn("ZSSH_PUBLIC_GATEWAY_INSTALL_GREEN", text)
+        self.assertIn("systemctl --user is-active --quiet zssh-public.service", text)
+        self.assertIn("systemctl --user is-enabled --quiet zssh-public.service", text)
+        self.assertIn('curl --fail --silent --show-error "http://127.0.0.1:8789/health"', text)
+        self.assertIn('test "$live_main_after" = "$ZSSH_SHA"', text)
+        self.assertIn("ZSSH_PUBLIC_GATEWAY_ACTIVATION_GREEN", text)
+        self.assertIn('--project zssh', text)
+        self.assertIn('--source "github-actions:zssh-public-gateway-activate"', text)
+        self.assertIn("challenge_token_configured_by_this_workflow: false", text)
+        self.assertNotIn("OPENAI_APPS_CHALLENGE_TOKEN:", text)
+
+
 if __name__ == "__main__":
     unittest.main()
