@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-task37-readiness-cli-proof-278251fd.yml"
+      - ".github/workflows/ftmo-task37-readiness-cli-proof-8582eef1.yml"
   workflow_dispatch:
 
 permissions:
