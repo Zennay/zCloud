@@ -33,7 +33,7 @@ jobs:
           ! grep -Fq "Werk verder aan het project en voer nu een concrete volgende stap uit" public/zcloud-worker.user.js
           ! grep -Fq "Ga verder met hetzelfde vrije werkgebied" firefox-extension/background.js
           ! grep -Fq "Werk verder aan het project en voer nu een concrete volgende stap uit" firefox-extension/background.js
-          grep -Fq "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit." server.py
+          grep -Fq "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. Doe waar relevant eerst echte research naar gebruikers, feedback en markt/concurrenten en vertaal bevindingen naar product, UX en prioriteiten." server.py
 
       - name: Reconcile only worker prompt runtime files
         shell: bash
@@ -94,7 +94,7 @@ jobs:
                   raise SystemExit(f"unknown project name for {key}: {base}")
               expected = (
                   f"Werk verder aan {name}. "
-                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. Doe waar relevant eerst echte research naar gebruikers, feedback en markt/concurrenten en vertaal bevindingen naar product, UX en prioriteiten."
               )
               actual = str(cfg.get("prompt") or "")
               if actual != expected:
