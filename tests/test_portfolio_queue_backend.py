@@ -178,7 +178,48 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         selected = server.portfolio_queue_allocate()
 
         self.assertEqual(3, len(selected))
-        self.assertEqual(["ftmo", "ftmo", "raiseai"], [item["project_id"] for item in selected])
+        projects = [item["project_id"] for item in selected]
+        self.assertEqual(2, projects.count("ftmo"))
+        self.assertEqual(1, projects.count("raiseai"))
+        # FTMO's canonical autonomy is currently VPS-owned, so another runnable
+        # project receives the first preferred slot. FTMO may borrow the rest.
+        self.assertEqual("raiseai", projects[0])
+
+    def test_gated_ftmo_yields_preferred_slot_to_lightup(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement FTMO reliability follow-up", "P0",
+            "Implement the next outcome-free FTMO reliability change with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement second FTMO reliability follow-up", "P0",
+            "Implement another outcome-free FTMO reliability change with deterministic tests.",
+        )
+        lightup = server.portfolio_queue_enqueue(
+            "lightup", "Implement LightUp lab capability", "P2",
+            "Implement the next authorized lab-only LightUp capability with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(2, len(selected))
+        self.assertEqual(lightup["queue_id"], selected[0]["queue_id"])
+        self.assertEqual({"lightup", "ftmo"}, {item["project_id"] for item in selected})
+
+    def test_gated_ftmo_can_borrow_idle_capacity_without_alternative(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement next generation candidate", "P0",
+            "Implement the next candidate and deterministic backtest evidence.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Run frozen walk-forward validation", "P0",
+            "Implement the validation harness and run deterministic walk-forward tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(["ftmo", "ftmo"], [item["project_id"] for item in selected])
 
     def test_ftmo_hard_cap_keeps_third_slot_unallocated_without_alternative(self):
         server.MAX_CHATGPT_WORKERS = 3
