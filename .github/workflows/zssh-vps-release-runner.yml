@@ -1,5 +1,5 @@
 name: zSSH VPS release runner
-# dispatch-marker: fdde408
+# dispatch-marker: aa50412
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      ZSSH_RELEASE_SHA: fdde4082cfec9eb81c84c5ea9e84304dc915fca3
+      ZSSH_RELEASE_SHA: aa50412cc057fb65744809de34942bf9603e0319
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
