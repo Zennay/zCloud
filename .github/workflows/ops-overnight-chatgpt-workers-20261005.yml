@@ -1,0 +1,213 @@
+name: Arm overnight ChatGPT workers
+
+on:
+  push:
+    branches:
+      - "ops/overnight-chatgpt-workers-20261005"
+    paths:
+      - ".github/workflows/ops-overnight-chatgpt-workers-20261005.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zcloud-overnight-chatgpt-workers-20261005
+  cancel-in-progress: false
+
+jobs:
+  arm:
+    runs-on: self-hosted
+    timeout-minutes: 6
+    steps:
+      - name: Keep ChatGPT workers running overnight
+        shell: bash
+        env:
+          DESIRED_CHATGPT_WORKERS: "7"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import subprocess
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE = "http://127.0.0.1:8765"
+          DESIRED = int(os.environ.get("DESIRED_CHATGPT_WORKERS", "7"))
+          RECEIPT_PATH = "artifacts/ops/overnight-chatgpt-workers-live.json"
+
+          def utc_now():
+              return datetime.now(timezone.utc).isoformat()
+
+          def local_api(method, path, payload=None):
+              data = None
+              headers = {"User-Agent": "zcloud-overnight-workers/1"}
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as response:
+                      body = json.load(response)
+                      return int(response.status), body if isinstance(body, dict) else {}
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read().decode("utf-8", "replace")
+                  try:
+                      body = json.loads(raw)
+                  except Exception:
+                      body = {"error": raw[:1200]}
+                  return int(exc.code), body
+
+          def run(cmd, timeout=20):
+              proc = subprocess.run(cmd, text=True, capture_output=True, check=False, timeout=timeout)
+              return {
+                  "command": cmd,
+                  "returncode": proc.returncode,
+                  "stdout": proc.stdout.strip()[-4000:],
+                  "stderr": proc.stderr.strip()[-4000:],
+              }
+
+          status, settings_payload = local_api("GET", "/api/dynamic-workers")
+          if status >= 300:
+              raise SystemExit(f"dynamic worker settings unavailable: HTTP {status} {settings_payload}")
+
+          current = settings_payload.get("dynamic_workers") or {}
+          keys = (
+              "chatgpt_count",
+              "claude_count",
+              "chatgpt_cooldown_seconds",
+              "claude_cooldown_seconds",
+              "check_interval_ms",
+              "tick_interval_ms",
+              "heartbeat_interval_ms",
+              "generation_start_timeout_ms",
+              "scheduler_interval_seconds",
+          )
+          desired = {key: current[key] for key in keys if key in current}
+          desired["chatgpt_count"] = DESIRED
+          desired["chatgpt_cooldown_seconds"] = min(
+              int(desired.get("chatgpt_cooldown_seconds") or 120),
+              120,
+          )
+
+          post_status, post_payload = local_api("POST", "/api/dynamic-workers", desired)
+          if post_status >= 300 or not post_payload.get("ok"):
+              raise SystemExit(f"could not arm dynamic worker pool: HTTP {post_status} {post_payload}")
+
+          # Make current allocations act immediately; normal queue scheduling and
+          # memory guards still decide how many of the seven desired slots can run.
+          push_status, push_payload = local_api("POST", "/api/dynamic-workers/force-push", {})
+          if push_status >= 300:
+              raise SystemExit(f"force-push failed: HTTP {push_status} {push_payload}")
+
+          # The minutely watchdog is the long-running recovery mechanism. Keep the
+          # installed timer alive without assuming whether it is system or user scoped.
+          timer_checks = []
+          system_timer = run(["systemctl", "is-active", "zcloud-self-heal.timer"], timeout=8)
+          timer_checks.append(system_timer)
+          if system_timer["returncode"] != 0:
+              start_system = run(["sudo", "-n", "systemctl", "start", "zcloud-self-heal.timer"], timeout=15)
+              timer_checks.append(start_system)
+              if start_system["returncode"] != 0:
+                  timer_checks.append(run(["systemctl", "--user", "start", "zcloud-self-heal.timer"], timeout=15))
+          timer_checks.append(run(["systemctl", "is-active", "zcloud-self-heal.timer"], timeout=8))
+          timer_checks.append(run(["systemctl", "--user", "is-active", "zcloud-self-heal.timer"], timeout=8))
+
+          # Run one immediate watchdog pass so already-stalled workers are repaired now.
+          watchdog = run([
+              "sudo", "-n", "python3",
+              "/home/ubuntu/zennay-cloud/scripts/zcloud_worker_watchdog.py",
+              "--json",
+          ], timeout=100)
+          if watchdog["returncode"] != 0:
+              # Fall back to a writable transient state file if sudo is unavailable.
+              watchdog = run([
+                  "python3",
+                  "/home/ubuntu/zennay-cloud/scripts/zcloud_worker_watchdog.py",
+                  "--state-file", "/tmp/zcloud-overnight-worker-watchdog.json",
+                  "--json",
+              ], timeout=100)
+
+          # Give the browser consumers a short interval to acknowledge the force-push.
+          time.sleep(8)
+          target_status, targets = local_api("GET", "/api/runner-targets")
+          if target_status >= 300:
+              raise SystemExit(f"runner target readback failed: HTTP {target_status} {targets}")
+          allocation = (targets.get("global_allocation") or {}).get("workers") or []
+
+          verify_status, verify_payload = local_api("GET", "/api/dynamic-workers")
+          if verify_status >= 300:
+              raise SystemExit(f"worker settings readback failed: HTTP {verify_status} {verify_payload}")
+          verified = verify_payload.get("dynamic_workers") or {}
+          if int(verified.get("chatgpt_count") or 0) != DESIRED:
+              raise SystemExit(f"chatgpt_count did not persist: {verified}")
+
+          receipt = {
+              "armed_at": utc_now(),
+              "mode": "overnight-chatgpt-autonomy",
+              "desired_chatgpt_workers": DESIRED,
+              "settings_before": current,
+              "settings_after": verified,
+              "force_push": push_payload,
+              "allocated_worker_count": len(allocation),
+              "allocation": allocation,
+              "self_heal_timer": timer_checks,
+              "watchdog": watchdog,
+              "guarantees": {
+                  "hourly_restart_workflow_on_main": True,
+                  "minutely_material_progress_watchdog_requested": True,
+                  "memory_guard_preserved": True,
+                  "queue_scheduler_preserved": True,
+              },
+          }
+          print(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True))
+
+          # Persist runtime evidence back to this ops branch without touching main.
+          repo = os.environ["GITHUB_REPOSITORY"]
+          branch = os.environ["GITHUB_REF_NAME"]
+          token = os.environ["GITHUB_TOKEN"]
+          api = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(RECEIPT_PATH)}"
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-overnight-workers/1",
+          }
+
+          existing_sha = None
+          get_req = urllib.request.Request(
+              api + "?ref=" + urllib.parse.quote(branch, safe=""),
+              headers=headers,
+              method="GET",
+          )
+          try:
+              with urllib.request.urlopen(get_req, timeout=20) as response:
+                  existing_sha = json.load(response).get("sha")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+
+          body = {
+              "message": "ops: record overnight ChatGPT worker arm receipt",
+              "content": base64.b64encode(
+                  (json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+              ).decode("ascii"),
+              "branch": branch,
+          }
+          if existing_sha:
+              body["sha"] = existing_sha
+          put_req = urllib.request.Request(
+              api,
+              data=json.dumps(body).encode("utf-8"),
+              headers={**headers, "Content-Type": "application/json"},
+              method="PUT",
+          )
+          with urllib.request.urlopen(put_req, timeout=25) as response:
+              saved = json.load(response)
+          print("RECEIPT_COMMIT", (saved.get("commit") or {}).get("sha"))
+          PY
