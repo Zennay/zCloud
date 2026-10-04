@@ -21,7 +21,7 @@ jobs:
     env:
       RAISE_REPO: Zennay/RaiseAI
       PR_NUMBER: '25'
-      PR_HEAD_SHA: 34289435dcca7840d5f6c3d43d458a75f740bc6a
+      PR_HEAD_SHA: abd2f2c5cb67135c4cfb6d6d516a060ac98b2522
       WATCH_RUN_ID: '37236532119'
       RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
       RECEIPT_PATH: runtime-evidence/raiseai-pr25-runner-recovery.json
