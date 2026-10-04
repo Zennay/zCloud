@@ -74,14 +74,14 @@ jobs:
             rc=$?
             if [[ "$rc" -ne 0 && "$installed" -eq 1 ]]; then
               sudo -n systemctl disable --now caddy >/dev/null 2>&1 || true
-              sudo -n DEBIAN_FRONTEND=noninteractive apt-get purge -y caddy >/dev/null 2>&1 || true
+              sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y caddy >/dev/null 2>&1 || true
             fi
             exit "$rc"
           }
           trap cleanup_on_error EXIT
 
           sudo -n apt-get update
-          sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends caddy
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends caddy
           installed=1
 
           sudo -n systemctl disable --now caddy
