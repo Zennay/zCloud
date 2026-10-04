@@ -2,6 +2,8 @@ const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
 const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.7";
 const violentmonkeyReadyProjects = new Set();
+const violentmonkeyFallbackProbeAt = new Map();
+const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
 const targets = Object.create(null);
 const tabTargets = Object.create(null);
 const projectTabs = Object.create(null);
@@ -44,8 +46,16 @@ function runnerConfigChanged(previous, next) {
     previous.vps_dispatch_only !== next.vps_dispatch_only ||
     Number(previous.auto_continue_delay_seconds || 0) !== Number(next.auto_continue_delay_seconds || 0) ||
     String(previous.queue_item?.queue_id || "") !== String(next.queue_item?.queue_id || "") ||
-    String(previous.queue_item?.claim_expires || "") !== String(next.queue_item?.claim_expires || "") ||
     Number(previous.global_worker_slot || 0) !== Number(next.global_worker_slot || 0);
+}
+
+function shouldProbeViolentmonkey(projectId) {
+  if (!VIOLENTMONKEY_PRIMARY_RUNNER || !projectId || violentmonkeyReadyProjects.has(projectId)) return false;
+  const last = Number(violentmonkeyFallbackProbeAt.get(projectId) || 0);
+  const current = Date.now();
+  if (last && current - last < VIOLENTMONKEY_FALLBACK_REPROBE_MS) return false;
+  violentmonkeyFallbackProbeAt.set(projectId, current);
+  return true;
 }
 
 async function setRecoveryTag(tabId, projectId) {
@@ -1120,11 +1130,17 @@ async function syncRunnerConfig(tabId, target) {
         return {ok:true, reason:"violentmonkey-config-bridged"};
       }
       // During the temporary migration fallback the legacy injected runner is
-      // still alive, so refresh its queue assignment through its message API.
-      const legacyResult = await browser.tabs.sendMessage(tabId, {
-        type:"runner-config-update", projectId:target.project_id, target
-      }).catch(() => null);
-      if (legacyResult?.ok) return legacyResult;
+      // still alive. A just-injected content runner can need a short moment
+      // before its message listener is reachable, so retry the config handoff
+      // before declaring the assignment broken and recycling the tab.
+      let legacyResult = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        legacyResult = await browser.tabs.sendMessage(tabId, {
+          type:"runner-config-update", projectId:target.project_id, target
+        }).catch(() => null);
+        if (legacyResult?.ok) return legacyResult;
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+      }
       return {ok:false, reason:"legacy-fallback-config-refresh-failed"};
     } catch (_) {
       return {ok:false, reason:"violentmonkey-config-bridge-failed"};
@@ -1216,7 +1232,7 @@ async function refreshTargets() {
           tabTargets[assignedTabId] = target;
           if (tab.status === "complete" && (
             runnerConfigChanged(previous, target) ||
-            (VIOLENTMONKEY_PRIMARY_RUNNER && !violentmonkeyReadyProjects.has(target.project_id))
+            shouldProbeViolentmonkey(target.project_id)
           )) {
             const synced = await syncRunnerConfig(assignedTabId, target);
             if (!synced?.ok) {
@@ -1416,6 +1432,9 @@ async function inject(tabId, target) {
         ? readiness.map(value => String(value || "").trim()).filter(Boolean)
         : [];
       const vmReady = vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION);
+      if (!vmReady) {
+        violentmonkeyFallbackProbeAt.set(effectiveTarget.project_id, Date.now());
+      }
       if (vmVersions.length && !vmReady) {
         violentmonkeyReadyProjects.delete(effectiveTarget.project_id);
         postStatus({
@@ -1433,6 +1452,7 @@ async function inject(tabId, target) {
         });
       }
       if (vmReady) {
+        violentmonkeyFallbackProbeAt.delete(effectiveTarget.project_id);
         violentmonkeyReadyProjects.add(effectiveTarget.project_id);
         await probeLiveThinkingPicker(tabId, effectiveTarget);
         // Stop any legacy injected runner that may still be alive from before
@@ -1492,6 +1512,16 @@ async function commandResult(commandId, status, result) {
   await fetch(API + "/runner-command-result", {method: "POST", mode: "no-cors",
     body: JSON.stringify({command_id: commandId, status: status, result: result})}).catch(() => {});
 }
+
+async function supersedeMissingTarget(projectId, commandId, action = "command") {
+  await commandResult(commandId, "completed", "Superseded: worker no longer allocated");
+  postStatus({
+    projectId,
+    event: "command-superseded",
+    reason: action + ":worker-no-longer-allocated",
+    at: new Date().toISOString()
+  });
+}
 async function newProjectChat(projectId, reason, commandId) {
   const workerKeys = workerKeysFor(projectId, true);
   if (!targets[projectId] && workerKeys.length) {
@@ -1509,7 +1539,10 @@ async function newProjectChat(projectId, reason, commandId) {
   runningActions.add(projectId);
   const target = targets[projectId];
   try {
-    if (!target) throw new Error("Projectconfig ontbreekt");
+    if (!target) {
+      await supersedeMissingTarget(projectId, commandId, "new_chat");
+      return;
+    }
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     const handoff = await prepareReplacementHandoff(target, reason);
     pendingInitialDispatches.add(projectId);
@@ -1553,7 +1586,10 @@ async function startProject(projectId, commandId) {
   runningActions.add(projectId);
   const target = targets[projectId];
   try {
-    if (!target) throw new Error("Projectconfig ontbreekt");
+    if (!target) {
+      await supersedeMissingTarget(projectId, commandId, "start");
+      return;
+    }
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     target.active = true;
     const current = projectTabs[projectId];
@@ -1672,7 +1708,7 @@ async function pushProject(projectId, commandId) {
   }
   const target = targets[projectId];
   if (!target) {
-    await commandResult(commandId, "failed", "Projectconfig ontbreekt");
+    await supersedeMissingTarget(projectId, commandId, "push");
     return;
   }
   if (!portfolioAssignmentReady(target)) {
@@ -1744,8 +1780,13 @@ async function pollCommands() {
     if (!response.ok) return;
     const data = await response.json();
     for (const command of data.commands || []) {
+      if (processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
       const hasTarget = !!targets[command.project_id] || workerKeysFor(command.project_id).length > 0;
-      if (!hasTarget || processedCommands.has(command.id) || runningActions.has(command.project_id)) continue;
+      if (!hasTarget) {
+        processedCommands.add(command.id);
+        await supersedeMissingTarget(command.project_id, command.id, command.action || "command");
+        continue;
+      }
       processedCommands.add(command.id);
       const commandWorkerKeys = targets[command.project_id]
         ? [command.project_id]
