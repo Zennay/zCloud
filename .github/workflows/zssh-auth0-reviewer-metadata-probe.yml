@@ -1,0 +1,187 @@
+name: zSSH Auth0 and reviewer input metadata probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-auth0-reviewer-metadata-probe.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-auth0-reviewer-input-metadata-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Find reusable Auth0 and reviewer input metadata without reading values
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-auth0-reviewer-metadata-runner.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Inventory exact GitHub input names and locations only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          OUT="$RUNNER_TEMP/zssh-auth0-reviewer-input-metadata.json" python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import quote
+
+          secret_names = {
+              "AUTH0_MANAGEMENT_API_TOKEN",
+              "ZSSH_REVIEW_ACCESS_TOKEN",
+              "OPENAI_APPS_CHALLENGE_TOKEN",
+          }
+          variable_names = {
+              "ZSSH_PLUGIN_MCP_URL",
+              "ZSSH_OAUTH_ISSUER",
+              "AUTH0_MANAGEMENT_BASE_URL",
+              "ZSSH_PLUGIN_DEMO_RECORDING_URL",
+              "ZSSH_REVIEW_LOGIN_URL",
+              "ZSSH_REVIEW_FILE",
+              "ZSSH_REVIEW_WRITE_FILE",
+          }
+
+          def gh_json(path):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=False,
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+              )
+              if proc.returncode != 0:
+                  return {"_unreadable": True}
+              try:
+                  return json.loads(proc.stdout)
+              except json.JSONDecodeError:
+                  return {"_unreadable": True}
+
+          def exact_names(payload, key, wanted):
+              if payload.get("_unreadable"):
+                  return []
+              return sorted(
+                  item.get("name", "")
+                  for item in payload.get(key, [])
+                  if item.get("name") in wanted
+              )
+
+          locations = {}
+          for repo in ("Zennay/zCloud", "Zennay/zSSH"):
+              repo_key = repo.split("/", 1)[1].lower()
+              secrets = gh_json(f"repos/{repo}/actions/secrets?per_page=100")
+              variables = gh_json(f"repos/{repo}/actions/variables?per_page=100")
+              locations[f"{repo_key}:repository"] = {
+                  "secrets": exact_names(secrets, "secrets", secret_names),
+                  "variables": exact_names(variables, "variables", variable_names),
+                  "secret_metadata_readable": not secrets.get("_unreadable", False),
+                  "variable_metadata_readable": not variables.get("_unreadable", False),
+              }
+
+              environments = gh_json(f"repos/{repo}/environments?per_page=100")
+              if environments.get("_unreadable"):
+                  continue
+              for env in environments.get("environments", []):
+                  name = env.get("name")
+                  if not name:
+                      continue
+                  encoded = quote(name, safe="")
+                  env_secrets = gh_json(f"repos/{repo}/environments/{encoded}/secrets?per_page=100")
+                  env_variables = gh_json(f"repos/{repo}/environments/{encoded}/variables?per_page=100")
+                  secrets_here = exact_names(env_secrets, "secrets", secret_names)
+                  variables_here = exact_names(env_variables, "variables", variable_names)
+                  if secrets_here or variables_here or (repo == "Zennay/zSSH" and name == "openai-production"):
+                      locations[f"{repo_key}:environment:{name}"] = {
+                          "secrets": secrets_here,
+                          "variables": variables_here,
+                          "secret_metadata_readable": not env_secrets.get("_unreadable", False),
+                          "variable_metadata_readable": not env_variables.get("_unreadable", False),
+                      }
+
+          secret_locations = {name: [] for name in sorted(secret_names)}
+          variable_locations = {name: [] for name in sorted(variable_names)}
+          for location, data in locations.items():
+              for name in data["secrets"]:
+                  secret_locations[name].append(location)
+              for name in data["variables"]:
+                  variable_locations[name].append(location)
+
+          target = locations.get("zssh:environment:openai-production", {"secrets": [], "variables": []})
+          auth0_required = {
+              "variables": {"ZSSH_PLUGIN_MCP_URL", "ZSSH_OAUTH_ISSUER", "AUTH0_MANAGEMENT_BASE_URL"},
+              "secrets": {"AUTH0_MANAGEMENT_API_TOKEN"},
+          }
+          reviewer_required = {
+              "variables": {
+                  "ZSSH_PLUGIN_DEMO_RECORDING_URL",
+                  "ZSSH_REVIEW_LOGIN_URL",
+                  "ZSSH_REVIEW_FILE",
+                  "ZSSH_REVIEW_WRITE_FILE",
+              },
+              "secrets": {"ZSSH_REVIEW_ACCESS_TOKEN"},
+          }
+
+          target_vars = set(target.get("variables", []))
+          target_secrets = set(target.get("secrets", []))
+          auth0_missing = sorted(
+              (auth0_required["variables"] - target_vars)
+              | (auth0_required["secrets"] - target_secrets)
+          )
+          reviewer_missing = sorted(
+              (reviewer_required["variables"] - target_vars)
+              | (reviewer_required["secrets"] - target_secrets)
+          )
+
+          result = {
+              "schema_version": 1,
+              "project": "zssh",
+              "probe": "auth0-reviewer-github-input-metadata",
+              "secret_values_read": False,
+              "locations": locations,
+              "secret_locations": secret_locations,
+              "variable_locations": variable_locations,
+              "openai_production_auth0_missing": auth0_missing,
+              "openai_production_reviewer_missing": reviewer_missing,
+              "auth0_ready_in_openai_production": len(auth0_missing) == 0,
+              "reviewer_ready_in_openai_production": len(reviewer_missing) == 0,
+              "mutation_attempted": False,
+          }
+          Path(os.environ["OUT"]).write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload non-secret input metadata evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-auth0-reviewer-input-metadata-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-auth0-reviewer-input-metadata.json
+            ${{ runner.temp }}/zssh-auth0-reviewer-metadata-runner.json
+          if-no-files-found: warn
+          retention-days: 7
