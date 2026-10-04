@@ -122,6 +122,39 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIsNone(blocked_row["worker_slot"])
         self.assertNotIn(blocked["queue_id"], [item["queue_id"] for item in selected])
 
+    def test_external_gate_preserves_running_and_verifying_work_without_auto_continue(self):
+        running = server.portfolio_queue_enqueue(
+            "zssh",
+            "Finish running zSSH release evidence",
+            "P0",
+            "Complete the already-running zSSH release evidence safely.",
+        )
+        verifying = server.portfolio_queue_enqueue(
+            "zssh",
+            "Implement zSSH release verification guard",
+            "P0",
+            "Implement the active release verification guard with deterministic tests.",
+        )
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',worker_slot=1,claim_expires=NULL WHERE queue_id=?",
+                (running["queue_id"],),
+            )
+            conn.execute(
+                "UPDATE portfolio_queue SET status='verifying',worker_slot=2,claim_expires=NULL WHERE queue_id=?",
+                (verifying["queue_id"],),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        selected_by_id = {item["queue_id"]: item for item in selected}
+        self.assertEqual("running", selected_by_id[running["queue_id"]]["status"])
+        self.assertEqual("verifying", selected_by_id[verifying["queue_id"]]["status"])
+        self.assertFalse(server.runner_targets()["zssh"]["auto_continue"])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual(1, rows[running["queue_id"]]["worker_slot"])
+        self.assertEqual(2, rows[verifying["queue_id"]]["worker_slot"])
+
     def test_three_slots_keep_one_slot_for_another_runnable_project(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
