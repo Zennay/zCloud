@@ -97,8 +97,8 @@ def http_json(url: str, timeout: float = 8.0) -> dict:
 
 def http_json_ready(
     url: str,
-    timeout: float = 4.0,
-    readiness_seconds: float = 30.0,
+    timeout: float = 8.0,
+    readiness_seconds: float = 90.0,
     retry_interval: float = 0.5,
     *,
     sleep_fn=time.sleep,
@@ -108,8 +108,10 @@ def http_json_ready(
 
     The deploy already proves that the HTTP server is listening before this
     canary runs. /api/status additionally depends on the first sampler snapshot,
-    so a short 503/connection race is expected during startup. Persistent
-    failures still raise and therefore keep the promotion fail-closed.
+    so a bounded 503/connection race is expected during startup. Keep this
+    window aligned with the transactional promoter's 90-second systemd startup
+    budget and 8-second status request timeout. Persistent failures still raise
+    and therefore keep the promotion fail-closed.
     """
     deadline = monotonic_fn() + max(0.0, float(readiness_seconds))
     last_error = None

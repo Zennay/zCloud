@@ -72,6 +72,23 @@ class PostdeployCanaryTests(unittest.TestCase):
         self.assertEqual([], result["errors"])
         self.assertEqual(2, fetch.call_count)
 
+    def test_status_readiness_default_allows_service_budget_warmup(self):
+        attempts = [
+            RuntimeError("timed out during sampler warmup"),
+            {"errors": [], "dynamic_workers": {"count": 5}},
+        ]
+        ticks = iter([0.0, 31.0])
+        with mock.patch.object(canary, "http_json", side_effect=attempts) as fetch:
+            result = canary.http_json_ready(
+                "http://127.0.0.1:8765/api/status",
+                retry_interval=0.5,
+                sleep_fn=lambda _: None,
+                monotonic_fn=lambda: next(ticks),
+            )
+        self.assertEqual([], result["errors"])
+        self.assertEqual(2, fetch.call_count)
+        self.assertEqual(8.0, fetch.call_args_list[0].kwargs["timeout"])
+
     def test_status_readiness_persistent_failure_stays_fail_closed(self):
         ticks = iter([0.0, 31.0])
         with mock.patch.object(
