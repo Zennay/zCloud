@@ -310,5 +310,27 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
 
 
+    def test_cloudflare_credential_probe_reads_metadata_only_and_never_secret_values(self):
+        text = (ROOT / ".github/workflows/zssh-cloudflare-credential-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
+        self.assertIn("actions/secrets?per_page=100", text)
+        self.assertIn("actions/variables?per_page=100", text)
+        self.assertIn("environments/{encoded}/secrets?per_page=100", text)
+        self.assertIn("environments/{encoded}/variables?per_page=100", text)
+        self.assertIn('"secret_values_read": False', text)
+        self.assertIn("CLOUDFLARE_API_TOKEN", text)
+        self.assertIn("CLOUDFLARE_ZONE_ID", text)
+        self.assertIn('"reusable_exact_pair_present"', text)
+        self.assertNotIn("gh secret set", text)
+        self.assertNotIn("gh variable set", text)
+        self.assertNotIn("--method PUT", text)
+        self.assertNotIn("--method PATCH", text)
+        self.assertNotIn("--method POST", text)
+        self.assertNotIn("cat ~/.config", text)
+
+
+
 if __name__ == "__main__":
     unittest.main()
