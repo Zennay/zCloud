@@ -1,0 +1,19 @@
+{
+  "config_sha256_after": "cdb95d457c7a318dddb04bd11c78bb846bf11ddd83117c2081a87ec032656a79",
+  "final_holdout_accessed": false,
+  "ftmo_main_sha": "e5363979dd40097ede98234554ed49b262514fa1",
+  "generation_number_verified": 30,
+  "host": "vps-bb300bba",
+  "live_or_broker_access_opened": false,
+  "paid_cloud_budget_usd": "0.00",
+  "project": "ftmo",
+  "provider_io_forced": false,
+  "repaired_directory_count": 0,
+  "result": "success",
+  "runner": "zcloud-vps-1",
+  "schema_version": 1,
+  "scope": "stable-root-publication-permission-repair",
+  "status_sha256_after": "8ca49abb0c6cd8e4122915c1da2d8a7d049927071df1c9fac4463f763ed09973",
+  "walk_forward_accessed": false,
+  "workflow_run_id": "37171295505"
+}
