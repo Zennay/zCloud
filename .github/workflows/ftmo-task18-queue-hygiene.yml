@@ -1,0 +1,70 @@
+name: FTMO TASK-18 queue hygiene
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-task18-queue-hygiene.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      FTMO_MAIN: 217c5f64ac29c0218184eaaec484b2b5dcbaec2e
+      CANONICAL_PR: "528"
+      CANONICAL_HEAD: c03cb345cd9b3b86d116fd7c5885d995439a649e
+      CANONICAL_RUN: "37180809155"
+      STALE_PR: "523"
+      STALE_HEAD: f981452ea7494b6fc178bc7468d58d4b7fcc6c6b
+      STALE_RUNS: "37180020723 37180020732"
+    steps:
+      - name: Cancel only superseded PR523 runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$CANONICAL_PR --jq .state)" = "open"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$CANONICAL_PR --jq .head.sha)" = "$CANONICAL_HEAD"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$CANONICAL_PR --jq .base.sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$STALE_PR --jq .state)" = "closed"
+          test "$(gh api repos/Zennay/Ftmo/pulls/$STALE_PR --jq .head.sha)" = "$STALE_HEAD"
+
+          canonical_status="$(gh api repos/Zennay/Ftmo/actions/runs/$CANONICAL_RUN --jq .status)"
+          case "$canonical_status" in
+            queued|in_progress|completed) ;;
+            *) echo "unexpected canonical status: $canonical_status" >&2; exit 1 ;;
+          esac
+          echo "CANONICAL_RUN_STATUS=$canonical_status"
+
+          for run_id in $STALE_RUNS; do
+            head="$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq .head_sha)"
+            test "$head" = "$STALE_HEAD"
+            status="$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq .status)"
+            echo "STALE_RUN pre run=$run_id status=$status head=$head"
+            if [[ "$status" == "queued" || "$status" == "in_progress" ]]; then
+              gh api --method POST "repos/Zennay/Ftmo/actions/runs/$run_id/cancel" >/dev/null
+            fi
+          done
+
+          for run_id in $STALE_RUNS; do
+            for _ in $(seq 1 12); do
+              status="$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq .status)"
+              conclusion="$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq '.conclusion // ""')"
+              echo "STALE_RUN post run=$run_id status=$status conclusion=$conclusion"
+              if [[ "$status" == "completed" ]]; then
+                break
+              fi
+              sleep 2
+            done
+            test "$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq .status)" = "completed"
+          done
+
+          echo "FTMO_TASK18_QUEUE_HYGIENE_GREEN=1"
