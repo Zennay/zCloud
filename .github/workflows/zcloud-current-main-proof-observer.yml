@@ -21,11 +21,11 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      TARGET_SHA: 2822d2f80ed49306013171f962da610182dab05a
+      TARGET_SHA: e0abf2a35910b398b4cdde7fc3d1396cc7751e83
       REGRESSION_WORKFLOW: zcloud-regression-smoke.yml
       DEPLOY_WORKFLOW: zcloud-vps-deploy.yml
       AUDIT_WORKFLOW: zcloud-state-receipt-coverage-audit.yml
-      CANCEL_RUNS: "37232750341"
+      CANCEL_RUNS: "37232602615 37232960305"
     steps:
       - name: Keep P0 production lane ahead of PR-only VPS validation
         shell: bash
