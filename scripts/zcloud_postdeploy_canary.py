@@ -25,7 +25,7 @@ LEGACY_FIREFOX_DISABLE_DROPIN = Path(os.environ.get(
     str(Path.home() / ".config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"),
 ))
 STATUS_REQUEST_TIMEOUT_SECONDS = float(
-    os.environ.get("ZCLOUD_STATUS_REQUEST_TIMEOUT_SECONDS", "30")
+    os.environ.get("ZCLOUD_STATUS_REQUEST_TIMEOUT_SECONDS", "40")
 )
 STATUS_READINESS_SECONDS = float(
     os.environ.get("ZCLOUD_STATUS_READINESS_SECONDS", "90")
