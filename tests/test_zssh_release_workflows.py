@@ -187,5 +187,35 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("systemctl restart caddy", text)
 
 
+    def test_public_ingress_bootstrap_is_dns_gateway_and_exact_main_gated(self):
+        text = (ROOT / ".github/workflows/zssh-public-ingress-bootstrap.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", text)
+        self.assertNotIn("schedule:", text)
+        self.assertIn("INSTALL_ZSSH_PUBLIC_INGRESS", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop", text)
+        self.assertIn("ZSSH_EXPECTED_IPV4: 198.244.191.182", text)
+        self.assertIn("if found != {expected}:", text)
+        self.assertIn("systemctl --user is-active --quiet zssh-public.service", text)
+        self.assertIn('http://127.0.0.1:$ZSSH_PUBLIC_GATEWAY_PORT/health', text)
+        self.assertIn("expected_zssh_sha:", text)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", text)
+        self.assertIn('test "$live_main" = "$EXPECTED_ZSSH_SHA"', text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn('ref: ${{ steps.zssh_target.outputs.sha }}', text)
+        self.assertIn("test/public-caddy-installer.test.mjs", text)
+        self.assertIn("https://dl.cloudsmith.io/public/caddy/stable/gpg.key", text)
+        self.assertIn("https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt", text)
+        self.assertIn("apt-get install --yes caddy", text)
+        self.assertIn("deploy/install-public-caddy.sh", text)
+        self.assertIn("systemctl is-active --quiet caddy", text)
+        self.assertIn('--resolve "$ZSSH_PRODUCTION_HOST:443:127.0.0.1"', text)
+        self.assertIn("ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN", text)
+        self.assertIn('--source "github-actions:zssh-public-ingress-bootstrap"', text)
+        self.assertNotIn("CLOUDFLARE_API_TOKEN", text)
+        self.assertNotIn("CF_API_TOKEN", text)
+
+
 if __name__ == "__main__":
     unittest.main()
