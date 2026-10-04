@@ -496,6 +496,17 @@ jobs:
           echo "FIREFOX_AUTOMATION_SERVICE=failed"
           exit 1
 
+      - name: Enter browser safe-idle for guarded promotion
+        id: safe_idle
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deploy_safe_idle.py enter \
+            --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
+            --timeout-seconds 240 \
+            --json
+
       - name: Repair legacy runtime project schema
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
@@ -626,6 +637,15 @@ jobs:
           sudo -n install -m 0755 "$GITHUB_WORKSPACE/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal
           echo "SELF_HEAL_PROBE_INSTALLED=max_time_8"
 
+      - name: Restore browser workers after guarded promotion
+        if: always() && steps.prewrite.outputs.deploy == 'true' && steps.safe_idle.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deploy_safe_idle.py restore \
+            --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
+            --json
+
       - name: Capture green production deploy evidence
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
@@ -694,6 +714,7 @@ jobs:
           path: |
             ${{ runner.temp }}/zcloud-production-health.json
             ${{ runner.temp }}/zcloud-production-deploy-evidence.json
+            ${{ runner.temp }}/zcloud-deploy-safe-idle.json
 
       - name: Resume external self-heal
         if: always() && steps.freshness.outputs.deploy == 'true' && steps.self_heal_guard.outputs.created == 'true'
