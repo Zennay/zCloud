@@ -1649,6 +1649,15 @@ async function drainProject(projectId, commandId) {
   }
   if (result?.ok) {
     await commandResult(commandId, "completed", "Worker rondt de huidige taak af");
+  } else if (VIOLENTMONKEY_PRIMARY_RUNNER) {
+    // A missing/transitioning Violentmonkey readiness marker must not make a
+    // fail-closed deploy command destructive. Keep the database command
+    // pending: the userscript may still acknowledge it, while the bounded
+    // safe-idle timeout remains the authority if no runner ever drains.
+    postStatus({projectId: projectId, projectName: target?.name, target: target?.url || "",
+      event: "runner-drain-deferred", reason: "violentmonkey-primary-awaiting-database-ack",
+      at: new Date().toISOString()});
+    return;
   } else {
     await commandResult(commandId, "failed", "Drain kon niet veilig worden bevestigd");
   }

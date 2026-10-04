@@ -151,6 +151,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
             block.index('if (rebound?.mode === "violentmonkey") return;'),
             block.index('"Drain kon niet veilig worden bevestigd"'),
         )
+        self.assertIn('else if (VIOLENTMONKEY_PRIMARY_RUNNER) {', block)
+        self.assertIn('event: "runner-drain-deferred"', block)
+        self.assertIn('reason: "violentmonkey-primary-awaiting-database-ack"', block)
+        self.assertLess(
+            block.index('event: "runner-drain-deferred"'),
+            block.index('"Drain kon niet veilig worden bevestigd"'),
+        )
 
     def test_start_command_for_existing_tab_forces_initial_dispatch(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
