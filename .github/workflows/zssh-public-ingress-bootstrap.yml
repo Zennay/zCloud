@@ -113,8 +113,9 @@ jobs:
           npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
           (
             cd zssh-source
-            node --test test/public-caddy-renderer.test.mjs test/public-caddy-installer.test.mjs
+            node --test test/public-caddy-renderer.test.mjs test/public-caddy-installer.test.mjs test/deploy.test.mjs test/runtime-dependency-policy.test.mjs
             bash -n deploy/install-public-caddy.sh
+            bash -n deploy/install-target-agent.sh
           )
           echo "ZSSH_PUBLIC_CADDY_TRANSACTION_TESTS_GREEN sha=$ZSSH_SHA"
 
@@ -204,6 +205,105 @@ jobs:
           NODE
           echo "ZSSH_PUBLIC_TLS_LOCAL_GREEN origin=$ZSSH_PRODUCTION_ORIGIN"
 
+      - name: Install and prove outbound reviewer target agent
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_root="$GITHUB_WORKSPACE/zssh-source"
+          public_keys="$HOME/.config/zssh/reviewer-agent-public.json"
+          private_key="$HOME/.config/zssh/agent-ed25519.pem"
+          review_root="/srv/zssh-review"
+          agent_env="$HOME/.config/zssh/agent.env"
+
+          test -f "$public_keys"
+          test -f "$private_key"
+          test -d "$review_root"
+
+          target_id="$(node --input-type=module - "$public_keys" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const ids = Object.keys(config?.targets || {});
+          if (config?.version !== 1 || ids.length !== 1 || !/^zt_[A-Za-z0-9_-]{8,96}$/.test(ids[0])) {
+            throw new Error("reviewer target public-key config must contain exactly one opaque target");
+          }
+          process.stdout.write(ids[0]);
+          NODE
+          )"
+
+          export ZSSH_GATEWAY_URL="$ZSSH_PRODUCTION_ORIGIN"
+          export ZSSH_TARGET_ID="$target_id"
+          export ZSSH_AGENT_PRIVATE_KEY_FILE="$private_key"
+          export ZSSH_PUBLIC_ALLOWED_ROOTS="$review_root"
+          export ZSSH_EXPECTED_SHA="$ZSSH_SHA"
+
+          install_output="$RUNNER_TEMP/zssh-target-agent-install.txt"
+          bash "$source_root/deploy/install-target-agent.sh" "$source_root" | tee "$install_output"
+          grep -F "ZSSH_AGENT_INSTALL_GREEN sha=$ZSSH_SHA target=$target_id service=zssh-agent.service" "$install_output"
+
+          node --input-type=module - "$agent_env" "$target_id" "$ZSSH_PRODUCTION_ORIGIN" "$private_key" "$review_root" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const [file, targetId, gatewayUrl, privateKey, reviewRoot] = process.argv.slice(2);
+          const entries = new Map();
+          for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
+            if (!raw) continue;
+            const index = raw.indexOf("=");
+            if (index <= 0) throw new Error("invalid agent.env line");
+            const key = raw.slice(0, index);
+            const value = raw.slice(index + 1);
+            if (entries.has(key)) throw new Error("duplicate agent.env key: " + key);
+            entries.set(key, value);
+          }
+          const expected = new Map([
+            ["NODE_ENV", "production"],
+            ["ZSSH_PLUGIN_PROFILE", "public"],
+            ["ZSSH_TARGET_ID", targetId],
+            ["ZSSH_GATEWAY_URL", gatewayUrl],
+            ["ZSSH_AGENT_PRIVATE_KEY_FILE", privateKey],
+            ["ZSSH_PUBLIC_ALLOWED_ROOTS", reviewRoot],
+            ["ZSSH_ALLOWED_ROOTS", reviewRoot],
+            ["ZSSH_EXEC_MODE", "disabled"],
+          ]);
+          for (const [key, value] of expected) {
+            if (entries.get(key) !== value) throw new Error("agent.env " + key + " does not match the release fixture");
+          }
+          NODE
+
+          systemctl --user is-active --quiet zssh-agent.service
+          systemctl --user is-enabled --quiet zssh-agent.service
+          restarts_before="$(systemctl --user show zssh-agent.service --property=NRestarts --value)"
+
+          raw_pairings="$RUNNER_TEMP/zssh-target-agent-pairings.raw.json"
+          control_proof="$RUNNER_TEMP/zssh-target-agent-control-proof.json"
+          node "$source_root/agent.mjs" pairings > "$raw_pairings"
+          node --input-type=module - "$raw_pairings" "$control_proof" "$target_id" <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          const [input, output, targetId] = process.argv.slice(2);
+          const value = JSON.parse(readFileSync(input, "utf8"));
+          if (!Array.isArray(value.pairings) || !Array.isArray(value.requests)) {
+            throw new Error("signed target pairing control returned an invalid response");
+          }
+          for (const item of [...value.pairings, ...value.requests]) {
+            if (item?.target_id !== targetId) throw new Error("pairing control leaked cross-target state");
+          }
+          writeFileSync(output, JSON.stringify({
+            ok: true,
+            target_id: targetId,
+            signed_pairing_control_green: true,
+            target_scoped: true,
+            pairing_count: value.pairings.length,
+            request_count: value.requests.length,
+          }, null, 2) + "\n");
+          NODE
+          rm -f "$raw_pairings"
+
+          sleep 4
+          systemctl --user is-active --quiet zssh-agent.service
+          restarts_after="$(systemctl --user show zssh-agent.service --property=NRestarts --value)"
+          test "$restarts_after" = "$restarts_before"
+
+          echo "ZSSH_REVIEW_TARGET_ID=$target_id" >> "$GITHUB_ENV"
+          echo "ZSSH_TARGET_AGENT_CONTROL_GREEN target=$target_id restarts=$restarts_after"
+
       - name: Reconfirm canonical zSSH main and record runtime receipt
         shell: bash
         run: |
@@ -229,6 +329,9 @@ jobs:
               "production_ipv4": os.environ["ZSSH_EXPECTED_IPV4"],
               "gateway_port": int(os.environ["ZSSH_PUBLIC_GATEWAY_PORT"]),
               "gateway_service_active": True,
+              "target_agent_service_active": True,
+              "target_agent_signed_pairing_control_green": True,
+              "target_agent_target_id": os.environ["ZSSH_REVIEW_TARGET_ID"],
               "caddy_service_active": True,
               "caddy_version": sys.argv[1],
               "caddy_root_sha256": sys.argv[2],
@@ -239,7 +342,7 @@ jobs:
           PY
           )"
 
-          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Installed Caddy and promoted transactional zSSH public TLS ingress"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.cheapgpt.shop/mcp, then continue OpenAI portal/reviewer gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Installed Caddy, promoted transactional zSSH public TLS ingress, and proved the outbound reviewer target agent"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.cheapgpt.shop/mcp, then continue Auth0 and reviewer pairing/login gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
 
           echo "$evidence_json" > "$RUNNER_TEMP/zssh-public-ingress-bootstrap.json"
           echo "ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN sha=$ZSSH_SHA"
@@ -254,5 +357,6 @@ jobs:
             ${{ runner.temp }}/zssh-public-ingress-runner-guard.json
             ${{ runner.temp }}/zssh-public-gateway-health.json
             ${{ runner.temp }}/zssh-public-tls-health.json
+            ${{ runner.temp }}/zssh-target-agent-control-proof.json
           if-no-files-found: error
           retention-days: 30
