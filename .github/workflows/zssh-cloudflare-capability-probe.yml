@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
+      - ".github/zssh-cloudflare-capability-trigger"
   pull_request:
     types: [closed]
     branches: [main]
     paths:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
+      - ".github/zssh-cloudflare-capability-trigger"
   workflow_dispatch:
 
 permissions:
