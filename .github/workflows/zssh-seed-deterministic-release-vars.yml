@@ -1,0 +1,145 @@
+name: zSSH seed deterministic OpenAI release variables
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-seed-deterministic-release-vars.yml"
+      - "tests/test_zssh_seed_release_vars.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-seed-deterministic-release-vars
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: Seed exact non-secret zSSH production release variables
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-release-var-seed-runner.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Verify canonical zSSH source facts and governance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          repo="Zennay/zSSH"
+          main_sha="$(gh api "repos/$repo/branches/main" --jq '.commit.sha')"
+          test "$(gh api "repos/$repo/branches/main" --jq '.protected // false')" = "true"
+          test "$(gh api "repos/$repo/issues/100" --jq '.state')" = "closed"
+
+          gh api "repos/$repo/contents/scripts/observe-public-origin-readiness.mjs?ref=$main_sha" --jq '.content' \
+            | base64 --decode >"$RUNNER_TEMP/zssh-origin-observer.mjs"
+          grep -Fq 'DEFAULT_PRODUCTION_MCP_URL = "https://zssh.cheapgpt.shop/mcp"' "$RUNNER_TEMP/zssh-origin-observer.mjs"
+
+          gh api "repos/$repo/contents/submission/README.md?ref=$main_sha" --jq '.content' \
+            | base64 --decode >"$RUNNER_TEMP/zssh-submission-readme.md"
+          grep -Fq 'ZSSH_REVIEW_FILE=/srv/zssh-review/sample.txt' "$RUNNER_TEMP/zssh-submission-readme.md"
+          grep -Fq 'ZSSH_REVIEW_WRITE_FILE=/srv/zssh-review/output.txt' "$RUNNER_TEMP/zssh-submission-readme.md"
+
+          echo "ZSSH_DETERMINISTIC_RELEASE_FACTS_GREEN main_sha=$main_sha"
+
+      - name: Set only deterministic non-secret OpenAI production variables
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          base="repos/Zennay/zSSH/environments/openai-production/variables"
+          receipt="$RUNNER_TEMP/zssh-deterministic-release-vars.json"
+          : >"$RUNNER_TEMP/zssh-release-var-actions.tsv"
+
+          set_exact_var() {
+            local name="$1"
+            local value="$2"
+            local action
+            set +e
+            gh api "$base/$name" >"$RUNNER_TEMP/zssh-var-current.json" 2>"$RUNNER_TEMP/zssh-var-current.err"
+            local rc="$?"
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              gh api --method PATCH "$base/$name" -f name="$name" -f value="$value" >/dev/null
+              action="updated"
+            else
+              if ! grep -Eq 'HTTP 404|Not Found' "$RUNNER_TEMP/zssh-var-current.err"; then
+                cat "$RUNNER_TEMP/zssh-var-current.err" >&2
+                exit "$rc"
+              fi
+              gh api --method POST "$base" -f name="$name" -f value="$value" >/dev/null
+              action="created"
+            fi
+
+            actual="$(gh api "$base/$name" --jq '.value')"
+            test "$actual" = "$value"
+            printf '%s\t%s\t%s\n' "$name" "$value" "$action" >>"$RUNNER_TEMP/zssh-release-var-actions.tsv"
+          }
+
+          set_exact_var ZSSH_PLUGIN_MCP_URL "https://zssh.cheapgpt.shop/mcp"
+          set_exact_var ZSSH_REVIEW_FILE "/srv/zssh-review/sample.txt"
+          set_exact_var ZSSH_REVIEW_WRITE_FILE "/srv/zssh-review/output.txt"
+
+          ACTIONS="$RUNNER_TEMP/zssh-release-var-actions.tsv" OUT="$receipt" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          entries = []
+          for line in Path(os.environ["ACTIONS"]).read_text(encoding="utf-8").splitlines():
+              name, value, action = line.split("\t")
+              entries.append({"name": name, "value": value, "action": action})
+
+          allowed = {
+              "ZSSH_PLUGIN_MCP_URL",
+              "ZSSH_REVIEW_FILE",
+              "ZSSH_REVIEW_WRITE_FILE",
+          }
+          if {entry["name"] for entry in entries} != allowed:
+              raise SystemExit("deterministic release variable scope changed unexpectedly")
+
+          result = {
+              "schema_version": 1,
+              "project": "zssh",
+              "environment": "openai-production",
+              "variables": entries,
+              "secret_values_read": False,
+              "provider_mutation_attempted": False,
+          }
+          Path(os.environ["OUT"]).write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+          echo "ZSSH_DETERMINISTIC_RELEASE_VARS_GREEN"
+
+      - name: Upload non-secret seed evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-deterministic-release-vars-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-deterministic-release-vars.json
+            ${{ runner.temp }}/zssh-release-var-seed-runner.json
+          if-no-files-found: warn
+          retention-days: 30
