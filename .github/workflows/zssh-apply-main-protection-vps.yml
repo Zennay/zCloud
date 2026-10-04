@@ -1,0 +1,207 @@
+name: zSSH apply main protection via VPS gh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-apply-main-protection-vps.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-apply-main-protection-vps
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply canonical zSSH main protection with persistent VPS GitHub auth
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-main-protection-vps-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Apply canonical zSSH branch protection when VPS gh is admin-capable
+        id: apply
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          repo="Zennay/zSSH"
+          branch="main"
+          endpoint="repos/$repo/branches/$branch/protection"
+
+          admin="$(gh api "repos/$repo" --jq '.permissions.admin // false')"
+          main_sha="$(gh api "repos/$repo/branches/$branch" --jq '.commit.sha')"
+          protected_before="$(gh api "repos/$repo/branches/$branch" --jq '.protected // false')"
+
+          associated_merged_prs="$(
+            gh api -H "Accept: application/vnd.github+json" \
+              "repos/$repo/commits/$main_sha/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length'
+          )"
+
+          if [ "$associated_merged_prs" -lt 1 ]; then
+            echo "ZSSH_VPS_MAIN_PROTECTION_REFUSED no merged-PR provenance for main_sha=$main_sha" >&2
+            exit 1
+          fi
+
+          if [ "$admin" != "true" ]; then
+            ADMIN="$admin" MAIN_SHA="$main_sha" PROTECTED_BEFORE="$protected_before" \
+            python3 - <<'PY' | tee "$RUNNER_TEMP/zssh-main-protection-vps.json"
+          import json
+          import os
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "zssh",
+              "action": "apply-main-protection-via-persistent-vps-gh",
+              "repository": "Zennay/zSSH",
+              "branch": "main",
+              "main_sha": os.environ["MAIN_SHA"],
+              "repository_admin": os.environ["ADMIN"].lower() == "true",
+              "protected_before": os.environ["PROTECTED_BEFORE"].lower() == "true",
+              "mutation_attempted": False,
+              "applied": False,
+              "reason": "persistent VPS gh auth is not repository-admin capable",
+          }, sort_keys=True, indent=2))
+          PY
+            echo "ZSSH_VPS_MAIN_PROTECTION_ADMIN_CAPABILITY_ABSENT main_sha=$main_sha"
+            exit 0
+          fi
+
+          cat >"$RUNNER_TEMP/zssh-main-protection-policy.json" <<'JSON'
+          {
+            "required_status_checks": {
+              "strict": true,
+              "checks": [
+                {
+                  "context": "test",
+                  "app_id": 15368
+                }
+              ]
+            },
+            "enforce_admins": true,
+            "required_pull_request_reviews": {
+              "dismiss_stale_reviews": true,
+              "require_code_owner_reviews": false,
+              "required_approving_review_count": 0,
+              "require_last_push_approval": false
+            },
+            "restrictions": null,
+            "required_linear_history": false,
+            "allow_force_pushes": false,
+            "allow_deletions": false,
+            "block_creations": false,
+            "required_conversation_resolution": true,
+            "lock_branch": false,
+            "allow_fork_syncing": true
+          }
+          JSON
+
+          gh api --method PUT "$endpoint" \
+            --input "$RUNNER_TEMP/zssh-main-protection-policy.json" \
+            >"$RUNNER_TEMP/zssh-main-protection-put-response.json"
+
+          gh api "$endpoint" >"$RUNNER_TEMP/zssh-main-protection-effective.json"
+          protected_after="$(gh api "repos/$repo/branches/$branch" --jq '.protected // false')"
+
+          MAIN_SHA="$main_sha" PROTECTED_BEFORE="$protected_before" PROTECTED_AFTER="$protected_after" \
+          EFFECTIVE="$RUNNER_TEMP/zssh-main-protection-effective.json" \
+          python3 - <<'PY' | tee "$RUNNER_TEMP/zssh-main-protection-vps.json"
+          import json
+          import os
+          from pathlib import Path
+
+          effective = json.loads(Path(os.environ["EFFECTIVE"]).read_text(encoding="utf-8"))
+          issues = []
+
+          status = effective.get("required_status_checks") or {}
+          if status.get("strict") is not True:
+              issues.append("required status checks are not strict")
+          checks = status.get("checks") or []
+          bound = [
+              check for check in checks
+              if check.get("context") == "test" and int(check.get("app_id", -1)) == 15368
+          ]
+          if not bound:
+              issues.append("test check is not bound to GitHub Actions app 15368")
+
+          if (effective.get("enforce_admins") or {}).get("enabled") is not True:
+              issues.append("administrators are not covered by branch protection")
+
+          reviews = effective.get("required_pull_request_reviews")
+          if not reviews:
+              issues.append("pull-request based changes are not required")
+          else:
+              allowances = reviews.get("bypass_pull_request_allowances") or {}
+              bypass = []
+              for kind in ("users", "teams", "apps"):
+                  bypass.extend(allowances.get(kind) or [])
+              if bypass:
+                  issues.append("pull-request bypass actors are configured")
+
+          if (effective.get("required_conversation_resolution") or {}).get("enabled") is not True:
+              issues.append("conversation resolution is not required")
+          if (effective.get("allow_force_pushes") or {}).get("enabled") is True:
+              issues.append("force pushes are enabled")
+          if (effective.get("allow_deletions") or {}).get("enabled") is True:
+              issues.append("branch deletion is enabled")
+          if os.environ["PROTECTED_AFTER"].lower() != "true":
+              issues.append("GitHub branch metadata still reports main unprotected")
+
+          if issues:
+              raise SystemExit("effective zSSH main protection failed verification: " + "; ".join(issues))
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "zssh",
+              "action": "apply-main-protection-via-persistent-vps-gh",
+              "repository": "Zennay/zSSH",
+              "branch": "main",
+              "main_sha": os.environ["MAIN_SHA"],
+              "repository_admin": True,
+              "protected_before": os.environ["PROTECTED_BEFORE"].lower() == "true",
+              "protected_after": True,
+              "mutation_attempted": True,
+              "applied": True,
+              "required_status_check": "test",
+              "required_status_check_app_id": 15368,
+              "strict_status_checks": True,
+              "pull_request_required": True,
+              "admins_enforced": True,
+              "bypass_actors": [],
+              "conversation_resolution_required": True,
+              "force_pushes_disabled": True,
+              "deletions_disabled": True,
+          }, sort_keys=True, indent=2))
+          PY
+
+          echo "ZSSH_VPS_MAIN_PROTECTION_APPLIED main_sha=$main_sha protected_before=$protected_before protected_after=$protected_after"
+
+      - name: Upload non-secret application evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-main-protection-vps-\${{ github.run_id }}
+          path: |
+            \${{ runner.temp }}/zssh-main-protection-vps.json
+            \${{ runner.temp }}/zssh-main-protection-vps-runner-guard.json
+          if-no-files-found: error
+          retention-days: 30
