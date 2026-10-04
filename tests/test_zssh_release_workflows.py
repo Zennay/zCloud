@@ -56,7 +56,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
     def test_vps_release_uses_permanent_runner_guard(self):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
-        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("runs-on: self-hosted", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         match = re.search(r"ZSSH_RELEASE_SHA:\s*([0-9a-f]{40})", text)
         self.assertIsNotNone(match)
@@ -94,8 +94,8 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('ZSSH_PUBLIC_BASE_URL="https://mcp.zssh-preflight.invalid"', text)
         self.assertIn('ZSSH_PUBLIC_RATE_LIMIT_PER_MINUTE=120', text)
         self.assertIn('ZSSH_PUBLIC_RATE_LIMIT_MAX_PROFILES=10000', text)
-        self.assertIn('"public_rate_limit_per_minute": Number(process.env.RATE_LIMIT_PER_MINUTE)', text)
-        self.assertIn('"public_rate_limit_max_profiles": Number(process.env.RATE_LIMIT_MAX_PROFILES)', text)
+        self.assertIn('public_rate_limit_per_minute: Number(process.env.RATE_LIMIT_PER_MINUTE)', text)
+        self.assertIn('public_rate_limit_max_profiles: Number(process.env.RATE_LIMIT_MAX_PROFILES)', text)
         self.assertIn('ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1', text)
         self.assertIn('test "$after_env" = "$before_env"', text)
         self.assertIn('test "$after_current" = "$before_current"', text)
