@@ -338,6 +338,41 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("queued", rows[lower["queue_id"]]["status"])
         self.assertIsNone(rows[lower["queue_id"]]["worker_slot"])
 
+    def test_inflight_browser_command_pins_claim_until_command_finishes(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        lower = server.portfolio_queue_enqueue(
+            "cloud", "lower in-flight", "P1",
+            "Implement lower-priority change with deterministic tests.",
+        )
+        server.portfolio_queue_allocate()
+        self.assertEqual(lower["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+
+        with server.connect() as conn:
+            ts = server.now()
+            command_id = conn.execute(
+                """INSERT INTO runner_commands(project_id,action,status,created_at,updated_at)
+                   VALUES(?,?,?,?,?)""",
+                ("cloud::w1", "start", "pending", ts, ts),
+            ).lastrowid
+
+        higher = server.portfolio_queue_enqueue(
+            "ftmo", "urgent recovery", "P0",
+            "Implement FTMO recovery with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual(lower["queue_id"], selected[0]["queue_id"])
+        self.assertEqual("claimed", selected[0]["status"])
+
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE runner_commands SET status='completed',updated_at=? WHERE id=?",
+                (server.now(), command_id),
+            )
+
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual(higher["queue_id"], selected[0]["queue_id"])
+
     def test_p0_does_not_preempt_running_lower_priority_work(self):
         lower = server.portfolio_queue_enqueue("cloud", "running lower", "P1", "Implement lower-priority change with tests.")
         server.portfolio_queue_allocate()
