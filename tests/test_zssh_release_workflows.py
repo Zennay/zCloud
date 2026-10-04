@@ -217,5 +217,25 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("CF_API_TOKEN", text)
 
 
+    def test_vps_github_admin_capability_probe_is_read_only_and_zssh_scoped(self):
+        text = (ROOT / ".github/workflows/zssh-gh-admin-capability-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
+        self.assertIn("gh auth status --hostname github.com", text)
+        self.assertIn("gh api repos/Zennay/zSSH --jq '.permissions.admin // false'", text)
+        self.assertIn("gh api repos/Zennay/zSSH/branches/main --jq '.protected // false'", text)
+        self.assertIn("repos/Zennay/zSSH/branches/main/protection", text)
+        self.assertIn('"mutation_attempted": False', text)
+        self.assertIn("ZSSH_VPS_GH_ADMIN_CAPABILITY_PRESENT", text)
+        self.assertIn("ZSSH_VPS_GH_ADMIN_CAPABILITY_ABSENT", text)
+        self.assertNotIn("--method PUT", text)
+        self.assertNotIn("--method PATCH", text)
+        self.assertNotIn("-X PUT", text)
+        self.assertNotIn("-X PATCH", text)
+        self.assertNotIn("apply-main-protection", text)
+
+
 if __name__ == "__main__":
     unittest.main()
