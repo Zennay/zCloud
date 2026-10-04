@@ -1,0 +1,53 @@
+name: Recover FTMO listener for post507 state sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-ftmo-listener-post507-sync.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      CURRENT_FTMO_MAIN: 77134b142952f590ba19f4666a616d0e0001621d
+      PINNED_SYNC_SHA: e5363979dd40097ede98234554ed49b262514fa1
+      STATE_SYNC_RUN: "37171444603"
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+    steps:
+      - name: Restart idle listener and prove state sync scheduling
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$CURRENT_FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$STATE_SYNC_RUN --jq .head_sha)" = "$PINNED_SYNC_SHA"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$STATE_SYNC_RUN --jq .status)" = "queued"
+
+          if pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            echo "FTMO active worker present; preserve it"
+          else
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            echo "FTMO idle listener restarted"
+          fi
+          test "$(systemctl is-active "$FTMO_SERVICE")" = active
+
+          started=""
+          for _ in $(seq 1 48); do
+            status="$(gh api repos/Zennay/Ftmo/actions/runs/$STATE_SYNC_RUN --jq .status)"
+            echo "STATE_SYNC_STATUS=$status"
+            if [[ "$status" == "in_progress" || "$status" == "completed" ]]; then
+              started=1
+              break
+            fi
+            sleep 5
+          done
+          test -n "$started"
+          echo "FTMO_POST507_STATE_SYNC_SCHEDULING_GREEN=1"
