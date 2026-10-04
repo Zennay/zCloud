@@ -99,11 +99,11 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
             self.assertEqual("vps", project["dispatch_mode"], project_id)
             self.assertEqual(120, project["min_ai_interval_seconds"], project_id)
             self.assertEqual(120, project["continue_delay_seconds"], project_id)
-            self.assertEqual(
-                contract["queue_mode"] != "human-gated",
-                project["auto_start"],
-                project_id,
+            expected_auto_start = (
+                contract["queue_mode"] != "human-gated"
+                and project["mode"] not in {"external_gate", "manual"}
             )
+            self.assertEqual(expected_auto_start, project["auto_start"], project_id)
 
     def test_worker_prompt_uses_vps_sqlite_queue_and_evidence_done_gate(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
