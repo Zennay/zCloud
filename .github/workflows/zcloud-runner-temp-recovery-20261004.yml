@@ -36,14 +36,14 @@ jobs:
           runner_root="/home/ubuntu/actions-runner-zcloud"
           temp_root="$runner_root/_work/_temp"
 
-          proc_cgroup() {
-            local pid="$1"
-            cat "/proc/$pid/cgroup" 2>/dev/null || true
-          }
-
           proc_cmdline() {
             local pid="$1"
             tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+          }
+
+          proc_cgroup() {
+            local pid="$1"
+            cat "/proc/$pid/cgroup" 2>/dev/null || true
           }
 
           runner_worker_pids() {
@@ -62,14 +62,23 @@ jobs:
             done
           }
 
-          service_cgroup="$(systemctl show "$service" -p ControlGroup --value)"
-          [[ -n "$service_cgroup" && "$service_cgroup" != "/" ]]
-          echo "ZCLOUD_RUNNER_RECOVERY_SERVICE cgroup=$service_cgroup mainpid=$(systemctl show "$service" -p MainPID --value)"
+          supervisor_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(proc_cmdline "$pid")"
+              case "$cmd" in
+                *"$runner_root/runsvc.sh"*|*"$runner_root/bin/RunnerService"*|*"$runner_root/run.sh"*)
+                  echo "$pid"
+                  ;;
+              esac
+            done
+          }
 
-          # The original failure is caused by two listeners sharing one _work/_temp.
-          # Never kill a listener while either lineage still owns a Runner.Worker.
+          # Never interrupt an executing zCloud Actions job. The transient recovery
+          # unit is independent of the runner service and starts only after the
+          # scheduling job has exited.
           workers=""
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 120); do
             workers="$(runner_worker_pids | xargs echo -n || true)"
             [[ -z "$workers" ]] && break
             echo "ZCLOUD_RUNNER_RECOVERY_WAIT workers=$workers"
@@ -80,45 +89,68 @@ jobs:
             exit 75
           fi
 
-          mapfile -t listeners < <(listener_pids)
-          echo "ZCLOUD_RUNNER_RECOVERY_PRE listeners=${listeners[*]:-none}"
-          canonical=()
-          orphan=()
-          for pid in "${listeners[@]}"; do
-            if proc_cgroup "$pid" | grep -Fq "$service_cgroup"; then
-              canonical+=("$pid")
-            else
-              orphan+=("$pid")
-            fi
+          echo "ZCLOUD_RUNNER_RECOVERY_PRE service_state=$(systemctl is-active "$service" || true) listeners=$(listener_pids | xargs echo -n || true) supervisors=$(supervisor_pids | xargs echo -n || true)"
+
+          # Stop the canonical service first. With no Runner.Worker alive this is
+          # safe and removes ambiguity about which listener lineage is canonical.
+          systemctl stop "$service"
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "$service" || true)"
+            [[ "$state" != "active" && "$state" != "activating" && "$state" != "deactivating" ]] && break
+            sleep 1
           done
 
-          [[ "${#canonical[@]}" -eq 1 ]] || {
-            echo "ZCLOUD_RUNNER_RECOVERY_ABORT canonical_listener_count=${#canonical[@]}" >&2
-            exit 76
-          }
-
-          for pid in "${orphan[@]}"; do
-            ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
-            parent_cmd=""
-            [[ "$ppid" =~ ^[1-9][0-9]*$ ]] && parent_cmd="$(proc_cmdline "$ppid")"
-            echo "ZCLOUD_RUNNER_ORPHAN pid=$pid ppid=${ppid:-unknown} cmd=$(proc_cmdline "$pid") parent=$parent_cmd"
-
-            # Stop an orphan supervisor only when its own command line is clearly
-            # rooted in this exact runner installation. Never kill a generic shell.
-            if [[ "$parent_cmd" == *"$runner_root"* ]] && {
-              [[ "$parent_cmd" == *"runsvc.sh"* ]] ||
-              [[ "$parent_cmd" == *"RunnerService"* ]] ||
-              [[ "$parent_cmd" == *"run.sh"* ]];
-            }; then
-              kill -TERM "$ppid" 2>/dev/null || true
-            fi
+          # Remove only processes whose own command line is rooted in this exact
+          # runner installation. Other project runners and zCloud runtime/browser
+          # processes are out of scope and untouched.
+          mapfile -t leftovers < <({ listener_pids; supervisor_pids; } | sort -u)
+          for pid in "${leftovers[@]}"; do
+            cmd="$(proc_cmdline "$pid")"
+            [[ "$cmd" == *"$runner_root/"* ]] || {
+              echo "ZCLOUD_RUNNER_RECOVERY_ABORT unsafe_pid=$pid cmd=$cmd" >&2
+              exit 76
+            }
+            echo "ZCLOUD_RUNNER_RECOVERY_TERM pid=$pid cmd=$cmd"
             kill -TERM "$pid" 2>/dev/null || true
           done
 
           for _ in $(seq 1 20); do
+            mapfile -t leftovers < <({ listener_pids; supervisor_pids; } | sort -u)
+            [[ "${#leftovers[@]}" -eq 0 ]] && break
+            sleep 1
+          done
+          mapfile -t leftovers < <({ listener_pids; supervisor_pids; } | sort -u)
+          if [[ "${#leftovers[@]}" -ne 0 ]]; then
+            for pid in "${leftovers[@]}"; do
+              cmd="$(proc_cmdline "$pid")"
+              [[ "$cmd" == *"$runner_root/"* ]] || exit 77
+              echo "ZCLOUD_RUNNER_RECOVERY_KILL pid=$pid cmd=$cmd"
+              kill -KILL "$pid" 2>/dev/null || true
+            done
+            sleep 2
+          fi
+
+          mapfile -t leftovers < <({ listener_pids; supervisor_pids; } | sort -u)
+          [[ "${#leftovers[@]}" -eq 0 ]] || {
+            echo "ZCLOUD_RUNNER_RECOVERY_ABORT residual=${leftovers[*]}" >&2
+            exit 78
+          }
+          [[ -z "$(runner_worker_pids | xargs echo -n || true)" ]] || exit 79
+
+          # _work/_temp is runner-owned ephemeral state. Recreate it only while
+          # every zCloud listener/worker is stopped, eliminating stale command
+          # files without touching the repository workspace or live application.
+          rm -rf -- "$temp_root"
+          install -d -o ubuntu -g ubuntu -m 0755 "$temp_root"
+
+          systemctl start "$service"
+          service_cgroup=""
+          listeners=()
+          for _ in $(seq 1 30); do
+            systemctl is-active --quiet "$service" || { sleep 1; continue; }
+            service_cgroup="$(systemctl show "$service" -p ControlGroup --value)"
             mapfile -t listeners < <(listener_pids)
-            [[ "${#listeners[@]}" -eq 1 ]] || { sleep 1; continue; }
-            if proc_cgroup "${listeners[0]}" | grep -Fq "$service_cgroup"; then
+            if [[ "${#listeners[@]}" -eq 1 ]] && [[ -n "$service_cgroup" ]] && proc_cgroup "${listeners[0]}" | grep -Fq "$service_cgroup"; then
               break
             fi
             sleep 1
@@ -127,17 +159,16 @@ jobs:
           mapfile -t listeners < <(listener_pids)
           [[ "${#listeners[@]}" -eq 1 ]] || {
             echo "ZCLOUD_RUNNER_RECOVERY_ABORT final_listener_count=${#listeners[@]} listeners=${listeners[*]:-none}" >&2
-            exit 77
+            exit 80
           }
+          service_cgroup="$(systemctl show "$service" -p ControlGroup --value)"
+          [[ -n "$service_cgroup" && "$service_cgroup" != "/" ]]
           proc_cgroup "${listeners[0]}" | grep -Fq "$service_cgroup"
           systemctl is-active --quiet "$service"
 
-          # Prove no second listener is deleting the runner's shared temp state.
-          install -d -o ubuntu -g ubuntu -m 0755 "$temp_root"
           sentinel="$temp_root/.zcloud-listener-recovery-$(date -u +%s)"
-          sudo -u ubuntu touch "$sentinel"
           event_probe="$temp_root/.zcloud-event-probe-$(date -u +%s)"
-          sudo -u ubuntu touch "$event_probe"
+          sudo -u ubuntu touch "$sentinel" "$event_probe"
           sleep 12
           test -f "$sentinel"
           test -f "$event_probe"
@@ -147,7 +178,11 @@ jobs:
           RECOVERY
 
           chmod 0755 "$script"
-          sudo -n systemd-run             --unit="$unit"             --on-active=8s             --property=Type=oneshot             /bin/bash "$script"
+          sudo -n systemd-run \
+            --unit="$unit" \
+            --on-active=8s \
+            --property=Type=oneshot \
+            /bin/bash "$script"
 
           systemctl status "$unit.timer" --no-pager || true
           echo "ZCLOUD_RUNNER_RECOVERY_SCHEDULED unit=$unit"
