@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.7
+// @version      1.3.8
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.7";
+  const SCRIPT_VERSION = "1.3.8";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -400,8 +400,11 @@
     const forced = !!target.force_initial_dispatch;
     const key = String(target.queue_item?.queue_id || "");
     if (forced && key && initialDispatchKey !== key && assignmentReady(target)) {
-      initialDispatchKey = key;
-      await sendPrompt("violentmonkey-initial-dispatch");
+      // Do not consume the forced-dispatch key until a prompt was actually sent.
+      // Fresh ChatGPT tabs can expose the worker binding before their composer is
+      // ready; a failed first attempt must remain retryable on the next refresh.
+      const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");
+      if (initialDispatchSent) initialDispatchKey = key;
     }
   }
 
