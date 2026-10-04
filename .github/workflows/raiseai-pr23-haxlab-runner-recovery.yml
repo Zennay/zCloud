@@ -22,8 +22,8 @@ jobs:
     env:
       HAXLAB_SERVICE: actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service
       RAISEAI_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
-      HAXLAB_RUN: "37167797726"
-      RAISEAI_RUN: "37167773363"
+      HAXLAB_RUN: "37168176409"
+      RAISEAI_RUN: "37168153969"
     steps:
       - name: Recover idle RaiseAI proof listeners
         shell: bash
