@@ -382,6 +382,7 @@ jobs:
                   queued.append({
                       "slot": global_slot,
                       "worker": key,
+                      "queue_id": str(row.get("queue_id") or ""),
                       "command_id": command_id,
                       "deduplicated": deduplicated,
                   })
@@ -406,18 +407,60 @@ jobs:
                   break
               time.sleep(5)
 
+          current_status, current_targets = api_call("GET", "/api/runner-targets")
+          if current_status >= 300:
+              raise SystemExit(
+                  f"Could not verify final worker allocation: HTTP {current_status} {current_targets}"
+              )
+          current_rows = (current_targets.get("global_allocation") or {}).get("workers") or []
+          current_by_key = {
+              str(row.get("worker_key") or f"{row.get('project_id')}::w{int(row.get('worker_slot') or 1)}"): row
+              for row in current_rows
+          }
+          queued_by_key = {item["worker"]: item for item in queued}
+          allocation_changed = set(current_by_key) != set(queued_by_key)
+
+          superseded_workers = []
+          for worker, value in final.items():
+              if value["status"] in ("completed",):
+                  continue
+              current = current_by_key.get(worker)
+              original = queued_by_key.get(worker) or {}
+              if (
+                  not current
+                  or str(current.get("queue_id") or "") != str(original.get("queue_id") or "")
+              ):
+                  superseded_workers.append(worker)
+
           pending_workers = [
               worker for worker, value in final.items()
               if value["status"] not in ("completed", "failed")
+              and worker not in superseded_workers
           ]
           failed_workers = [
               worker for worker, value in final.items()
               if value["status"] == "failed"
+              and worker not in superseded_workers
           ]
+
+          replacement_push = None
+          if allocation_changed or superseded_workers:
+              push_status, replacement_push = api_call(
+                  "POST", "/api/dynamic-workers/force-push", {}
+              )
+              if push_status >= 300:
+                  raise SystemExit(
+                      f"Replacement allocation push failed: HTTP {push_status} {replacement_push}"
+                  )
+
           print(json.dumps({
               "ok": not pending_workers and not failed_workers,
               "queued": queued,
               "final": final,
+              "current_allocation": current_rows,
+              "allocation_changed": allocation_changed,
+              "superseded_workers": superseded_workers,
+              "replacement_push": replacement_push,
               "pending_workers": pending_workers,
               "failed_workers": failed_workers,
           }, ensure_ascii=False, sort_keys=True))
