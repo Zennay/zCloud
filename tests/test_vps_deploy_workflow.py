@@ -457,6 +457,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("timeout=40", receipt)
         self.assertIn("for attempt in range(1, 4)", receipt)
         self.assertIn("ZCLOUD_PRODUCTION_RECEIPT_STATUS_RETRY", receipt)
+        self.assertIn("import http.client", receipt)
+        self.assertIn("http.client.RemoteDisconnected", receipt)
         self.assertIn("time.sleep(5)", receipt)
         self.assertIn('project.get("state_source") != "evidence_receipt"', receipt)
         self.assertIn('state.get("commit_sha") != expected_sha', receipt)
