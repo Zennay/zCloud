@@ -80,6 +80,48 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("sqlite", allocation["queue_backend"])
         self.assertEqual(["cloud", "raiseai"], [worker["project_id"] for worker in allocation["workers"]])
 
+    def test_external_gate_keeps_queue_queued_and_releases_unstarted_claim(self):
+        blocked = server.portfolio_queue_enqueue(
+            "zssh",
+            "Implement gated zSSH release step",
+            "P0",
+            "Implement the next zSSH release step with deterministic tests.",
+        )
+        runnable = server.portfolio_queue_enqueue(
+            "raiseai",
+            "Implement runnable gateway step",
+            "P1",
+            "Implement the next Raise AI gateway step with deterministic tests.",
+        )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([runnable["queue_id"]], [item["queue_id"] for item in selected])
+        blocked_row = next(
+            item for item in server.portfolio_queue_items(True)
+            if item["queue_id"] == blocked["queue_id"]
+        )
+        self.assertEqual("queued", blocked_row["status"])
+        self.assertIsNone(blocked_row["worker_slot"])
+
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='claimed',worker_slot=2,claim_expires=NULL WHERE queue_id=?",
+                (blocked["queue_id"],),
+            )
+        self.assertTrue(server.portfolio_queue_has_project_assignment("zssh"))
+        self.assertFalse(server.runner_targets()["zssh"]["auto_continue"])
+
+        selected = server.portfolio_queue_allocate()
+
+        blocked_row = next(
+            item for item in server.portfolio_queue_items(True)
+            if item["queue_id"] == blocked["queue_id"]
+        )
+        self.assertEqual("queued", blocked_row["status"])
+        self.assertIsNone(blocked_row["worker_slot"])
+        self.assertNotIn(blocked["queue_id"], [item["queue_id"] for item in selected])
+
     def test_three_slots_keep_one_slot_for_another_runnable_project(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
@@ -96,14 +138,14 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "Implement provider provenance checks with deterministic tests.",
         )
         server.portfolio_queue_enqueue(
-            "zssh", "Implement runner deploy recovery", "P2",
+            "raiseai", "Implement runner deploy recovery", "P2",
             "Implement deploy recovery with deterministic tests.",
         )
 
         selected = server.portfolio_queue_allocate()
 
         self.assertEqual(3, len(selected))
-        self.assertEqual(["ftmo", "ftmo", "zssh"], [item["project_id"] for item in selected])
+        self.assertEqual(["ftmo", "ftmo", "raiseai"], [item["project_id"] for item in selected])
 
     def test_ftmo_hard_cap_keeps_third_slot_unallocated_without_alternative(self):
         server.MAX_CHATGPT_WORKERS = 3

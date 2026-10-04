@@ -2190,7 +2190,10 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
     lanes=[]
     for project_id in target_ids:
         project=PROJECT_INDEX.get(project_id) or {}
-        if not project or str(project.get('queue_mode') or '').lower()=='human-gated':
+        autonomy_mode=str((_autonomy_config(project_id) or {}).get('mode') or 'manual').lower()
+        if (not project
+                or str(project.get('queue_mode') or '').lower()=='human-gated'
+                or autonomy_mode in {'external_gate','manual'}):
             continue
         lanes.extend(generate_execution_lanes(
             project,
@@ -2610,27 +2613,36 @@ def portfolio_queue_allocate():
             soft_cap=_portfolio_project_soft_cap()
 
             if row and str(row['status']) == 'claimed':
-                higher=lane_candidates[0][0] if lane_candidates else None
                 row_project=str(row['project_id'] or '')
-                hard_cap=_portfolio_project_hard_cap(row_project)
-                alternate_project_available=any(
-                    str(pair[0]['project_id'] or '') != row_project
-                    and used_counts.get(str(pair[0]['project_id'] or ''),0) < soft_cap
-                    for pair in lane_candidates
-                )
-                should_enforce_hard_cap=used_counts.get(row_project,0) >= hard_cap
-                should_diversify=used_counts.get(row_project,0) >= soft_cap and alternate_project_available
-                should_preempt_priority=(
-                    higher and
-                    _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority'])
-                )
-                if should_enforce_hard_cap or should_diversify or should_preempt_priority:
+                row_mode=str((_autonomy_config(row_project) or {}).get('mode') or 'manual').lower()
+                if row_mode in {'external_gate','manual'}:
                     c.execute("""UPDATE portfolio_queue
                                  SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                                  WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
                     preempted.add(str(row['queue_id']))
                     row=None
                     lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                else:
+                    higher=lane_candidates[0][0] if lane_candidates else None
+                    hard_cap=_portfolio_project_hard_cap(row_project)
+                    alternate_project_available=any(
+                        str(pair[0]['project_id'] or '') != row_project
+                        and used_counts.get(str(pair[0]['project_id'] or ''),0) < soft_cap
+                        for pair in lane_candidates
+                    )
+                    should_enforce_hard_cap=used_counts.get(row_project,0) >= hard_cap
+                    should_diversify=used_counts.get(row_project,0) >= soft_cap and alternate_project_available
+                    should_preempt_priority=(
+                        higher and
+                        _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority'])
+                    )
+                    if should_enforce_hard_cap or should_diversify or should_preempt_priority:
+                        c.execute("""UPDATE portfolio_queue
+                                     SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                                     WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
+                        preempted.add(str(row['queue_id']))
+                        row=None
+                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
@@ -3026,10 +3038,11 @@ def runner_targets():
         improvement=improvement_loop_state(r['project_id']) if r['project_id']==IMPROVEMENT_PROJECT_ID else None
         autonomy=project_autonomy_state(r['project_id'])
         queue_active=portfolio_queue_has_project_assignment(r['project_id'])
+        gate_blocks_auto_continue=str(autonomy.get('mode') or '').lower() in {'external_gate','manual'}
         out[r['project_id']]={'project_id':r['project_id'],'name':r['name'],'conversation_id':r['conversation_id'],
                               'url':('https://chatgpt.com/c/'+r['conversation_id']) if r['conversation_id'] else 'https://chatgpt.com/',
                               'prompt':r['prompt'],'active':bool(r['active']),'worker_count':max(1,int(r['worker_count'] or 1)),
-                              'auto_continue':queue_active or bool(autonomy['allow_ai']),
+                              'auto_continue':(queue_active or bool(autonomy['allow_ai'])) and not gate_blocks_auto_continue,
                               'auto_continue_delay_seconds':autonomy['continue_delay_seconds'],
                               'vps_dispatch_only':autonomy.get('dispatch_mode')=='vps',
                               'ai_dispatch_interval_seconds':autonomy.get('min_ai_interval_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS),
