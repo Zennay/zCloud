@@ -7,6 +7,7 @@ on:
       - .github/workflows/zcloud-state-receipt-coverage-audit.yml
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+  # PWQ-10 temporary carrier: opening this PR triggers the unchanged live VPS receipt audit.
 
 permissions:
   contents: read
