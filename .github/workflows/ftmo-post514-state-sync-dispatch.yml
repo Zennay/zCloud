@@ -1,4 +1,4 @@
-name: Dispatch FTMO post-PR521 receipt state sync
+# Exact-current-main trigger for the post-PR521 receipt commit.\nname: Dispatch FTMO post-PR521 receipt state sync
 
 on:
   push:
