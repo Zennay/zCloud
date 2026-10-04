@@ -40,8 +40,16 @@ def load_contracts(path: Path | None = None) -> dict:
             raise ValueError(f"project {project_id!r} has invalid autonomy contract")
         if not isinstance(autonomy.get("auto_start"), bool):
             raise ValueError(f"project {project_id!r} autonomy.auto_start must be boolean")
-        if not isinstance(contract.get("ai_worker_cap"), int) or contract["ai_worker_cap"] < 1:
-            raise ValueError(f"project {project_id!r} ai_worker_cap must be >= 1")
+        cap = contract.get("ai_worker_cap")
+        if not isinstance(cap, int) or isinstance(cap, bool) or cap < 0:
+            raise ValueError(f"project {project_id!r} ai_worker_cap must be >= 0")
+        if cap == 0 and (
+            autonomy.get("mode") not in {"external_gate", "manual"}
+            or autonomy.get("auto_start") is not False
+        ):
+            raise ValueError(
+                f"project {project_id!r} ai_worker_cap=0 requires fail-closed external_gate/manual autonomy"
+            )
         if not isinstance(compute, dict) or compute.get("pool") not in pools:
             raise ValueError(f"project {project_id!r} has invalid compute pool")
         if contract.get("queue_mode") == "human-gated":
@@ -61,8 +69,8 @@ def project_contract(project_id: str, contracts: dict | None = None) -> dict:
 
 
 def ai_worker_cap(project_id: str, global_limit: int, contracts: dict | None = None) -> int:
-    cap = int(project_contract(project_id, contracts).get("ai_worker_cap") or 1)
-    return max(1, min(max(1, int(global_limit)), cap))
+    cap = int(project_contract(project_id, contracts).get("ai_worker_cap", 1))
+    return max(0, min(max(0, int(global_limit)), cap))
 
 
 def autonomy_policy(contracts: dict | None = None) -> dict:
