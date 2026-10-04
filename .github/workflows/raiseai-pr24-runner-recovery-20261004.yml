@@ -1,17 +1,17 @@
-name: Recover RaiseAI runner for PR24 exact-head
+name: Recover RaiseAI runner for active Watch gate
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/raiseai-pr24-runner-recovery-20261004.yml"
+      - ".github/workflows/raiseai-pr25-runner-recovery-20261004.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: raiseai-pr24-runner-recovery-20261004
+  group: raiseai-pr25-runner-recovery-20261004
   cancel-in-progress: false
 
 jobs:
@@ -20,11 +20,11 @@ jobs:
     timeout-minutes: 7
     env:
       RAISE_REPO: Zennay/RaiseAI
-      PR_NUMBER: '24'
-      PR_HEAD_SHA: 226815612a9dd795d7f2bea852934c4c0dad6832
-      WATCH_RUN_ID: '37171973211'
+      PR_NUMBER: '25'
+      PR_HEAD_SHA: abd2f2c5cb67135c4cfb6d6d516a060ac98b2522
+      WATCH_RUN_ID: '37236655065'
       RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
-      RECEIPT_PATH: runtime-evidence/raiseai-pr24-runner-recovery.json
+      RECEIPT_PATH: runtime-evidence/raiseai-pr25-runner-recovery.json
 
     steps:
       - name: Verify exact RaiseAI gate identity
@@ -37,7 +37,7 @@ jobs:
           test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .head.sha)" = "$PR_HEAD_SHA"
           test "$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .head_sha)" = "$PR_HEAD_SHA"
           test "$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .name)" = "Raise Watch app CI"
-          echo "RAISEAI_PR24_IDENTITY=verified"
+          echo "RAISEAI_PR25_IDENTITY=verified"
 
       - name: Diagnose and recover only the RaiseAI Actions listener
         id: recover
@@ -106,7 +106,7 @@ jobs:
           echo "post_state=$post_state" >> "$GITHUB_OUTPUT"
           echo "post_pid=$post_pid" >> "$GITHUB_OUTPUT"
 
-      - name: Prove PR24 exact-head run starts scheduling
+      - name: Prove PR25 exact-head run starts scheduling
         id: schedule
         shell: bash
         run: |
@@ -116,7 +116,7 @@ jobs:
           for _ in $(seq 1 48); do
             status="$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .status)"
             conclusion="$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq '.conclusion // ""')"
-            echo "RAISEAI_PR24_WATCH status=$status conclusion=$conclusion"
+            echo "RAISEAI_PR25_WATCH status=$status conclusion=$conclusion"
             if [[ "$status" == "in_progress" || "$status" == "completed" ]]; then
               break
             fi
@@ -139,7 +139,7 @@ jobs:
           WATCH_CONCLUSION: ${{ steps.schedule.outputs.run_conclusion }}
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/zcloud-raiseai-pr24-runner-recovery"
+          work="$RUNNER_TEMP/zcloud-raiseai-pr25-runner-recovery"
           rm -rf "$work"
           gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
           cd "$work"
@@ -176,7 +176,7 @@ jobs:
           git config user.email "zcloud-automation@users.noreply.github.com"
           git add "$RECEIPT_PATH"
           if ! git diff --cached --quiet; then
-            git commit -m "Record RaiseAI PR24 runner recovery"
+            git commit -m "Record RaiseAI PR25 runner recovery"
             for _ in 1 2 3; do
               if git push origin HEAD:main; then exit 0; fi
               git fetch origin main
