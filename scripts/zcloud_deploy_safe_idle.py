@@ -209,6 +209,7 @@ def enter_safe_idle(
         "db": str(db),
         "workers": [],
         "drain_command_ids": [],
+        "superseded_push_command_ids": [],
         "safe_idle": False,
     }
     by_key: dict[str, dict] = {}
@@ -229,6 +230,29 @@ def enter_safe_idle(
                     }
                     by_key[key] = record
                     snapshot["workers"].append(record)
+                    # A pending push predates the deploy drain and must not fire
+                    # after the worker is restored. Supersede it transactionally
+                    # before creating the drain command so final health cannot be
+                    # poisoned by stale pre-deploy intent.
+                    pending_pushes = conn.execute(
+                        "SELECT id FROM runner_commands "
+                        "WHERE project_id=? AND action='push' AND status='pending' "
+                        "ORDER BY id",
+                        (key,),
+                    ).fetchall()
+                    for push in pending_pushes:
+                        push_id = int(push["id"])
+                        cursor = conn.execute(
+                            "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                            "WHERE id=? AND status='pending'",
+                            (
+                                utc_now(),
+                                "deploy safe-idle superseded pre-deploy pending push",
+                                push_id,
+                            ),
+                        )
+                        if cursor.rowcount == 1:
+                            snapshot["superseded_push_command_ids"].append(push_id)
                     command = conn.execute(
                         "INSERT INTO runner_commands("
                         "project_id,action,status,created_at,updated_at,result"
