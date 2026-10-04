@@ -498,5 +498,50 @@
     ],
     "queue_mode": "execution",
     "lane_profile": "security-lab"
+  },
+  {
+    "id": "zguard",
+    "name": "zGuard / zBrowse",
+    "eyebrow": "DEFENSIVE BROWSER RUNTIME",
+    "goal": "Build a minimal, reliable TV-friendly zBrowse runtime protected by zGuard, with safe popup/content intervention and reproducible VPS validation.",
+    "icon": "shield",
+    "accent": "#9fb7ff",
+    "repo_url": "https://github.com/Zennay/zGuard",
+    "notion_url": "https://app.notion.com/p/3ef9e19ac9558156b449c37142ed8e34",
+    "phase": "M0 · Runtime hardening + portfolio onboarding",
+    "status": "active",
+    "priority": "high",
+    "next_step": "Continue the zGuard/zBrowse roadmap: validate the current gateway/browser stack, harden runtime and UX, add deterministic tests, and use the self-hosted VPS lane for deploy/runtime evidence.",
+    "milestone_revision": "zguard-zbrowse-v1-onboarding",
+    "progress_basis": "Engineering progress only: repository/runtime integration, deterministic validation and safe VPS evidence.",
+    "milestones": [
+      {
+        "title": "M0 · zCloud portfolio onboarding",
+        "done": false,
+        "progress": 70
+      },
+      {
+        "title": "M1 · Deterministic gateway/browser validation",
+        "done": false,
+        "progress": 45
+      },
+      {
+        "title": "M2 · Minimal TV browser UX",
+        "done": false,
+        "progress": 35
+      },
+      {
+        "title": "M3 · zGuard protection hardening",
+        "done": false,
+        "progress": 30
+      },
+      {
+        "title": "M4 · VPS deploy + recovery evidence",
+        "done": false,
+        "progress": 15
+      }
+    ],
+    "queue_mode": "execution",
+    "lane_profile": "product"
   }
 ]
