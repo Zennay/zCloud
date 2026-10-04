@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   proof:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 12
     env:
       TARGET_SHA: e558c379cbcaa7564265dea646a49ab6661ef511
@@ -30,6 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
           test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_MAIN_SHA"
           test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)" = "open"
           test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)" = "$TARGET_SHA"
