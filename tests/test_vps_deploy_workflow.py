@@ -18,7 +18,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn("\nconcurrency:\n  group: zcloud-production-deploy", text)
         self.assertIn("Resolve latest green main revision", text)
         self.assertIn("actions: read", text)
-        self.assertIn("ref: main", text)
+        self.assertNotIn("uses: actions/checkout@", text)
+        self.assertIn("Manual checkout current main candidate", text)
+        self.assertIn('git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune --depth=513 origin main', text)
+        self.assertIn('git -C "$GITHUB_WORKSPACE" checkout --force -B main refs/remotes/origin/main', text)
+        self.assertIn('git -C "$GITHUB_WORKSPACE" clean -ffdx', text)
+        self.assertIn("ZCLOUD_MANUAL_CHECKOUT_GREEN", text)
         self.assertIn("git ls-remote origin refs/heads/main", text)
         self.assertIn("zcloud-regression-smoke.yml/runs", text)
         self.assertIn("?branch=main&status=success&per_page=100", text)
@@ -31,7 +36,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("PREWRITE_MAIN_CONFIRMED", text)
         self.assertIn("steps.freshness.outputs.deploy == 'true'", text)
         self.assertIn("steps.prewrite.outputs.deploy == 'true'", text)
-        self.assertIn("fetch-depth: 513", text)
+        self.assertLess(text.index("Manual checkout current main candidate"), text.index("Enforce permanent zCloud VPS runner identity"))
         self.assertLess(
             text.index("- name: Promote backend runtime core"),
             text.index("- name: Promote Violentmonkey worker"),
