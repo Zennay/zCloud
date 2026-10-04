@@ -24,6 +24,12 @@ LEGACY_FIREFOX_DISABLE_DROPIN = Path(os.environ.get(
     "ZCLOUD_LEGACY_FIREFOX_DISABLE_DROPIN",
     str(Path.home() / ".config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"),
 ))
+STATUS_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_STATUS_REQUEST_TIMEOUT_SECONDS", "30")
+)
+STATUS_READINESS_SECONDS = float(
+    os.environ.get("ZCLOUD_STATUS_READINESS_SECONDS", "90")
+)
 
 
 def legacy_firefox_intentionally_disabled(path: Path = LEGACY_FIREFOX_DISABLE_DROPIN) -> bool:
@@ -97,8 +103,8 @@ def http_json(url: str, timeout: float = 8.0) -> dict:
 
 def http_json_ready(
     url: str,
-    timeout: float = 8.0,
-    readiness_seconds: float = 90.0,
+    timeout: float = STATUS_REQUEST_TIMEOUT_SECONDS,
+    readiness_seconds: float = STATUS_READINESS_SECONDS,
     retry_interval: float = 0.5,
     *,
     sleep_fn=time.sleep,
@@ -107,11 +113,12 @@ def http_json_ready(
     """Wait briefly for a just-restarted API endpoint to become ready.
 
     The deploy already proves that the HTTP server is listening before this
-    canary runs. /api/status additionally depends on the first sampler snapshot,
-    so a bounded 503/connection race is expected during startup. Keep this
-    window aligned with the transactional promoter's 90-second systemd startup
-    budget and 8-second status request timeout. Persistent failures still raise
-    and therefore keep the promotion fail-closed.
+    canary runs. /api/status additionally aggregates runner and Firefox runtime
+    state, including bounded systemd probes that can legitimately outlive the
+    generic 8-second transport timeout during restart/rebind. Give each deep
+    status request enough time to finish while keeping the same 90-second
+    overall readiness deadline. Persistent failures still raise and therefore
+    keep the promotion fail-closed.
     """
     deadline = monotonic_fn() + max(0.0, float(readiness_seconds))
     last_error = None
