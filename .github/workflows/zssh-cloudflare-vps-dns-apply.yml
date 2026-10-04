@@ -24,6 +24,7 @@ jobs:
     env:
       ZSSH_PUBLIC_BASE_URL: https://zssh.cheapgpt.shop
       ZSSH_PUBLIC_IPV4: 198.244.191.182
+      CLOUDFLARE_ZONE_NAME: cheapgpt.shop
     steps:
       - name: Check out zCloud control plane
         uses: actions/checkout@v4
@@ -83,7 +84,7 @@ jobs:
           test "$(gh api repos/Zennay/zSSH/issues/100 --jq '.state')" = "closed"
           echo "ZSSH_DNS_VPS_GOVERNANCE_GREEN sha=$ZSSH_SHA"
 
-      - name: Require pre-existing Cloudflare credentials from runner process environment
+      - name: Require pre-existing Cloudflare token from runner process environment
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -102,17 +103,19 @@ jobs:
               "credential_source": "runner-process-environment",
               "cloudflare_api_token_present": os.environ["TOKEN_PRESENT"] == "true",
               "cloudflare_zone_id_present": os.environ["ZONE_PRESENT"] == "true",
+              "cloudflare_zone_id_required": False,
+              "zone_discovery_name": "cheapgpt.shop",
               "credential_values_emitted": False,
               "mutation_attempted": False,
           }
           print(json.dumps(result, indent=2, sort_keys=True))
           PY
 
-          if [ "$token_present" != "true" ] || [ "$zone_present" != "true" ]; then
-            echo "ZSSH_VPS_CLOUDFLARE_CREDENTIALS_ABSENT token_present=$token_present zone_present=$zone_present" >&2
+          if [ "$token_present" != "true" ]; then
+            echo "ZSSH_VPS_CLOUDFLARE_TOKEN_ABSENT token_present=$token_present zone_id_present=$zone_present" >&2
             exit 1
           fi
-          echo "ZSSH_VPS_CLOUDFLARE_CREDENTIALS_PRESENT"
+          echo "ZSSH_VPS_CLOUDFLARE_CREDENTIALS_READY token_present=$token_present zone_id_present=$zone_present zone_discovery=$CLOUDFLARE_ZONE_NAME"
 
       - name: Validate exact Cloudflare DNS change without mutation
         working-directory: zssh-source
