@@ -137,7 +137,11 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
-        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'
+        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
+        'Doe niet alleen codewerk: wanneer product-, UX-, roadmap- of prioriteitskeuzes spelen, doe ook echte research naar '
+        'gebruikersbehoeften, pijnpunten, feedback, concurrenten en markt-signalen. Vertaal relevante bevindingen direct naar '
+        'concrete productkeuzes, UX-aanpassingen, backlog-items of prioriteiten en voer daarna waar veilig mogelijk meteen '
+        'een materiële vervolgactie uit.'
     )
 
 
@@ -2533,7 +2537,12 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         'A single tiny edit, one config tweak, one commit, read-only inspection, audit, status, checklist, documentation-only work, '
         'or evidence collection alone cannot complete this item. After every successful sub-step, immediately continue to the next '
         'safe adjacent roadmap step within the same assignment. Only return DONE when the work package is genuinely exhausted, '
-        'a meaningful milestone is proven green, or further progress requires a real human/external gate.'
+        'a meaningful milestone is proven green, or further progress requires a real human/external gate. '
+        'RESEARCH LOOP: do not default to coding-only execution. When the next product, UX, roadmap or prioritization decision '
+        'depends on assumptions about users or the market, research current user needs, pain points, feedback, competitors and '
+        'market signals first. Persist the useful findings and convert them into concrete product/UX/backlog/priority changes, '
+        'then continue with a material implementation, experiment, validation or runtime action. Research-only is not enough to '
+        'finish the item, but coding through an unresolved user/product assumption is also not acceptable.'
     )
     if next_step:
         criteria += ' Current project next-step hint: ' + next_step
