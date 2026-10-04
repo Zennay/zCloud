@@ -4,7 +4,7 @@ on:
     workflows: ["zCloud regression smoke"]
     types: [completed]
   push:
-    branches: [main]
+    branches: [main, "worker/zcloud-generic-stale-deploy-cleanup-20261004"]
     paths:
       - ".github/workflows/zcloud-stale-deploy-cancel-hosted.yml"
       - "tests/test_zcloud_stale_deploy_cancel_hosted_workflow.py"
@@ -33,7 +33,7 @@ jobs:
           test -n "$current_main"
           echo "ZCLOUD_STALE_DEPLOY_CURRENT_MAIN=$current_main"
 
-          gh api             "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=100"             --paginate             --jq '.workflow_runs[] | [.id, .status, .head_sha] | @tsv' |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=100" --paginate --jq '.workflow_runs[] | [.id, .status, .head_sha] | @tsv' |
           while IFS=$'\t' read -r run_id status head_sha; do
             [[ -n "$run_id" ]] || continue
 
