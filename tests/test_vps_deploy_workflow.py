@@ -204,27 +204,49 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(probe.index(guard), probe.index("Acquire cloud deploylane coordination claim"))
         self.assertIn("zcloud-vps-runner-guard.json", probe)
 
-    def test_deploy_coalesces_only_to_current_green_main(self):
+    def test_deploy_coalesces_to_current_main_with_runtime_equivalent_green_evidence(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         resolve = text[
             text.index("- name: Resolve latest green main revision"):
             text.index("- name: Reconfirm green main before VPS writes")
         ]
-        self.assertIn('str(run.get("head_sha") or "") == sha', resolve)
+        self.assertIn('str(run.get("head_sha") or "")', resolve)
         self.assertIn('str(run.get("conclusion") or "") == "success"', resolve)
         self.assertIn('str(run.get("event") or "") in {"push", "workflow_dispatch"}', resolve)
         self.assertIn('str(run.get("head_branch") or "") == "main"', resolve)
         self.assertIn('deadline=$((SECONDS + 180))', resolve)
         self.assertIn('poll_seconds=8', resolve)
-        self.assertIn('git fetch --no-tags --depth=64 origin main', resolve)
+        self.assertIn('git fetch --no-tags --depth=513 origin main', resolve)
         self.assertIn('git checkout --detach "$current"', resolve)
         self.assertIn("MAIN_MOVED_DURING_GREEN_WAIT", resolve)
         self.assertIn("COALESCED_CURRENT_MAIN", resolve)
         self.assertIn("GREEN_WAIT_CURRENT_MAIN", resolve)
         self.assertIn("CURRENT_MAIN_NOT_GREEN_TIMEOUT", resolve)
+        self.assertIn("GREEN_RUNTIME_EQUIVALENT", resolve)
+        self.assertIn('"runtime-equivalent"', resolve)
+        self.assertIn('"git", "merge-base", "--is-ancestor"', resolve)
+        self.assertIn('"git", "diff", "--quiet"', resolve)
+        for protected in (
+            ".github/workflows/zcloud-vps-deploy.yml",
+            "server.py",
+            "enhancements.py",
+            "project_runtime.py",
+            "lane_generator.py",
+            "project-contracts.json",
+            "autonomy-policy.json",
+            "vps-execution-policy.json",
+            "portfolio_queue.seed.json",
+            "firefox-extension",
+            "public",
+            "deploy",
+            "scripts",
+        ):
+            self.assertIn(f'"{protected}"', resolve)
         self.assertIn('echo "deploy_sha=$resolved"', resolve)
-        self.assertIn('echo "regression_run_id=$regression_id"', resolve)
+        self.assertIn('echo "regression_sha=$regression_sha"', resolve)
+        self.assertIn('echo "regression_mode=$regression_mode"', resolve)
         self.assertNotIn("MAIN_MOVED_BEFORE_GREEN_CHECK", resolve)
+
 
     def test_deploy_uses_transactional_promotions_without_chat_activation(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
