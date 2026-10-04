@@ -131,9 +131,9 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         )
         verifying = server.portfolio_queue_enqueue(
             "zssh",
-            "Verify active zSSH release evidence",
+            "Implement zSSH release verification guard",
             "P0",
-            "Verify the already-started zSSH release evidence safely.",
+            "Implement the active release verification guard with deterministic tests.",
         )
         with server.connect() as conn:
             conn.execute(
