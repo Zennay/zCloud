@@ -231,6 +231,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
 
         self.assertIn("DISPATCH_EVENTS", workflow)
         self.assertIn("def dispatched_worker(status, key, command_id):", workflow)
+        self.assertIn("latest_command_id < int(command_id)", workflow)
+        self.assertNotIn('int(command.get("id") or 0) != int(command_id)', workflow)
+        self.assertIn("def allocation_state(targets):", workflow)
+        self.assertIn("current_limit, _, current_keys = allocation_state(final)", workflow)
+        self.assertIn("start_keys(current_keys)", workflow)
+        self.assertIn("final_limit, _, final_keys = allocation_state(final)", workflow)
+        self.assertIn("missing = [key for key in final_keys if not live.get(key)]", workflow)
         self.assertIn('command_status != "completed"', workflow)
         self.assertIn('event == "send-blocked"', workflow)
         self.assertIn('"prompt-sent"', workflow)
