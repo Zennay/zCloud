@@ -1,0 +1,60 @@
+name: zCloud current-main proof observer
+
+on:
+  push:
+    branches: [ops/current-main-proof-observer-20261004]
+    paths:
+      - .github/workflows/zcloud-current-main-proof-observer.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-current-main-proof-observer.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_SHA: 60fd17ccb6203f51ba9514da7f1ae1d08571d380
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Locate exact-main regression and deploy runs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/actions/workflows/zcloud-regression-smoke.yml/runs?branch=main&per_page=20" > "$RUNNER_TEMP/regression.json"
+          gh api "repos/$REPO/actions/workflows/zcloud-vps-deploy.yml/runs?branch=main&per_page=20" > "$RUNNER_TEMP/deploy.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          target=os.environ["TARGET_SHA"]
+          def pick(path):
+              payload=json.loads(Path(path).read_text())
+              rows=[]
+              for run in payload.get("workflow_runs", []):
+                  if run.get("head_sha") == target:
+                      rows.append({
+                          "id":run.get("id"),
+                          "name":run.get("name"),
+                          "event":run.get("event"),
+                          "status":run.get("status"),
+                          "conclusion":run.get("conclusion"),
+                          "head_sha":run.get("head_sha"),
+                          "run_number":run.get("run_number"),
+                          "created_at":run.get("created_at"),
+                          "updated_at":run.get("updated_at"),
+                      })
+              return rows
+          result={
+              "target_sha":target,
+              "regression":pick(os.environ["RUNNER_TEMP"]+"/regression.json"),
+              "deploy":pick(os.environ["RUNNER_TEMP"]+"/deploy.json"),
+          }
+          print("ZCLOUD_CURRENT_MAIN_PROOF="+json.dumps(result,sort_keys=True))
+          PY
