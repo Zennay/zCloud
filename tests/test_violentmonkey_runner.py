@@ -133,6 +133,18 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertLess(primary, bridge_return)
         self.assertLess(bridge_return, legacy_injection)
 
+    def test_extension_fallback_canary_accepts_busy_idempotent_push(self):
+        workflow = (ROOT / ".github" / "workflows" / "zcloud-extension-fallback-canary.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('busy_noop=result=="Runner is al bezig; extra prompt was niet nodig"', workflow)
+        self.assertIn('"runner-config-updated","injection-success","heartbeat"', workflow)
+        self.assertIn('print("CANARY_PUSH_BUSY_GREEN=1")', workflow)
+        self.assertLess(
+            workflow.index('busy_noop=result=="Runner is al bezig; extra prompt was niet nodig"'),
+            workflow.index('raise SystemExit("CANARY_PUSH_TIMEOUT'),
+        )
+
     def test_drain_handoff_keeps_command_pending_when_violentmonkey_takes_over(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
         start = background.index("async function drainProject(projectId, commandId)")
