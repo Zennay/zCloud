@@ -91,6 +91,25 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(8, result["contracts"]["max_workers"])
 
+    def test_allows_zero_worker_cap_for_external_gate(self):
+        contracts = json.loads(self.project_contracts.read_text())
+        contracts["projects"]["cloud"]["ai_worker_cap"] = 0
+        contracts["projects"]["cloud"]["autonomy"] = {
+            "mode": "external_gate",
+            "auto_start": False,
+        }
+        self.project_contracts.write_text(json.dumps(contracts))
+        result = self.validate()
+        self.assertTrue(result["ok"], result)
+
+    def test_blocks_zero_worker_cap_for_active_autonomy(self):
+        contracts = json.loads(self.project_contracts.read_text())
+        contracts["projects"]["cloud"]["ai_worker_cap"] = 0
+        self.project_contracts.write_text(json.dumps(contracts))
+        result = self.validate()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("ai_worker_cap=0 requires external_gate/manual" in x for x in result["errors"]))
+
     def test_blocks_duplicate_project_id_and_bad_progress(self):
         data = json.loads(self.projects.read_text())
         data[0]["milestones"][0]["progress"] = 101
