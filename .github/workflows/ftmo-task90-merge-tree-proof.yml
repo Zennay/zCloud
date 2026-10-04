@@ -19,10 +19,10 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      TARGET_SHA: 220f33b5f1e3e27c663bce8a6c07dc85896ac45e
-      TESTED_HEAD: 2c04e28dbf2f1f46f894f7d29f1be0b76ca895f9
-      MERGE_COMMIT: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
-      EXPECTED_BASE: 9145322dd71837e50777b4a1289fec80e98932b4
+      TARGET_SHA: 318564c704ed16dd7aa54093b09b55a38356147d
+      TESTED_HEAD: 220f33b5f1e3e27c663bce8a6c07dc85896ac45e
+      MERGE_COMMIT: 318564c704ed16dd7aa54093b09b55a38356147d
+      EXPECTED_BASE: b579124835e5300eac99ad0fb56361069826fa79
       REPLAY_BRANCH: reliability/task-90-merge-tree-proof-b579124
       RECEIPT_PATH: runtime-evidence/ftmo-task90-merge-tree-proof.json
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: '0.00'
