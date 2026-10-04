@@ -60,6 +60,7 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(id -u)" -ne 0
+          sudo -n true
 
       - name: Bind activation to exact current canonical zSSH main
         id: zssh_target
@@ -102,15 +103,23 @@ jobs:
           set -Eeuo pipefail
           source_root="$GITHUB_WORKSPACE/zssh-source"
           reviewer_report="$RUNNER_TEMP/zssh-reviewer-target.json"
-          bash "$source_root/deploy/prepare-reviewer-target.sh" "$source_root" > "$reviewer_report"
+          review_root="/srv/zssh-review"
+          sudo -n install -d -o "$(id -un)" -g "$(id -gn)" -m 0700 "$review_root"
+          ZSSH_REVIEW_ROOT="$review_root" \
+          ZSSH_REVIEW_REQUIRE_RELEASE_COMPATIBLE=1 \
+            bash "$source_root/deploy/prepare-reviewer-target.sh" "$source_root" > "$reviewer_report"
 
           target_id="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.target_id)' "$reviewer_report")"
           trust_file="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.gateway_public_key_config_file)' "$reviewer_report")"
-          review_root="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.review_root)' "$reviewer_report")"
+          prepared_review_root="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.review_root)' "$reviewer_report")"
           fingerprint="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.public_key_sha256)' "$reviewer_report")"
+          release_compatible="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.release_compatible === true ? "true" : "false")' "$reviewer_report")"
+          release_guard_enforced="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.release_guard_enforced === true ? "true" : "false")' "$reviewer_report")"
 
           test "$trust_file" = "$HOME/.config/zssh/reviewer-agent-public.json"
-          test "$review_root" = "$HOME/zssh-review"
+          test "$prepared_review_root" = "$review_root"
+          test "$release_compatible" = "true"
+          test "$release_guard_enforced" = "true"
           [[ "$target_id" =~ ^zt_[A-Za-z0-9_-]{8,96}$ ]]
           [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]]
 
