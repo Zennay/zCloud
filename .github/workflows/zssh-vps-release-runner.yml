@@ -24,10 +24,7 @@ jobs:
   release:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-       github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name == 'push'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
@@ -113,3 +110,69 @@ jobs:
 
           echo "ZSSH_HOSTED_CLIENT_CANARIES_GREEN"
           echo "ZSSH_DEPLOY_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
+
+  pr_proof:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      ZSSH_PROOF_SHA: 578bc73969f9cb6ac49e3a92967d4369e6d34240
+    steps:
+      - name: Check out zCloud control plane for proof
+        uses: actions/checkout@v4
+        with:
+          path: zcloud-proof-control
+          persist-credentials: false
+
+      - name: Verify permanent VPS runner identity for proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 zcloud-proof-control/scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+
+      - name: Check out exact zSSH proof revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_PROOF_SHA }}
+          path: zssh-proof
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact zSSH proof source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-proof rev-parse HEAD)" = "$ZSSH_PROOF_SHA"
+          echo "runner=$RUNNER_NAME"
+          echo "hostname=$(hostname)"
+          echo "sha=$ZSSH_PROOF_SHA"
+          node --version
+          npm --version
+
+      - name: Install locked zSSH proof dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh-proof
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run zSSH proof tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh-proof
+          npm test
+          node --test \
+            test/release-provenance-verifier.test.mjs \
+            test/install-live-stage-provenance.test.mjs \
+            test/release-workflow-trigger.test.mjs
+          bash -n deploy/install-live.sh
+          bash -n deploy/install-public-gateway.sh
+          bash -n deploy/install-target-agent.sh
+          node --check scripts/verify-release-provenance.mjs
+          echo "ZSSH_PR291_RELEASE_ROOT_SYMLINK_VPS_PROOF_GREEN"
