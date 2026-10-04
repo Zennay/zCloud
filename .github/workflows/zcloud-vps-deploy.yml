@@ -460,7 +460,7 @@ jobs:
           set -euo pipefail
           root="/home/ubuntu/zennay-cloud"
           pointer="$HOME/.local/state/zcloud/recovery/last-known-good.json"
-          expected_live_sha="66f51bda39a722d79745c74e852e32a43afe8085928eab6d415c988d231d49be"
+          expected_live_sha="160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
           expected_lkg="20261002T105256Z-a57439eb"
           live_sha="$(sha256sum "$root/server.py" | awk '{print $1}')"
           current_lkg="$(python3 - "$pointer" <<'PY'
@@ -488,7 +488,7 @@ jobs:
           if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]; then
             reconcile_args+=(
               --reconcile-known-live-sha
-              "server.py=66f51bda39a722d79745c74e852e32a43afe8085928eab6d415c988d231d49be"
+              "server.py=160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
             )
           fi
           python3 scripts/zcloud_transactional_promote.py \
