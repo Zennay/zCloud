@@ -610,5 +610,31 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual("Implement automatic queue lane scheduling", worker["current_task"]["title"])
 
 
+    def test_runner_statuses_reuses_one_target_and_worker_graph_snapshot(self):
+        original_targets = server.runner_targets
+        original_worker_targets = server.runner_worker_targets
+        calls = {"targets": 0, "worker_targets": 0}
+
+        def counted_targets():
+            calls["targets"] += 1
+            return original_targets()
+
+        def counted_worker_targets(base=None):
+            calls["worker_targets"] += 1
+            return original_worker_targets(base)
+
+        server.runner_targets = counted_targets
+        server.runner_worker_targets = counted_worker_targets
+        try:
+            statuses = server.runner_statuses()
+        finally:
+            server.runner_targets = original_targets
+            server.runner_worker_targets = original_worker_targets
+
+        self.assertIn("cloud", statuses)
+        self.assertEqual(1, calls["targets"])
+        self.assertEqual(1, calls["worker_targets"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
