@@ -1,0 +1,107 @@
+name: FTMO TASK-90 merge tree-equivalence proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-task90-merge-tree-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-task90-merge-tree-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 3992ae6099a25810fbaa413d7130562acce738cf
+      TESTED_HEAD: 2c04e28dbf2f1f46f894f7d29f1be0b76ca895f9
+      MERGE_COMMIT: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
+      EXPECTED_BASE: 9145322dd71837e50777b4a1289fec80e98932b4
+      RECEIPT_PATH: runtime-evidence/ftmo-task90-merge-tree-proof.json
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: '0.00'
+      FTMO_ALLOW_PAID_AWS: ''
+    steps:
+      - name: Fetch exact FTMO TASK-90 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = '0.00'
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+          src="$RUNNER_TEMP/ftmo-task90-exact"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Prove real TASK-78 tested-head to guarded-merge equivalence
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-task90-exact"
+          python3 -m py_compile "$src/scripts/verify-tested-merge.py"
+          python3 "$src/scripts/verify-tested-merge.py"             --repo "$src"             --tested-head "$TESTED_HEAD"             --merge-commit "$MERGE_COMMIT"             --expected-base "$EXPECTED_BASE"             --current-main origin/main
+
+      - name: Persist sanitized proof receipt
+        if: always()
+        shell: bash
+        env:
+          PROOF_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/zcloud-task90-receipt"
+          rm -rf "$work"
+          gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git checkout main >/dev/null
+          git pull --rebase origin main
+          mkdir -p "$(dirname "$RECEIPT_PATH")"
+          python3 - <<'PY'
+          import json, os, socket
+          from pathlib import Path
+
+          payload = {
+              "schema_version": 1,
+              "project": "ftmo",
+              "task": "TASK-90",
+              "pull_request": 523,
+              "target_sha": os.environ["TARGET_SHA"],
+              "tested_head": os.environ["TESTED_HEAD"],
+              "merge_commit": os.environ["MERGE_COMMIT"],
+              "expected_base": os.environ["EXPECTED_BASE"],
+              "result": os.environ["PROOF_RESULT"],
+              "runner_host": socket.gethostname(),
+              "scope": "guarded squash merge tree-equivalence integration proof",
+              "research_stage": "provider_foundation",
+              "research_semantics_changed": False,
+              "live_or_broker_access_relaxed": False,
+              "paid_cloud_enabled": False,
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+          }
+          Path(os.environ["RECEIPT_PATH"]).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add "$RECEIPT_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Record FTMO TASK-90 merge tree proof"
+            for attempt in 1 2 3; do
+              if git push origin HEAD:main; then
+                exit 0
+              fi
+              git fetch origin main
+              git rebase origin/main
+            done
+            exit 1
+          fi
