@@ -378,13 +378,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "project-contracts.json",
             "lane_generator.py",
             "vps-execution-policy.json",
-            "scripts/zcloud_recovery.py",
         ):
             self.assertIn(f"--path {path}", core)
             self.assertNotIn(f"--path {path}", policy)
-        for path in ("autonomy-policy.json", "portfolio_queue.seed.json"):
+        for path in (
+            "scripts/zcloud_recovery.py",
+            "autonomy-policy.json",
+            "portfolio_queue.seed.json",
+        ):
             self.assertIn(f"--path {path}", policy)
             self.assertNotIn(f"--path {path}", core)
+        self.assertLess(core.count("--path "), 6)
+        self.assertLess(policy.count("--path "), 6)
         self.assertIn("--path vps-execution-policy.json", core)
         self.assertNotIn("--path vps-execution-policy.json", policy)
         self.assertNotIn("high_blast_radius_promotion", core + policy)
