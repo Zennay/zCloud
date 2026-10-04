@@ -1,0 +1,148 @@
+name: Diagnose live zCloud server provenance
+
+on:
+  push:
+    branches:
+      - diag/live-server-provenance-20261004
+    paths:
+      - .github/workflows/zcloud-live-server-provenance-20261004.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 512
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Fetch branch provenance without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune --depth=512 origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: Match live server bytes to repository and local recovery evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import ast
+          import hashlib
+          import json
+          import subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          live = Path("/home/ubuntu/zennay-cloud/server.py")
+          candidate = Path("server.py")
+          state_root = Path.home() / ".local/state/zcloud"
+
+          def sha_bytes(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def sha_file(path: Path) -> str:
+              return sha_bytes(path.read_bytes())
+
+          if not live.is_file():
+              raise SystemExit("live server.py missing")
+          if not candidate.is_file():
+              raise SystemExit("candidate server.py missing")
+
+          live_hash = sha_file(live)
+          candidate_hash = sha_file(candidate)
+          stat = live.stat()
+
+          commits = subprocess.run(
+              ["git", "rev-list", "--all", "--", "server.py"],
+              check=True,
+              text=True,
+              capture_output=True,
+          ).stdout.splitlines()
+
+          repo_matches = []
+          for commit in commits[:6000]:
+              blob = subprocess.run(
+                  ["git", "show", f"{commit}:server.py"],
+                  check=False,
+                  capture_output=True,
+              )
+              if blob.returncode != 0 or sha_bytes(blob.stdout) != live_hash:
+                  continue
+              refs = subprocess.run(
+                  ["git", "branch", "-r", "--contains", commit],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              ).stdout.splitlines()
+              repo_matches.append({
+                  "commit": commit,
+                  "refs": sorted(ref.strip() for ref in refs if ref.strip())[:30],
+              })
+              if len(repo_matches) >= 20:
+                  break
+
+          local_matches = []
+          if state_root.is_dir():
+              for path in state_root.rglob("server.py*"):
+                  try:
+                      if not path.is_file() or path.is_symlink():
+                          continue
+                      if sha_file(path) != live_hash:
+                          continue
+                      local_matches.append(str(path.relative_to(state_root)))
+                  except (OSError, ValueError):
+                      continue
+                  if len(local_matches) >= 50:
+                      break
+
+          def symbols(path: Path) -> dict[str, str]:
+              text = path.read_text(encoding="utf-8")
+              lines = text.splitlines()
+              tree = ast.parse(text)
+              result = {}
+              for node in tree.body:
+                  if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                      continue
+                  start = max(1, int(getattr(node, "lineno", 1)))
+                  end = max(start, int(getattr(node, "end_lineno", start)))
+                  body = "\n".join(lines[start - 1:end]).encode()
+                  result[f"{type(node).__name__}:{node.name}"] = sha_bytes(body)
+              return result
+
+          live_symbols = symbols(live)
+          candidate_symbols = symbols(candidate)
+          changed_symbols = sorted(
+              key for key in set(live_symbols) | set(candidate_symbols)
+              if live_symbols.get(key) != candidate_symbols.get(key)
+          )
+
+          payload = {
+              "live_sha256": live_hash,
+              "candidate_sha256": candidate_hash,
+              "candidate_equal": live_hash == candidate_hash,
+              "live_size": stat.st_size,
+              "live_mtime_utc": datetime.fromtimestamp(
+                  stat.st_mtime, tz=timezone.utc
+              ).isoformat(),
+              "repo_matches": repo_matches,
+              "local_state_matches": sorted(local_matches),
+              "changed_top_level_symbols_vs_candidate": changed_symbols[:120],
+              "repo_commits_scanned": min(len(commits), 6000),
+          }
+          print("ZCLOUD_LIVE_SERVER_PROVENANCE=" + json.dumps(
+              payload,
+              sort_keys=True,
+              separators=(",", ":"),
+          ))
+          PY
