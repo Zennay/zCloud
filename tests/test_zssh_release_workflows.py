@@ -413,12 +413,22 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
                     text,
                 )
                 self.assertTrue(remote_uses, f"{workflow} must use at least one remote action")
+                expected_refs = {
+                    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+                    "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+                }
                 for action, ref in remote_uses:
                     self.assertRegex(
                         ref,
                         r"^[0-9a-f]{40}$",
                         f"{workflow} must pin {action} to an immutable commit SHA",
                     )
+                    if action in expected_refs:
+                        self.assertEqual(
+                            ref,
+                            expected_refs[action],
+                            f"{workflow} must use the reviewed v7 commit for {action}",
+                        )
 
 
 if __name__ == "__main__":
