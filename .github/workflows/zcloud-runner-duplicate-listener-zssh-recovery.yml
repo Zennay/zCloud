@@ -15,14 +15,14 @@ concurrency:
 
 jobs:
   enqueue:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 3
     steps:
       - name: Enqueue bounded duplicate-listener recovery
         shell: bash
         run: |
           set -euo pipefail
-          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$RUNNER_NAME" = "vps-bb300bba-ftmo"
           test "$(hostname)" = "vps-bb300bba"
           python3 - <<'PY'
           import json, time, urllib.error, urllib.request
@@ -48,12 +48,15 @@ jobs:
                   "supervisor processes outside that cgroup once their workers are idle, and prevent "
                   "them respawning. Verify exactly one zCloud Runner.Listener remains, the canonical "
                   "service is active/listening, and no duplicate worker can share the runner temp. "
-                  "Then rerun exact-main regression run 37234164421 (same a270e1f7 SHA) to generate "
-                  "a fresh attempt-1 production deploy; verify the fresh deploy ID is greater than "
-                  "37234528493 and starts scheduling. Do not modify zCloud application/runtime data, "
-                  "browser workers, project queue priorities other than this recovery item, secrets, "
-                  "or production code. Return pre/post process trees, service/cgroup identity, the "
-                  "concrete recovery action, and the fresh regression/deploy IDs."
+                  "Canonical zCloud main is c193f700e67957ae5ee0038bbc4a0bb43128cc06; regression "
+                  "run 37235351942 is green but deploy 37235430020 still failed in checkout because "
+                  "the duplicate listener removed save_state/set_output files. After recovery, "
+                  "dispatch a fresh zCloud regression smoke on exact current main and require a fresh "
+                  "attempt-1 zCloud VPS deploy newer than 37235430020 to start scheduling. "
+                  "Do not modify zCloud application/runtime data, browser workers, project queue "
+                  "priorities other than this recovery item, secrets, or production code. Return "
+                  "pre/post process trees, service/cgroup identity, the concrete recovery action, "
+                  "and the fresh regression/deploy IDs."
               ),
               "source_url": "https://github.com/Zennay/zCloud/pull/401",
           }
