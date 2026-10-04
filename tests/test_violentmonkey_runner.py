@@ -122,7 +122,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("const vmOwnsCommand = VIOLENTMONKEY_PRIMARY_RUNNER", background)
         self.assertIn("violentmonkeyReadyProjects.has(key)", background)
         self.assertIn("positively announced readiness", background)
-        self.assertIn("!violentmonkeyReadyProjects.has(target.project_id)", background)
+        self.assertIn("shouldProbeViolentmonkey(target.project_id)", background)
 
         start = background.index("async function inject(tabId, target)")
         end = background.index("async function commandResult(", start)
@@ -132,6 +132,30 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         legacy_injection = inject_block.index("runProject.toString()", primary)
         self.assertLess(primary, bridge_return)
         self.assertLess(bridge_return, legacy_injection)
+
+    def test_fallback_refresh_is_stable_and_stale_commands_are_superseded(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+
+        config_start = background.index("function runnerConfigChanged")
+        config_end = background.index("async function setRecoveryTag", config_start)
+        config_block = background[config_start:config_end]
+        self.assertNotIn("claim_expires", config_block)
+        self.assertIn("VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000", background)
+        self.assertIn("function shouldProbeViolentmonkey(projectId)", background)
+        self.assertIn("shouldProbeViolentmonkey(target.project_id)", background)
+
+        sync_start = background.index("async function syncRunnerConfig")
+        sync_end = background.index("async function refreshTargets", sync_start)
+        sync_block = background[sync_start:sync_end]
+        self.assertIn("for (let attempt = 0; attempt < 4; attempt += 1)", sync_block)
+        self.assertIn("250 * (attempt + 1)", sync_block)
+        self.assertIn("legacy-fallback-config-refresh-failed", sync_block)
+
+        self.assertIn("async function supersedeMissingTarget", background)
+        self.assertIn("Superseded: worker no longer allocated", background)
+        poll_start = background.index("async function pollCommands")
+        poll_block = background[poll_start:]
+        self.assertIn("await supersedeMissingTarget(command.project_id, command.id", poll_block)
 
     def test_extension_fallback_canary_accepts_busy_idempotent_push(self):
         workflow = (ROOT / ".github" / "workflows" / "zcloud-extension-fallback-canary.yml").read_text(
