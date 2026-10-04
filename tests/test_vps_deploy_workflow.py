@@ -137,6 +137,23 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows/haxlab-priority-scoped-live.yml").exists()
         )
 
+    def test_deploy_holds_browser_safe_idle_across_all_promotions(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        enter = text.index("Enter browser safe-idle for guarded promotion")
+        first_promotion = text.index("Promote backend runtime core")
+        last_guarded_step = text.index("Install aligned self-heal probe")
+        restore = text.index("Restore browser workers after guarded promotion")
+        evidence = text.index("Capture green production deploy evidence")
+        self.assertLess(enter, first_promotion)
+        self.assertLess(first_promotion, last_guarded_step)
+        self.assertLess(last_guarded_step, restore)
+        self.assertLess(restore, evidence)
+        self.assertIn("scripts/zcloud_deploy_safe_idle.py enter", text)
+        self.assertIn("--timeout-seconds 240", text)
+        self.assertIn("steps.safe_idle.outcome == 'success'", text)
+        self.assertIn("scripts/zcloud_deploy_safe_idle.py restore", text)
+        self.assertIn("zcloud-deploy-safe-idle.json", text)
+
     def test_violentmonkey_only_mode_skips_inactive_firefox_extension_promotion(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         block = text[
