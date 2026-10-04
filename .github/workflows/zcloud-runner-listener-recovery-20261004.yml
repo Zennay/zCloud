@@ -1,0 +1,81 @@
+name: Recover zCloud Actions listener safely
+
+on:
+  push:
+    branches: [ops/cloud-runner-listener-recovery-20261004]
+    paths:
+      - .github/workflows/zcloud-runner-listener-recovery-20261004.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runner-listener-recovery-20261004
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover only an idle or unhealthy zCloud listener
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+
+          runner_process_state() {
+            local cgroup pid cmd
+            RUNNER_WORKER=0
+            RUNNER_LISTENER=0
+            cgroup="$(systemctl show "$service" -p ControlGroup --value 2>/dev/null || true)"
+            if [[ -n "$cgroup" && -r "/sys/fs/cgroup${cgroup}/cgroup.procs" ]]; then
+              while read -r pid; do
+                [[ "$pid" =~ ^[0-9]+$ ]] || continue
+                [[ -r "/proc/$pid/cmdline" ]] || continue
+                cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+                [[ "$cmd" == *"Runner.Worker"* ]] && RUNNER_WORKER=1
+                if [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]]; then
+                  RUNNER_LISTENER=1
+                fi
+              done < "/sys/fs/cgroup${cgroup}/cgroup.procs"
+            fi
+          }
+
+          pre_state="$(systemctl is-active "$service" 2>/dev/null || true)"
+          runner_process_state
+          echo "ZCLOUD_RUNNER_PRE state=$pre_state listener=$RUNNER_LISTENER worker=$RUNNER_WORKER"
+
+          action=none
+          if [[ "$RUNNER_WORKER" -eq 1 ]]; then
+            action=preserve-active-worker
+          elif [[ "$pre_state" != "active" ]]; then
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl start "$service"
+            action=start-inactive-listener
+          elif [[ "$RUNNER_LISTENER" -eq 1 ]]; then
+            action=preserve-healthy-listener
+          else
+            sudo -n systemctl restart "$service"
+            action=restart-unhealthy-listener
+          fi
+
+          post_state=""
+          for _ in $(seq 1 20); do
+            post_state="$(systemctl is-active "$service" 2>/dev/null || true)"
+            runner_process_state
+            if [[ "$post_state" = "active" && "$RUNNER_LISTENER" -eq 1 ]]; then
+              break
+            fi
+            sleep 2
+          done
+
+          test "$post_state" = "active"
+          test "$RUNNER_LISTENER" -eq 1
+          echo "ZCLOUD_RUNNER_RECOVERY_ACTION=$action"
+          echo "ZCLOUD_RUNNER_LISTENER_GREEN"
