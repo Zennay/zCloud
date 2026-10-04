@@ -45,7 +45,7 @@ class ProjectRuntimeTests(unittest.TestCase):
                 "ulab": {
                     "queue_mode": "human-gated",
                     "lane_profile": "human-gated",
-                    "ai_worker_cap": 1,
+                    "ai_worker_cap": 0,
                     "autonomy": {"mode": "external_gate", "auto_start": False},
                     "compute": {"class": "human-gated", "pool": "disabled", "cpu_soft_cores": 0, "memory_soft_mb": 0},
                 },
@@ -64,6 +64,14 @@ class ProjectRuntimeTests(unittest.TestCase):
     def test_ai_worker_cap_is_contract_driven(self):
         self.assertEqual(2, runtime.ai_worker_cap("ftmo", 3))
         self.assertEqual(1, runtime.ai_worker_cap("cloud", 3))
+        self.assertEqual(0, runtime.ai_worker_cap("ulab", 3))
+
+    def test_zero_ai_worker_cap_requires_fail_closed_autonomy(self):
+        data = json.loads(self.contracts.read_text())
+        data["projects"]["cloud"]["ai_worker_cap"] = 0
+        self.contracts.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "ai_worker_cap=0 requires fail-closed"):
+            runtime.load_contracts()
 
     def test_receipt_overrides_stale_phase_and_next_gate(self):
         receipt = runtime.record_receipt(
