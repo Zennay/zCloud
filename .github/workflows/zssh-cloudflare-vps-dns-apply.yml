@@ -38,8 +38,11 @@ jobs:
           set -Eeuo pipefail
           test "${{ github.event.pull_request.merged }}" = "true"
           test "${{ github.event.pull_request.base.ref }}" = "main"
-          test "$(cat .github/zssh-production-dns-vps-trigger)" = "PUBLISH_ZSSH_PRODUCTION_DNS_VIA_VPS"
-          echo "ZSSH_DNS_VPS_MERGED_PR_ACTIVATION_GREEN pr=${{ github.event.pull_request.number }}"
+          mapfile -t activation < .github/zssh-production-dns-vps-trigger
+          test "${#activation[@]}" -eq 2
+          test "${activation[0]}" = "PUBLISH_ZSSH_PRODUCTION_DNS_VIA_VPS"
+          [[ "${activation[1]}" =~ ^activation-id=[A-Za-z0-9._:-]{8,80}$ ]]
+          echo "ZSSH_DNS_VPS_MERGED_PR_ACTIVATION_GREEN pr=${{ github.event.pull_request.number }} activation=${activation[1]}"
 
       - name: Enforce permanent VPS runner identity
         shell: bash
