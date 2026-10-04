@@ -663,14 +663,26 @@ jobs:
           set -euo pipefail
           health="$RUNNER_TEMP/zcloud-production-health.json"
           evidence="$RUNNER_TEMP/zcloud-production-deploy-evidence.json"
-          set +e
-          python3 scripts/zcloud_healthcheck.py --json | tee "$health"
-          health_rc=${PIPESTATUS[0]}
-          set -e
-          if [[ "$health_rc" -ne 0 ]]; then
-            echo "PRODUCTION_HEALTH_BLOCKED rc=$health_rc" >&2
-            exit "$health_rc"
-          fi
+          deadline=$((SECONDS + 120))
+          attempt=0
+          health_rc=2
+          while true; do
+            attempt=$((attempt + 1))
+            set +e
+            python3 scripts/zcloud_healthcheck.py --json | tee "$health"
+            health_rc=${PIPESTATUS[0]}
+            set -e
+            if [[ "$health_rc" -eq 0 ]]; then
+              echo "PRODUCTION_HEALTH_SETTLED attempt=$attempt"
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "PRODUCTION_HEALTH_BLOCKED rc=$health_rc attempts=$attempt" >&2
+              exit "$health_rc"
+            fi
+            echo "PRODUCTION_HEALTH_RETRY rc=$health_rc attempt=$attempt"
+            sleep 5
+          done
           python3 - "$health" "$evidence" <<'PY'
           import json
           import os
