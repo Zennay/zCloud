@@ -23,7 +23,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      TARGET_ZCLOUD_SHA: 7412d866d567658e85422212fec8f1788d8ba167
+      TARGET_ZCLOUD_SHA: 31667af8eaf3234f1de06fc73c8427cfad62468f
     steps:
       - name: Check out proof control plane
         uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
 
-      - name: Check out exact zCloud PR328 head
+      - name: Check out exact canonical zCloud retirement merge
         uses: actions/checkout@v4
         with:
           repository: Zennay/zCloud
