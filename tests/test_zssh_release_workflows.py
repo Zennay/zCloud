@@ -66,7 +66,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
-        self.assertIn("ZSSH_RELEASE_SHA: fdde4082cfec9eb81c84c5ea9e84304dc915fca3", text)
+        self.assertIn("ZSSH_RELEASE_SHA: aa50412cc057fb65744809de34942bf9603e0319", text)
         self.assertIn("repository: Zennay/zSSH", text)
         self.assertIn("ref: ${{ env.ZSSH_RELEASE_SHA }}", text)
         self.assertIn('test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_RELEASE_SHA"', text)
