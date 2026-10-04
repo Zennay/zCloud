@@ -184,6 +184,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         for rel in (
             ".github/workflows/zcloud-live-prompt-surgical-patch.yml",
             ".github/workflows/repair-live-exact-worker-prompt.yml",
+            ".github/workflows/zcloud-live-prompt-contract-repair.yml",
         ):
             self.assertFalse(
                 (ROOT / rel).exists(),
