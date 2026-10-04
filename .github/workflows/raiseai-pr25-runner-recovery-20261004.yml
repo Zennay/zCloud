@@ -1,10 +1,6 @@
-name: Recover RaiseAI runner for current PR31 exact-head
+name: Legacy RaiseAI runner recovery (manual only)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/raiseai-pr31-runner-recovery-20261004.yml"
   workflow_dispatch:
 
 permissions:
