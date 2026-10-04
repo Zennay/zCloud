@@ -14,16 +14,74 @@ permissions:
 env:
   ZCLOUD_RUN_STATE_DIR: /home/ubuntu/.local/state/zcloud/actions/${{ github.run_id }}-${{ github.run_attempt }}
 
+# Serialize complete production workflows, not only the self-hosted job. This
+# keeps duplicate green-regression events off the scarce VPS runner while the
+# first production transaction is still active.
+concurrency:
+  group: zcloud-production-deploy
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  preflight:
     if: github.run_attempt == 1 && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
-    concurrency:
-      group: zcloud-production-deploy
-      # Never cancel an in-flight production transaction. Keeping concurrency
-      # at job scope means skipped deploy reruns cannot evict a fresh pending job.
-      # Exact-green revisions are serialized; stale revisions self-skip before
-      # any VPS write, leaving only current main eligible for promotion.
-      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.production_status.outputs.deploy }}
+    steps:
+      - name: Skip current main when production is already green
+        id: production_status
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/commits/main/status",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-vps-deploy-preflight",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=15) as response:
+              payload = json.load(response)
+
+          matching = [
+              status
+              for status in payload.get("statuses", [])
+              if str(status.get("context") or "") == "zcloud/vps-production"
+          ]
+          latest = max(
+              matching,
+              key=lambda status: (
+                  str(status.get("created_at") or ""),
+                  int(status.get("id") or 0),
+              ),
+              default=None,
+          )
+          already_green = bool(latest and str(latest.get("state") or "") == "success")
+          decision = "false" if already_green else "true"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"deploy={decision}\n")
+          print(
+              "PRODUCTION_PREFLIGHT "
+              f"sha={payload.get('sha')} "
+              f"latest_state={latest.get('state') if latest else 'missing'} "
+              f"deploy={decision}"
+          )
+          PY
+
+  deploy:
+    needs: preflight
+    if: needs.preflight.result == 'success' && needs.preflight.outputs.deploy == 'true'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
     steps:

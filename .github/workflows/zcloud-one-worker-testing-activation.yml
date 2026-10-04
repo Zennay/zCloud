@@ -124,7 +124,12 @@ jobs:
               if not worker:
                   return None
               command = worker.get("command") or {}
-              if int(command.get("id") or 0) != int(command_id):
+              # The scheduler can legitimately supersede our start command with a
+              # newer push/new-chat while the worker is coming alive. Treat the
+              # activation command as an evidence floor, not as an immutable latest
+              # command id; older evidence is still rejected.
+              latest_command_id = int(command.get("id") or 0)
+              if latest_command_id < int(command_id):
                   return None
               command_status = str(command.get("status") or "")
               event = str((worker.get("last_event") or {}).get("event") or "")
@@ -144,15 +149,21 @@ jobs:
                   return None
               return worker
 
-          before = call("GET", "/api/runner-targets")
-          limit = int(before.get("max_workers") or 0)
-          allocation = before.get("global_allocation") or {}
-          selected = allocation.get("workers") or []
+          def allocation_state(targets):
+              limit = int(targets.get("max_workers") or 0)
+              allocation = targets.get("global_allocation") or {}
+              selected = allocation.get("workers") or []
+              if limit < 0 or limit > 8:
+                  raise SystemExit(f"invalid dashboard dynamic worker limit: {limit}")
+              if len(selected) > limit:
+                  raise SystemExit(f"allocation exceeds dashboard limit: {len(selected)} > {limit}")
+              keys = [worker_key(item) for item in selected]
+              if any(not key for key in keys):
+                  raise SystemExit(f"queue allocation contains worker without identity: {selected}")
+              return limit, selected, keys
 
-          if limit < 0 or limit > 8:
-              raise SystemExit(f"invalid dashboard dynamic worker limit: {limit}")
-          if len(selected) > limit:
-              raise SystemExit(f"allocation exceeds dashboard limit: {len(selected)} > {limit}")
+          before = call("GET", "/api/runner-targets")
+          limit, selected, keys = allocation_state(before)
 
           if limit == 0:
               if selected:
@@ -174,39 +185,49 @@ jobs:
               }, ensure_ascii=False, sort_keys=True))
               raise SystemExit(0)
 
-          keys = [worker_key(item) for item in selected]
-          if any(not key for key in keys):
-              raise SystemExit(f"queue allocation contains worker without identity: {selected}")
-
           starts = {}
-          for key in keys:
-              result = call("POST", "/api/runner-control", {
-                  "project_id": key,
-                  "action": "start",
-              })
-              if not result.get("ok"):
-                  raise SystemExit(f"worker start was not accepted for {key}: {result}")
-              starts[key] = result
+          command_ids = {}
 
-          command_ids = {
-              key: int((starts[key] or {}).get("command_id") or 0)
-              for key in keys
-          }
-          if any(not command_id for command_id in command_ids.values()):
-              raise SystemExit(f"worker start did not return command ids: {starts}")
+          def start_keys(current_keys):
+              for key in current_keys:
+                  if key in command_ids:
+                      continue
+                  result = call("POST", "/api/runner-control", {
+                      "project_id": key,
+                      "action": "start",
+                  })
+                  if not result.get("ok"):
+                      raise SystemExit(f"worker start was not accepted for {key}: {result}")
+                  command_id = int(result.get("command_id") or 0)
+                  if not command_id:
+                      raise SystemExit(f"worker start did not return command id for {key}: {result}")
+                  starts[key] = result
+                  command_ids[key] = command_id
 
-          final = None
+          start_keys(keys)
+
+          final = before
           status = None
           live = {}
+          current_limit = limit
+          current_keys = keys
           for _ in range(12):
               time.sleep(5)
               final = call("GET", "/api/runner-targets")
+              current_limit, _, current_keys = allocation_state(final)
+              if current_limit == 0 or not current_keys:
+                  live = {}
+                  break
+              start_keys(current_keys)
               status = call("GET", "/api/runner-live")
-              live = {key: dispatched_worker(status, key, command_ids[key]) for key in keys}
+              live = {
+                  key: dispatched_worker(status, key, command_ids[key])
+                  for key in current_keys
+              }
               if all(live.values()):
                   break
 
-          missing = [key for key, value in live.items() if not value]
+          missing = [key for key in current_keys if not live.get(key)]
           if missing:
               for key in missing:
                   recovered = call("POST", "/api/runner-control", {
@@ -221,32 +242,39 @@ jobs:
               for _ in range(12):
                   time.sleep(5)
                   final = call("GET", "/api/runner-targets")
+                  current_limit, _, current_keys = allocation_state(final)
+                  if current_limit == 0 or not current_keys:
+                      live = {}
+                      break
+                  start_keys(current_keys)
                   status = call("GET", "/api/runner-live")
-                  live = {key: dispatched_worker(status, key, command_ids[key]) for key in keys}
+                  live = {
+                      key: dispatched_worker(status, key, command_ids[key])
+                      for key in current_keys
+                  }
                   if all(live.values()):
                       break
 
+          final_limit, _, final_keys = allocation_state(final)
           active = [
               key for key, value in (final.get("projects") or {}).items()
               if bool(value.get("active"))
           ]
-          if int(final.get("max_workers") or -1) != limit:
-              raise SystemExit(f"dashboard worker limit changed unexpectedly: {final.get('max_workers')!r} != {limit}")
-          if len(active) > limit:
+          if len(active) > final_limit:
               raise SystemExit(f"more active workers than dashboard limit: {active}")
-          missing = [key for key, value in live.items() if not value]
+          missing = [key for key in final_keys if not live.get(key)]
           if missing:
               print("FINAL_RUNNER_TARGETS=" + json.dumps(final, ensure_ascii=False, sort_keys=True), flush=True)
               print("FINAL_STATUS=" + json.dumps(status, ensure_ascii=False, sort_keys=True), flush=True)
-              raise SystemExit(f"no live Firefox heartbeat observed for: {missing}")
+              raise SystemExit(f"no live Firefox heartbeat observed for current allocation: {missing}")
 
           print(json.dumps({
               "ok": True,
               "mode": "dashboard",
-              "worker_limit": limit,
-              "selected_workers": keys,
+              "worker_limit": final_limit,
+              "selected_workers": final_keys,
               "active_workers": active,
-              "live_workers": live,
+              "live_workers": {key: live.get(key) for key in final_keys},
               "dispatch_cooldown_seconds": (final.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
               "start_commands": starts,
           }, ensure_ascii=False, sort_keys=True))
