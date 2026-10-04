@@ -1,4 +1,4 @@
-name: zSSH PR307 VPS proof
+name: zSSH canonical zone-scope VPS proof
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zssh-pr307-vps-proof
+  group: zssh-canonical-zone-scope-vps-proof
   cancel-in-progress: true
 
 jobs:
@@ -22,11 +22,11 @@ jobs:
       (github.event_name == 'pull_request' &&
        github.actor == 'Zennay' &&
        github.event.pull_request.head.repo.full_name == github.repository)
-    name: Prove zSSH PR307 on vps-bb300bba
+    name: Prove canonical zSSH zone-scope hardening on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      ZSSH_PR_SHA: 9a81c3833242545247dc50bb1bd8524ddaafba35
+      ZSSH_PR_SHA: 2a1bcf6dfb939bbf473307ca15fb5b0393fe3f86
     steps:
       - name: Check out zCloud control plane
         uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_PR_SHA"
           git -C zssh-source diff --exit-code
-          echo "ZSSH_PR307_SOURCE_GREEN sha=$ZSSH_PR_SHA runner=$RUNNER_NAME"
+          echo "ZSSH_CANONICAL_ZONE_SCOPE_SOURCE_GREEN sha=$ZSSH_PR_SHA runner=$RUNNER_NAME"
 
       - name: Run focused DNS hardening proof
         shell: bash
@@ -65,4 +65,4 @@ jobs:
           set -euo pipefail
           node --check scripts/publish-cloudflare-dns.mjs
           node --test test/cloudflare-dns-publish.test.mjs
-          echo "ZSSH_PR307_DNS_SCOPE_GREEN sha=$ZSSH_PR_SHA runner=$RUNNER_NAME"
+          echo "ZSSH_CANONICAL_ZONE_SCOPE_GREEN sha=$ZSSH_PR_SHA runner=$RUNNER_NAME"
