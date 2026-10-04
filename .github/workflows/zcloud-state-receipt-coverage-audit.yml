@@ -1,5 +1,5 @@
 name: zCloud live state-receipt coverage audit
-# Ephemeral PR carrier for a direct current VPS receipt-coverage proof; do not merge.
+# Ephemeral PR carrier deferred until exact-current-main production deploy completes; do not merge.
 
 on:
   pull_request:
@@ -18,11 +18,7 @@ concurrency:
 
 jobs:
   audit:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+    if: ${{ false }}
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
