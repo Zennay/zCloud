@@ -15,21 +15,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  dispatch:
+  preserve:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       FTMO_MAIN_SHA: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
       RECEIPT_PATH: runtime-evidence/ftmo-post521-preservation-gate.json
     steps:
-      - name: Dispatch exact-main preservation workflows and persist receipt
+      - name: Prove exact-main preservation workflows
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
           gh auth status >/dev/null 2>&1
-          current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
-          test "$current" = "$FTMO_MAIN_SHA"
+
+          require_exact_main() {
+            current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+            test "$current" = "$FTMO_MAIN_SHA"
+          }
 
           find_latest() {
             local workflow="$1"
@@ -37,6 +40,8 @@ jobs:
               -f head_sha="$FTMO_MAIN_SHA" -f per_page=30 \
               --jq '[.workflow_runs[] | select(.head_sha == env.FTMO_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty'
           }
+
+          require_exact_main
 
           sync_run="$(find_latest sync-autonomous-research-state.yml)"
           verify_run="$(find_latest deploy-autonomous-vps.yml)"
@@ -54,9 +59,23 @@ jobs:
             [[ -n "$sync_run" && -n "$verify_run" ]] && break
             sleep 4
           done
-
           test -n "$sync_run"
           test -n "$verify_run"
+
+          require_exact_main
+          gh run watch "$sync_run" --repo Zennay/Ftmo --exit-status
+          gh run watch "$verify_run" --repo Zennay/Ftmo --exit-status
+          require_exact_main
+
+          sync_json="$(gh run view "$sync_run" --repo Zennay/Ftmo --json status,conclusion,headSha,url)"
+          verify_json="$(gh run view "$verify_run" --repo Zennay/Ftmo --json status,conclusion,headSha,url)"
+          test "$(jq -r .status <<<"$sync_json")" = "completed"
+          test "$(jq -r .conclusion <<<"$sync_json")" = "success"
+          test "$(jq -r .headSha <<<"$sync_json")" = "$FTMO_MAIN_SHA"
+          test "$(jq -r .status <<<"$verify_json")" = "completed"
+          test "$(jq -r .conclusion <<<"$verify_json")" = "success"
+          test "$(jq -r .headSha <<<"$verify_json")" = "$FTMO_MAIN_SHA"
+
           printf 'FTMO_POST521_SYNC_RUN=%s\n' "$sync_run"
           printf 'FTMO_POST521_VERIFY_RUN=%s\n' "$verify_run"
 
@@ -67,16 +86,40 @@ jobs:
           git checkout main >/dev/null
           git pull --rebase origin main
           mkdir -p "$(dirname "$RECEIPT_PATH")"
-          SYNC_RUN_ID="$sync_run" VERIFY_RUN_ID="$verify_run" python3 - <<'PY'
-          import json, os
+          SYNC_RUN_ID="$sync_run" VERIFY_RUN_ID="$verify_run" \
+          SYNC_URL="$(jq -r .url <<<"$sync_json")" \
+          VERIFY_URL="$(jq -r .url <<<"$verify_json")" \
+          python3 - <<'PY'
+          import json
+          import os
           from pathlib import Path
+
           payload = {
-              "schema_version": 1,
+              "schema_version": 2,
               "project": "ftmo",
-              "scope": "post-pr521-preservation-dispatch",
+              "scope": "post-pr521-preservation-proof",
+              "result": "success",
               "ftmo_main_sha": os.environ["FTMO_MAIN_SHA"],
-              "state_sync_run_id": int(os.environ["SYNC_RUN_ID"]),
-              "vps_verify_run_id": int(os.environ["VERIFY_RUN_ID"]),
+              "state_sync": {
+                  "run_id": int(os.environ["SYNC_RUN_ID"]),
+                  "url": os.environ["SYNC_URL"],
+                  "conclusion": "success",
+                  "head_sha": os.environ["FTMO_MAIN_SHA"],
+              },
+              "vps_verify": {
+                  "run_id": int(os.environ["VERIFY_RUN_ID"]),
+                  "url": os.environ["VERIFY_URL"],
+                  "conclusion": "success",
+                  "head_sha": os.environ["FTMO_MAIN_SHA"],
+              },
+              "generation_number": 30,
+              "stage": "provider_foundation",
+              "expected_action": "provider_foundation_window_not_elapsed",
+              "walk_forward_access_allowed": False,
+              "final_holdout_access_allowed": False,
+              "live_trading_allowed": False,
+              "broker_order_submission_allowed": False,
+              "paid_cloud_budget_usd": "0.00",
               "dispatcher_run_id": int(os.environ["GITHUB_RUN_ID"]),
           }
           Path(os.environ["RECEIPT_PATH"]).write_text(
@@ -84,11 +127,12 @@ jobs:
               encoding="utf-8",
           )
           PY
+
           git config user.name "zcloud-automation"
           git config user.email "zcloud-automation@users.noreply.github.com"
           git add "$RECEIPT_PATH"
           if ! git diff --cached --quiet; then
-            git commit -m "Record FTMO post-PR521 preservation dispatch"
+            git commit -m "Record FTMO post-PR521 preservation proof"
             for attempt in 1 2 3; do
               if git push origin HEAD:main; then
                 exit 0
