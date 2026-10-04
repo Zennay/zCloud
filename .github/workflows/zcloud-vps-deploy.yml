@@ -614,6 +614,15 @@ jobs:
             --actor "github-actions-vps-deploy" \
             --json
 
+      - name: Restore browser workers after worker-runtime promotion
+        if: always() && steps.prewrite.outputs.deploy == 'true' && steps.safe_idle.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deploy_safe_idle.py restore \
+            --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
+            --json
+
       - name: Promote mobile UI
         if: steps.prewrite.outputs.deploy == 'true'
         run: |
@@ -644,15 +653,6 @@ jobs:
           set -euo pipefail
           sudo -n install -m 0755 "$GITHUB_WORKSPACE/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal
           echo "SELF_HEAL_PROBE_INSTALLED=max_time_8"
-
-      - name: Restore browser workers after guarded promotion
-        if: always() && steps.prewrite.outputs.deploy == 'true' && steps.safe_idle.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/zcloud_deploy_safe_idle.py restore \
-            --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
-            --json
 
       - name: Capture green production deploy evidence
         if: steps.prewrite.outputs.deploy == 'true'
