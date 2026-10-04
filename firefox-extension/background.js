@@ -1631,9 +1631,20 @@ async function drainProject(projectId, commandId) {
     result = await browser.tabs.sendMessage(tabId, {type: "runner-drain", projectId: projectId, reason: "dashboard-drain"});
   } catch (_) {
     try {
-      await inject(tabId, target);
+      const injected = await inject(tabId, target);
+      // inject() can discover that Violentmonkey is now the primary runner and
+      // deliberately stop the legacy content runner. In that takeover window,
+      // leave the database drain pending so the userscript can acknowledge it
+      // instead of racing the stopped legacy runner and marking it failed.
+      if (injected?.mode === "violentmonkey") return;
       await new Promise(resolve => setTimeout(resolve, 800));
       result = await browser.tabs.sendMessage(tabId, {type: "runner-drain", projectId: projectId, reason: "dashboard-drain"});
+    } catch (_) {}
+  }
+  if (!result?.ok && VIOLENTMONKEY_PRIMARY_RUNNER) {
+    try {
+      const rebound = await inject(tabId, target);
+      if (rebound?.mode === "violentmonkey") return;
     } catch (_) {}
   }
   if (result?.ok) {
