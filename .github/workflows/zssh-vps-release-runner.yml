@@ -31,7 +31,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      ZSSH_RELEASE_SHA: aa50412cc057fb65744809de34942bf9603e0319
+      ZSSH_RELEASE_SHA: a7da44dc5442b2dd50147d43bf632305ec75ba68
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
@@ -67,49 +67,12 @@ jobs:
           test -f zssh-source/submission/plugin.template.json
           echo "ZSSH_RELEASE_SOURCE_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
 
-      - name: Deploy and verify under exclusive local lock
+      - name: Run exact zSSH regression suite without deployment
         shell: bash
-        env:
-          ZSSH_EXPECTED_SHA: ${{ env.ZSSH_RELEASE_SHA }}
         run: |
           set -euo pipefail
-          lock_dir="$HOME/.local/state/zssh"
-          lock_file="$lock_dir/deploy.lock"
-          mkdir -p "$lock_dir"
-          exec 9>"$lock_file"
-          if ! flock -w 60 9; then
-            echo "ZSSH_DEPLOY_LOCK_BUSY file=$lock_file" >&2
-            exit 75
-          fi
-          echo "ZSSH_DEPLOY_LOCK_ACQUIRED file=$lock_file"
-
-          bash zssh-source/deploy/install-live.sh "$GITHUB_WORKSPACE/zssh-source"
-
-          current="$(readlink -f /home/ubuntu/.local/share/zssh/current)"
-          expected="/home/ubuntu/.local/share/zssh/releases/$ZSSH_RELEASE_SHA"
-          test "$current" = "$expected"
-          systemctl --user is-active --quiet zssh.service
-          curl --fail --silent --show-error http://127.0.0.1:8788/health
-          test -f "$current/oauth.mjs"
-          test -f "$current/pairing.mjs"
-          test -f "$current/submission/plugin.template.json"
-          echo "ZSSH_LIVE_PROVENANCE_GREEN sha=$ZSSH_RELEASE_SHA"
-
-          set -a
-          source /home/ubuntu/.config/zssh/gateway.env
-          set +a
-          test -n "$ZSSH_API_KEY"
-          test -n "$ZSSH_MCP_CAPABILITY_TOKEN"
-
-          ZSSH_MCP_URL="https://198.244.191.182/mcp" \
-          ZSSH_MCP_API_KEY="$ZSSH_API_KEY" \
-          ZSSH_MCP_CAPABILITY_TOKEN="" \
-          node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
-
-          ZSSH_MCP_URL="https://198.244.191.182/mcp" \
-          ZSSH_MCP_API_KEY="" \
-          ZSSH_MCP_CAPABILITY_TOKEN="$ZSSH_MCP_CAPABILITY_TOKEN" \
-          node /home/ubuntu/.local/share/zssh/current/mcp-claude-canary.mjs
-
-          echo "ZSSH_HOSTED_CLIENT_CANARIES_GREEN"
-          echo "ZSSH_DEPLOY_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
+          cd zssh-source
+          test "$(git rev-parse HEAD)" = "$ZSSH_RELEASE_SHA"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+          echo "ZSSH_VPS_TEST_GREEN sha=$ZSSH_RELEASE_SHA runner=$RUNNER_NAME"
