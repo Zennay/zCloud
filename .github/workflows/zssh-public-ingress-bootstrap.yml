@@ -1,0 +1,258 @@
+name: zSSH public ingress bootstrap (zCloud lane)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_zssh_sha:
+        description: Exact canonical Zennay/zSSH main SHA to deploy
+        required: true
+        type: string
+      activation_phrase:
+        description: Type INSTALL_ZSSH_PUBLIC_INGRESS
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-public-ingress-bootstrap-zcloud
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Install Caddy and promote zSSH public ingress
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+      ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_EXPECTED_IPV4: 198.244.191.182
+      ZSSH_PUBLIC_GATEWAY_PORT: "8789"
+    steps:
+      - name: Check out zCloud coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce explicit activation and canonical runner
+        env:
+          ACTIVATION_PHRASE: "${{ inputs.activation_phrase }}"
+          EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_NAME" = "main"
+          test "$ACTIVATION_PHRASE" = "INSTALL_ZSSH_PUBLIC_INGRESS"
+          [[ "$EXPECTED_ZSSH_SHA" =~ ^[0-9a-f]{40}$ ]]
+          python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-public-ingress-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+          sudo -n true
+
+      - name: Require production DNS to point directly at this VPS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import os
+          import socket
+
+          host = os.environ["ZSSH_PRODUCTION_HOST"]
+          expected = os.environ["ZSSH_EXPECTED_IPV4"]
+          found = {
+              row[4][0]
+              for row in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
+          }
+          if found != {expected}:
+              raise SystemExit(
+                  f"production DNS is not exact: {host} resolved to {sorted(found)!r}, expected only {expected}"
+              )
+          print(f"ZSSH_PUBLIC_INGRESS_DNS_GREEN host={host} ipv4={expected}")
+          PY
+
+      - name: Require healthy isolated zSSH public gateway first
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          systemctl --user is-active --quiet zssh-public.service
+          systemctl --user is-enabled --quiet zssh-public.service
+          curl --fail --silent --show-error             "http://127.0.0.1:$ZSSH_PUBLIC_GATEWAY_PORT/health"             > "$RUNNER_TEMP/zssh-public-gateway-health.json"
+          echo "ZSSH_PUBLIC_GATEWAY_LOCAL_GREEN port=$ZSSH_PUBLIC_GATEWAY_PORT"
+
+      - name: Bind ingress promotion to exact canonical zSSH main
+        id: zssh_target
+        env:
+          EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          live_main="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main" = "$EXPECTED_ZSSH_SHA"
+          echo "sha=$live_main" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_SHA=$live_main" >> "$GITHUB_ENV"
+          echo "ZSSH_PUBLIC_INGRESS_SHA_BOUND sha=$live_main"
+
+      - name: Check out exact canonical zSSH revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ steps.zssh_target.outputs.sha }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Verify release source and Caddy transaction tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"
+          npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
+          (
+            cd zssh-source
+            node --test test/public-caddy-renderer.test.mjs test/public-caddy-installer.test.mjs
+            bash -n deploy/install-public-caddy.sh
+          )
+          echo "ZSSH_PUBLIC_CADDY_TRANSACTION_TESTS_GREEN sha=$ZSSH_SHA"
+
+      - name: Require public web ports to be unclaimed before first Caddy install
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if command -v caddy >/dev/null 2>&1; then
+            echo "ZSSH_CADDY_ALREADY_PRESENT_SKIP_PORT_OWNERSHIP_CHECK"
+            exit 0
+          fi
+          listeners="$(sudo -n ss -H -ltnp 2>/dev/null | awk '$4 ~ /:80$|:443$/ {print}')"
+          if [[ -n "$listeners" ]]; then
+            echo "Ports 80/443 already have listeners; refusing first Caddy installation." >&2
+            exit 2
+          fi
+          echo "ZSSH_PUBLIC_WEB_PORTS_FREE_GREEN"
+
+      - name: Install official stable Caddy package when absent
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if command -v caddy >/dev/null 2>&1; then
+            echo "ZSSH_CADDY_PACKAGE_ALREADY_PRESENT version=$(caddy version)"
+            exit 0
+          fi
+
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes             debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+
+          key_src="$RUNNER_TEMP/caddy-stable.gpg.key"
+          keyring="$RUNNER_TEMP/caddy-stable-archive-keyring.gpg"
+          list_src="$RUNNER_TEMP/caddy-stable.list"
+
+          curl --fail --silent --show-error --location             "https://dl.cloudsmith.io/public/caddy/stable/gpg.key"             --output "$key_src"
+          gpg --batch --yes --dearmor --output "$keyring" "$key_src"
+
+          curl --fail --silent --show-error --location             "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt"             --output "$list_src"
+
+          test -s "$keyring"
+          test -s "$list_src"
+          sudo -n install -m 0644 "$keyring" /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+          sudo -n install -m 0644 "$list_src" /etc/apt/sources.list.d/caddy-stable.list
+
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes caddy
+
+          command -v caddy
+          caddy version
+          sudo -n systemctl is-active --quiet caddy
+          sudo -n systemctl is-enabled --quiet caddy
+          sudo -n test -f /etc/caddy/Caddyfile
+          echo "ZSSH_CADDY_PACKAGE_INSTALL_GREEN version=$(caddy version)"
+
+      - name: Promote canonical zSSH Caddy ingress transaction
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_root="$GITHUB_WORKSPACE/zssh-source"
+          export ZSSH_PUBLIC_BASE_URL="$ZSSH_PRODUCTION_ORIGIN"
+          export ZSSH_PUBLIC_GATEWAY_PORT
+          bash "$source_root/deploy/install-public-caddy.sh" "$source_root"             | tee "$RUNNER_TEMP/zssh-public-caddy-install.txt"
+          grep -F "ZSSH_PUBLIC_CADDY_INSTALL_GREEN host=$ZSSH_PRODUCTION_HOST port=$ZSSH_PUBLIC_GATEWAY_PORT"             "$RUNNER_TEMP/zssh-public-caddy-install.txt"
+          sudo -n systemctl is-active --quiet caddy
+          echo "ZSSH_PUBLIC_CADDY_PROMOTION_GREEN sha=$ZSSH_SHA"
+
+      - name: Prove local TLS ingress reaches exact zSSH health surface
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          health_url="https://$ZSSH_PRODUCTION_HOST/health"
+          success=0
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --show-error               --resolve "$ZSSH_PRODUCTION_HOST:443:127.0.0.1"               "$health_url"               > "$RUNNER_TEMP/zssh-public-tls-health.json"; then
+              success=1
+              break
+            fi
+            sleep 2
+          done
+          test "$success" = "1"
+          node - "$RUNNER_TEMP/zssh-public-tls-health.json" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (value?.ok !== true || value?.service !== "zssh") {
+            throw new Error("public TLS /health did not return healthy zSSH");
+          }
+          NODE
+          echo "ZSSH_PUBLIC_TLS_LOCAL_GREEN origin=$ZSSH_PRODUCTION_ORIGIN"
+
+      - name: Reconfirm canonical zSSH main and record runtime receipt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main_after" = "$ZSSH_SHA"
+
+          caddy_version="$(caddy version)"
+          root_sha="$(sudo -n sha256sum /etc/caddy/Caddyfile | awk '{print $1}')"
+          snippet_sha="$(sudo -n sha256sum /etc/caddy/zssh-public.caddy | awk '{print $1}')"
+
+          evidence_json="$(python3 - "$caddy_version" "$root_sha" "$snippet_sha" <<'PY'
+          import json
+          import os
+          import sys
+          print(json.dumps({
+              "proof": "public-ingress-bootstrap",
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "runner_name": os.environ["RUNNER_NAME"],
+              "hostname": "vps-bb300bba",
+              "zssh_commit_sha": os.environ["ZSSH_SHA"],
+              "production_origin": os.environ["ZSSH_PRODUCTION_ORIGIN"],
+              "production_ipv4": os.environ["ZSSH_EXPECTED_IPV4"],
+              "gateway_port": int(os.environ["ZSSH_PUBLIC_GATEWAY_PORT"]),
+              "gateway_service_active": True,
+              "caddy_service_active": True,
+              "caddy_version": sys.argv[1],
+              "caddy_root_sha256": sys.argv[2],
+              "caddy_snippet_sha256": sys.argv[3],
+              "local_tls_health_green": True,
+              "canonical_main_reconfirmed": True,
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          )"
+
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Installed Caddy and promoted transactional zSSH public TLS ingress"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.cheapgpt.shop/mcp, then continue OpenAI portal/reviewer gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
+
+          echo "$evidence_json" > "$RUNNER_TEMP/zssh-public-ingress-bootstrap.json"
+          echo "ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN sha=$ZSSH_SHA"
+
+      - name: Upload non-secret ingress evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-public-ingress-bootstrap-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-public-ingress-bootstrap.json
+            ${{ runner.temp }}/zssh-public-ingress-runner-guard.json
+            ${{ runner.temp }}/zssh-public-gateway-health.json
+            ${{ runner.temp }}/zssh-public-tls-health.json
+          if-no-files-found: error
+          retention-days: 30
