@@ -1,0 +1,67 @@
+name: zSSH retired lanes PR325 VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/tmp-zssh-retired-lanes-pr325-vps-proof.yml
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-retired-lanes-pr325-vps-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      TARGET_ZCLOUD_SHA: a39ee320da7d7fc63d168c8ae217d6cc41fabdaf
+    steps:
+      - name: Check out proof control plane
+        uses: actions/checkout@v4
+        with:
+          path: proof-control
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 proof-control/scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Check out exact zCloud PR325 head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zCloud
+          ref: ${{ env.TARGET_ZCLOUD_SHA }}
+          path: target
+          persist-credentials: false
+
+      - name: Verify exact source and retired lanes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C target rev-parse HEAD)" = "$TARGET_ZCLOUD_SHA"
+          test ! -e target/.github/workflows/zssh-vps-release-runner.yml
+          test ! -e target/.github/workflows/zssh-standalone-vps-release.yml
+          test ! -e target/.github/workflows/finalize-zssh-public-release-20261002.yml
+          test -f target/.github/workflows/zssh-public-gateway-activate.yml
+          test -f target/.github/workflows/zssh-public-ingress-bootstrap.yml
+
+      - name: Run zSSH release workflow regressions
+        shell: bash
+        working-directory: target
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_zssh_release_workflows
+          echo "ZSSH_RETIRED_LEGACY_LANES_VPS_GREEN sha=$TARGET_ZCLOUD_SHA runner=$RUNNER_NAME"
