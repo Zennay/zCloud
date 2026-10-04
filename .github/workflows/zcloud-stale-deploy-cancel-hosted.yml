@@ -4,7 +4,7 @@ on:
     workflows: ["zCloud regression smoke"]
     types: [completed]
   push:
-    branches: [main, "worker/zcloud-generic-stale-deploy-cleanup-20261004"]
+    branches: [main]
     paths:
       - ".github/workflows/zcloud-stale-deploy-cancel-hosted.yml"
       - "tests/test_zcloud_stale_deploy_cancel_hosted_workflow.py"
