@@ -11,6 +11,9 @@ permissions:
   contents: read
   statuses: write
 
+env:
+  ZCLOUD_RUN_STATE_DIR: /home/ubuntu/.local/state/zcloud/actions/${{ github.run_id }}-${{ github.run_attempt }}
+
 jobs:
   deploy:
     if: github.run_attempt == 1 && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
@@ -48,12 +51,19 @@ jobs:
           test "$checked_out" = "$remote_main"
           echo "ZCLOUD_MANUAL_CHECKOUT_GREEN sha=$checked_out"
 
+      - name: Prepare stable deploy state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$ZCLOUD_RUN_STATE_DIR"
+          echo "ZCLOUD_STABLE_STATE_READY path=$ZCLOUD_RUN_STATE_DIR"
+
       - name: Enforce permanent zCloud VPS runner identity
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/zcloud_vps_runner_guard.py --json \
-            | tee "$RUNNER_TEMP/zcloud-vps-runner-guard.json"
+            | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-vps-runner-guard.json"
 
       - name: Resolve latest green main revision
         id: freshness
@@ -311,7 +321,7 @@ jobs:
             label="${spec##*:}"
             live="$root/$rel"
             candidate="$GITHUB_WORKSPACE/$rel"
-            backup="$RUNNER_TEMP/$rel.prehealth.bak"
+            backup="$ZCLOUD_RUN_STATE_DIR/$rel.prehealth.bak"
 
             candidate_sha="$(sha256sum "$candidate" | awk '{print $1}')"
             if [[ -f "$live" ]]; then
@@ -404,7 +414,7 @@ jobs:
             label="${rest%%:*}"
             had_live="${rest##*:}"
             live="$root/$rel"
-            backup="$RUNNER_TEMP/$rel.prehealth.bak"
+            backup="$ZCLOUD_RUN_STATE_DIR/$rel.prehealth.bak"
             if [[ "$had_live" == "true" ]]; then
               install -m 0644 "$backup" "$live"
               echo "BACKEND_DEPENDENCY_${label^^}_ROLLBACK=restored"
@@ -528,7 +538,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/zcloud_deploy_safe_idle.py enter \
-            --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
+            --state "$ZCLOUD_RUN_STATE_DIR/zcloud-deploy-safe-idle.json" \
             --timeout-seconds 480 \
             --json
 
@@ -668,7 +678,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/zcloud_deploy_safe_idle.py restore \
-            --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
+            --state "$ZCLOUD_RUN_STATE_DIR/zcloud-deploy-safe-idle.json" \
             --json
 
       - name: Capture green production deploy evidence
@@ -678,8 +688,8 @@ jobs:
           DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
         run: |
           set -euo pipefail
-          health="$RUNNER_TEMP/zcloud-production-health.json"
-          evidence="$RUNNER_TEMP/zcloud-production-deploy-evidence.json"
+          health="$ZCLOUD_RUN_STATE_DIR/zcloud-production-health.json"
+          evidence="$ZCLOUD_RUN_STATE_DIR/zcloud-production-deploy-evidence.json"
           deadline=$((SECONDS + 120))
           attempt=0
           health_rc=2
@@ -749,9 +759,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           path: |
-            ${{ runner.temp }}/zcloud-production-health.json
-            ${{ runner.temp }}/zcloud-production-deploy-evidence.json
-            ${{ runner.temp }}/zcloud-deploy-safe-idle.json
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-production-health.json
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-production-deploy-evidence.json
+            ${{ env.ZCLOUD_RUN_STATE_DIR }}/zcloud-deploy-safe-idle.json
 
       - name: Resume external self-heal
         if: always() && steps.freshness.outputs.deploy == 'true' && steps.self_heal_guard.outputs.created == 'true'
@@ -769,7 +779,7 @@ jobs:
           REGRESSION_RUN_ID: ${{ steps.freshness.outputs.regression_run_id }}
         run: |
           set -euo pipefail
-          deploy_evidence="$RUNNER_TEMP/zcloud-production-deploy-evidence.json"
+          deploy_evidence="$ZCLOUD_RUN_STATE_DIR/zcloud-production-deploy-evidence.json"
           evidence_json="$(python3 - "$deploy_evidence" <<'PY'
           import json
           import os
@@ -875,3 +885,15 @@ jobs:
                   raise RuntimeError(f"unexpected GitHub status response: {response.status}")
           print(f"PRODUCTION_DEPLOY_STATUS={state} sha={sha}")
           PY
+
+      - name: Cleanup stable deploy state
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "$ZCLOUD_RUN_STATE_DIR" in
+            /home/ubuntu/.local/state/zcloud/actions/*) ;;
+            *) echo "Refusing unsafe cleanup path: $ZCLOUD_RUN_STATE_DIR" >&2; exit 2 ;;
+          esac
+          rm -rf -- "$ZCLOUD_RUN_STATE_DIR"
+          echo "ZCLOUD_STABLE_STATE_CLEANED"
