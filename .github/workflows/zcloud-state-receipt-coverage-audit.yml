@@ -1,5 +1,6 @@
 name: zCloud live state-receipt coverage audit
 
+# Audit trigger: exact-main receipt verification for 3a7bd137550ae2d53e2fa2a3c9cf6501b08172ad
 on:
   pull_request:
     branches: [main]
