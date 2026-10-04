@@ -1,0 +1,65 @@
+name: Verify recovered zCloud Actions listener
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-runner-listener-recovery-verify.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runner-listener-recovery-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Prove duplicate listener is gone
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+
+          recovery="zcloud-runner-listener-recovery-37235581721.service"
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+          temp_root="$runner_root/_work/_temp"
+
+          state="$(systemctl is-active "$recovery" || true)"
+          echo "ZCLOUD_RECOVERY_UNIT_STATE=$state"
+          if [[ "$state" == "active" || "$state" == "activating" ]]; then
+            echo "Recovery is still executing; retry this verifier after it becomes terminal." >&2
+            exit 75
+          fi
+
+          result="$(systemctl show "$recovery" -p Result --value || true)"
+          exit_status="$(systemctl show "$recovery" -p ExecMainStatus --value || true)"
+          echo "ZCLOUD_RECOVERY_UNIT_RESULT=$result exit_status=$exit_status"
+          journalctl -u "$recovery" --no-pager -n 120 || true
+          test "$result" = "success"
+          test "$exit_status" = "0"
+
+          cgroup="$(systemctl show "$service" -p ControlGroup --value)"
+          mapfile -t listeners < <(
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          )
+          echo "ZCLOUD_LISTENER_VERIFY listeners=${listeners[*]:-none} cgroup=$cgroup"
+          test "${#listeners[@]}" -eq 1
+          grep -Fq "$cgroup" "/proc/${listeners[0]}/cgroup"
+          systemctl is-active --quiet "$service"
+
+          sentinel="$temp_root/.zcloud-post-recovery-verify-$GITHUB_RUN_ID"
+          touch "$sentinel"
+          sleep 12
+          test -f "$sentinel"
+          rm -f "$sentinel"
+          echo "ZCLOUD_DUPLICATE_LISTENER_RECOVERY_GREEN listener=${listeners[0]} cgroup=$cgroup"
