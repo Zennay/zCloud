@@ -240,6 +240,9 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
     def test_vps_main_protection_apply_is_exact_admin_gated_and_secret_safe(self):
         text = (ROOT / ".github/workflows/zssh-main-protection-vps-apply.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("workflow_run:", text)
+        self.assertIn('"zSSH GitHub admin capability probe"', text)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn("PROTECT_ZSSH_MAIN", text)
