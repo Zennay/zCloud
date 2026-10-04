@@ -127,7 +127,7 @@ jobs:
                   raise SystemExit(f"unknown base project for {key}: {base_id!r}")
               expected = (
                   f"Werk verder aan {project_name}. "
-                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. Doe waar relevant eerst echte research naar gebruikers, feedback en markt/concurrenten en vertaal bevindingen naar product, UX en prioriteiten."
               )
               if prompt != expected:
                   raise SystemExit(f"worker prompt is not exact for {key}: {prompt!r} != {expected!r}")
