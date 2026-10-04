@@ -424,5 +424,26 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("cat ~/.config", text)
 
 
+    def test_current_m5_vps_lanes_pin_checkout_to_immutable_commit(self):
+        expected = "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"
+        workflows = [
+            "zssh-cloudflare-vps-dns-apply.yml",
+            "zssh-cloudflare-capability-probe.yml",
+            "zssh-cloudflare-credential-probe.yml",
+            "zssh-public-gateway-vps-preflight.yml",
+            "zssh-public-gateway-preflight.yml",
+            "zssh-public-gateway-activate.yml",
+            "zssh-caddy-topology-audit.yml",
+            "zssh-public-ingress-bootstrap.yml",
+            "zssh-production-origin-readiness.yml",
+            "zssh-seed-deterministic-release-vars.yml",
+        ]
+        for workflow in workflows:
+            with self.subTest(workflow=workflow):
+                text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
+                self.assertIn(expected, text)
+                self.assertNotRegex(text, r"uses:\\s+actions/checkout@v\\d")
+
+
 if __name__ == "__main__":
     unittest.main()
