@@ -1,0 +1,113 @@
+name: zSSH external-gate live pause
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-external-gate-live-pause.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-external-gate-live-pause
+  cancel-in-progress: false
+
+jobs:
+  pause:
+    name: Pause zSSH chat workers only
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact reviewed canonical main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ed7f6a4bcfd7ca017c1770520c2ef68dfecfb3d8
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Pause zSSH through live control API and prove FTMO unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import urllib.request
+          from pathlib import Path
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+
+          def snapshot_ftmo():
+              conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+              conn.row_factory = sqlite3.Row
+              target = conn.execute(
+                  "SELECT active FROM runner_targets WHERE project_id='ftmo'"
+              ).fetchone()
+              workers = conn.execute(
+                  "SELECT worker_slot,desired_state FROM runner_workers "
+                  "WHERE project_id='ftmo' ORDER BY worker_slot"
+              ).fetchall()
+              conn.close()
+              return {
+                  "active": int(target["active"]) if target else None,
+                  "workers": [(int(r["worker_slot"]), str(r["desired_state"])) for r in workers],
+              }
+
+          before_ftmo = snapshot_ftmo()
+          body = json.dumps({"project_id": "zssh", "action": "pause"}).encode()
+          req = urllib.request.Request(
+              "http://127.0.0.1:8765/api/runner-control",
+              data=body,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=15) as response:
+              result = json.load(response)
+          if not result.get("ok"):
+              raise SystemExit(f"zSSH pause rejected: {result}")
+
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          conn.row_factory = sqlite3.Row
+          target = conn.execute(
+              "SELECT active FROM runner_targets WHERE project_id='zssh'"
+          ).fetchone()
+          runtime = conn.execute(
+              "SELECT manual_pause,last_reason FROM autonomy_runtime WHERE project_id='zssh'"
+          ).fetchone()
+          workers = conn.execute(
+              "SELECT worker_slot,desired_state FROM runner_workers "
+              "WHERE project_id='zssh' ORDER BY worker_slot"
+          ).fetchall()
+          allocation = conn.execute(
+              "SELECT slot,project_id,worker_slot FROM ai_global_slots "
+              "WHERE project_id='zssh' ORDER BY slot"
+          ).fetchall()
+          conn.close()
+
+          after_ftmo = snapshot_ftmo()
+          evidence = {
+              "api_ok": bool(result.get("ok")),
+              "target_active": int(target["active"]) if target else None,
+              "manual_pause": int(runtime["manual_pause"]) if runtime else None,
+              "last_reason": str(runtime["last_reason"]) if runtime else None,
+              "worker_states": [(int(r["worker_slot"]), str(r["desired_state"])) for r in workers],
+              "allocated_slots": [int(r["slot"]) for r in allocation],
+              "ftmo_unchanged": before_ftmo == after_ftmo,
+          }
+          print("ZSSH_EXTERNAL_GATE_PAUSE", json.dumps(evidence, sort_keys=True))
+
+          assert evidence["target_active"] == 0
+          assert evidence["manual_pause"] == 1
+          assert evidence["last_reason"] == "manual_pause"
+          assert evidence["worker_states"]
+          assert all(state == "paused" for _, state in evidence["worker_states"])
+          assert evidence["ftmo_unchanged"]
+          PY
