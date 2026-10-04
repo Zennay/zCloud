@@ -37,6 +37,24 @@ jobs:
           test "$(id -un)" = ubuntu
           python3 scripts/zcloud_vps_runner_guard.py --json
 
+      - name: Refresh stale non-cloud receipts from live evidence
+        shell: bash
+        env:
+          ZCLOUD_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for project in ftmo haxlab lightup raiseai supa ulab zssh; do
+            if [[ "$project" == "haxlab" ]]; then
+              source="github-actions:haxlab-state-receipt-backfill"
+            else
+              source="github-actions:portfolio-state-receipt-backfill"
+            fi
+            python3 scripts/zcloud_backfill_project_receipt.py \
+              --project "$project" \
+              --source "$source" \
+              --workflow-run-id "$ZCLOUD_WORKFLOW_RUN_ID"
+          done
+
       - name: Read receipt coverage directly from VPS source of truth
         shell: bash
         run: |
