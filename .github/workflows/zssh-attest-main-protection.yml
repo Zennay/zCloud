@@ -94,11 +94,16 @@ jobs:
 
           canary_parent="$(gh api "repos/$repo/git/commits/284dadd80a7e46fc9203ed5e5caa9a5709e3f24b" --jq '.parents[0].sha')"
           canary_tree="$(gh api "repos/$repo/git/commits/284dadd80a7e46fc9203ed5e5caa9a5709e3f24b" --jq '.tree.sha')"
-          main_tree="$(gh api "repos/$repo/git/commits/$main_sha" --jq '.tree.sha')"
-          test "$canary_parent" = "$main_sha"
-          test "$canary_tree" = "$main_tree"
+          parent_tree="$(gh api "repos/$repo/git/commits/$canary_parent" --jq '.tree.sha')"
+          test "$canary_tree" = "$parent_tree"
 
-          echo "ZSSH_MAIN_PROTECTION_NEGATIVE_EVIDENCE_GREEN main_sha=$main_sha"
+          lineage_status="$(gh api "repos/$repo/compare/$canary_parent...$main_sha" --jq '.status')"
+          case "$lineage_status" in
+            ahead|identical) ;;
+            *) echo "canary proof parent is not an ancestor of current canonical main: $lineage_status" >&2; exit 1 ;;
+          esac
+
+          echo "ZSSH_MAIN_PROTECTION_NEGATIVE_EVIDENCE_GREEN proof_parent=$canary_parent current_main=$main_sha lineage=$lineage_status"
 
       - name: Set only the validated OpenAI production governance attestation
         shell: bash
