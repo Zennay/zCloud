@@ -12,72 +12,92 @@ permissions:
 
 concurrency:
   group: ftmo-post521-preservation-gate
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   preserve:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      FTMO_MAIN_SHA: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
+      MERGED_MAIN_SHA: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
       RECEIPT_PATH: runtime-evidence/ftmo-post521-preservation-gate.json
     steps:
-      - name: Prove exact-main preservation workflows
+      - name: Prove merged-main preservation and receipt-only advancement
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
           gh auth status >/dev/null 2>&1
 
-          require_exact_main() {
-            current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
-            test "$current" = "$FTMO_MAIN_SHA"
-          }
+          current_main="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+          canonical_main="$current_main"
 
           find_latest() {
             local workflow="$1"
+            local sha="$2"
             gh api -X GET "repos/Zennay/Ftmo/actions/workflows/$workflow/runs" \
-              -f head_sha="$FTMO_MAIN_SHA" -f per_page=30 \
-              --jq '[.workflow_runs[] | select(.head_sha == env.FTMO_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty'
+              -f head_sha="$sha" -f per_page=30 \
+              --jq --arg sha "$sha" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | last | .id // empty'
           }
 
-          require_exact_main
+          require_success() {
+            local run_id="$1"
+            local sha="$2"
+            local payload
+            gh run watch "$run_id" --repo Zennay/Ftmo --exit-status
+            payload="$(gh run view "$run_id" --repo Zennay/Ftmo --json status,conclusion,headSha,url)"
+            test "$(jq -r .status <<<"$payload")" = "completed"
+            test "$(jq -r .conclusion <<<"$payload")" = "success"
+            test "$(jq -r .headSha <<<"$payload")" = "$sha"
+            printf '%s' "$payload"
+          }
 
-          sync_run="$(find_latest sync-autonomous-research-state.yml)"
-          verify_run="$(find_latest deploy-autonomous-vps.yml)"
-
-          if [[ -z "$sync_run" ]]; then
-            gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
-          fi
-          if [[ -z "$verify_run" ]]; then
-            gh workflow run deploy-autonomous-vps.yml --repo Zennay/Ftmo --ref main
-          fi
-
-          for _ in $(seq 1 30); do
-            sync_run="$(find_latest sync-autonomous-research-state.yml)"
-            verify_run="$(find_latest deploy-autonomous-vps.yml)"
-            [[ -n "$sync_run" && -n "$verify_run" ]] && break
-            sleep 4
-          done
+          sync_run="$(find_latest sync-autonomous-research-state.yml "$MERGED_MAIN_SHA")"
+          verify_run="$(find_latest deploy-autonomous-vps.yml "$MERGED_MAIN_SHA")"
           test -n "$sync_run"
           test -n "$verify_run"
 
-          require_exact_main
-          gh run watch "$sync_run" --repo Zennay/Ftmo --exit-status
-          gh run watch "$verify_run" --repo Zennay/Ftmo --exit-status
-          require_exact_main
+          sync_json="$(require_success "$sync_run" "$MERGED_MAIN_SHA")"
+          verify_json="$(require_success "$verify_run" "$MERGED_MAIN_SHA")"
 
-          sync_json="$(gh run view "$sync_run" --repo Zennay/Ftmo --json status,conclusion,headSha,url)"
-          verify_json="$(gh run view "$verify_run" --repo Zennay/Ftmo --json status,conclusion,headSha,url)"
-          test "$(jq -r .status <<<"$sync_json")" = "completed"
-          test "$(jq -r .conclusion <<<"$sync_json")" = "success"
-          test "$(jq -r .headSha <<<"$sync_json")" = "$FTMO_MAIN_SHA"
-          test "$(jq -r .status <<<"$verify_json")" = "completed"
-          test "$(jq -r .conclusion <<<"$verify_json")" = "success"
-          test "$(jq -r .headSha <<<"$verify_json")" = "$FTMO_MAIN_SHA"
+          if [[ "$canonical_main" != "$MERGED_MAIN_SHA" ]]; then
+            commit_json="$(gh api "repos/Zennay/Ftmo/commits/$canonical_main")"
+            test "$(jq '.parents | length' <<<"$commit_json")" = "1"
+            test "$(jq -r '.parents[0].sha' <<<"$commit_json")" = "$MERGED_MAIN_SHA"
 
-          printf 'FTMO_POST521_SYNC_RUN=%s\n' "$sync_run"
-          printf 'FTMO_POST521_VERIFY_RUN=%s\n' "$verify_run"
+            mapfile -t changed < <(jq -r '.files[].filename' <<<"$commit_json")
+            test "${#changed[@]}" -gt 0
+            for path in "${changed[@]}"; do
+              case "$path" in
+                artifacts/autonomous_runtime/vps-controller-receipt.json|artifacts/autonomous_runtime/vps-cpu-attribution.json)
+                  ;;
+                *)
+                  echo "Unexpected post-verify main change: $path" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            current_sync_run="$(find_latest sync-autonomous-research-state.yml "$canonical_main")"
+            if [[ -z "$current_sync_run" ]]; then
+              latest="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+              test "$latest" = "$canonical_main"
+              gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
+              for _ in $(seq 1 30); do
+                current_sync_run="$(find_latest sync-autonomous-research-state.yml "$canonical_main")"
+                [[ -n "$current_sync_run" ]] && break
+                sleep 4
+              done
+            fi
+            test -n "$current_sync_run"
+            current_sync_json="$(require_success "$current_sync_run" "$canonical_main")"
+          else
+            current_sync_run="$sync_run"
+            current_sync_json="$sync_json"
+          fi
+
+          latest="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+          test "$latest" = "$canonical_main"
 
           work="$RUNNER_TEMP/zcloud-ftmo-post521-preservation"
           rm -rf "$work"
@@ -86,32 +106,46 @@ jobs:
           git checkout main >/dev/null
           git pull --rebase origin main
           mkdir -p "$(dirname "$RECEIPT_PATH")"
-          SYNC_RUN_ID="$sync_run" VERIFY_RUN_ID="$verify_run" \
-          SYNC_URL="$(jq -r .url <<<"$sync_json")" \
-          VERIFY_URL="$(jq -r .url <<<"$verify_json")" \
+
+          PRE_SYNC_RUN_ID="$sync_run" PRE_VERIFY_RUN_ID="$verify_run" \
+          CURRENT_SYNC_RUN_ID="$current_sync_run" CANONICAL_MAIN_SHA="$canonical_main" \
+          PRE_SYNC_URL="$(jq -r .url <<<"$sync_json")" \
+          PRE_VERIFY_URL="$(jq -r .url <<<"$verify_json")" \
+          CURRENT_SYNC_URL="$(jq -r .url <<<"$current_sync_json")" \
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
           payload = {
-              "schema_version": 2,
+              "schema_version": 3,
               "project": "ftmo",
               "scope": "post-pr521-preservation-proof",
               "result": "success",
-              "ftmo_main_sha": os.environ["FTMO_MAIN_SHA"],
-              "state_sync": {
-                  "run_id": int(os.environ["SYNC_RUN_ID"]),
-                  "url": os.environ["SYNC_URL"],
+              "merged_main_sha": os.environ["MERGED_MAIN_SHA"],
+              "canonical_main_sha": os.environ["CANONICAL_MAIN_SHA"],
+              "pre_receipt_state_sync": {
+                  "run_id": int(os.environ["PRE_SYNC_RUN_ID"]),
+                  "url": os.environ["PRE_SYNC_URL"],
                   "conclusion": "success",
-                  "head_sha": os.environ["FTMO_MAIN_SHA"],
+                  "head_sha": os.environ["MERGED_MAIN_SHA"],
               },
-              "vps_verify": {
-                  "run_id": int(os.environ["VERIFY_RUN_ID"]),
-                  "url": os.environ["VERIFY_URL"],
+              "pre_receipt_vps_verify": {
+                  "run_id": int(os.environ["PRE_VERIFY_RUN_ID"]),
+                  "url": os.environ["PRE_VERIFY_URL"],
                   "conclusion": "success",
-                  "head_sha": os.environ["FTMO_MAIN_SHA"],
+                  "head_sha": os.environ["MERGED_MAIN_SHA"],
               },
+              "canonical_main_state_sync": {
+                  "run_id": int(os.environ["CURRENT_SYNC_RUN_ID"]),
+                  "url": os.environ["CURRENT_SYNC_URL"],
+                  "conclusion": "success",
+                  "head_sha": os.environ["CANONICAL_MAIN_SHA"],
+              },
+              "allowed_post_verify_paths": [
+                  "artifacts/autonomous_runtime/vps-controller-receipt.json",
+                  "artifacts/autonomous_runtime/vps-cpu-attribution.json",
+              ],
               "generation_number": 30,
               "stage": "provider_foundation",
               "expected_action": "provider_foundation_window_not_elapsed",
@@ -132,7 +166,7 @@ jobs:
           git config user.email "zcloud-automation@users.noreply.github.com"
           git add "$RECEIPT_PATH"
           if ! git diff --cached --quiet; then
-            git commit -m "Record FTMO post-PR521 preservation proof"
+            git commit -m "Record FTMO post-PR521 canonical preservation proof"
             for attempt in 1 2 3; do
               if git push origin HEAD:main; then
                 exit 0
