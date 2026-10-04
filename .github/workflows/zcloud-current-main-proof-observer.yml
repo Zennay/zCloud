@@ -25,7 +25,22 @@ jobs:
       REGRESSION_WORKFLOW: zcloud-regression-smoke.yml
       DEPLOY_WORKFLOW: zcloud-vps-deploy.yml
       AUDIT_WORKFLOW: zcloud-state-receipt-coverage-audit.yml
+      CANCEL_RUNS: "37232750341"
     steps:
+      - name: Keep P0 production lane ahead of PR-only VPS validation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for id in $CANCEL_RUNS; do
+            status="$(gh api "repos/$REPO/actions/runs/$id" --jq .status)"
+            if [[ "$status" == "queued" || "$status" == "in_progress" || "$status" == "pending" || "$status" == "waiting" ]]; then
+              gh api --method POST "repos/$REPO/actions/runs/$id/cancel" >/dev/null
+              echo "ZCLOUD_NONESSENTIAL_VPS_RUN_CANCELLED=$id"
+            else
+              echo "ZCLOUD_NONESSENTIAL_VPS_RUN_TERMINAL=$id status=$status"
+            fi
+          done
+
       - name: Require exact current-main regression green
         shell: bash
         run: |
