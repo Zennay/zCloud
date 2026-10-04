@@ -232,6 +232,17 @@ jobs:
                       raise SystemExit(0)
               if cmd and cmd["status"]=="failed":
                   raise SystemExit("CANARY_COMMAND_FAILED "+json.dumps(last,ensure_ascii=False,sort_keys=True))
+              if cmd and cmd["status"]=="completed":
+                  result=str(cmd["result"] or "")
+                  busy_noop=result=="Runner is al bezig; extra prompt was niet nodig"
+                  fresh_bound=any(
+                      e["event"] in {"runner-config-updated","injection-success","heartbeat"}
+                      for e in events
+                  )
+                  if busy_noop and fresh_bound:
+                      print("CANARY_PUSH_BUSY_GREEN=1")
+                      print(json.dumps(last,ensure_ascii=False,sort_keys=True))
+                      raise SystemExit(0)
               time.sleep(3)
           raise SystemExit("CANARY_PUSH_TIMEOUT "+json.dumps(last,ensure_ascii=False,sort_keys=True))
           PY
