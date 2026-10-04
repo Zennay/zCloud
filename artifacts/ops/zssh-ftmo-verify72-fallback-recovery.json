@@ -57,17 +57,35 @@
     "[2026-10-04 02:48:29Z INFO JobDispatcher] Job request e603051a-0a46-5679-b21e-ff86471d8c48 processed succeed.",
     "[2026-10-04 02:48:29Z INFO Terminal] WRITE LINE: 2026-10-04 02:48:29Z: Running job: snapshot",
     "[2026-10-04 02:48:29Z INFO JobDispatcher] Start renew job request 0 for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1.",
-    "[2026-10-04 02:48:29Z INFO JobDispatcher] Send job request message to worker for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1."
+    "[2026-10-04 02:48:29Z INFO JobDispatcher] Send job request message to worker for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1.",
+    "[2026-10-04 02:49:04Z INFO JobDispatcher] finish job request for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1 with result: Succeeded",
+    "[2026-10-04 02:49:04Z INFO JobDispatcher] Stop renew job request for job 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1.",
+    "[2026-10-04 02:49:04Z WARN GitHubActionsService] GET request to https://broker.actions.githubusercontent.com/message?sessionId=39885425-6809-4bff-83cb-740c567a6b67&status=Busy&runnerVersion=2.337.0&os=Linux&architecture=X64&disableUpdate=false has been cancelled.",
+    "   at GitHub.Actions.RunService.WebApi.BrokerHttpClient.GetRunnerMessageAsync(Nullable`1 sessionId, String runnerVersion, Nullable`1 status, String os, String architecture, Nullable`1 disableUpdate, CancellationToken cancellationToken)",
+    "[2026-10-04 02:49:05Z INFO JobDispatcher] Job request 0 for plan 8bdcb2b7-ed74-8ed7-9c99-194d3b5b1f87 job 7323b7fc-29a1-57f5-a2a5-5aa3cdc0d37a received.",
+    "[2026-10-04 02:49:05Z INFO JobDispatcher] Job request 3ab43eb3-e57d-57d3-9b8e-3ec3ed55b7e1 processed succeed.",
+    "[2026-10-04 02:49:05Z INFO Terminal] WRITE LINE: 2026-10-04 02:49:05Z: Running job: marathon",
+    "[2026-10-04 02:49:05Z INFO JobDispatcher] Start renew job request 0 for job 7323b7fc-29a1-57f5-a2a5-5aa3cdc0d37a.",
+    "[2026-10-04 02:49:06Z INFO JobDispatcher] Send job request message to worker for job 7323b7fc-29a1-57f5-a2a5-5aa3cdc0d37a.",
+    "[2026-10-04 02:49:10Z INFO JobDispatcher] finish job request for job 7323b7fc-29a1-57f5-a2a5-5aa3cdc0d37a with result: Succeeded",
+    "[2026-10-04 02:49:10Z INFO JobDispatcher] Stop renew job request for job 7323b7fc-29a1-57f5-a2a5-5aa3cdc0d37a.",
+    "[2026-10-04 02:49:10Z WARN GitHubActionsService] GET request to https://broker.actions.githubusercontent.com/message?sessionId=39885425-6809-4bff-83cb-740c567a6b67&status=Busy&runnerVersion=2.337.0&os=Linux&architecture=X64&disableUpdate=false has been cancelled.",
+    "   at GitHub.Actions.RunService.WebApi.BrokerHttpClient.GetRunnerMessageAsync(Nullable`1 sessionId, String runnerVersion, Nullable`1 status, String os, String architecture, Nullable`1 disableUpdate, CancellationToken cancellationToken)",
+    "[2026-10-04 02:49:12Z INFO JobDispatcher] Job request 0 for plan 6df3a212-2331-8617-b62b-d883d0f9ff02 job d9c2161f-d441-5967-b7f8-0cf3e10c0fa0 received.",
+    "[2026-10-04 02:49:12Z INFO JobDispatcher] Job request 7323b7fc-29a1-57f5-a2a5-5aa3cdc0d37a processed succeed.",
+    "[2026-10-04 02:49:12Z INFO Terminal] WRITE LINE: 2026-10-04 02:49:12Z: Running job: test",
+    "[2026-10-04 02:49:12Z INFO JobDispatcher] Start renew job request 0 for job d9c2161f-d441-5967-b7f8-0cf3e10c0fa0.",
+    "[2026-10-04 02:49:12Z INFO JobDispatcher] Send job request message to worker for job d9c2161f-d441-5967-b7f8-0cf3e10c0fa0."
   ],
   "runner_name": "zcloud-vps-1",
   "runner_processes": [
-    "3415916 Sun Oct  4 02:47:52 2026       00:48 /bin/bash /opt/ftmo-runner/runsvc.sh",
-    "3415944 Sun Oct  4 02:47:52 2026       00:48 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service",
-    "3416830 Sun Oct  4 02:48:28 2026       00:11 /opt/ftmo-runner/bin/Runner.Worker spawnclient 161 164"
+    "3415916 Sun Oct  4 02:47:52 2026       01:28 /bin/bash /opt/ftmo-runner/runsvc.sh",
+    "3415944 Sun Oct  4 02:47:52 2026       01:28 /opt/ftmo-runner/bin/Runner.Listener run --startuptype service",
+    "3418414 Sun Oct  4 02:49:12 2026       00:08 /opt/ftmo-runner/bin/Runner.Worker spawnclient 143 157"
   ],
   "schema_version": 1,
   "service": "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
   "workflow_run_attempt": "1",
-  "workflow_run_id": "37172178429",
-  "workflow_sha": "4f076f442aad281ce2853819fd8728e84e41d516"
+  "workflow_run_id": "37172209539",
+  "workflow_sha": "74cea76206203cb05b31d313da2c4e9176c8c39b"
 }
