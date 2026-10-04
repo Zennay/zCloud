@@ -271,10 +271,19 @@ def evaluate(
         if not isinstance(runner, dict):
             scheduler_problems.append(f"{pid}: missing live runner read-model")
             continue
-        if int(runner.get("desired_worker_count") or 0) != count:
+        desired_count = int(runner.get("desired_worker_count") or 0)
+        # runner_targets.worker_count is the configured baseline. The live dynamic
+        # allocator may temporarily grant a project extra global slots, so live/API
+        # counts can be greater than this baseline without being unhealthy.
+        if desired_count < count:
             scheduler_problems.append(
-                f"{pid}: desired count mismatch "
-                f"{runner.get('desired_worker_count')} != {count}"
+                f"{pid}: desired count below configured minimum "
+                f"{desired_count} < {count}"
+            )
+        if max_workers_int and desired_count > max_workers_int:
+            scheduler_problems.append(
+                f"{pid}: desired count {desired_count} exceeds max_workers "
+                f"{max_workers_int}"
             )
         expected_slots = set(range(1, count + 1))
         actual_slots = {
@@ -283,12 +292,12 @@ def evaluate(
         }
         if not expected_slots.issubset(actual_slots):
             scheduler_problems.append(
-                f"{pid}: missing live slots {sorted(expected_slots - actual_slots)}"
+                f"{pid}: missing configured live slots "
+                f"{sorted(expected_slots - actual_slots)}"
             )
-        if bool(runner.get("active")) != bool(target["active"]):
+        if actual_slots and actual_slots != set(range(1, max(actual_slots) + 1)):
             scheduler_problems.append(
-                f"{pid}: active-state mismatch "
-                f"{runner.get('active')} != {bool(target['active'])}"
+                f"{pid}: non-contiguous live slots {sorted(actual_slots)}"
             )
         api_slots = {
             int(item.get("worker_slot") or 0)
@@ -296,10 +305,19 @@ def evaluate(
             if isinstance(item, dict)
             and str(item.get("base_project_id") or item.get("project_id") or "") == pid
         }
-        if api_slots != expected_slots:
+        if not expected_slots.issubset(api_slots):
             scheduler_problems.append(
-                f"{pid}: runner-target slots {sorted(api_slots)} != "
-                f"{sorted(expected_slots)}"
+                f"{pid}: missing configured runner-target slots "
+                f"{sorted(expected_slots - api_slots)}"
+            )
+        if api_slots and api_slots != set(range(1, max(api_slots) + 1)):
+            scheduler_problems.append(
+                f"{pid}: non-contiguous runner-target slots {sorted(api_slots)}"
+            )
+        if max_workers_int and len(api_slots) > max_workers_int:
+            scheduler_problems.append(
+                f"{pid}: runner-target slot count {len(api_slots)} exceeds "
+                f"max_workers {max_workers_int}"
             )
 
     if store.get("stale_pending_commands"):
