@@ -787,27 +787,55 @@ jobs:
           python3 - "$DEPLOY_SHA" <<'PY'
           import json
           import sys
+          import time
           import urllib.request
 
           expected_sha = sys.argv[1]
-          with urllib.request.urlopen("http://127.0.0.1:8765/api/status", timeout=10) as response:
-              payload = json.load(response)
-          project = next((item for item in payload.get("projects", []) if item.get("id") == "cloud"), None)
-          if not project:
-              raise SystemExit("cloud project missing from live /api/status")
-          state = project.get("execution_state") or {}
-          if project.get("state_source") != "evidence_receipt":
-              raise SystemExit("cloud live state is not receipt-backed")
-          if state.get("commit_sha") != expected_sha:
-              raise SystemExit(
-                  f"cloud receipt commit mismatch expected={expected_sha} actual={state.get('commit_sha')}"
+          deadline = time.monotonic() + 90
+          attempt = 0
+          last_reason = "not_checked"
+
+          while True:
+              attempt += 1
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8765/api/status", timeout=10) as response:
+                      payload = json.load(response)
+                  project = next(
+                      (item for item in payload.get("projects", []) if item.get("id") == "cloud"),
+                      None,
+                  )
+                  if not project:
+                      last_reason = "cloud_project_missing"
+                  else:
+                      state = project.get("execution_state") or {}
+                      if project.get("state_source") != "evidence_receipt":
+                          last_reason = f"state_source={project.get('state_source')}"
+                      elif state.get("commit_sha") != expected_sha:
+                          last_reason = (
+                              f"commit_mismatch expected={expected_sha} "
+                              f"actual={state.get('commit_sha')}"
+                          )
+                      elif state.get("ci_status") != "success":
+                          last_reason = f"ci_status={state.get('ci_status')}"
+                      else:
+                          print(
+                              "ZCLOUD_PRODUCTION_RECEIPT_GREEN "
+                              f"receipt_id={state.get('receipt_id')} sha={expected_sha}"
+                          )
+                          break
+              except Exception as exc:
+                  last_reason = f"status_probe_error={type(exc).__name__}"
+
+              if time.monotonic() >= deadline:
+                  raise SystemExit(
+                      "cloud live state did not converge to receipt-backed state "
+                      f"within 90s: {last_reason}"
+                  )
+              print(
+                  "ZCLOUD_PRODUCTION_RECEIPT_WAIT "
+                  f"attempt={attempt} reason={last_reason}"
               )
-          if state.get("ci_status") != "success":
-              raise SystemExit("cloud receipt does not report successful production state")
-          print(
-              "ZCLOUD_PRODUCTION_RECEIPT_GREEN "
-              f"receipt_id={state.get('receipt_id')} sha={expected_sha}"
-          )
+              time.sleep(5)
           PY
 
       - name: Publish production deploy result
