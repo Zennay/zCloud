@@ -20,8 +20,8 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 35
     env:
-      RAISE_SHA: 1c9b9ef75503a4555d35c4c8bc4714b07e946e56
-      RAISE_BUILD_REVISION: 1c9b9ef75503a4555d35c4c8bc4714b07e946e56
+      RAISE_SHA: 887cbbb456e6eb7fd626f24ea46242971d7a1502
+      RAISE_BUILD_REVISION: 887cbbb456e6eb7fd626f24ea46242971d7a1502
     steps:
       - name: Verify VPS execution host
         shell: bash
