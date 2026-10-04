@@ -1,0 +1,46 @@
+name: Dispatch FTMO post514 research-state sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dispatch-ftmo-post514-state-sync.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      EXPECTED_MAIN: 2c161be49331bd20e7dc9a2e35d9916b81200776
+    steps:
+      - name: Dispatch exact-main research-state sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$EXPECTED_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .merged)" = "true"
+
+          before="$(gh api 'repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs?event=workflow_dispatch&per_page=1' --jq '.workflow_runs[0].id // 0')"
+          gh api --method POST repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/dispatches -f ref=main >/dev/null
+
+          found=""
+          for _ in $(seq 1 30); do
+            row="$(gh api 'repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs?event=workflow_dispatch&per_page=5' --jq --arg sha "$EXPECTED_MAIN" '[.workflow_runs[] | select(.head_sha==$sha)][0] | [.id,.status] | @tsv')"
+            if [[ -n "$row" ]]; then
+              run_id="${row%%$'\t'*}"
+              status="${row#*$'\t'}"
+              if [[ "$run_id" != "$before" ]]; then
+                found=1
+                echo "FTMO_POST514_SYNC_RUN=$run_id status=$status"
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test -n "$found"
+          echo "FTMO_POST514_SYNC_DISPATCHED=1"
