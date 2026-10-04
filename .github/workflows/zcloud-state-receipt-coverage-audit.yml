@@ -1,4 +1,5 @@
 name: zCloud live state-receipt coverage audit
+# Ephemeral PR carrier for a direct current VPS receipt-coverage proof; do not merge.
 
 on:
   pull_request:
