@@ -3066,8 +3066,10 @@ def runner_targets():
                               'autonomy':autonomy,'improvement':improvement}
     return out
 
-def runner_worker_targets():
-    base=runner_targets()
+def runner_worker_targets(base=None):
+    # Status aggregation may already have an immutable target snapshot. Reuse it
+    # instead of rebuilding project autonomy/queue state for every project.
+    base=base if base is not None else runner_targets()
     global_slots=_current_global_slot_map()
     out={}
     with connect() as c:
@@ -3199,8 +3201,8 @@ def runner_record(payload):
         elif event=='improvement-audit-failed':
             improvement_loop_record(project_id,'audit',audit_green=False)
 
-def runner_status(project_id=None):
-    target_cfg=runner_targets()
+def runner_status(project_id=None, target_cfg=None):
+    target_cfg=target_cfg if target_cfg is not None else runner_targets()
     with connect() as c:
         if project_id in target_cfg:
             cfg=target_cfg[project_id]
@@ -3244,11 +3246,13 @@ def runner_status(project_id=None):
             'last_generation_started':info(started),'last_generation_finished':info(finished),
             'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None,'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')}
 
-def runner_worker_statuses(project_id):
-    base=runner_targets().get(project_id)
+def runner_worker_statuses(project_id, base_targets=None, worker_targets=None):
+    base_targets=base_targets if base_targets is not None else runner_targets()
+    base=base_targets.get(project_id)
     if not base:
         return []
-    targets=runner_worker_targets()
+    targets=(worker_targets if worker_targets is not None
+             else runner_worker_targets(base_targets))
     claims=task_claims(project_id)
     by_worker={}
     for claim in claims:
@@ -3339,9 +3343,14 @@ def runner_worker_statuses(project_id):
 
 def runner_statuses():
     result={}
-    for pid in runner_targets():
-        status=runner_status(pid)
-        workers=runner_worker_statuses(pid)
+    # Build the expensive portfolio worker target graph once per response.
+    # Previously runner_worker_statuses() rebuilt the full graph for every
+    # project, making /api/status O(projects²) and slower than the canary budget.
+    target_cfg=runner_targets()
+    worker_targets=runner_worker_targets(target_cfg)
+    for pid in target_cfg:
+        status=runner_status(pid,target_cfg)
+        workers=runner_worker_statuses(pid,target_cfg,worker_targets)
         status['workers']=workers
         status['desired_worker_count']=len(workers)
         status['active_worker_count']=sum(1 for w in workers if w['state'] not in ('paused','offline'))
