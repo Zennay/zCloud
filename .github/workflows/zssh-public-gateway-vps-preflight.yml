@@ -1,0 +1,227 @@
+name: zSSH public gateway VPS preflight (zCloud lane)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-public-gateway-vps-preflight.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-public-gateway-vps-preflight-zcloud
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate zSSH public gateway on vps-bb300bba
+    runs-on: self-hosted
+    timeout-minutes: 12
+    env:
+      ZSSH_SHA: e2dee8b5e07a41c13408954348c05412b1d66e5d
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+    steps:
+      - name: Check out zCloud coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce canonical zCloud VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_NAME" = "main"
+          python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-public-gateway-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+
+      - name: Check out exact canonical zSSH revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_SHA }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Prove exact zSSH source and install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"
+          node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+          test "$node_major" -ge 20
+          npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
+
+      - name: Validate public gateway configuration without mutating live public service state
+        id: preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          source_root="$GITHUB_WORKSPACE/zssh-source"
+          env_file="$HOME/.config/zssh/public-gateway.env"
+          current_link="$HOME/.local/share/zssh-public/current"
+
+          file_state() {
+            local file="$1"
+            if [[ -f "$file" ]]; then
+              printf 'present:%s' "$(sha256sum "$file" | awk '{print $1}')"
+            elif [[ -e "$file" ]]; then
+              printf 'present-nonregular'
+            else
+              printf 'absent'
+            fi
+          }
+
+          before_env="$(file_state "$env_file")"
+          before_current="$(readlink -f "$current_link" 2>/dev/null || true)"
+          before_active="$(systemctl --user is-active zssh-public.service 2>/dev/null || true)"
+          before_enabled="$(systemctl --user is-enabled zssh-public.service 2>/dev/null || true)"
+
+          reviewer_report="$RUNNER_TEMP/zssh-reviewer-target.json"
+          npm --prefix "$source_root" run review:target -- "$source_root" > "$reviewer_report"
+
+          target_id="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.target_id)' "$reviewer_report")"
+          trust_file="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.gateway_public_key_config_file)' "$reviewer_report")"
+          review_root="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.review_root)' "$reviewer_report")"
+          fingerprint="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.public_key_sha256)' "$reviewer_report")"
+
+          test "$trust_file" = "$HOME/.config/zssh/reviewer-agent-public.json"
+          test "$review_root" = "$HOME/zssh-review"
+          [[ "$target_id" =~ ^zt_[A-Za-z0-9_-]{8,96}$ ]]
+          [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]]
+
+          export ZSSH_PUBLIC_BASE_URL="https://mcp.zssh-preflight.invalid"
+          export ZSSH_OAUTH_ISSUER="https://auth.zssh-preflight.invalid"
+          export ZSSH_OAUTH_JWKS_URI="https://auth.zssh-preflight.invalid/.well-known/jwks.json"
+          export ZSSH_TARGET_ID="$target_id"
+          export ZSSH_AGENT_PUBLIC_KEYS_FILE="$trust_file"
+          export ZSSH_PUBLIC_ALLOWED_ROOTS="$review_root"
+          export ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1
+          export ZSSH_EXPECTED_SHA="$ZSSH_SHA"
+
+          preflight_output="$RUNNER_TEMP/zssh-public-gateway-preflight.txt"
+          bash "$source_root/deploy/install-public-gateway.sh" "$source_root" | tee "$preflight_output"
+          grep -F "ZSSH_PUBLIC_GATEWAY_CONFIG_GREEN sha=$ZSSH_SHA" "$preflight_output"
+
+          after_env="$(file_state "$env_file")"
+          after_current="$(readlink -f "$current_link" 2>/dev/null || true)"
+          after_active="$(systemctl --user is-active zssh-public.service 2>/dev/null || true)"
+          after_enabled="$(systemctl --user is-enabled zssh-public.service 2>/dev/null || true)"
+
+          test "$after_env" = "$before_env"
+          test "$after_current" = "$before_current"
+          test "$after_active" = "$before_active"
+          test "$after_enabled" = "$before_enabled"
+
+          receipt="$RUNNER_TEMP/zssh-public-gateway-vps-preflight.json"
+          export RECEIPT="$receipt"
+          export TARGET_ID="$target_id"
+          export TRUST_FILE="$trust_file"
+          export REVIEW_ROOT="$review_root"
+          export FINGERPRINT="$fingerprint"
+          export BEFORE_ENV="$before_env"
+          export AFTER_ENV="$after_env"
+          export BEFORE_CURRENT="$before_current"
+          export AFTER_CURRENT="$after_current"
+          export BEFORE_ACTIVE="$before_active"
+          export AFTER_ACTIVE="$after_active"
+          export BEFORE_ENABLED="$before_enabled"
+          export AFTER_ENABLED="$after_enabled"
+
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+
+          const receipt = {
+            ok: true,
+            project: "zssh",
+            proof: "public-gateway-validate-only",
+            coordination_repository: process.env.GITHUB_REPOSITORY,
+            coordination_commit_sha: process.env.GITHUB_SHA,
+            zssh_commit_sha: process.env.ZSSH_SHA,
+            workflow_run_id: process.env.GITHUB_RUN_ID,
+            workflow_run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+            runner_name: process.env.RUNNER_NAME,
+            hostname: "vps-bb300bba",
+            mode: "validate-only",
+            placeholder_external_inputs: true,
+            target_id: process.env.TARGET_ID,
+            public_key_sha256: process.env.FINGERPRINT,
+            trust_file: process.env.TRUST_FILE,
+            review_root: process.env.REVIEW_ROOT,
+            public_gateway_env_before: process.env.BEFORE_ENV,
+            public_gateway_env_after: process.env.AFTER_ENV,
+            public_release_before: process.env.BEFORE_CURRENT,
+            public_release_after: process.env.AFTER_CURRENT,
+            public_service_active_before: process.env.BEFORE_ACTIVE,
+            public_service_active_after: process.env.AFTER_ACTIVE,
+            public_service_enabled_before: process.env.BEFORE_ENABLED,
+            public_service_enabled_after: process.env.AFTER_ENABLED,
+            external_gate_remaining: [
+              "stable public DNS/TLS ingress",
+              "production OAuth/OIDC issuer and reviewer account",
+              "OpenAI domain challenge token",
+              "real demo recording URL",
+              "openai-production variables and secrets",
+              "OpenAI Verify Domain and current Scan Tools",
+              "live ChatGPT desktop and mobile connection-card review",
+              "final portal submission"
+            ]
+          };
+          writeFileSync(process.env.RECEIPT, JSON.stringify(receipt, null, 2) + "\n");
+          console.log("ZSSH_PUBLIC_GATEWAY_VPS_PREFLIGHT_GREEN", JSON.stringify({
+            zssh_commit_sha: receipt.zssh_commit_sha,
+            workflow_run_id: receipt.workflow_run_id,
+            target_id: receipt.target_id,
+            public_key_sha256: receipt.public_key_sha256
+          }));
+          NODE
+
+          echo "receipt=$receipt" >> "$GITHUB_OUTPUT"
+
+      - name: Record evidence-backed zSSH runtime receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_json="$(python3 - "$RUNNER_TEMP/zssh-public-gateway-vps-preflight.json" <<'PY'
+          import json
+          import sys
+
+          receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(json.dumps({
+              "workflow_run_id": receipt["workflow_run_id"],
+              "runner_name": receipt["runner_name"],
+              "hostname": receipt["hostname"],
+              "proof": receipt["proof"],
+              "mode": receipt["mode"],
+              "zssh_commit_sha": receipt["zssh_commit_sha"],
+              "target_id": receipt["target_id"],
+              "public_key_sha256": receipt["public_key_sha256"],
+              "public_gateway_state_unchanged": (
+                  receipt["public_gateway_env_before"] == receipt["public_gateway_env_after"]
+                  and receipt["public_release_before"] == receipt["public_release_after"]
+                  and receipt["public_service_active_before"] == receipt["public_service_active_after"]
+                  and receipt["public_service_enabled_before"] == receipt["public_service_enabled_after"]
+              ),
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          )"
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Canonical zSSH public gateway validate-only proof succeeded on zCloud VPS lane"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Supply real public DNS/TLS and production OAuth/reviewer inputs; then deploy isolated public gateway and run protected production submission probe"             --source "github-actions:zssh-public-gateway-vps-preflight"             --evidence-json "$evidence_json"
+
+      - name: Upload non-secret preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-public-gateway-vps-preflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-public-gateway-vps-preflight.json
+            ${{ runner.temp }}/zssh-public-gateway-runner-guard.json
+          if-no-files-found: error
+          retention-days: 30
