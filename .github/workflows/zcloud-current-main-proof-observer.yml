@@ -14,47 +14,83 @@ permissions:
   contents: read
   actions: write
 
+concurrency:
+  group: zcloud-current-main-proof-observer
+  cancel-in-progress: true
+
 jobs:
   close-receipt-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      TARGET_SHA: 60fd17ccb6203f51ba9514da7f1ae1d08571d380
-      DEPLOY_RUN: "37231857854"
+      TARGET_SHA: 2822d2f80ed49306013171f962da610182dab05a
+      REGRESSION_WORKFLOW: zcloud-regression-smoke.yml
+      DEPLOY_WORKFLOW: zcloud-vps-deploy.yml
       AUDIT_WORKFLOW: zcloud-state-receipt-coverage-audit.yml
     steps:
-      - name: Wait for exact guarded deploy
+      - name: Require exact current-main regression green
         shell: bash
         run: |
           set -Eeuo pipefail
-          for attempt in $(seq 1 60); do
-            payload="$(gh api "repos/$REPO/actions/runs/$DEPLOY_RUN")"
-            status="$(jq -r .status <<<"$payload")"
-            conclusion="$(jq -r '.conclusion // ""' <<<"$payload")"
-            sha="$(jq -r .head_sha <<<"$payload")"
-            printf 'ZCLOUD_DEPLOY_WATCH attempt=%s status=%s conclusion=%s sha=%s\n' "$attempt" "$status" "$conclusion" "$sha"
-            test "$sha" = "$TARGET_SHA"
+          regression_id=""
+          for attempt in $(seq 1 90); do
+            current="$(gh api "repos/$REPO/commits/main" --jq .sha)"
+            test "$current" = "$TARGET_SHA"
+            row="$(
+              gh api "repos/$REPO/actions/workflows/$REGRESSION_WORKFLOW/runs?branch=main&per_page=30"                 --jq '[.workflow_runs[] | select(.head_sha == env.TARGET_SHA)] | sort_by(.created_at) | last // {}'
+            )"
+            regression_id="$(jq -r '.id // empty' <<<"$row")"
+            status="$(jq -r '.status // empty' <<<"$row")"
+            conclusion="$(jq -r '.conclusion // empty' <<<"$row")"
+            printf 'ZCLOUD_MAIN_REGRESSION attempt=%s run=%s status=%s conclusion=%s\n' "$attempt" "$regression_id" "$status" "$conclusion"
             if [[ "$status" == "completed" ]]; then
               test "$conclusion" = "success"
-              echo "ZCLOUD_EXACT_DEPLOY_GREEN run=$DEPLOY_RUN sha=$sha"
+              echo "ZCLOUD_EXACT_MAIN_REGRESSION_GREEN run=$regression_id sha=$TARGET_SHA"
               exit 0
             fi
             sleep 10
           done
-          echo "exact deploy did not complete inside bounded observer window" >&2
           exit 1
 
-      - name: Dispatch direct live receipt coverage audit
+      - name: Follow exact guarded production deploy
+        id: deploy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deploy_id=""
+          for attempt in $(seq 1 90); do
+            current="$(gh api "repos/$REPO/commits/main" --jq .sha)"
+            test "$current" = "$TARGET_SHA"
+            row="$(
+              gh api "repos/$REPO/actions/workflows/$DEPLOY_WORKFLOW/runs?branch=main&per_page=30"                 --jq '[.workflow_runs[] | select(.head_sha == env.TARGET_SHA and .event == "workflow_run")] | sort_by(.created_at) | last // {}'
+            )"
+            deploy_id="$(jq -r '.id // empty' <<<"$row")"
+            status="$(jq -r '.status // empty' <<<"$row")"
+            conclusion="$(jq -r '.conclusion // empty' <<<"$row")"
+            printf 'ZCLOUD_EXACT_DEPLOY attempt=%s run=%s status=%s conclusion=%s\n' "$attempt" "$deploy_id" "$status" "$conclusion"
+            if [[ "$status" == "completed" ]]; then
+              test "$conclusion" = "success"
+              echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+              echo "ZCLOUD_EXACT_DEPLOY_GREEN run=$deploy_id sha=$TARGET_SHA"
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Reconfirm main and dispatch direct live receipt coverage audit
         id: dispatch
         shell: bash
         run: |
           set -Eeuo pipefail
+          current="$(gh api "repos/$REPO/commits/main" --jq .sha)"
+          test "$current" = "$TARGET_SHA"
           dispatched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           gh api --method POST             -H "Accept: application/vnd.github+json"             "repos/$REPO/actions/workflows/$AUDIT_WORKFLOW/dispatches"             -f ref=main >/dev/null
           echo "dispatched_at=$dispatched_at" >> "$GITHUB_OUTPUT"
-          echo "ZCLOUD_RECEIPT_AUDIT_DISPATCHED at=$dispatched_at"
+          echo "ZCLOUD_RECEIPT_AUDIT_DISPATCHED sha=$current at=$dispatched_at"
 
       - name: Follow receipt coverage audit to terminal state
         shell: bash
@@ -75,17 +111,18 @@ jobs:
           done
           test -n "$audit_id"
 
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 90); do
+            current="$(gh api "repos/$REPO/commits/main" --jq .sha)"
+            test "$current" = "$TARGET_SHA"
             payload="$(gh api "repos/$REPO/actions/runs/$audit_id")"
             status="$(jq -r .status <<<"$payload")"
             conclusion="$(jq -r '.conclusion // ""' <<<"$payload")"
             printf 'ZCLOUD_RECEIPT_AUDIT_WATCH attempt=%s run=%s status=%s conclusion=%s\n' "$attempt" "$audit_id" "$status" "$conclusion"
             if [[ "$status" == "completed" ]]; then
               test "$conclusion" = "success"
-              echo "ZCLOUD_RECEIPT_AUDIT_GREEN run=$audit_id"
+              echo "ZCLOUD_RECEIPT_AUDIT_GREEN run=$audit_id sha=$TARGET_SHA"
               exit 0
             fi
             sleep 10
           done
-          echo "receipt audit did not complete inside bounded observer window" >&2
           exit 1
