@@ -25,7 +25,7 @@ jobs:
           test "$RUNNER_NAME" = "zcloud-vps-1"
           test "$(hostname)" = "vps-bb300bba"
 
-          recovery="zcloud-runner-listener-recovery-37235581721.service"
+          recovery="zcloud-runner-listener-recovery-37235763224.service"
           service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
           runner_root="/home/ubuntu/actions-runner-zcloud"
           temp_root="$runner_root/_work/_temp"
