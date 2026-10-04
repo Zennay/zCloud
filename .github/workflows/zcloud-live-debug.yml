@@ -105,6 +105,21 @@ jobs:
             state="$(systemctl is-active "$service" || true)"
             echo "SUPA_RUNNER_REGISTERED service=$service state=$state"
             test "$state" = "active"
+
+            target_run=37171774140
+            status="$(gh api "repos/Zennay/Supa/actions/runs/$target_run" --jq '.status')"
+            echo "SUPA_CAPTURE_PRE status=$status run=$target_run"
+            if [[ "$status" == "queued" ]]; then
+              gh api --method POST "repos/Zennay/Supa/actions/runs/$target_run/cancel" >/dev/null
+              for _ in {1..30}; do
+                status="$(gh api "repos/Zennay/Supa/actions/runs/$target_run" --jq '.status')"
+                [[ "$status" == "completed" ]] && break
+                sleep 2
+              done
+              test "$status" = "completed"
+              gh api --method POST "repos/Zennay/Supa/actions/runs/$target_run/rerun" >/dev/null
+              echo "SUPA_CAPTURE_REFRESH=rerun-requested"
+            fi
             exit 0
           fi
           if (( count != 1 )); then
@@ -142,6 +157,29 @@ jobs:
           echo "SUPA_RUNNER_POST state=$post_state pid=$post_pid listener=$post_listener service=$service"
           test "$post_state" = "active"
           test "$post_listener" = "1"
+
+      - name: Refresh stale Supa M1 capture scheduling
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_run=37171774140
+          status="$(gh api "repos/Zennay/Supa/actions/runs/$target_run" --jq '.status')"
+          conclusion="$(gh api "repos/Zennay/Supa/actions/runs/$target_run" --jq '.conclusion // ""')"
+          echo "SUPA_CAPTURE_PRE status=$status conclusion=$conclusion run=$target_run"
+
+          if [[ "$status" == "queued" ]]; then
+            gh api --method POST "repos/Zennay/Supa/actions/runs/$target_run/cancel" >/dev/null
+            for _ in {1..30}; do
+              status="$(gh api "repos/Zennay/Supa/actions/runs/$target_run" --jq '.status')"
+              [[ "$status" == "completed" ]] && break
+              sleep 2
+            done
+            test "$status" = "completed"
+            gh api --method POST "repos/Zennay/Supa/actions/runs/$target_run/rerun" >/dev/null
+            echo "SUPA_CAPTURE_REFRESH=rerun-requested"
+          else
+            echo "SUPA_CAPTURE_REFRESH=preserve-current-state"
+          fi
 
       - name: Read live canary and worker state
         shell: bash
