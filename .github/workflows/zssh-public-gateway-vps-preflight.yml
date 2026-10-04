@@ -113,6 +113,8 @@ jobs:
           export ZSSH_TARGET_ID="$target_id"
           export ZSSH_AGENT_PUBLIC_KEYS_FILE="$trust_file"
           export ZSSH_PUBLIC_ALLOWED_ROOTS="$review_root"
+          export ZSSH_PUBLIC_RATE_LIMIT_PER_MINUTE=120
+          export ZSSH_PUBLIC_RATE_LIMIT_MAX_PROFILES=10000
           export ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1
           export ZSSH_EXPECTED_SHA="$ZSSH_SHA"
 
@@ -140,6 +142,8 @@ jobs:
           export TRUST_FILE="$trust_file"
           export REVIEW_ROOT="$review_root"
           export FINGERPRINT="$fingerprint"
+          export RATE_LIMIT_PER_MINUTE="$ZSSH_PUBLIC_RATE_LIMIT_PER_MINUTE"
+          export RATE_LIMIT_MAX_PROFILES="$ZSSH_PUBLIC_RATE_LIMIT_MAX_PROFILES"
           export BEFORE_ENV="$before_env"
           export AFTER_ENV="$after_env"
           export BEFORE_CURRENT="$before_current"
@@ -168,6 +172,8 @@ jobs:
             placeholder_external_inputs: true,
             target_id: process.env.TARGET_ID,
             public_key_sha256: process.env.FINGERPRINT,
+            public_rate_limit_per_minute: Number(process.env.RATE_LIMIT_PER_MINUTE),
+            public_rate_limit_max_profiles: Number(process.env.RATE_LIMIT_MAX_PROFILES),
             trust_file: process.env.TRUST_FILE,
             review_root: process.env.REVIEW_ROOT,
             public_gateway_env_before: process.env.BEFORE_ENV,
@@ -220,6 +226,8 @@ jobs:
               "zssh_main_reconfirmed": receipt["zssh_main_reconfirmed"],
               "target_id": receipt["target_id"],
               "public_key_sha256": receipt["public_key_sha256"],
+              "public_rate_limit_per_minute": receipt["public_rate_limit_per_minute"],
+              "public_rate_limit_max_profiles": receipt["public_rate_limit_max_profiles"],
               "public_gateway_state_unchanged": (
                   receipt["public_gateway_env_before"] == receipt["public_gateway_env_after"]
                   and receipt["public_release_before"] == receipt["public_release_after"]
