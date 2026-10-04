@@ -562,7 +562,6 @@ jobs:
             --path project-contracts.json \
             --path lane_generator.py \
             --path vps-execution-policy.json \
-            --path scripts/zcloud_recovery.py \
             --preserve-prechange-drift public/zcloud-worker.user.js \
             --preserve-prechange-drift firefox-extension/background.js \
             --allow-recent-ancestor-prechange-drift \
@@ -576,6 +575,7 @@ jobs:
         run: |
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
+            --path scripts/zcloud_recovery.py \
             --path autonomy-policy.json \
             --path portfolio_queue.seed.json \
             --preserve-prechange-drift public/zcloud-worker.user.js \
