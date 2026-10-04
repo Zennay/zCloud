@@ -1,17 +1,17 @@
-name: FTMO TASK-37 readiness CLI exact-head proof 8582eef1
+name: FTMO TASK-37 readiness CLI exact-head proof 278251fd
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ftmo-task37-readiness-cli-proof-8582eef1.yml"
+      - ".github/workflows/ftmo-task37-readiness-cli-proof-278251fd.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: ftmo-task37-readiness-cli-proof-8582eef1
+  group: ftmo-task37-readiness-cli-proof-278251fd
   cancel-in-progress: true
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      TARGET_SHA: 8582eef102f5f1299818fc0854b782417049d856
+      TARGET_SHA: 278251fdfcbf778b3b159da71f5be1e921de9443
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
       FTMO_ALLOW_PAID_AWS: ""
     steps:
@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/ftmo-task37-8582eef1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          work="$RUNNER_TEMP/ftmo-task37-278251fd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           rm -rf "$work"
           git init -q "$work"
           git -C "$work" remote add origin https://github.com/Zennay/Ftmo.git
@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          venv="$RUNNER_TEMP/ftmo-task37-8582eef1-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          venv="$RUNNER_TEMP/ftmo-task37-278251fd-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           rm -rf "$venv"
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install -q -r "$FTMO_WORK/requirements-ci.txt"
@@ -73,7 +73,7 @@ jobs:
           GH_TOKEN: "${{ github.token }}"
         run: |
           set -euo pipefail
-          receipt="$RUNNER_TEMP/ftmo-task37-proof-8582eef1.json"
+          receipt="$RUNNER_TEMP/ftmo-task37-proof-278251fd.json"
           cat >"$receipt" <<EOF
 {
   "schema_version": 1,
@@ -87,7 +87,7 @@ jobs:
 }
 EOF
           content="$(base64 -w0 "$receipt")"
-          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task37-readiness-cli-proof-8582eef1.json \
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task37-readiness-cli-proof-278251fd.json \
             -f message="Record FTMO TASK-37 exact-head VPS proof" \
             -f content="$content" \
             -f branch=main >/dev/null
@@ -96,6 +96,6 @@ EOF
         if: always()
         shell: bash
         run: |
-          rm -rf "$RUNNER_TEMP/ftmo-task37-8582eef1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-                 "$RUNNER_TEMP/ftmo-task37-8582eef1-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-                 "$RUNNER_TEMP/ftmo-task37-proof-8582eef1.json"
+          rm -rf "$RUNNER_TEMP/ftmo-task37-278251fd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+                 "$RUNNER_TEMP/ftmo-task37-278251fd-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+                 "$RUNNER_TEMP/ftmo-task37-proof-278251fd.json"
