@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
 
@@ -39,6 +40,15 @@ class DeploySafeIdleTests(unittest.TestCase):
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     result TEXT
+                );
+                CREATE TABLE runner_events(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    project_id TEXT,
+                    worker_slot INTEGER NOT NULL DEFAULT 1,
+                    generating INTEGER NOT NULL DEFAULT 0,
+                    sending INTEGER NOT NULL DEFAULT 0
                 );
                 INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at)
                 VALUES(1,'cloud',1,'now');
@@ -132,6 +142,67 @@ class DeploySafeIdleTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM runner_workers WHERE project_id='cloud' AND worker_slot=1"
             ).fetchone()[0]
         self.assertEqual(0, count)
+
+    def add_event(self, *, age_seconds, generating=0, sending=0, event="heartbeat"):
+        ts = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) "
+                "VALUES(?,?,?,?,?,?)",
+                (ts, event, "cloud", 1, generating, sending),
+            )
+
+    def test_offline_idle_worker_is_auto_quiesced_and_restored(self):
+        self.add_event(age_seconds=600, generating=0, sending=0)
+        result = safe_idle.enter_safe_idle(
+            self.db,
+            self.state,
+            timeout_seconds=0.5,
+            poll_seconds=0.01,
+            stable_seconds=0.02,
+            offline_after_seconds=300,
+        )
+        self.assertTrue(result["safe_idle"])
+        self.assertEqual("paused", self.state_of())
+        payload = json.loads(self.state.read_text())
+        self.assertEqual("cloud::w1", payload["auto_quiesced_workers"][0]["worker_id"])
+        command = self.pending_drain()
+        self.assertEqual("completed", command[1])
+        restored = safe_idle.restore_safe_idle(self.db, self.state)
+        self.assertTrue(restored["ok"])
+        self.assertEqual("running", self.state_of())
+
+    def test_offline_generating_worker_stays_fail_closed(self):
+        self.add_event(age_seconds=600, generating=1, sending=0, event="generation-started")
+        with self.assertRaisesRegex(safe_idle.SafeIdleError, "cloud::w1"):
+            safe_idle.enter_safe_idle(
+                self.db,
+                self.state,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+                stable_seconds=0.01,
+                offline_after_seconds=300,
+            )
+        payload = json.loads(self.state.read_text())
+        blocker = payload["blocking_workers"][0]
+        self.assertEqual("cloud::w1", blocker["worker_id"])
+        self.assertTrue(blocker["generating"])
+        self.assertEqual("running", self.state_of())
+
+    def test_recent_idle_worker_still_requires_browser_drain_ack(self):
+        self.add_event(age_seconds=1, generating=0, sending=0)
+        with self.assertRaises(safe_idle.SafeIdleError):
+            safe_idle.enter_safe_idle(
+                self.db,
+                self.state,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+                stable_seconds=0.01,
+                offline_after_seconds=300,
+            )
+        payload = json.loads(self.state.read_text())
+        self.assertEqual("pending", payload["blocking_workers"][0]["drain_command_status"])
+        self.assertEqual("running", self.state_of())
 
     def test_timeout_restores_previous_state_fail_closed(self):
         with self.assertRaises(safe_idle.SafeIdleError):
