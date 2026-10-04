@@ -437,6 +437,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('project.get("state_source") != "evidence_receipt"', receipt)
         self.assertIn('state.get("commit_sha") != expected_sha', receipt)
         self.assertIn("ZCLOUD_PRODUCTION_RECEIPT_GREEN", receipt)
+        self.assertIn("deadline = time.monotonic() + 90", receipt)
+        self.assertIn("ZCLOUD_PRODUCTION_RECEIPT_WAIT", receipt)
+        self.assertIn("time.sleep(5)", receipt)
+        self.assertIn("did not converge to receipt-backed state", receipt)
         self.assertLess(text.index("Resume external self-heal"), text.index(step))
         self.assertLess(text.index(step), text.index("Publish production deploy result"))
 
