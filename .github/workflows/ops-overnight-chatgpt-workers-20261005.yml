@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   arm:
-    runs-on: self-hosted
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 6
     steps:
       - name: Keep ChatGPT workers running overnight
