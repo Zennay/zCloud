@@ -1,0 +1,67 @@
+name: zSSH current Cloudflare capability VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/tmp-zssh-cloudflare-capability-proof.yml
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-current-cloudflare-capability-vps-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    name: Probe current zSSH Cloudflare capability on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          path: zcloud-control
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 zcloud-control/scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Probe persistent Cloudflare authorization without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 zcloud-control/scripts/zssh_cloudflare_capability_probe.py             --output "$RUNNER_TEMP/zssh-cloudflare-capability.json"
+          python3 - "$RUNNER_TEMP/zssh-cloudflare-capability.json" <<'PY'
+          import json
+          import sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert data["hostname"] == "vps-bb300bba"
+          assert data["mutation_attempted"] is False
+          present = bool(data["persistent_provider_session_present"])
+          print(f"ZSSH_CLOUDFLARE_CAPABILITY_PRESENT={str(present).lower()}")
+          print(f"ZSSH_CLOUDFLARE_TOKEN_PRESENT={str(bool(data['persistent_token_present'])).lower()}")
+          print(f"ZSSH_CLOUDFLARE_TOKEN_VERIFIED={str(bool(data['token_verified'])).lower()}")
+          print(f"ZSSH_CLOUDFLARE_ZONE_READABLE={str(bool(data['zone_readable'])).lower()}")
+          print(f"ZSSH_CLOUDFLARE_WRANGLER_AUTHENTICATED={str(bool(data['wrangler_authenticated'])).lower()}")
+          PY
+
+      - name: Upload non-secret capability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-current-cloudflare-capability-${{ github.run_id }}
+          path: ${{ runner.temp }}/zssh-cloudflare-capability.json
+          if-no-files-found: error
+          retention-days: 30
