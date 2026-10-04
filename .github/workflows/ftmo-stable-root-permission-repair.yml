@@ -125,7 +125,9 @@ jobs:
           set -euo pipefail
           test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$FTMO_MAIN_SHA"
           gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
+          gh workflow run deploy-autonomous-vps.yml --repo Zennay/Ftmo --ref main
           echo "FTMO_REPAIRED_SYNC_DISPATCHED=1"
+          echo "FTMO_REPAIRED_RUNTIME_VERIFY_DISPATCHED=1"
 
       - name: Persist repair receipt
         shell: bash
