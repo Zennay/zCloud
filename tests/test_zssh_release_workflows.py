@@ -78,7 +78,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/zssh-public-gateway-vps-preflight.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
-        self.assertNotRegex(text, r"ZSSH_SHA:\\s*[0-9a-f]{40}")
+        self.assertNotRegex(text, r"ZSSH_SHA:\s*[0-9a-f]{40}")
         self.assertIn("repository: Zennay/zSSH", text)
         self.assertIn("cancel-in-progress: true", text)
         self.assertIn("id: zssh_target", text)
