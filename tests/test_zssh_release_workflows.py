@@ -140,5 +140,26 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("OPENAI_APPS_CHALLENGE_TOKEN:", text)
 
 
+    def test_production_origin_readiness_is_exact_and_non_mutating(self):
+        text = (ROOT / ".github/workflows/zssh-production-origin-readiness.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop", text)
+        self.assertIn("ZSSH_EXPECTED_IPV4: 198.244.191.182", text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", text)
+        self.assertIn('ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1', text)
+        self.assertIn('node "$source_root/scripts/render-public-caddy.mjs"', text)
+        self.assertIn('grep -Fx "    reverse_proxy 127.0.0.1:8789"', text)
+        self.assertIn('"dns_ready": dns_ready', text)
+        self.assertIn('"public_gateway_state_mutated": False', text)
+        self.assertIn('"oauth_external_gate_remaining": True', text)
+        self.assertIn("ZSSH_PRODUCTION_ORIGIN_DNS_PENDING", text)
+        self.assertIn("ZSSH_PRODUCTION_ORIGIN_DNS_GREEN", text)
+        self.assertIn("--project zssh", text)
+        self.assertIn('--source "github-actions:zssh-production-origin-readiness"', text)
+        self.assertNotIn("systemctl --user enable --now zssh-public.service", text)
+
+
 if __name__ == "__main__":
     unittest.main()
