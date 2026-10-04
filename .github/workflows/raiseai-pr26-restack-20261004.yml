@@ -1,4 +1,4 @@
-name: Restack RaiseAI PR26 onto merged main
+name: Merge canonical main into RaiseAI PR26 stack
 
 on:
   push:
@@ -24,11 +24,10 @@ jobs:
       BRANCH: hardening/install-device-binding-20261004
       EXPECTED_HEAD: 5e6ab40a011afc6bfa8e9606d7cc6af5813f2a8e
       EXPECTED_OLD_BASE: hardening/retry-safe-physical-handoff-20261004
-      EXPECTED_MERGE_BASE: 226815612a9dd795d7f2bea852934c4c0dad6832
       RECEIPT_PATH: runtime-evidence/raiseai-pr26-restack.json
 
     steps:
-      - name: Verify exact PR26 stack identity
+      - name: Verify exact restored PR26 identity
         shell: bash
         run: |
           set -euo pipefail
@@ -39,17 +38,16 @@ jobs:
           test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .head.sha)" = "$EXPECTED_HEAD"
           test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .base.ref)" = "$EXPECTED_OLD_BASE"
 
-      - name: Rebase cumulative hardening stack safely
-        id: restack
+      - name: Merge current main into cumulative hardening stack
         shell: bash
         run: |
           set -euo pipefail
           state="$RUNNER_TEMP/raiseai-pr26-restack-state"
           : > "$state"
-          echo "status=started" >> "$state"
+          echo "strategy=merge_main_into_stack" >> "$state"
           echo "old_head=$EXPECTED_HEAD" >> "$state"
 
-          work="$RUNNER_TEMP/raiseai-pr26-restack"
+          work="$RUNNER_TEMP/raiseai-pr26-merge-main"
           rm -rf "$work"
           gh repo clone "$RAISE_REPO" "$work" -- --filter=blob:none >/dev/null
           cd "$work"
@@ -60,25 +58,19 @@ jobs:
           original="$(git rev-parse "origin/$BRANCH")"
           main_sha="$(git rev-parse origin/main)"
           test "$original" = "$EXPECTED_HEAD"
-          merge_base="$(git merge-base origin/main "origin/$BRANCH")"
-          test "$merge_base" = "$EXPECTED_MERGE_BASE"
           echo "main_sha=$main_sha" >> "$state"
-          echo "merge_base=$merge_base" >> "$state"
-
-          backup="backup/pr26-pre-restack-20261004-$(printf '%s' "$original" | cut -c1-12)"
-          git push origin "$original:refs/heads/$backup"
-          echo "backup_ref=$backup" >> "$state"
 
           git checkout -B "$BRANCH" "origin/$BRANCH"
-          if ! git rebase --onto origin/main "$merge_base"; then
+          if ! git merge --no-ff --no-edit origin/main; then
             conflicts="$(git diff --name-only --diff-filter=U | sort -u | paste -sd, -)"
-            echo "status=rebase_conflict" >> "$state"
+            echo "status=merge_conflict" >> "$state"
             echo "conflicts=$conflicts" >> "$state"
-            git rebase --abort || true
+            git merge --abort || true
             exit 1
           fi
 
           new_head="$(git rev-parse HEAD)"
+          test "$new_head" != "$main_sha"
           echo "new_head=$new_head" >> "$state"
           git diff --check origin/main...HEAD
 
@@ -119,11 +111,11 @@ EOF
           python3 -m unittest discover -s tests -p 'test_start_physical_handoff.py'
           python3 -m unittest discover -s tests -p 'test_adb_device_binding.py'
 
-          git push --force-with-lease="refs/heads/$BRANCH:$original" origin "HEAD:refs/heads/$BRANCH"
+          git push origin "HEAD:refs/heads/$BRANCH"
           remote_head="$(git ls-remote origin "refs/heads/$BRANCH" | awk '{print $1}')"
           test "$remote_head" = "$new_head"
 
-          gh api -X PATCH "repos/$RAISE_REPO/pulls/$PR_NUMBER" -f base=main >/dev/null
+          gh api -X PATCH "repos/$RAISE_REPO/pulls/$PR_NUMBER" -f base=main -f state=open >/dev/null
           test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .base.ref)" = "main"
           test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .head.sha)" = "$new_head"
 
@@ -131,7 +123,7 @@ EOF
           echo "changed_paths=$changed_csv" >> "$state"
           echo "status=success" >> "$state"
 
-      - name: Persist sanitized restack receipt
+      - name: Persist sanitized merge-restack receipt
         if: always()
         shell: bash
         run: |
@@ -158,7 +150,7 @@ EOF
                       state[key] = value
 
           payload = {
-              "schema_version": 1,
+              "schema_version": 2,
               "project": "raiseai",
               "pull_request": 26,
               "runner_name": os.environ.get("RUNNER_NAME"),
@@ -175,7 +167,7 @@ EOF
           git config user.email "zcloud-automation@users.noreply.github.com"
           git add "$RECEIPT_PATH"
           if ! git diff --cached --quiet; then
-            git commit -m "Record RaiseAI PR26 restack"
+            git commit -m "Record RaiseAI PR26 merge restack"
             for _ in 1 2 3; do
               if git push origin HEAD:main; then exit 0; fi
               git fetch origin main
