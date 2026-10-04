@@ -87,18 +87,23 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("read-only inspection", server)
 
     def test_production_policy_has_no_time_debounce_and_waits_for_generation_boundary(self):
-        policy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
+        contracts = json.loads((ROOT / "project-contracts.json").read_text(encoding="utf-8"))
+        defaults = dict(contracts["defaults"]["autonomy"])
 
-        self.assertTrue(policy["default"]["auto_start"])
-        self.assertEqual("vps", policy["default"]["dispatch_mode"])
-        self.assertEqual(120, policy["default"]["min_ai_interval_seconds"])
-        self.assertEqual(120, policy["default"]["continue_delay_seconds"])
+        self.assertEqual("vps", defaults["dispatch_mode"])
+        self.assertEqual(120, defaults["min_ai_interval_seconds"])
+        self.assertEqual(120, defaults["continue_delay_seconds"])
 
-        for project_id, project in policy["projects"].items():
+        for project_id, contract in contracts["projects"].items():
+            project = {**defaults, **contract["autonomy"]}
             self.assertEqual("vps", project["dispatch_mode"], project_id)
             self.assertEqual(120, project["min_ai_interval_seconds"], project_id)
             self.assertEqual(120, project["continue_delay_seconds"], project_id)
-            self.assertEqual(project_id != "ulab", project["auto_start"], project_id)
+            self.assertEqual(
+                contract["queue_mode"] != "human-gated",
+                project["auto_start"],
+                project_id,
+            )
 
     def test_worker_prompt_uses_vps_sqlite_queue_and_evidence_done_gate(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
