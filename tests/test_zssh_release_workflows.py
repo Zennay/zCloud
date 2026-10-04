@@ -430,7 +430,6 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
             "zssh-cloudflare-capability-probe.yml",
             "zssh-cloudflare-credential-probe.yml",
             "zssh-public-gateway-vps-preflight.yml",
-            "zssh-public-gateway-preflight.yml",
             "zssh-public-gateway-activate.yml",
             "zssh-caddy-topology-audit.yml",
             "zssh-public-ingress-bootstrap.yml",
