@@ -37,8 +37,8 @@ jobs:
           test ! -L "$FTMO_ROOT"
           test "$(stat -c %U "$FTMO_ROOT")" = "ftmo-runner"
 
-          before_config_sha="$(sha256sum "$FTMO_ROOT/configs/research_machine.json" | awk '{print $1}')"
-          before_status_sha="$(sha256sum "$FTMO_ROOT/.scratch/autonomy/status.json" | awk '{print $1}')"
+          before_config_sha="$(sudo -n -u ftmo-runner sha256sum "$FTMO_ROOT/configs/research_machine.json" | awk '{print $1}')"
+          before_status_sha="$(sudo -n -u ftmo-runner sha256sum "$FTMO_ROOT/.scratch/autonomy/status.json" | awk '{print $1}')"
 
           mapfile -t unsafe < <(
             sudo -n find "$FTMO_ROOT" \
@@ -64,8 +64,8 @@ jobs:
             -type d -user ftmo-runner -perm /022 -print | wc -l)"
           test "$remaining" -eq 0
 
-          after_config_sha="$(sha256sum "$FTMO_ROOT/configs/research_machine.json" | awk '{print $1}')"
-          after_status_sha="$(sha256sum "$FTMO_ROOT/.scratch/autonomy/status.json" | awk '{print $1}')"
+          after_config_sha="$(sudo -n -u ftmo-runner sha256sum "$FTMO_ROOT/configs/research_machine.json" | awk '{print $1}')"
+          after_status_sha="$(sudo -n -u ftmo-runner sha256sum "$FTMO_ROOT/.scratch/autonomy/status.json" | awk '{print $1}')"
           test "$before_config_sha" = "$after_config_sha"
           test "$before_status_sha" = "$after_status_sha"
 
