@@ -165,5 +165,27 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("systemctl --user enable --now zssh-public.service", text)
 
 
+    def test_caddy_topology_audit_is_non_mutating_and_evidence_backed(self):
+        text = (ROOT / ".github/workflows/zssh-caddy-topology-audit.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop", text)
+        self.assertIn("ZSSH_PUBLIC_UPSTREAM: 127.0.0.1:8789", text)
+        self.assertIn("sudo -n true", text)
+        self.assertIn("systemctl is-active --quiet caddy", text)
+        self.assertIn("caddy validate --config", text.replace('\"$caddy_binary\"', "caddy"))
+        self.assertIn("caddyfile_imports_conf_d", text)
+        self.assertIn("caddyfile_imports_sites_enabled", text)
+        self.assertIn('"promotion_strategy": os.environ["STRATEGY"]', text)
+        self.assertIn('"configuration_content_exposed": False', text)
+        self.assertIn('"configuration_mutated": False', text)
+        self.assertIn("ZSSH_CADDY_TOPOLOGY_AUDIT_GREEN", text)
+        self.assertIn('--project zssh', text)
+        self.assertIn('--source "github-actions:zssh-caddy-topology-audit"', text)
+        self.assertNotIn("sudo -n install", text)
+        self.assertNotIn("systemctl reload caddy", text)
+        self.assertNotIn("systemctl restart caddy", text)
+
+
 if __name__ == "__main__":
     unittest.main()
