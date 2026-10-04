@@ -1,0 +1,75 @@
+name: Diagnose zCloud Actions runner temp integrity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-runner-temp-diagnostic-20261004.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runner-temp-diagnostic-20261004
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Inspect runner process and temp integrity without checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+
+          root="/home/ubuntu/actions-runner-zcloud"
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+
+          echo "ZCLOUD_RUNNER_DIAG root=$root service=$service"
+          echo "ZCLOUD_RUNNER_DIAG event_path=$GITHUB_EVENT_PATH runner_temp=$RUNNER_TEMP"
+          systemctl show "$service" -p ActiveState -p SubState -p MainPID -p ControlGroup -p ExecMainStartTimestamp || true
+          systemctl list-units --type=service --all 'actions.runner.*' --no-legend || true
+
+          echo "ZCLOUD_RUNNER_PROCESSES_BEGIN"
+          ps -eo pid,ppid,user,lstart,args \
+            | grep -E 'actions-runner-zcloud|Runner\.(Listener|Worker)|runsvc\.sh' \
+            | grep -v grep || true
+          echo "ZCLOUD_RUNNER_PROCESSES_END"
+
+          listener_count="$(
+            ps -eo args= \
+              | grep -E "^${root}/bin/Runner\.Listener|^${root}/runsvc\.sh|/bin/bash ${root}/runsvc\.sh" \
+              | grep -v grep \
+              | wc -l
+          )"
+          worker_count="$(
+            ps -eo args= \
+              | grep -E "^${root}/bin/Runner\.Worker|${root}/bin/Runner\.Worker" \
+              | grep -v grep \
+              | wc -l
+          )"
+          echo "ZCLOUD_RUNNER_COUNTS listener_like=$listener_count worker=$worker_count"
+
+          test -d "$RUNNER_TEMP"
+          stat -c 'ZCLOUD_RUNNER_TEMP owner=%U group=%G mode=%a inode=%i mtime=%y path=%n' "$RUNNER_TEMP"
+          find "$RUNNER_TEMP" -maxdepth 2 -mindepth 1 -printf 'ZCLOUD_RUNNER_TEMP_ENTRY %u:%g %m %TY-%Tm-%TdT%TH:%TM:%TS %p\n' \
+            2>/dev/null | tail -120 || true
+
+          before_event=missing
+          [[ -e "$GITHUB_EVENT_PATH" ]] && before_event=present
+          sentinel="$RUNNER_TEMP/zcloud-runner-temp-sentinel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s\n' "$GITHUB_RUN_ID" > "$sentinel"
+          sleep 8
+          after_event=missing
+          [[ -e "$GITHUB_EVENT_PATH" ]] && after_event=present
+          sentinel_state=missing
+          [[ -s "$sentinel" ]] && sentinel_state=present
+          echo "ZCLOUD_RUNNER_TEMP_STABILITY event_before=$before_event event_after=$after_event sentinel=$sentinel_state"
+          rm -f "$sentinel"
+
+          test "$before_event" = "present"
+          test "$after_event" = "present"
+          test "$sentinel_state" = "present"
