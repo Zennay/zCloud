@@ -1,0 +1,23 @@
+{
+  "current_main_sha": "77134b142952f590ba19f4666a616d0e0001621d",
+  "protected_runs": [
+    {
+      "conclusion": null,
+      "head_sha": "e5363979dd40097ede98234554ed49b262514fa1",
+      "name": "Sync autonomous VPS research state",
+      "run_id": 37171444603,
+      "status": "queued"
+    },
+    {
+      "conclusion": "cancelled",
+      "head_sha": "baac36f317348487d9c461172a17b9db0872d48c",
+      "name": "Test suite",
+      "run_id": 37172359837,
+      "status": "completed"
+    }
+  ],
+  "recovery_action": "",
+  "runner_name": "zcloud-vps-1",
+  "scope": "ftmo-task37-pr511-listener-recovery",
+  "workflow_run_id": "37172449461"
+}
