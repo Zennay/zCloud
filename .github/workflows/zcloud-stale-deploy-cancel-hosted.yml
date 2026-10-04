@@ -21,7 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for run_id in 37237440248 37237691366; do
+          for run_id in 37237440248 37237691366 37238046823 37238258050; do
             state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + ":" + (.conclusion // "")' 2>/dev/null || true)"
             echo "RUN ${run_id} state=${state:-unresolved}"
             case "$state" in
