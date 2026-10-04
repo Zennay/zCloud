@@ -47,6 +47,14 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
             self.assertFalse(bool(cfg.get("auto_start")))
             self.assertEqual(0, pool.get("slots"))
 
+    def test_zssh_external_gate_pauses_ai_without_disabling_control_plane(self):
+        contract = self.contracts["projects"]["zssh"]
+        self.assertEqual("execution", contract["queue_mode"])
+        self.assertEqual("external_gate", contract["autonomy"]["mode"])
+        self.assertFalse(contract["autonomy"]["auto_start"])
+        self.assertEqual("protected", contract["compute"]["pool"])
+        self.assertTrue(contract["compute"]["protected"])
+
     def test_server_has_no_hard_coded_project_worker_cap_table(self):
         server_source = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertNotIn("PROJECT_AI_WORKER_LIMITS", server_source)
