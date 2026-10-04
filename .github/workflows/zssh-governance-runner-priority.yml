@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      GH_TOKEN: \${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Identify bounded stale queued audits
         shell: bash
@@ -100,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zssh-governance-runner-priority-\${{ github.run_id }}
-          path: \${{ runner.temp }}/zssh-governance-runner-priority.json
+          name: zssh-governance-runner-priority-${{ github.run_id }}
+          path: ${{ runner.temp }}/zssh-governance-runner-priority.json
           if-no-files-found: error
           retention-days: 7
