@@ -1,0 +1,17 @@
+{
+  "execution_runner": "zcloud-vps-1",
+  "hostname": "vps-bb300bba",
+  "project": "zssh",
+  "proof": "outbound-agent-canonical-exact-head",
+  "result": "success",
+  "schema_version": 1,
+  "target_sha": "7f8d9715e79ec5714d7a100d98283b8636fbe582",
+  "tests": [
+    "agent-runtime",
+    "agent-client",
+    "agent-transport",
+    "full-npm-test"
+  ],
+  "workflow_run_attempt": 1,
+  "workflow_run_id": 37163539208
+}
