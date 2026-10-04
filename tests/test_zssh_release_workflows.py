@@ -424,8 +424,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("cat ~/.config", text)
 
 
-    def test_current_m5_vps_lanes_pin_checkout_to_immutable_commit(self):
-        expected = "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"
+    def test_current_m5_vps_lanes_pin_remote_actions_to_immutable_commits(self):
         workflows = [
             "zssh-cloudflare-vps-dns-apply.yml",
             "zssh-cloudflare-capability-probe.yml",
@@ -441,8 +440,17 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         for workflow in workflows:
             with self.subTest(workflow=workflow):
                 text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
-                self.assertIn(expected, text)
-                self.assertNotRegex(text, r"uses:\\s+actions/checkout@v\\d")
+                remote_uses = re.findall(
+                    r"uses:\\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\\s#]+)",
+                    text,
+                )
+                self.assertTrue(remote_uses, f"{workflow} must use at least one remote action")
+                for action, ref in remote_uses:
+                    self.assertRegex(
+                        ref,
+                        r"^[0-9a-f]{40}$",
+                        f"{workflow} must pin {action} to an immutable commit SHA",
+                    )
 
 
 if __name__ == "__main__":
