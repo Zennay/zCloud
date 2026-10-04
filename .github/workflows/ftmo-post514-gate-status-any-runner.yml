@@ -1,0 +1,82 @@
+name: FTMO post514 exact-main gate status (any runner)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-post514-gate-status-any-runner.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-post514-gate-status-any-runner
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: self-hosted
+    timeout-minutes: 4
+    env:
+      EXPECTED_MAIN: ac2a2563283c286b66aa409280339286bc05b366
+    steps:
+      - name: Ensure and capture exact-main FTMO gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
+          test "$current" = "$EXPECTED_MAIN"
+
+          get_run() {
+            local workflow="$1"
+            gh api "repos/Zennay/Ftmo/actions/workflows/$workflow/runs?event=workflow_dispatch&per_page=30"               --jq --arg sha "$EXPECTED_MAIN" '[.workflow_runs[] | select(.head_sha==$sha)] | sort_by(.created_at) | last // {}'
+          }
+
+          sync_json="$(get_run sync-autonomous-research-state.yml)"
+          sync_id="$(printf '%s' "$sync_json" | jq -r '.id // empty')"
+          action="reused-existing"
+          if [[ -z "$sync_id" ]]; then
+            gh api --method POST repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/dispatches               -f ref=main >/dev/null
+            action="dispatched"
+            for _ in $(seq 1 20); do
+              sleep 2
+              sync_json="$(get_run sync-autonomous-research-state.yml)"
+              sync_id="$(printf '%s' "$sync_json" | jq -r '.id // empty')"
+              [[ -n "$sync_id" ]] && break
+            done
+          fi
+          test -n "$sync_id"
+
+          vps_json="$(get_run deploy-autonomous-vps.yml)"
+          receipt="$RUNNER_TEMP/ftmo-post514-gate-status-any-runner.json"
+          python3 - "$EXPECTED_MAIN" "$action" "$sync_json" "$vps_json" "$GITHUB_RUN_ID" >"$receipt" <<'PY'
+import json, sys
+sha, action, sync_raw, vps_raw, carrier = sys.argv[1:]
+def pick(raw):
+    obj = json.loads(raw)
+    if not obj:
+        return None
+    return {
+        "run_id": obj.get("id"),
+        "status": obj.get("status"),
+        "conclusion": obj.get("conclusion"),
+        "head_sha": obj.get("head_sha"),
+        "created_at": obj.get("created_at"),
+        "updated_at": obj.get("updated_at"),
+        "event": obj.get("event"),
+    }
+print(json.dumps({
+    "schema_version": 1,
+    "scope": "ftmo-post514-gate-status-any-runner",
+    "expected_main_sha": sha,
+    "sync_action": action,
+    "state_sync": pick(sync_raw),
+    "vps_verify": pick(vps_raw),
+    "carrier_run_id": carrier,
+}, sort_keys=True, indent=2))
+PY
+          cat "$receipt"
+          encoded="$(base64 -w0 "$receipt")"
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post514-gate-status-any-runner.json             -f message="Record FTMO post514 gate status from generic runner"             -f content="$encoded"             -f branch=main >/dev/null
