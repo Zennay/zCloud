@@ -1,0 +1,52 @@
+name: Backfill missing project state receipts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/project-state-receipt-backfill.yml
+      - scripts/zcloud_backfill_project_receipt.py
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Project to backfill
+        required: true
+        default: raiseai
+        type: choice
+        options:
+          - ftmo
+          - lightup
+          - raiseai
+          - supa
+          - ulab
+          - zssh
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        project: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.project)) || fromJSON('["ftmo","lightup","raiseai","supa","ulab","zssh"]') }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Backfill evidence-backed project state receipt
+        shell: bash
+        env:
+          PROJECT_ID: ${{ matrix.project }}
+          ZCLOUD_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_backfill_project_receipt.py \
+            --project "${PROJECT_ID}" \
+            --source "github-actions:portfolio-state-receipt-backfill" \
+            --workflow-run-id "${ZCLOUD_WORKFLOW_RUN_ID}"
