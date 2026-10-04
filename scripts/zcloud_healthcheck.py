@@ -16,6 +16,9 @@ from pathlib import Path
 DEFAULT_ROOT = Path(os.environ.get("ZCLOUD_ROOT", "/home/ubuntu/zennay-cloud"))
 DEFAULT_DB = Path(os.environ.get("ZCLOUD_DB", str(DEFAULT_ROOT / "history.db")))
 DEFAULT_BASE_URL = os.environ.get("ZCLOUD_BASE_URL", "http://127.0.0.1:8765")
+DEFAULT_STATUS_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_STATUS_REQUEST_TIMEOUT_SECONDS", "40")
+)
 DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
     "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
@@ -345,10 +348,14 @@ def live_health(
     runtime_extension: Path = DEFAULT_RUNTIME_EXTENSION,
     legacy_disable_path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE,
     max_pending_age_seconds: int = 300,
+    status_request_timeout_seconds: float = DEFAULT_STATUS_REQUEST_TIMEOUT_SECONDS,
 ) -> dict:
     transport_errors = []
     try:
-        status = http_json(base_url.rstrip("/") + "/api/status")
+        status = http_json(
+            base_url.rstrip("/") + "/api/status",
+            timeout=max(3.0, float(status_request_timeout_seconds)),
+        )
     except Exception as exc:
         status = {"errors": [f"status unavailable: {exc}"]}
         transport_errors.append(str(exc))
@@ -391,6 +398,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--runtime-extension", type=Path, default=DEFAULT_RUNTIME_EXTENSION)
     parser.add_argument("--max-pending-age-seconds", type=int, default=300)
+    parser.add_argument(
+        "--status-request-timeout-seconds",
+        type=float,
+        default=DEFAULT_STATUS_REQUEST_TIMEOUT_SECONDS,
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = live_health(
@@ -399,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         runtime_extension=args.runtime_extension.resolve(),
         max_pending_age_seconds=max(30, args.max_pending_age_seconds),
+        status_request_timeout_seconds=max(3.0, args.status_request_timeout_seconds),
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
