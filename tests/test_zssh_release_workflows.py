@@ -81,6 +81,8 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("ZSSH_SHA: e2dee8b5e07a41c13408954348c05412b1d66e5d", text)
         self.assertIn("repository: Zennay/zSSH", text)
         self.assertIn('test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"', text)
+        self.assertIn('bash "$source_root/deploy/prepare-reviewer-target.sh" "$source_root" > "$reviewer_report"', text)
+        self.assertNotIn('npm --prefix "$source_root" run review:target', text)
         self.assertIn('ZSSH_PUBLIC_BASE_URL="https://mcp.zssh-preflight.invalid"', text)
         self.assertIn('ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1', text)
         self.assertIn('test "$after_env" = "$before_env"', text)

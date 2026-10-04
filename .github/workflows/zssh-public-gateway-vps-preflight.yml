@@ -85,7 +85,7 @@ jobs:
           before_enabled="$(systemctl --user is-enabled zssh-public.service 2>/dev/null || true)"
 
           reviewer_report="$RUNNER_TEMP/zssh-reviewer-target.json"
-          npm --prefix "$source_root" run review:target -- "$source_root" > "$reviewer_report"
+          bash "$source_root/deploy/prepare-reviewer-target.sh" "$source_root" > "$reviewer_report"
 
           target_id="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.target_id)' "$reviewer_report")"
           trust_file="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.gateway_public_key_config_file)' "$reviewer_report")"
