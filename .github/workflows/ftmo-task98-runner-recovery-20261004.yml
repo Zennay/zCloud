@@ -1,0 +1,86 @@
+name: Recover FTMO runner after TASK-98 host-memory deferral
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-task98-runner-recovery-20261004.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-task98-runner-recovery-20261004
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Recover only an idle or unhealthy FTMO Actions listener
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+          RUN_USER=ftmo-runner
+
+          pre_state="$(systemctl is-active "$SERVICE" || true)"
+          pre_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+          worker_before=0
+          listener_before=0
+
+          if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            worker_before=1
+          fi
+          if [[ "$pre_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pre_pid/cmdline"; then
+            pre_cmdline="$(tr '\0' ' ' < "/proc/$pre_pid/cmdline")"
+            if [[ "$pre_cmdline" == *"Runner.Listener"* || "$pre_cmdline" == *"runsvc.sh"* ]]; then
+              listener_before=1
+            fi
+          fi
+
+          echo "FTMO_TASK98_RECOVERY_PRE state=$pre_state pid=$pre_pid listener=$listener_before worker=$worker_before"
+
+          action=none
+          if [[ "$worker_before" -eq 1 ]]; then
+            action=preserve-active-worker
+          elif [[ "$pre_state" != "active" ]]; then
+            sudo -n systemctl reset-failed "$SERVICE" || true
+            sudo -n systemctl start "$SERVICE"
+            action=start-inactive-listener
+          elif [[ "$listener_before" -eq 1 ]]; then
+            action=preserve-healthy-listener
+          else
+            sudo -n systemctl restart "$SERVICE"
+            action=restart-unhealthy-listener
+          fi
+
+          post_state=""
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$SERVICE" || true)"
+            if [[ "$post_state" == "active" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$post_state" = "active"
+
+          post_pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          test -r "/proc/$post_pid/cmdline"
+          post_cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+          [[ "$post_cmdline" == *"Runner.Listener"* || "$post_cmdline" == *"runsvc.sh"* ]]
+
+          echo "FTMO_TASK98_RECOVERY_ACTION=$action"
+          echo "FTMO_TASK98_RECOVERY_POST state=$post_state pid=$post_pid listener=1"
+          echo "FTMO_TASK98_MEMORY_BEGIN"
+          free -m || true
+          echo "FTMO_TASK98_MEMORY_END"
+          echo "FTMO_TASK98_OOM_BEGIN"
+          (sudo -n journalctl -k --since "-30 min" --no-pager 2>/dev/null || journalctl -k --since "-30 min" --no-pager 2>/dev/null || true) \
+            | grep -Eai 'out of memory|oom|killed process|memory cgroup' \
+            | tail -80 || true
+          echo "FTMO_TASK98_OOM_END"
