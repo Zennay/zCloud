@@ -10,6 +10,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ZsshReleaseWorkflowTests(unittest.TestCase):
+    def test_legacy_zssh_mutating_release_workflows_stay_retired(self):
+        retired = [
+            ".github/workflows/zssh-vps-release-runner.yml",
+            ".github/workflows/zssh-standalone-vps-release.yml",
+            ".github/workflows/finalize-zssh-public-release-20261002.yml",
+        ]
+        for relative in retired:
+            self.assertFalse(
+                (ROOT / relative).exists(),
+                f"retired mutating zSSH workflow must not return: {relative}",
+            )
+
+        activate = (ROOT / ".github/workflows/zssh-public-gateway-activate.yml").read_text(encoding="utf-8")
+        ingress = (ROOT / ".github/workflows/zssh-public-ingress-bootstrap.yml").read_text(encoding="utf-8")
+        self.assertIn("expected_zssh_sha", activate)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", activate)
+        self.assertIn('test "$live_main" = "$EXPECTED_ZSSH_SHA"', activate)
+        self.assertIn("expected_zssh_sha", ingress)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", ingress)
+
     def test_public_plugin_queue_stays_below_ftmo_p0(self):
         text = (ROOT / ".github/workflows/zssh-public-plugin-priority.yml").read_text(encoding="utf-8")
         self.assertIn('"priority": "P1"', text)
@@ -34,57 +54,6 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
             "server.mjs",
         ]))
         self.assertFalse(coordination.release_only_main_advance([]))
-
-    def test_vps_release_proves_public_listing_site_without_switching_live_profile(self):
-        text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
-        self.assertIn("ZSSH_RELEASE_SHA: c1a249e4995605b025496a0178cacbc4cfcecf41", text)
-        self.assertIn("Verify isolated public review site on exact release", text)
-        self.assertIn("ZSSH_PUBLIC_LISTING_SITE_VPS_GREEN", text)
-        self.assertIn("ZSSH_PLUGIN_PROFILE=public", text)
-        self.assertIn("ZSSH_PUBLIC_AUTH_MODE=legacy", text)
-        self.assertIn("Your Linux target stays yours.", text)
-        self.assertIn("/support /privacy /terms", text)
-
-    def test_public_release_finalizer_is_exact_and_success_gated(self):
-        text = (ROOT / ".github/workflows/finalize-zssh-public-release-20261002.yml").read_text(encoding="utf-8")
-        self.assertIn("workflow_run:", text)
-        self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
-        self.assertIn("zssh-openai-public-plugin-release", text)
-        self.assertIn("c1a249e4995605b025496a0178cacbc4cfcecf41", text)
-        self.assertIn("ZCLOUD_ZSSH_PUBLIC_RELEASE_QUEUE_DONE_GREEN=1", text)
-        self.assertNotIn("portfolio_queue_drop", text)
-
-    def test_vps_release_uses_permanent_runner_guard(self):
-        text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
-        self.assertIn("runs-on: self-hosted", text)
-        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
-        match = re.search(r"ZSSH_RELEASE_SHA:\s*([0-9a-f]{40})", text)
-        self.assertIsNotNone(match)
-
-    def test_legacy_vps_release_runner_is_pinned_to_current_green_zssh_and_permanent_runner(self):
-        text = (ROOT / ".github/workflows/zssh-vps-release-runner.yml").read_text(encoding="utf-8")
-        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
-        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
-        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
-        self.assertIn("ZSSH_RELEASE_SHA: aa50412cc057fb65744809de34942bf9603e0319", text)
-        self.assertIn("repository: Zennay/zSSH", text)
-        self.assertIn("ref: ${{ env.ZSSH_RELEASE_SHA }}", text)
-        self.assertIn('test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_RELEASE_SHA"', text)
-        self.assertIn("ZSSH_LIVE_PROVENANCE_GREEN", text)
-        self.assertIn("ZSSH_HOSTED_CLIENT_CANARIES_GREEN", text)
-
-    def test_vps_release_records_evidence_backed_zssh_receipt(self):
-        text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
-        self.assertIn("Record evidence-backed zSSH release state receipt", text)
-        self.assertIn("--project zssh", text)
-        self.assertIn('--commit "$ZSSH_RELEASE_SHA"', text)
-        self.assertIn("--ci-status success", text)
-        self.assertIn('"live_marker": "ZSSH_STANDALONE_M1_LIVE_GREEN"', text)
-        self.assertIn('"public_listing_marker": "ZSSH_PUBLIC_LISTING_SITE_VPS_GREEN"', text)
-        self.assertIn('--source "github-actions:zssh-standalone-vps-release"', text)
-        receipt_pos = text.index("Record evidence-backed zSSH release state receipt")
-        release_pos = text.index("Release coordination claim")
-        self.assertLess(receipt_pos, release_pos)
 
     def test_public_gateway_validate_only_proof_uses_zcloud_runner_lane(self):
         text = (ROOT / ".github/workflows/zssh-public-gateway-vps-preflight.yml").read_text(encoding="utf-8")
