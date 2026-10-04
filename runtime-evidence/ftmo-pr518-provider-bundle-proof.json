@@ -11,9 +11,9 @@
   "runner_host": "vps-bb300bba",
   "schema_version": 1,
   "scope": "restart-safe provider evidence bundle focused exact-head proof",
-  "target_sha": "0cfa970439d1ebf0daec24d5587d91dc6afea551",
+  "target_sha": "22c9b6d8596630b929623d64120d5d695da9942e",
   "task": "TASK-78",
   "walk_forward_access_relaxed": false,
   "workflow_run_attempt": 1,
-  "workflow_run_id": 37175527656
+  "workflow_run_id": 37175831969
 }
