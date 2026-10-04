@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ZsshCloudflareCapabilityProbeTests(unittest.TestCase):
-    def test_probe_is_vps_bound_read_only_and_secret_safe(self):
+    def test_workflow_is_vps_bound_reviewed_and_secret_safe(self):
         text = (
             ROOT / ".github/workflows/zssh-cloudflare-capability-probe.yml"
         ).read_text(encoding="utf-8")
@@ -22,33 +22,38 @@ class ZsshCloudflareCapabilityProbeTests(unittest.TestCase):
         self.assertIn("types: [closed]", text)
         self.assertIn("github.event.pull_request.merged == true", text)
         self.assertIn('".github/zssh-cloudflare-capability-trigger"', text)
+        self.assertIn("python3 scripts/zssh_cloudflare_capability_probe.py", text)
+        self.assertIn("Upload non-secret capability evidence", text)
+
+        self.assertNotIn("secrets.CLOUDFLARE", text)
+        self.assertNotIn("CLOUDFLARE_API_TOKEN", text)
+        self.assertNotIn("Authorization: Bearer", text)
+        self.assertNotIn("set -x", text)
+
+    def test_probe_script_is_read_only_and_does_not_emit_secret_material(self):
+        text = (
+            ROOT / "scripts/zssh_cloudflare_capability_probe.py"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("CLOUDFLARE_API_TOKEN", text)
         self.assertIn("CF_API_TOKEN", text)
         self.assertIn("CLOUDFLARE_ZONE_ID", text)
-        self.assertIn("https://api.cloudflare.com/client/v4/user/tokens/verify", text)
-        self.assertIn(
-            "https://api.cloudflare.com/client/v4/zones?name=cheapgpt.shop&status=active",
-            text,
-        )
+        self.assertIn("client/v4/user/tokens/verify", text)
+        self.assertIn("client/v4/zones", text)
+        self.assertIn('method="GET"', text)
         self.assertIn("wrangler whoami", text)
         self.assertIn('"mutation_attempted": False', text)
         self.assertIn("ZSSH_VPS_CLOUDFLARE_API_SESSION_PRESENT", text)
         self.assertIn("ZSSH_VPS_CLOUDFLARE_WRANGLER_SESSION_PRESENT", text)
         self.assertIn("ZSSH_VPS_CLOUDFLARE_SESSION_ABSENT", text)
 
-        self.assertNotIn("secrets.CLOUDFLARE", text)
-        self.assertNotIn('echo "$token"', text)
-        self.assertNotIn("set -x", text)
-        self.assertNotIn("--request POST", text)
-        self.assertNotIn("--request PUT", text)
-        self.assertNotIn("--request PATCH", text)
-        self.assertNotIn("--request DELETE", text)
-        self.assertNotIn("-X POST", text)
-        self.assertNotIn("-X PUT", text)
-        self.assertNotIn("-X PATCH", text)
-        self.assertNotIn("-X DELETE", text)
-        self.assertNotIn("--data", text)
+        self.assertNotIn('print(token)', text)
+        self.assertNotIn('print(zone_id)', text)
+        self.assertNotIn('method="POST"', text)
+        self.assertNotIn('method="PUT"', text)
+        self.assertNotIn('method="PATCH"', text)
+        self.assertNotIn('method="DELETE"', text)
+        self.assertNotIn("data=", text)
 
 
 if __name__ == "__main__":
