@@ -1,0 +1,160 @@
+name: zSSH attest main protection for OpenAI release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-attest-main-protection.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-attest-main-protection
+  cancel-in-progress: false
+
+jobs:
+  attest:
+    name: Verify live governance evidence and set protected release attestation
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-main-protection-attestation-runner.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Verify canonical zSSH governance evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          repo="Zennay/zSSH"
+          main_sha="$(gh api "repos/$repo/branches/main" --jq '.commit.sha')"
+          protected="$(gh api "repos/$repo/branches/main" --jq '.protected // false')"
+          test "$protected" = "true"
+
+          gh api "repos/$repo/branches/main/protection" >"$RUNNER_TEMP/zssh-main-protection-live.json"
+          MAIN_SHA="$main_sha" LIVE="$RUNNER_TEMP/zssh-main-protection-live.json" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          live = json.loads(Path(os.environ["LIVE"]).read_text(encoding="utf-8"))
+          issues = []
+          status = live.get("required_status_checks") or {}
+          checks = status.get("checks") or []
+          if status.get("strict") is not True:
+              issues.append("required status checks are not strict")
+          if not any(check.get("context") == "test" and int(check.get("app_id", -1)) == 15368 for check in checks):
+              issues.append("required test check is not bound to GitHub Actions app 15368")
+          if (live.get("enforce_admins") or {}).get("enabled") is not True:
+              issues.append("administrators are not covered")
+          reviews = live.get("required_pull_request_reviews")
+          if not reviews:
+              issues.append("pull-request based changes are not required")
+          else:
+              allowances = reviews.get("bypass_pull_request_allowances") or {}
+              if any(allowances.get(kind) for kind in ("users", "teams", "apps")):
+                  issues.append("pull-request bypass actors are configured")
+          if (live.get("required_conversation_resolution") or {}).get("enabled") is not True:
+              issues.append("conversation resolution is not required")
+          if (live.get("allow_force_pushes") or {}).get("enabled") is True:
+              issues.append("force pushes are enabled")
+          if (live.get("allow_deletions") or {}).get("enabled") is True:
+              issues.append("branch deletion is enabled")
+          if issues:
+              raise SystemExit("live zSSH main protection is not canonical: " + "; ".join(issues))
+          print("ZSSH_MAIN_PROTECTION_DEEP_VERIFY_GREEN main_sha=" + os.environ["MAIN_SHA"])
+          PY
+
+          issue_state="$(gh api "repos/$repo/issues/100" --jq '.state')"
+          issue_reason="$(gh api "repos/$repo/issues/100" --jq '.state_reason // ""')"
+          test "$issue_state" = "closed"
+          test "$issue_reason" = "completed"
+
+          gh api --paginate "repos/$repo/issues/100/comments" \
+            --jq '.[].body' >"$RUNNER_TEMP/zssh-issue100-comments.txt"
+          grep -Fq "284dadd80a7e46fc9203ed5e5caa9a5709e3f24b" "$RUNNER_TEMP/zssh-issue100-comments.txt"
+          grep -Fq "HTTP 422" "$RUNNER_TEMP/zssh-issue100-comments.txt"
+          grep -Fq "Changes must be made through a pull request" "$RUNNER_TEMP/zssh-issue100-comments.txt"
+
+          canary_parent="$(gh api "repos/$repo/git/commits/284dadd80a7e46fc9203ed5e5caa9a5709e3f24b" --jq '.parents[0].sha')"
+          canary_tree="$(gh api "repos/$repo/git/commits/284dadd80a7e46fc9203ed5e5caa9a5709e3f24b" --jq '.tree.sha')"
+          main_tree="$(gh api "repos/$repo/git/commits/$main_sha" --jq '.tree.sha')"
+          test "$canary_parent" = "$main_sha"
+          test "$canary_tree" = "$main_tree"
+
+          echo "ZSSH_MAIN_PROTECTION_NEGATIVE_EVIDENCE_GREEN main_sha=$main_sha"
+
+      - name: Set only the validated OpenAI production governance attestation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          base="repos/Zennay/zSSH/environments/openai-production/variables"
+          set +e
+          current="$(gh api "$base/ZSSH_MAIN_PROTECTION_VERIFIED" 2>"$RUNNER_TEMP/zssh-attestation-get.err")"
+          rc="$?"
+          set -e
+
+          if [ "$rc" -eq 0 ]; then
+            gh api --method PATCH "$base/ZSSH_MAIN_PROTECTION_VERIFIED" \
+              -f name=ZSSH_MAIN_PROTECTION_VERIFIED \
+              -f value=1 >/dev/null
+            action="updated"
+          else
+            if ! grep -Eq 'HTTP 404|Not Found' "$RUNNER_TEMP/zssh-attestation-get.err"; then
+              cat "$RUNNER_TEMP/zssh-attestation-get.err" >&2
+              exit "$rc"
+            fi
+            gh api --method POST "$base" \
+              -f name=ZSSH_MAIN_PROTECTION_VERIFIED \
+              -f value=1 >/dev/null
+            action="created"
+          fi
+
+          value="$(gh api "$base/ZSSH_MAIN_PROTECTION_VERIFIED" --jq '.value')"
+          test "$value" = "1"
+
+          ACTION="$action" python3 - <<'PY' | tee "$RUNNER_TEMP/zssh-main-protection-attestation.json"
+          import json
+          import os
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "zssh",
+              "environment": "openai-production",
+              "variable": "ZSSH_MAIN_PROTECTION_VERIFIED",
+              "value": "1",
+              "action": os.environ["ACTION"],
+              "governance_evidence_verified": True,
+              "secrets_exposed": False,
+          }, indent=2, sort_keys=True))
+          PY
+          echo "ZSSH_MAIN_PROTECTION_ATTESTATION_GREEN action=$action"
+
+      - name: Upload non-secret governance attestation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-main-protection-attestation-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-main-protection-attestation.json
+            ${{ runner.temp }}/zssh-main-protection-attestation-runner.json
+          if-no-files-found: warn
+          retention-days: 30
