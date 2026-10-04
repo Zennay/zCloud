@@ -237,16 +237,35 @@ jobs:
                   "/api/runner-control",
                   {"project_id": "", "action": "restart_firefox"},
               )
+              restart_initial = {
+                  "status": firefox_status,
+                  "response": firefox,
+              }
+              firefox_runtime = firefox.get("status") if firefox_status < 300 else None
               if firefox_status >= 300 or not firefox.get("ok"):
-                  raise SystemExit(
-                      f"Firefox worker consumer restart failed: "
-                      f"HTTP {firefox_status} {firefox}"
-                  )
+                  # The backend bounds systemctl restart to 12s. Firefox can
+                  # legitimately become active just after that timeout, so
+                  # verify the actual runtime before treating it as a failure.
+                  deadline = time.time() + 35
+                  firefox_runtime = None
+                  while time.time() < deadline:
+                      live_status, live = api_call("GET", "/api/runner-live")
+                      candidate = (live.get("chatgpt_firefox") or {}) if live_status < 300 else {}
+                      if candidate.get("active"):
+                          firefox_runtime = candidate
+                          break
+                      time.sleep(2)
+                  if not firefox_runtime:
+                      raise SystemExit(
+                          f"Firefox worker consumer restart failed: "
+                          f"HTTP {firefox_status} {firefox}"
+                      )
               print(json.dumps({
                   "consumer_restart": "systemd-firefox",
-                  "firefox": firefox.get("status"),
+                  "firefox": firefox_runtime,
+                  "initial_restart": restart_initial,
               }, ensure_ascii=False, sort_keys=True))
-              time.sleep(8)
+              time.sleep(4)
 
           # Reconcile the pool before selecting workers. ai_global_slots may
           # temporarily contain stale identities after a queue transition; the
