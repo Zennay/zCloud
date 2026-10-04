@@ -1,0 +1,103 @@
+name: FTMO TASK-78 focused bundle proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-task78-provider-bundle-proof.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-task78-provider-bundle-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 0cfa970439d1ebf0daec24d5587d91dc6afea551
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
+      FTMO_ALLOW_PAID_AWS: ""
+    steps:
+      - name: Verify VPS and zero-cost boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = "0.00"
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+
+      - name: Checkout exact FTMO TASK-78 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ftmo-task78-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$TARGET_SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$TARGET_SHA"
+          echo "FTMO_WORK=$work" >> "$GITHUB_ENV"
+
+      - name: Install exact-head environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/ftmo-task78-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$FTMO_WORK/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$FTMO_WORK"
+          echo "FTMO_VENV=$venv" >> "$GITHUB_ENV"
+
+      - name: Run TASK-78 focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$FTMO_WORK"
+          "$FTMO_VENV/bin/python" -m py_compile \
+            src/prop_trading_ai/data/market/provider_evidence_bundle.py \
+            tests/test_provider_evidence_bundle.py
+          "$FTMO_VENV/bin/python" -m pytest -q tests/test_provider_evidence_bundle.py
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Publish focused proof receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth status >/dev/null 2>&1
+          receipt="$RUNNER_TEMP/ftmo-task78-provider-bundle-proof.json"
+          cat >"$receipt" <<EOF
+{
+  "schema_version": 1,
+  "scope": "ftmo-task78-provider-bundle-proof",
+  "target_sha": "$TARGET_SHA",
+  "runner_host": "$(hostname)",
+  "workflow_run_id": "$GITHUB_RUN_ID",
+  "workflow_run_attempt": "$GITHUB_RUN_ATTEMPT",
+  "result": "success",
+  "focused_test": "tests/test_provider_evidence_bundle.py"
+}
+EOF
+          encoded="$(base64 -w0 "$receipt")"
+          existing_sha="$(gh api repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task78-provider-bundle-proof.json?ref=main --jq .sha 2>/dev/null || true)"
+          args=(--method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task78-provider-bundle-proof.json
+                -f message="Record FTMO TASK-78 focused proof"
+                -f content="$encoded"
+                -f branch=main)
+          if [[ -n "$existing_sha" ]]; then
+            args+=(-f sha="$existing_sha")
+          fi
+          gh api "${args[@]}" >/dev/null
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/ftmo-task78-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+                 "$RUNNER_TEMP/ftmo-task78-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+                 "$RUNNER_TEMP/ftmo-task78-provider-bundle-proof.json"
