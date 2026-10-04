@@ -61,9 +61,6 @@ DYNAMIC_WORKER_SETTING_KEYS = {
     'scheduler_interval_seconds':'dynamic_worker_scheduler_interval_seconds',
 }
 AI_SLOT_DIVERSITY_PENALTY = 500
-# Hard per-project AI/code-worker caps. These constrain browser/queue concurrency only;
-# project-owned VPS compute services and backtest CPU parallelism are unaffected.
-PROJECT_AI_WORKER_LIMITS = {'ftmo': 2}
 NOTION_PORTFOLIO_QUEUE_URL = 'https://app.notion.com/p/4162fac179f44fcbbe4072a183d2b440'
 NOTION_PORTFOLIO_QUEUE_DATA_SOURCE = 'collection://86e406fd-2c99-4ef5-8058-363c1004b3eb'
 PORTFOLIO_QUEUE_SEED_FILE = ROOT / 'portfolio_queue.seed.json'
@@ -1726,64 +1723,30 @@ def task_claim_release(project_id,claim_key,owner_id):
     return {'released':cur.rowcount==1}
 
 def _legacy_autonomy_policy():
-    default={
-        'schema_version':1,
-        'default':{
-            'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps','continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            'wait_vps_seconds':900,'wait_human_seconds':21600,'complete_recheck_seconds':86400,
-        },
-        'projects':{
-            'cloud':{
-                'mode':'zcloud_stopgate','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-            'haxlab':{
-                'mode':'haxlab_status','auto_start':True,'dispatch_mode':'vps',
-                'status_file':'/var/lib/haxlab/state/autonomy-status.json',
-                'ai_states':['NEEDS_AI'],'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-            'ftmo':{
-                'mode':'ftmo_status','auto_start':True,'dispatch_mode':'vps',
-                'status_file':'/opt/ftmo-autonomous/.scratch/autonomy/status.json',
-                'ai_stages':[
-                    'provider_foundation','freeze_data_split','await_preregistration','development',
-                    'development_review','close_development_reject','walk_forward',
-                    'close_walk_forward_reject','final_holdout','close_validated','next_generation_design',
-                ],
-                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-            'ulab':{
-                'mode':'external_gate','auto_start':False,'dispatch_mode':'vps',
-                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-            'supa':{
-                'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-            'raiseai':{
-                'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-            'zssh':{
-                'mode':'ai_worker','auto_start':True,'dispatch_mode':'vps',
-                'continue_delay_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,'min_ai_interval_seconds':PORTFOLIO_AI_COOLDOWN_SECONDS,
-            },
-        },
-    }
+    """Compatibility loader without a second hard-coded project truth source."""
+    try:
+        canonical=project_runtime.autonomy_policy()
+    except Exception:
+        logging.exception('Canonical project contracts unavailable to legacy autonomy compatibility loader')
+        canonical={'schema_version':1,'default':{'mode':'manual','auto_start':False},'projects':{}}
     if not AUTONOMY_POLICY_FILE.exists():
-        return default
+        return canonical
     try:
         raw=json.loads(AUTONOMY_POLICY_FILE.read_text(encoding='utf-8'))
         if not isinstance(raw,dict) or raw.get('schema_version')!=1:
             raise ValueError('schema_version must be 1')
-        base={**default['default'],**(raw.get('default') if isinstance(raw.get('default'),dict) else {})}
+        raw_default=raw.get('default') if isinstance(raw.get('default'),dict) else {}
+        base={**(canonical.get('default') or {}),**raw_default}
         file_projects=raw.get('projects') if isinstance(raw.get('projects'),dict) else {}
-        projects={**default['projects'],**file_projects}
+        projects={}
+        for project_id,cfg in file_projects.items():
+            if not isinstance(cfg,dict):
+                raise ValueError(f'project {project_id!r} autonomy override must be an object')
+            projects[str(project_id)]={**cfg}
         return {'schema_version':1,'default':base,'projects':projects}
     except Exception:
-        logging.exception('Invalid autonomy policy; fail closed')
-        return {'schema_version':1,'default':{**default['default'],'mode':'manual','auto_start':False},'projects':{}}
+        logging.exception('Invalid autonomy compatibility policy; fail closed')
+        return {'schema_version':1,'default':{'mode':'manual','auto_start':False},'projects':{}}
 
 
 def load_autonomy_policy():
