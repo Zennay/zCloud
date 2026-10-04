@@ -81,6 +81,8 @@ jobs:
           token = os.environ["GITHUB_TOKEN"]
           protected_paths = [
               ".github/workflows/zcloud-vps-deploy.yml",
+              ".github/workflows/zcloud-regression-smoke.yml",
+              "tests",
               "server.py",
               "enhancements.py",
               "project_runtime.py",
