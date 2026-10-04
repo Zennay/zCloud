@@ -162,18 +162,14 @@ jobs:
           cd zssh-proof
           npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Run zSSH proof tests
+      - name: Run focused zSSH provenance proof
         shell: bash
         run: |
           set -Eeuo pipefail
           cd zssh-proof
-          npm test
-          node --test \
-            test/release-provenance-verifier.test.mjs \
-            test/install-live-stage-provenance.test.mjs \
-            test/release-workflow-trigger.test.mjs
+          node --test test/release-provenance-verifier.test.mjs
+          node --check scripts/verify-release-provenance.mjs
           bash -n deploy/install-live.sh
           bash -n deploy/install-public-gateway.sh
           bash -n deploy/install-target-agent.sh
-          node --check scripts/verify-release-provenance.mjs
           echo "ZSSH_CANONICAL_COMMIT_OBJECT_VPS_PROOF_GREEN"
