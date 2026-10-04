@@ -1,0 +1,34 @@
+name: Cancel superseded zCloud rollout runs
+on:
+  push:
+    branches:
+      - "ops/cancel-superseded-rollout-20261004"
+    paths:
+      - ".github/workflows/cancel-superseded-rollout-20261004.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel superseded runs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_id in 37238798801 37239126698 37239126759 37239126696 37239126688; do
+            state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id" --jq '.status + ":" + (.conclusion // "")' 2>/dev/null || true)"
+            echo "RUN $run_id state=${state:-unresolved}"
+            case "$state" in
+              queued:*|pending:*|in_progress:*|waiting:*)
+                gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id/cancel" >/dev/null || true
+                echo "SUPERSEDED_ZCLOUD_RUN_CANCEL_REQUESTED=$run_id"
+                ;;
+              *) ;;
+            esac
+          done
