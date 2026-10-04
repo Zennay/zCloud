@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -273,6 +274,29 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         result = self.evaluate(source_runtime_match=False)
         self.assertFalse(result["ok"])
         self.assertEqual("problem", result["summary"]["firefox_automation"])
+
+    def test_live_health_gives_deep_status_probe_extended_budget(self):
+        status, targets = self.sample()
+        root = Path(self.tmp.name) / "root"
+        source = root / "firefox-extension" / "background.js"
+        runtime = Path(self.tmp.name) / "runtime-background.js"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("same-runtime", encoding="utf-8")
+        runtime.write_text("same-runtime", encoding="utf-8")
+
+        with mock.patch.object(health, "http_json", side_effect=[status, targets]) as fetch, \
+             mock.patch.object(health, "service_active", return_value=True):
+            result = health.live_health(
+                root=root,
+                db_path=self.db,
+                base_url="http://127.0.0.1:8765",
+                runtime_extension=runtime,
+                status_request_timeout_seconds=40,
+            )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(40, fetch.call_args_list[0].kwargs["timeout"])
+        self.assertNotIn("timeout", fetch.call_args_list[1].kwargs)
 
     def test_database_is_opened_read_only(self):
         result = self.store()
