@@ -1,0 +1,106 @@
+name: zSSH governance runner queue priority
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-governance-runner-priority.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  prioritize:
+    name: Cancel older queued zSSH read-only VPS audits behind governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: \${{ github.token }}
+    steps:
+      - name: Identify bounded stale queued audits
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api --method GET repos/Zennay/zCloud/actions/runs \
+            -f status=queued \
+            -f per_page=100 \
+            >"$RUNNER_TEMP/zssh-queued-runs.json"
+
+          QUEUED_JSON="$RUNNER_TEMP/zssh-queued-runs.json" \
+          CANCEL_IDS="$RUNNER_TEMP/zssh-cancel-queued-ids.txt" \
+          EVIDENCE="$RUNNER_TEMP/zssh-governance-runner-priority.json" \
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runs = json.loads(Path(os.environ["QUEUED_JSON"]).read_text(encoding="utf-8")).get("workflow_runs", [])
+          governance_name = "zSSH main protection VPS apply"
+          allow = {
+              "zSSH production origin readiness (zCloud lane)",
+              "zSSH Caddy topology audit (zCloud lane)",
+              "zSSH public gateway VPS preflight (zCloud lane)",
+          }
+
+          governance = [run for run in runs if run.get("name") == governance_name and run.get("status") == "queued"]
+          if not governance:
+              result = {
+                  "schema_version": 1,
+                  "governance_run_present": False,
+                  "cancelled_run_ids": [],
+                  "cancelled_names": [],
+                  "reason": "no queued zSSH governance apply run",
+              }
+              Path(os.environ["CANCEL_IDS"]).write_text("", encoding="utf-8")
+              Path(os.environ["EVIDENCE"]).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+              raise SystemExit(0)
+
+          target = max(governance, key=lambda run: run.get("created_at") or "")
+          target_created = target.get("created_at") or ""
+          stale = [
+              run for run in runs
+              if run.get("status") == "queued"
+              and run.get("name") in allow
+              and (run.get("created_at") or "") < target_created
+          ]
+
+          Path(os.environ["CANCEL_IDS"]).write_text(
+              "".join(f"{int(run['id'])}\n" for run in stale),
+              encoding="utf-8",
+          )
+          result = {
+              "schema_version": 1,
+              "governance_run_present": True,
+              "governance_run_id": int(target["id"]),
+              "governance_created_at": target_created,
+              "cancelled_run_ids": [int(run["id"]) for run in stale],
+              "cancelled_names": [run["name"] for run in stale],
+              "policy": "queued-only older allowlisted zSSH read-only VPS audits",
+          }
+          Path(os.environ["EVIDENCE"]).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Cancel only the selected queued read-only runs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            case "$run_id" in
+              *[!0-9]*) echo "invalid run id: $run_id" >&2; exit 1 ;;
+            esac
+            gh api --method POST "repos/Zennay/zCloud/actions/runs/$run_id/cancel" >/dev/null
+            echo "ZSSH_GOVERNANCE_QUEUE_CANCELLED run_id=$run_id"
+          done <"$RUNNER_TEMP/zssh-cancel-queued-ids.txt"
+
+      - name: Upload non-secret queue-priority evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-governance-runner-priority-\${{ github.run_id }}
+          path: \${{ runner.temp }}/zssh-governance-runner-priority.json
+          if-no-files-found: error
+          retention-days: 7
