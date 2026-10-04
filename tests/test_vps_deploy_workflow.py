@@ -232,6 +232,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(text.index(guard), text.index("Promote backend runtime core"))
 
         probe = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6", probe)
+        self.assertNotIn("actions/checkout@v4", probe)
         self.assertIn(guard, probe)
         self.assertLess(probe.index(guard), probe.index("Acquire cloud deploylane coordination claim"))
         self.assertIn("zcloud-vps-runner-guard.json", probe)
@@ -454,6 +456,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
     def test_live_deploy_diagnostics_use_permanent_zcloud_vps_runner(self):
         text = (ROOT / ".github/workflows/zcloud-live-debug.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6", text)
+        self.assertNotIn("actions/checkout@v4", text)
         self.assertNotIn("runs-on: self-hosted\n", text)
 
     def test_execution_probe_uploads_sanitized_prechange_evidence(self):
@@ -472,6 +476,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py release", text)
         self.assertIn("if: always()", text)
         self.assertIn("actions/upload-artifact@v4", text)
+
+        audit = (ROOT / ".github/workflows/zcloud-state-receipt-coverage-audit.yml").read_text(encoding="utf-8")
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6", audit)
+        self.assertNotIn("actions/checkout@v4", audit)
 
         coordination = (ROOT / "scripts/zcloud_vps_deploylane_coordination.py").read_text(encoding="utf-8")
         self.assertIn('PROJECT = "cloud"', coordination)
