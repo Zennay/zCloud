@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-04T21:42:50Z",
+  "source": {
+    "repository": "Zennay/RaiseAI",
+    "workflow": "Recover duplicate zCloud Actions listener safely",
+    "run_id": 37236890646,
+    "job_id": 111537751373,
+    "conclusion": "success"
+  },
+  "zcloud_runner": {
+    "host": "vps-bb300bba",
+    "service": "actions.runner.Zennay-zCloud.zcloud-vps-1.service",
+    "main_pid": 497839,
+    "canonical_listener_pid": 505685,
+    "orphan_listener_targets": [],
+    "canonical_listener_count": 1,
+    "recovery_marker": "ZCLOUD_DUPLICATE_LISTENER_RECOVERY_GREEN",
+    "regression_dispatch_marker": "ZCLOUD_REGRESSION_DISPATCHED"
+  },
+  "verification": {
+    "before_and_after_same_canonical_lineage": true,
+    "active_worker_preserved": true,
+    "duplicate_listener_present_after_recovery": false
+  },
+  "health_fix": {
+    "pull_request": 413,
+    "merged_sha": "5498e61332aa803c3216db55568711f184f1e968",
+    "merged_main_regression_run": 37237142912,
+    "merged_main_regression_conclusion": "success",
+    "post_recovery_regression_run": 37237195430,
+    "post_recovery_regression_conclusion": "success"
+  }
+}
