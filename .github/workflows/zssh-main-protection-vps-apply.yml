@@ -1,4 +1,5 @@
 name: zSSH main protection VPS apply
+# activation nudge: zSSH M5 repository governance 2026-10-04
 
 on:
   push:
