@@ -237,5 +237,28 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("apply-main-protection", text)
 
 
+    def test_vps_main_protection_apply_is_exact_admin_gated_and_secret_safe(self):
+        text = (ROOT / ".github/workflows/zssh-main-protection-vps-apply.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn("PROTECT_ZSSH_MAIN", text)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn('ref: ${{ steps.zssh_target.outputs.sha }}', text)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
+        self.assertIn("gh auth status --hostname github.com", text)
+        self.assertIn("gh api repos/Zennay/zSSH --jq '.permissions.admin // false'", text)
+        self.assertIn("gh auth token --hostname github.com", text)
+        self.assertIn("node --test test/main-protection*.test.mjs", text)
+        self.assertIn("scripts/apply-main-protection.mjs --apply", text)
+        self.assertIn("scripts/check-main-protection.mjs", text)
+        self.assertIn("ZSSH_MAIN_PROTECTION_VPS_APPLY_GREEN", text)
+        self.assertIn('test "$live_main_after" = "$ZSSH_SHA"', text)
+        self.assertNotIn('echo "$token"', text)
+        self.assertNotIn("set -x", text)
+        self.assertNotIn("ZSSH_REPO_ADMIN_TOKEN: ${{", text)
+
+
 if __name__ == "__main__":
     unittest.main()
