@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
-      TARGET_SHA: 67ded0b137cf5ae50c22c9192875fb0a326cdb99
+      TARGET_SHA: 0ad080a836e18d9581ff1d7b3d93244ec4880ccc
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
       FTMO_ALLOW_PAID_AWS: ""
     steps:
@@ -86,7 +86,7 @@ jobs:
 }
 EOF
           content="$(base64 -w0 "$receipt")"
-          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task37-readiness-cli-proof.json \
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-task37-readiness-cli-proof-0ad080a8.json \
             -f message="Record FTMO TASK-37 VPS proof" \
             -f content="$content" \
             -f branch=main >/dev/null
