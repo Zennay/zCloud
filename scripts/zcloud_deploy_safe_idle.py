@@ -53,6 +53,7 @@ def worker_observation(
         return {
             "available": False,
             "event": None,
+            "observed_at": None,
             "age_seconds": None,
             "generating": None,
             "sending": None,
@@ -67,6 +68,7 @@ def worker_observation(
     return {
         "available": True,
         "event": str(row["event"] or ""),
+        "observed_at": str(row["ts"] or ""),
         "age_seconds": age_seconds,
         "generating": bool(row["generating"]),
         "sending": bool(row["sending"]),
@@ -75,16 +77,17 @@ def worker_observation(
 
 def drain_command_state(conn: sqlite3.Connection, worker_id: str) -> dict:
     row = conn.execute(
-        "SELECT id,status,action FROM runner_commands "
+        "SELECT id,status,action,created_at FROM runner_commands "
         "WHERE project_id=? AND action='drain' ORDER BY id DESC LIMIT 1",
         (worker_id,),
     ).fetchone()
     if row is None:
-        return {"id": None, "status": None, "action": None}
+        return {"id": None, "status": None, "action": None, "created_at": None}
     return {
         "id": int(row["id"]),
         "status": str(row["status"] or ""),
         "action": str(row["action"] or ""),
+        "created_at": str(row["created_at"] or ""),
     }
 
 
@@ -278,6 +281,30 @@ def enter_safe_idle(
                             conn, record["project_id"], record["worker_slot"]
                         )
                         age = observation.get("age_seconds")
+                        command = drain_command_state(conn, key)
+                        observed_after_drain = False
+                        try:
+                            observed_at = datetime.fromisoformat(
+                                str(observation.get("observed_at") or "").replace("Z", "+00:00")
+                            )
+                            command_at = datetime.fromisoformat(
+                                str(command.get("created_at") or "").replace("Z", "+00:00")
+                            )
+                            if observed_at.tzinfo is None:
+                                observed_at = observed_at.replace(tzinfo=timezone.utc)
+                            if command_at.tzinfo is None:
+                                command_at = command_at.replace(tzinfo=timezone.utc)
+                            observed_after_drain = observed_at >= command_at
+                        except (TypeError, ValueError):
+                            observed_after_drain = False
+                        config_ack_idle = (
+                            observation.get("available") is True
+                            and observation.get("event") == "runner-config-updated"
+                            and observed_after_drain
+                            and observation.get("generating") is False
+                            and observation.get("sending") is False
+                            and command.get("status") == "pending"
+                        )
                         offline_idle = (
                             observation.get("available") is True
                             and age is not None
@@ -285,7 +312,7 @@ def enter_safe_idle(
                             and observation.get("generating") is False
                             and observation.get("sending") is False
                         )
-                        if offline_idle:
+                        if config_ack_idle or offline_idle:
                             conn.execute(
                                 "UPDATE runner_workers SET desired_state='paused' "
                                 "WHERE project_id=? AND worker_slot=? AND desired_state='draining'",
@@ -298,7 +325,11 @@ def enter_safe_idle(
                                     "WHERE id=? AND status='pending'",
                                     (
                                         utc_now(),
-                                        "deploy safe-idle auto-quiesced offline idle worker",
+                                        (
+                                            "deploy safe-idle accepted idle config acknowledgement"
+                                            if config_ack_idle
+                                            else "deploy safe-idle auto-quiesced offline idle worker"
+                                        ),
                                         int(command_id),
                                     ),
                                 )
@@ -307,6 +338,11 @@ def enter_safe_idle(
                                 "worker_id": key,
                                 "last_event": observation.get("event"),
                                 "last_event_age_seconds": round(float(age), 1),
+                                "reason": (
+                                    "idle-config-ack"
+                                    if config_ack_idle
+                                    else "offline-idle"
+                                ),
                             })
                     states[key] = desired
                     if key in current_allocated and desired != "paused":
