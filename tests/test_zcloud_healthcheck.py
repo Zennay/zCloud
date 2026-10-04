@@ -202,7 +202,56 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
-        self.assertTrue(any("desired count mismatch" in x for x in scheduler["detail"]))
+        self.assertTrue(
+            any("desired count below configured minimum" in x for x in scheduler["detail"])
+        )
+
+    def test_scheduler_accepts_dynamic_slots_above_configured_baseline(self):
+        status, targets = self.sample()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'"
+            )
+            conn.commit()
+
+        # A second live slot is valid when the global allocator temporarily grants
+        # extra capacity to this project. The configured count is a minimum baseline,
+        # not an exact live-allocation snapshot.
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertTrue(result["ok"], result)
+
+    def test_scheduler_detects_non_contiguous_dynamic_api_slots(self):
+        status, targets = self.sample()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'"
+            )
+            conn.commit()
+        targets["projects"]["cloud::w3"] = {
+            "project_id": "cloud::w3",
+            "base_project_id": "cloud",
+            "worker_slot": 3,
+        }
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("non-contiguous runner-target slots" in x for x in scheduler["detail"])
+        )
 
     def test_scheduler_detects_missing_api_slot(self):
         status, targets = self.sample()
