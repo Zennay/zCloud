@@ -76,6 +76,13 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
     def test_public_gateway_validate_only_proof_uses_zcloud_runner_lane(self):
         text = (ROOT / ".github/workflows/zssh-public-gateway-vps-preflight.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn(".github/zssh-production-dns-vps-trigger", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
+        self.assertIn("PUBLISH_ZSSH_PRODUCTION_DNS_VIA_VPS", text)
+        self.assertIn("ZSSH_DNS_VPS_MERGED_PR_ACTIVATION_GREEN", text)
+        self.assertNotIn("\n  push:\n", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertNotRegex(text, r"ZSSH_SHA:\s*[0-9a-f]{40}")
