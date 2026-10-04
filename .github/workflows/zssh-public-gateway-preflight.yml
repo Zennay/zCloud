@@ -1,0 +1,74 @@
+name: zSSH canonical reviewer trust and public-gateway preflight
+
+on:
+  push:
+    paths:
+      - ".github/workflows/zssh-public-gateway-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Checkout canonical public gateway release
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: d2a0b2259deac4b6c7363258dc85e7b213ae507c
+          path: zssh
+          fetch-depth: 1
+
+      - name: Migrate live reviewer trust and prove gateway compatibility
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh
+          test "$(git rev-parse HEAD)" = "d2a0b2259deac4b6c7363258dc85e7b213ae507c"
+          npm install --ignore-scripts --no-audit --no-fund >/dev/null
+
+          output="$(npm run --silent review:target)"
+          printf '%s\n' "$output"
+
+          node --input-type=module - "$output" "$HOME/.config/zssh/reviewer-agent-public.json" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { agentPublicKeysFromEnv } from "./agent-transport.mjs";
+          const [raw, publicFile] = process.argv.slice(2);
+          const report = JSON.parse(raw);
+          if (report.target_id !== "zt_NgZ8uUmNyTS--jC_") throw new Error("review target identity changed");
+          if (report.public_key_sha256 !== "2d1c4fd95e3b145ac80c520c30643c3ba50e7e95d621988221076d6b1cbe859d") {
+            throw new Error("review target fingerprint changed");
+          }
+          const config = JSON.parse(readFileSync(publicFile, "utf8"));
+          if (config.version !== 1 || config.gateway_public_key_config !== undefined) {
+            throw new Error("reviewer trust file is not normalized");
+          }
+          const trusted = agentPublicKeysFromEnv({ ZSSH_AGENT_PUBLIC_KEYS_FILE: publicFile });
+          if (trusted.size !== 1 || !trusted.has(report.target_id)) {
+            throw new Error("canonical gateway loader rejected live reviewer trust file");
+          }
+          NODE
+
+      - name: Validate canonical public gateway against live reviewer target without runtime mutation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh
+          test ! -e "$HOME/.config/zssh/public-gateway.env"
+          test ! -e "$HOME/.local/share/zssh-public/current"
+
+          ZSSH_PUBLIC_BASE_URL=https://mcp.review.example \
+          ZSSH_OAUTH_ISSUER=https://auth.review.example \
+          ZSSH_OAUTH_JWKS_URI=https://auth.review.example/.well-known/jwks.json \
+          ZSSH_TARGET_ID=zt_NgZ8uUmNyTS--jC_ \
+          ZSSH_AGENT_PUBLIC_KEYS_FILE="$HOME/.config/zssh/reviewer-agent-public.json" \
+          ZSSH_PUBLIC_ALLOWED_ROOTS="$HOME/zssh-review" \
+          ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1 \
+          ZSSH_EXPECTED_SHA=d2a0b2259deac4b6c7363258dc85e7b213ae507c \
+          npm run --silent gateway:public:install
+
+          test ! -e "$HOME/.config/zssh/public-gateway.env"
+          test ! -e "$HOME/.local/share/zssh-public/current"
+          echo "ZSSH_CANONICAL_PUBLIC_GATEWAY_PREFLIGHT_GREEN"
