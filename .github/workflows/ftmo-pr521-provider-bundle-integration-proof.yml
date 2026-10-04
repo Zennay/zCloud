@@ -57,7 +57,7 @@ jobs:
           test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = '0.00'
           test -z "${FTMO_ALLOW_PAID_AWS:-}"
           "$venv/bin/python" -m compileall -q src/prop_trading_ai/data/market/provider_evidence_bundle.py
-          "$venv/bin/python" -m pytest -q             tests/test_provider_evidence_bundle.py             tests/test_provider_validation.py             tests/test_provider_validation_json_integrity.py             tests/test_atomic_preresearch_evidence.py
+          "$venv/bin/python" -m pytest -q             tests/test_provider_evidence_bundle.py             tests/test_provider_validation.py             tests/test_provider_validation_json_integrity.py             tests/test_atomic_preresearch_evidence.py             tests/test_zero_cost_workflow_boundary.py::test_q2_2024_generation18_foundation_is_fail_closed_zero_cost_and_oos_sealed
 
       - name: Persist sanitized proof receipt
         if: always()
