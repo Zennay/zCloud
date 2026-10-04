@@ -228,6 +228,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('"git", "diff", "--quiet"', resolve)
         for protected in (
             ".github/workflows/zcloud-vps-deploy.yml",
+            ".github/workflows/zcloud-regression-smoke.yml",
+            "tests",
             "server.py",
             "enhancements.py",
             "project_runtime.py",
