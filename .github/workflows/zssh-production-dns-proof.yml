@@ -1,0 +1,100 @@
+name: zSSH production DNS proof (hosted)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/zssh-production-dns-proof.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-production-dns-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dns:
+    name: Resolve zSSH production host from GitHub-hosted network
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_EXPECTED_IPV4: 198.244.191.182
+    steps:
+      - name: Resolve production DNS and write non-secret evidence
+        id: probe
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          report="$RUNNER_TEMP/zssh-production-dns-proof.json"
+          export REPORT="$report"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import socket
+          from pathlib import Path
+
+          host = os.environ["ZSSH_PRODUCTION_HOST"]
+          expected = os.environ["ZSSH_EXPECTED_IPV4"]
+          addresses = set()
+          error = None
+
+          try:
+              for row in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM):
+                  addresses.add(row[4][0])
+          except OSError as exc:
+              error = f"{type(exc).__name__}: {exc}"
+
+          resolved = sorted(addresses)
+          dns_ready = expected in addresses
+          evidence = {
+              "ok": True,
+              "proof": "production-dns-hosted-proof",
+              "production_host": host,
+              "expected_ipv4": expected,
+              "resolved_ipv4": resolved,
+              "dns_ready": dns_ready,
+              "dns_error": error,
+              "runner_environment": "github-hosted",
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "coordination_commit_sha": os.environ["GITHUB_SHA"],
+          }
+          Path(os.environ["REPORT"]).write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          marker = "ZSSH_PRODUCTION_DNS_READY" if dns_ready else "ZSSH_PRODUCTION_DNS_PENDING"
+          print(marker, json.dumps({
+              "host": host,
+              "expected_ipv4": expected,
+              "resolved_ipv4": resolved,
+              "dns_error": error,
+          }, sort_keys=True))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"dns_ready={'1' if dns_ready else '0'}\n")
+          PY
+
+          {
+            echo "## zSSH production DNS proof"
+            echo
+            echo "- Host: `$ZSSH_PRODUCTION_HOST`"
+            echo "- Expected IPv4: `$ZSSH_EXPECTED_IPV4`"
+            if [[ "${{ steps.probe.outputs.dns_ready }}" == "1" ]]; then
+              echo "- Result: **DNS ready**"
+            else
+              echo "- Result: **DNS pending**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload non-secret DNS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-production-dns-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/zssh-production-dns-proof.json
+          if-no-files-found: error
+          retention-days: 30
