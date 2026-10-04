@@ -1,0 +1,224 @@
+name: zSSH public gateway activate (zCloud lane)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_zssh_sha:
+        description: Exact canonical Zennay/zSSH main SHA to deploy
+        required: true
+        type: string
+      public_base_url:
+        description: Canonical public HTTPS origin, for example https://mcp.example.tld
+        required: true
+        type: string
+      oauth_issuer:
+        description: Production OAuth/OIDC issuer URL
+        required: true
+        type: string
+      oauth_jwks_uri:
+        description: Production OAuth/OIDC JWKS URL
+        required: true
+        type: string
+      activation_phrase:
+        description: Type ACTIVATE_ZSSH_PUBLIC_GATEWAY
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-public-gateway-activate-zcloud
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    name: Activate zSSH public gateway on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+    steps:
+      - name: Check out zCloud coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce explicit production activation and canonical runner
+        env:
+          ACTIVATION_PHRASE: "${{ inputs.activation_phrase }}"
+          EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_NAME" = "main"
+          test "$ACTIVATION_PHRASE" = "ACTIVATE_ZSSH_PUBLIC_GATEWAY"
+          [[ "$EXPECTED_ZSSH_SHA" =~ ^[0-9a-f]{40}$ ]]
+          python3 scripts/zcloud_vps_runner_guard.py --json | tee "$RUNNER_TEMP/zssh-public-gateway-activate-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+
+      - name: Bind activation to exact current canonical zSSH main
+        id: zssh_target
+        env:
+          EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          live_main="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main" = "$EXPECTED_ZSSH_SHA"
+          echo "sha=$live_main" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_SHA=$live_main" >> "$GITHUB_ENV"
+          echo "ZSSH_PUBLIC_GATEWAY_ACTIVATION_SHA_BOUND sha=$live_main"
+
+      - name: Check out exact canonical zSSH revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: "${{ steps.zssh_target.outputs.sha }}"
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Prove source and installer regression before mutation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"
+          node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+          test "$node_major" -ge 20
+          npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
+          (
+            cd zssh-source
+            node --test test/public-gateway-installer.test.mjs
+          )
+          echo "ZSSH_PUBLIC_GATEWAY_ACTIVATION_REGRESSION_GREEN sha=$ZSSH_SHA"
+
+      - name: Prepare bounded reviewer target identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_root="$GITHUB_WORKSPACE/zssh-source"
+          reviewer_report="$RUNNER_TEMP/zssh-reviewer-target.json"
+          bash "$source_root/deploy/prepare-reviewer-target.sh" "$source_root" > "$reviewer_report"
+
+          target_id="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.target_id)' "$reviewer_report")"
+          trust_file="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.gateway_public_key_config_file)' "$reviewer_report")"
+          review_root="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.review_root)' "$reviewer_report")"
+          fingerprint="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.public_key_sha256)' "$reviewer_report")"
+
+          test "$trust_file" = "$HOME/.config/zssh/reviewer-agent-public.json"
+          test "$review_root" = "$HOME/zssh-review"
+          [[ "$target_id" =~ ^zt_[A-Za-z0-9_-]{8,96}$ ]]
+          [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]]
+
+          echo "ZSSH_TARGET_ID=$target_id" >> "$GITHUB_ENV"
+          echo "ZSSH_AGENT_PUBLIC_KEYS_FILE=$trust_file" >> "$GITHUB_ENV"
+          echo "ZSSH_PUBLIC_ALLOWED_ROOTS=$review_root" >> "$GITHUB_ENV"
+          echo "ZSSH_REVIEWER_PUBLIC_KEY_SHA256=$fingerprint" >> "$GITHUB_ENV"
+
+      - name: Validate production origin and render non-secret Caddy config
+        env:
+          ZSSH_PUBLIC_BASE_URL: "${{ inputs.public_base_url }}"
+          ZSSH_PUBLIC_GATEWAY_PORT: "8789"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh-source
+          node scripts/render-public-caddy.mjs | tee "$RUNNER_TEMP/zssh-public-caddy.conf"
+          grep -F "reverse_proxy 127.0.0.1:8789" "$RUNNER_TEMP/zssh-public-caddy.conf"
+          echo "ZSSH_PUBLIC_CADDY_RENDER_GREEN sha=$ZSSH_SHA"
+
+      - name: Activate isolated public gateway
+        env:
+          ZSSH_PUBLIC_BASE_URL: "${{ inputs.public_base_url }}"
+          ZSSH_OAUTH_ISSUER: "${{ inputs.oauth_issuer }}"
+          ZSSH_OAUTH_JWKS_URI: "${{ inputs.oauth_jwks_uri }}"
+          ZSSH_PUBLIC_GATEWAY_PORT: "8789"
+          ZSSH_PUBLIC_RATE_LIMIT_PER_MINUTE: "120"
+          ZSSH_PUBLIC_RATE_LIMIT_MAX_PROFILES: "10000"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_root="$GITHUB_WORKSPACE/zssh-source"
+          export ZSSH_EXPECTED_SHA="$ZSSH_SHA"
+
+          install_output="$RUNNER_TEMP/zssh-public-gateway-activate.txt"
+          bash "$source_root/deploy/install-public-gateway.sh" "$source_root" | tee "$install_output"
+          grep -F "ZSSH_PUBLIC_GATEWAY_INSTALL_GREEN sha=$ZSSH_SHA" "$install_output"
+
+          systemctl --user is-active --quiet zssh-public.service
+          systemctl --user is-enabled --quiet zssh-public.service
+          curl --fail --silent --show-error "http://127.0.0.1:8789/health" > "$RUNNER_TEMP/zssh-public-health.json"
+
+          live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main_after" = "$ZSSH_SHA"
+          echo "ZSSH_CANONICAL_MAIN_RECONFIRMED sha=$ZSSH_SHA"
+
+          receipt="$RUNNER_TEMP/zssh-public-gateway-activation.json"
+          export RECEIPT="$receipt"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const publicOrigin = new URL(process.env.ZSSH_PUBLIC_BASE_URL).origin;
+          const oauthIssuer = new URL(process.env.ZSSH_OAUTH_ISSUER).origin;
+          const evidence = {
+            ok: true,
+            project: "zssh",
+            proof: "public-gateway-activation",
+            coordination_repository: process.env.GITHUB_REPOSITORY,
+            coordination_commit_sha: process.env.GITHUB_SHA,
+            zssh_commit_sha: process.env.ZSSH_SHA,
+            workflow_run_id: process.env.GITHUB_RUN_ID,
+            workflow_run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+            runner_name: process.env.RUNNER_NAME,
+            hostname: "vps-bb300bba",
+            service: "zssh-public.service",
+            service_active: true,
+            service_enabled: true,
+            loopback_port: 8789,
+            public_origin: publicOrigin,
+            oauth_issuer_origin: oauthIssuer,
+            target_id: process.env.ZSSH_TARGET_ID,
+            reviewer_public_key_sha256: process.env.ZSSH_REVIEWER_PUBLIC_KEY_SHA256,
+            public_rate_limit_per_minute: 120,
+            public_rate_limit_max_profiles: 10000,
+            canonical_main_reconfirmed: true,
+            challenge_token_configured_by_this_workflow: false,
+            next_gate: "apply public DNS/TLS ingress for the rendered Caddy config, then run the GitHub-hosted external ingress preflight"
+          };
+          writeFileSync(process.env.RECEIPT, JSON.stringify(evidence, null, 2) + "\n");
+          console.log("ZSSH_PUBLIC_GATEWAY_ACTIVATION_GREEN", JSON.stringify({
+            zssh_commit_sha: evidence.zssh_commit_sha,
+            service: evidence.service,
+            public_origin: evidence.public_origin,
+            target_id: evidence.target_id
+          }));
+          NODE
+
+      - name: Record evidence-backed zSSH runtime receipt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_json="$(python3 - "$RUNNER_TEMP/zssh-public-gateway-activation.json" <<'PY'
+          import json
+          import sys
+          receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+          PY
+          )"
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Activated isolated zSSH public gateway on canonical VPS lane"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Apply real public DNS/TLS for rendered 8789 ingress and run external public ingress preflight"             --source "github-actions:zssh-public-gateway-activate"             --evidence-json "$evidence_json"
+
+      - name: Upload non-secret activation evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-public-gateway-activation-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-public-gateway-activation.json
+            ${{ runner.temp }}/zssh-public-gateway-activate-runner-guard.json
+            ${{ runner.temp }}/zssh-public-caddy.conf
+            ${{ runner.temp }}/zssh-public-health.json
+          if-no-files-found: error
+          retention-days: 30
