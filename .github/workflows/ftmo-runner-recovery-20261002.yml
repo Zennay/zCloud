@@ -150,3 +150,5 @@ jobs:
 # PR510 exact-head queue recovery trigger 2026-10-04T02:45Z
 
 # TASK-37 PR509 queued-lane recovery trigger 2026-10-04T02:46Z
+
+# TASK-37 post-verify idle-listener recovery 2026-10-04T02:47Z
