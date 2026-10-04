@@ -78,7 +78,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/zSSH
-          ref: "${{ steps.zssh_target.outputs.sha }}"
+          ref: ${{ steps.zssh_target.outputs.sha }}
           path: zssh-source
           persist-credentials: false
 
