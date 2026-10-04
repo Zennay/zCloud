@@ -22,7 +22,7 @@ jobs:
       # any VPS write, leaving only current main eligible for promotion.
       cancel-in-progress: false
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Check out current main candidate
         uses: actions/checkout@v4
@@ -504,7 +504,7 @@ jobs:
           set -euo pipefail
           python3 scripts/zcloud_deploy_safe_idle.py enter \
             --state "$RUNNER_TEMP/zcloud-deploy-safe-idle.json" \
-            --timeout-seconds 240 \
+            --timeout-seconds 480 \
             --json
 
       - name: Repair legacy runtime project schema
