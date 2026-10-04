@@ -1,0 +1,149 @@
+name: zSSH main protection VPS apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-main-protection-vps-apply.yml"
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PROTECT_ZSSH_MAIN to apply canonical zSSH main protection
+        required: true
+        type: string
+      expected_zssh_sha:
+        description: Optional exact canonical zSSH main SHA to bind before mutation
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-main-protection-vps-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply zSSH main protection with persistent VPS GitHub admin auth
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-main-protection-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Require explicit manual confirmation
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          CONFIRMATION: \${{ inputs.confirmation }}
+        run: |
+          set -Eeuo pipefail
+          test "$CONFIRMATION" = "PROTECT_ZSSH_MAIN"
+
+      - name: Resolve exact canonical zSSH main
+        id: zssh_target
+        shell: bash
+        env:
+          EXPECTED_ZSSH_SHA: \${{ github.event_name == 'workflow_dispatch' && inputs.expected_zssh_sha || '' }}
+        run: |
+          set -Eeuo pipefail
+          zssh_sha="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          case "$zssh_sha" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo "invalid canonical zSSH SHA" >&2; exit 1 ;;
+          esac
+          if [ -n "$EXPECTED_ZSSH_SHA" ]; then
+            test "$zssh_sha" = "$EXPECTED_ZSSH_SHA"
+          fi
+          echo "sha=$zssh_sha" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_SHA=$zssh_sha" >> "$GITHUB_ENV"
+          echo "ZSSH_CANONICAL_MAIN_RESOLVED sha=$zssh_sha"
+
+      - name: Check out exact zSSH main
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: \${{ steps.zssh_target.outputs.sha }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Verify exact zSSH checkout
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"
+          live_main="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main" = "$ZSSH_SHA"
+          echo "ZSSH_CANONICAL_MAIN_RECONFIRMED sha=$ZSSH_SHA"
+
+      - name: Validate persistent VPS GitHub admin authority
+        id: admin
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+          admin="$(gh api repos/Zennay/zSSH --jq '.permissions.admin // false')"
+          test "$admin" = "true"
+          token="$(gh auth token --hostname github.com)"
+          test "\${#token}" -ge 20
+          echo "ZSSH_VPS_GH_ADMIN_AUTH_GREEN"
+
+      - name: Run focused zSSH main-protection tests
+        shell: bash
+        working-directory: zssh-source
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts
+          node --test test/main-protection*.test.mjs
+
+      - name: Apply and deep-verify canonical zSSH main protection
+        shell: bash
+        working-directory: zssh-source
+        env:
+          RECEIPT_PATH: \${{ runner.temp }}/zssh-main-protection-vps-apply.json
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          token="$(gh auth token --hostname github.com)"
+          test "\${#token}" -ge 20
+
+          GITHUB_REPOSITORY="Zennay/zSSH" \
+          ZSSH_REPO_ADMIN_TOKEN="$token" \
+          ZSSH_MAIN_PROTECTION_CONFIRM="PROTECT_ZSSH_MAIN" \
+            node scripts/apply-main-protection.mjs --apply \
+            | tee "$RECEIPT_PATH"
+
+          GITHUB_REPOSITORY="Zennay/zSSH" \
+          GITHUB_TOKEN="$token" \
+            node scripts/check-main-protection.mjs
+
+          protected="$(gh api repos/Zennay/zSSH/branches/main --jq '.protected // false')"
+          test "$protected" = "true"
+
+          live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main_after" = "$ZSSH_SHA"
+          echo "ZSSH_MAIN_PROTECTION_VPS_APPLY_GREEN sha=$ZSSH_SHA"
+
+      - name: Upload non-secret main-protection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-main-protection-vps-apply-\${{ github.run_id }}
+          path: |
+            \${{ runner.temp }}/zssh-main-protection-vps-apply.json
+            \${{ runner.temp }}/zssh-main-protection-runner-guard.json
+          if-no-files-found: warn
+          retention-days: 30
