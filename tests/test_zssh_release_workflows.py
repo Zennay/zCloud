@@ -158,6 +158,10 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("ZSSH_PRODUCTION_ORIGIN_DNS_GREEN", text)
         self.assertIn("--project zssh", text)
         self.assertIn('--source "github-actions:zssh-production-origin-readiness"', text)
+        self.assertIn("statuses: write", text)
+        self.assertIn("zssh/production-origin-readiness-audit", text)
+        self.assertIn("ZSSH_PRODUCTION_ORIGIN_STATUS_PUBLISHED", text)
+        self.assertIn('DNS_READY: ${{ steps.readiness.outputs.dns_ready }}', text)
         self.assertNotIn("systemctl --user enable --now zssh-public.service", text)
 
 
