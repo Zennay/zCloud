@@ -1,4 +1,5 @@
 name: zCloud live state-receipt coverage audit
+# Fresh acceptance carrier for c536eb32 receipt #63; do not merge.
 
 on:
   pull_request:
