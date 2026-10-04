@@ -128,6 +128,23 @@ jobs:
           git commit -m "Record FTMO PR480 exact-head proof $GITHUB_RUN_ID"
           git push origin HEAD:main
 
+      - name: Merge exact green FTMO PR480
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)" = "$TARGET_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)" = "open"
+          result="$(gh api --method PUT "repos/Zennay/Ftmo/pulls/$TARGET_PR/merge" \
+            -f merge_method=squash \
+            -f sha="$TARGET_SHA")"
+          test "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged")).lower())' <<<"$result")" = "true"
+          merge_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha") or "")' <<<"$result")"
+          test -n "$merge_sha"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .merged)" = "true"
+          echo "FTMO_PR480_MERGE_SHA=$merge_sha"
+
       - name: Cleanup
         if: always()
         shell: bash
