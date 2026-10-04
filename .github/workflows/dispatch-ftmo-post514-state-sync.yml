@@ -1,53 +1,32 @@
-name: Dispatch FTMO post514 research-state sync
+name: Dispatch FTMO post514 state sync
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - ".github/workflows/dispatch-ftmo-post514-state-sync.yml"
+      - .github/workflows/dispatch-ftmo-post514-state-sync.yml
 
 permissions:
   contents: read
 
-concurrency:
-  group: dispatch-ftmo-post514-state-sync
-  cancel-in-progress: true
-
 jobs:
   dispatch:
-    runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 4
-    env:
-      EXPECTED_MAIN: 2c161be49331bd20e7dc9a2e35d9916b81200776
+    runs-on:
+      - self-hosted
+      - zcloud
+      - vps
+    timeout-minutes: 3
     steps:
-      - name: Dispatch exact-main research-state sync
+      - name: Dispatch exact-main sync
         shell: bash
+        env:
+          EXPECTED_MAIN: 2c161be49331bd20e7dc9a2e35d9916b81200776
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
           gh auth status >/dev/null 2>&1
           test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$EXPECTED_MAIN"
           test "$(gh api repos/Zennay/Ftmo/pulls/514 --jq .merged)" = "true"
-
           gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
-
-          found=""
-          for _ in $(seq 1 30); do
-            runs_json="$(gh run list --repo Zennay/Ftmo --workflow sync-autonomous-research-state.yml --event workflow_dispatch --branch main --limit 10 --json databaseId,headSha,status)"
-            row="$(printf '%s' "$runs_json" | python3 -c '
-import json, os, sys
-sha = os.environ["EXPECTED_MAIN"]
-for run in json.load(sys.stdin):
-    if run.get("headSha") == sha:
-        print("%s\t%s" % (run.get("databaseId"), run.get("status")))
-        break
-')"
-            if [[ -n "$row" ]]; then
-              echo "FTMO_POST514_SYNC=$row"
-              found=1
-              break
-            fi
-            sleep 2
-          done
-          test -n "$found"
-          echo "FTMO_POST514_SYNC_DISPATCHED=1"
+          echo "FTMO_POST514_SYNC_DISPATCH_REQUESTED=1"
