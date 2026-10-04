@@ -63,7 +63,15 @@ jobs:
               sleep 2
             done
           fi
-          curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null
+          if ! curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null 2>&1; then
+            echo "=== ZENNAY-CLOUD SERVICE STATUS ==="
+            sudo -n systemctl --no-pager --full status zennay-cloud.service || true
+            echo "=== ZENNAY-CLOUD JOURNAL ==="
+            sudo -n journalctl -u zennay-cloud.service -n 120 --no-pager || true
+            echo "=== LISTENERS ==="
+            ss -ltnp | grep ':8765' || true
+            exit 1
+          fi
 
           python3 - <<'PY'
           import json, time, urllib.request, urllib.error
