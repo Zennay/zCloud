@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -273,6 +274,40 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         result = self.evaluate(source_runtime_match=False)
         self.assertFalse(result["ok"])
         self.assertEqual("problem", result["summary"]["firefox_automation"])
+
+    def test_live_health_gives_deep_status_a_bounded_longer_budget(self):
+        source_dir = Path(self.tmp.name) / "firefox-extension"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        source = source_dir / "background.js"
+        runtime = Path(self.tmp.name) / "runtime-background.js"
+        source.write_text("same-runtime", encoding="utf-8")
+        runtime.write_text("same-runtime", encoding="utf-8")
+        status, targets = self.sample()
+        calls = []
+
+        def fake_http(url, timeout=3.0):
+            calls.append((url, timeout))
+            return status if url.endswith("/api/status") else targets
+
+        with mock.patch.object(health, "http_json", side_effect=fake_http), mock.patch.object(
+            health, "service_active", return_value=True
+        ):
+            result = health.live_health(
+                root=Path(self.tmp.name),
+                db_path=self.db,
+                base_url="http://zcloud",
+                runtime_extension=runtime,
+            )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            [
+                ("http://zcloud/api/status", health.DEEP_STATUS_TIMEOUT_SECONDS),
+                ("http://zcloud/api/runner-targets", health.FAST_API_TIMEOUT_SECONDS),
+            ],
+            calls,
+        )
+        self.assertGreater(health.DEEP_STATUS_TIMEOUT_SECONDS, health.FAST_API_TIMEOUT_SECONDS)
 
     def test_database_is_opened_read_only(self):
         result = self.store()
