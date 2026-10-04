@@ -88,7 +88,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
         required = re.search(r'VIOLENTMONKEY_REQUIRED_VERSION = "([^"]+)"', background)
-        metadata = re.search(r"^// @version\\s+([^\\s]+)", userscript, re.MULTILINE)
+        metadata = re.search(r"^// @version\s+([^\s]+)", userscript, re.MULTILINE)
         runtime = re.search(r'SCRIPT_VERSION = "([^"]+)"', userscript)
 
         self.assertIsNotNone(required)
