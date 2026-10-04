@@ -2,11 +2,11 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github/workflows/ftmo-pr507-publication-integrity-full-proof.yml"
+WORKFLOW = ROOT / ".github/workflows/ftmo-runner-self-health-proof-20261002.yml"
 
 
-class FtmoPr507RunnerLaneTests(unittest.TestCase):
-    def test_pr507_full_proof_uses_dedicated_ftmo_runner(self):
+class FtmoDedicatedRunnerLaneTests(unittest.TestCase):
+    def test_current_ftmo_runner_proof_uses_dedicated_ftmo_runner(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("runs-on: [self-hosted, ftmo-research]", text)
         self.assertNotIn("runs-on: [self-hosted, zcloud, vps]", text)
