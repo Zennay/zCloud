@@ -1,0 +1,259 @@
+name: zSSH production origin readiness (zCloud lane)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-production-origin-readiness.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-production-origin-readiness-zcloud
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit zSSH production origin on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    env:
+      XDG_RUNTIME_DIR: /run/user/1000
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+      ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_EXPECTED_IPV4: 198.244.191.182
+    steps:
+      - name: Check out zCloud coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce canonical zCloud VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_NAME" = "main"
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-production-origin-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+
+      - name: Resolve current canonical zSSH main
+        id: zssh_target
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          zssh_sha="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          [[ "$zssh_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$zssh_sha" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_SHA=$zssh_sha" >> "$GITHUB_ENV"
+          echo "ZSSH_CANONICAL_MAIN_RESOLVED sha=$zssh_sha"
+
+      - name: Check out exact canonical zSSH revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ steps.zssh_target.outputs.sha }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Install zSSH dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"
+          node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+          test "$node_major" -ge 20
+          npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
+
+      - name: Audit selected production origin without mutating public runtime
+        id: readiness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          source_root="$GITHUB_WORKSPACE/zssh-source"
+          reviewer_report="$RUNNER_TEMP/zssh-production-origin-reviewer-target.json"
+          caddy_report="$RUNNER_TEMP/zssh-production-origin.Caddyfile"
+          readiness_report="$RUNNER_TEMP/zssh-production-origin-readiness.json"
+
+          bash "$source_root/deploy/prepare-reviewer-target.sh" "$source_root" > "$reviewer_report"
+
+          target_id="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.target_id)' "$reviewer_report")"
+          trust_file="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.gateway_public_key_config_file)' "$reviewer_report")"
+          review_root="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.review_root)' "$reviewer_report")"
+          fingerprint="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.public_key_sha256)' "$reviewer_report")"
+
+          test "$trust_file" = "$HOME/.config/zssh/reviewer-agent-public.json"
+          test "$review_root" = "$HOME/zssh-review"
+          [[ "$target_id" =~ ^zt_[A-Za-z0-9_-]{8,96}$ ]]
+          [[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]]
+
+          export ZSSH_PUBLIC_BASE_URL="$ZSSH_PRODUCTION_ORIGIN"
+          export ZSSH_OAUTH_ISSUER="https://auth.zssh-preflight.invalid"
+          export ZSSH_OAUTH_JWKS_URI="https://auth.zssh-preflight.invalid/.well-known/jwks.json"
+          export ZSSH_TARGET_ID="$target_id"
+          export ZSSH_AGENT_PUBLIC_KEYS_FILE="$trust_file"
+          export ZSSH_PUBLIC_ALLOWED_ROOTS="$review_root"
+          export ZSSH_PUBLIC_RATE_LIMIT_PER_MINUTE=120
+          export ZSSH_PUBLIC_RATE_LIMIT_MAX_PROFILES=10000
+          export ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1
+          export ZSSH_EXPECTED_SHA="$ZSSH_SHA"
+
+          preflight_output="$RUNNER_TEMP/zssh-production-origin-gateway-preflight.txt"
+          bash "$source_root/deploy/install-public-gateway.sh" "$source_root" | tee "$preflight_output"
+          grep -F "ZSSH_PUBLIC_GATEWAY_CONFIG_GREEN sha=$ZSSH_SHA" "$preflight_output"
+
+          node "$source_root/scripts/render-public-caddy.mjs" > "$caddy_report"
+          grep -Fx "$ZSSH_PRODUCTION_HOST {" "$caddy_report"
+          grep -Fx "    reverse_proxy 127.0.0.1:8789" "$caddy_report"
+          caddy_sha256="$(sha256sum "$caddy_report" | awk '{print $1}')"
+
+          export READINESS_REPORT="$readiness_report"
+          export TARGET_ID="$target_id"
+          export TRUST_FILE="$trust_file"
+          export REVIEW_ROOT="$review_root"
+          export FINGERPRINT="$fingerprint"
+          export CADDY_SHA256="$caddy_sha256"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import socket
+          from pathlib import Path
+
+          host = os.environ["ZSSH_PRODUCTION_HOST"]
+          expected = os.environ["ZSSH_EXPECTED_IPV4"]
+          addresses = set()
+          error = None
+          try:
+              for row in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM):
+                  addresses.add(row[4][0])
+          except OSError as exc:
+              error = f"{type(exc).__name__}: {exc}"
+
+          resolved = sorted(addresses)
+          dns_ready = expected in addresses
+          evidence = {
+              "ok": True,
+              "project": "zssh",
+              "proof": "production-origin-readiness-audit",
+              "coordination_repository": os.environ["GITHUB_REPOSITORY"],
+              "coordination_commit_sha": os.environ["GITHUB_SHA"],
+              "zssh_commit_sha": os.environ["ZSSH_SHA"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_name": os.environ["RUNNER_NAME"],
+              "hostname": socket.gethostname(),
+              "production_origin": os.environ["ZSSH_PRODUCTION_ORIGIN"],
+              "production_host": host,
+              "expected_ipv4": expected,
+              "resolved_ipv4": resolved,
+              "dns_ready": dns_ready,
+              "dns_error": error,
+              "target_id": os.environ["TARGET_ID"],
+              "public_key_sha256": os.environ["FINGERPRINT"],
+              "trust_file": os.environ["TRUST_FILE"],
+              "review_root": os.environ["REVIEW_ROOT"],
+              "public_gateway_validate_only": True,
+              "public_gateway_state_mutated": False,
+              "caddy_upstream": "127.0.0.1:8789",
+              "caddy_sha256": os.environ["CADDY_SHA256"],
+              "oauth_fixture_only": True,
+              "oauth_external_gate_remaining": True,
+          }
+          Path(os.environ["READINESS_REPORT"]).write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "ZSSH_PRODUCTION_ORIGIN_DNS_GREEN"
+              if dns_ready
+              else "ZSSH_PRODUCTION_ORIGIN_DNS_PENDING",
+              json.dumps({
+                  "host": host,
+                  "expected_ipv4": expected,
+                  "resolved_ipv4": resolved,
+                  "dns_error": error,
+              }, sort_keys=True),
+          )
+          PY
+
+          live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main_after" = "$ZSSH_SHA"
+          echo "ZSSH_CANONICAL_MAIN_RECONFIRMED sha=$ZSSH_SHA"
+
+          dns_ready="$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["dns_ready"] else "0")' "$readiness_report")"
+          echo "dns_ready=$dns_ready" >> "$GITHUB_OUTPUT"
+          echo "report=$readiness_report" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_PRODUCTION_ORIGIN_READINESS_AUDIT_COMPLETE host=$ZSSH_PRODUCTION_HOST dns_ready=$dns_ready"
+
+      - name: Record evidence-backed zSSH production-origin receipt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          report="$RUNNER_TEMP/zssh-production-origin-readiness.json"
+          dns_ready="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dns_ready"])' "$report")"
+
+          if [[ "$dns_ready" == "True" ]]; then
+            next_gate="Configure production OAuth/OIDC issuer + JWKS + dedicated reviewer account, then activate isolated public gateway/Caddy ingress and run external ingress preflight"
+          else
+            next_gate="Create/update public DNS A record zssh.cheapgpt.shop -> 198.244.191.182; then configure production OAuth/OIDC before activating the isolated public gateway"
+          fi
+
+          evidence_json="$(python3 - "$report" <<'PY'
+          import json
+          import sys
+          row = json.load(open(sys.argv[1], encoding="utf-8"))
+          keep = {
+              "proof": row["proof"],
+              "workflow_run_id": row["workflow_run_id"],
+              "runner_name": row["runner_name"],
+              "hostname": row["hostname"],
+              "zssh_commit_sha": row["zssh_commit_sha"],
+              "production_origin": row["production_origin"],
+              "expected_ipv4": row["expected_ipv4"],
+              "resolved_ipv4": row["resolved_ipv4"],
+              "dns_ready": row["dns_ready"],
+              "dns_error": row["dns_error"],
+              "target_id": row["target_id"],
+              "public_key_sha256": row["public_key_sha256"],
+              "public_gateway_validate_only": row["public_gateway_validate_only"],
+              "public_gateway_state_mutated": row["public_gateway_state_mutated"],
+              "caddy_upstream": row["caddy_upstream"],
+              "caddy_sha256": row["caddy_sha256"],
+              "oauth_external_gate_remaining": row["oauth_external_gate_remaining"],
+          }
+          print(json.dumps(keep, sort_keys=True, separators=(",", ":")))
+          PY
+          )"
+
+          python3 scripts/zcloud_runtime.py \
+            --db /home/ubuntu/zennay-cloud/history.db \
+            receipt \
+            --project zssh \
+            --phase "Public plugin · production submission hardening" \
+            --action "Audited selected production origin zssh.cheapgpt.shop on canonical VPS lane" \
+            --commit "$ZSSH_SHA" \
+            --ci-status success \
+            --next-gate "$next_gate" \
+            --source "github-actions:zssh-production-origin-readiness" \
+            --evidence-json "$evidence_json"
+
+      - name: Upload non-secret readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-production-origin-readiness-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-production-origin-readiness.json
+            ${{ runner.temp }}/zssh-production-origin.Caddyfile
+            ${{ runner.temp }}/zssh-production-origin-runner-guard.json
+          if-no-files-found: error
+          retention-days: 30
