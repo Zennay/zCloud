@@ -1,0 +1,116 @@
+name: zCloud resource governor VPS canary
+
+on:
+  push:
+    branches: [worker/cloud-resource-governor-vps-canary-20261004]
+    paths:
+      - .github/workflows/zcloud-resource-governor-canary.yml
+      - scripts/zcloud_governed_exec.py
+      - scripts/zcloud_runtime.py
+      - project_runtime.py
+      - project-contracts.json
+      - tests/test_resource_governor_canary_workflow.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove live resource admission and process bounds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workdir="$(mktemp -d "$RUNNER_TEMP/zcloud-resource-canary.XXXXXX")"
+          db="$workdir/canary.db"
+          cloud_marker="$workdir/cloud.json"
+          haxlab_marker="$workdir/haxlab.json"
+          blocked_marker="$workdir/blocked.txt"
+
+          cleanup() {
+            python3 scripts/zcloud_runtime.py --db "$db" release --project ftmo --owner canary-heavy-holder >/dev/null 2>&1 || true
+            rm -rf "$workdir"
+          }
+          trap cleanup EXIT
+
+          python3 scripts/zcloud_runtime.py \
+            --db "$db" acquire \
+            --project ftmo \
+            --owner canary-heavy-holder \
+            --lease-seconds 300 \
+            --metadata-json '{"purpose":"resource-governor-vps-canary"}'
+
+          set +e
+          BLOCKED_MARKER="$blocked_marker" python3 scripts/zcloud_governed_exec.py \
+            --db "$db" \
+            --project haxlab \
+            --owner canary-heavy-contender \
+            --lease-seconds 300 \
+            --renew-seconds 30 \
+            -- python3 -c 'import os; from pathlib import Path; Path(os.environ["BLOCKED_MARKER"]).write_text("unexpected")'
+          blocked_rc=$?
+          set -e
+          test "$blocked_rc" -eq 75
+          test ! -e "$blocked_marker"
+
+          CLOUD_MARKER="$cloud_marker" python3 scripts/zcloud_governed_exec.py \
+            --db "$db" \
+            --project cloud \
+            --owner canary-protected-control-plane \
+            --lease-seconds 300 \
+            --renew-seconds 30 \
+            -- python3 -c 'import json,os,resource; from pathlib import Path; Path(os.environ["CLOUD_MARKER"]).write_text(json.dumps({"project":os.environ["ZCLOUD_RESOURCE_PROJECT"],"owner":os.environ["ZCLOUD_RESOURCE_OWNER"],"cpus":len(os.sched_getaffinity(0)),"memory":resource.getrlimit(resource.RLIMIT_AS)[0]}))'
+
+          curl -fsS --max-time 4 http://127.0.0.1:8765/ >/dev/null
+
+          python3 - "$cloud_marker" <<'PY'
+          import json, sys
+          from pathlib import Path
+          payload = json.loads(Path(sys.argv[1]).read_text())
+          assert payload["project"] == "cloud", payload
+          assert payload["owner"] == "canary-protected-control-plane", payload
+          assert payload["cpus"] == 1, payload
+          assert payload["memory"] == 1536 * 1024 * 1024, payload
+          print("ZCLOUD_PROTECTED_POOL_RESPONSIVE_GREEN")
+          PY
+
+          python3 scripts/zcloud_runtime.py \
+            --db "$db" release \
+            --project ftmo \
+            --owner canary-heavy-holder
+
+          HAXLAB_MARKER="$haxlab_marker" python3 scripts/zcloud_governed_exec.py \
+            --db "$db" \
+            --project haxlab \
+            --owner canary-heavy-after-release \
+            --lease-seconds 300 \
+            --renew-seconds 30 \
+            -- python3 -c 'import json,os,resource; from pathlib import Path; Path(os.environ["HAXLAB_MARKER"]).write_text(json.dumps({"project":os.environ["ZCLOUD_RESOURCE_PROJECT"],"cpus":len(os.sched_getaffinity(0)),"memory":resource.getrlimit(resource.RLIMIT_AS)[0]}))'
+
+          python3 - "$haxlab_marker" <<'PY'
+          import json, sys
+          from pathlib import Path
+          payload = json.loads(Path(sys.argv[1]).read_text())
+          assert payload["project"] == "haxlab", payload
+          assert payload["cpus"] == 1, payload
+          assert payload["memory"] == 3072 * 1024 * 1024, payload
+          print("ZCLOUD_HEAVY_POOL_RELEASE_GREEN")
+          PY
+
+          status="$(python3 scripts/zcloud_runtime.py --db "$db" status)"
+          STATUS_JSON="$status" python3 - <<'PY'
+          import json, os
+          payload = json.loads(os.environ["STATUS_JSON"])
+          assert payload["leases"] == [], payload
+          assert payload["pools"]["heavy"]["used"] == 0, payload
+          assert payload["pools"]["protected"]["used"] == 0, payload
+          print("ZCLOUD_RESOURCE_GOVERNOR_VPS_CANARY_GREEN")
+          PY
