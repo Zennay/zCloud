@@ -1,0 +1,136 @@
+name: FTMO PR500 autonomous JSON exact-head proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr500-autonomous-json-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr500-autonomous-json-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: 76082e8b5af088c8ba02ed743d467701ecef07f3
+      TARGET_PR: "500"
+      EXPECTED_MAIN_SHA: a98d7ead8113e362ee4301410b4cdcdd5f29b1bd
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
+      FTMO_ALLOW_PAID_AWS: ""
+    steps:
+      - name: Verify exact FTMO identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, os, subprocess
+          pr=json.loads(subprocess.check_output(
+              ["gh","api",f"repos/Zennay/Ftmo/pulls/{os.environ['TARGET_PR']}"],
+              text=True,
+          ))
+          assert pr["state"] == "open"
+          assert pr["head"]["sha"] == os.environ["TARGET_SHA"]
+          assert pr["base"]["sha"] == os.environ["EXPECTED_MAIN_SHA"]
+          main=subprocess.check_output(
+              ["gh","api","repos/Zennay/Ftmo/commits/main","--jq",".sha"],
+              text=True,
+          ).strip()
+          assert main == os.environ["EXPECTED_MAIN_SHA"]
+          print("FTMO_PR500_IDENTITY=verified")
+          PY
+
+      - name: Checkout exact FTMO PR500 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ftmo-pr500-zcloud-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$TARGET_SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Prove autonomous JSON and provider boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ftmo-pr500-zcloud-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          venv="$RUNNER_TEMP/ftmo-pr500-zcloud-venv-$GITHUB_RUN_ID"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$work/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$work"
+          cd "$work"
+          "$venv/bin/python" -m py_compile src/prop_trading_ai/ops/autonomous_rollover.py
+          "$venv/bin/python" -m pytest -q             tests/test_autonomous_rollover_json_integrity.py             tests/test_autonomous_provider_retry.py             tests/test_provider_foundation_publication.py
+          "$venv/bin/python" -m pytest -q             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = "0.00"
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+          echo "FTMO_PR500_ZCLOUD_EXACT_HEAD_PROOF=success"
+
+      - name: Merge exact green FTMO PR500
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)" = "$TARGET_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)" = "open"
+          result="$(gh api --method PUT "repos/Zennay/Ftmo/pulls/$TARGET_PR/merge"             -f merge_method=squash             -f sha="$TARGET_SHA")"
+          test "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged")).lower())' <<<"$result")" = "true"
+          echo "FTMO_PR500_ZCLOUD_MERGED=1"
+
+      - name: Persist durable proof receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="/tmp/ftmo-pr500-zcloud-proof-$GITHUB_RUN_ID.json"
+          python3 - <<'PY' > "$receipt"
+          import json, os
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "ftmo",
+              "pull_request": 500,
+              "target_sha": os.environ["TARGET_SHA"],
+              "expected_main_sha": os.environ["EXPECTED_MAIN_SHA"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner": os.environ.get("RUNNER_NAME", ""),
+              "host": "vps-bb300bba",
+              "result": "success",
+              "proof": [
+                  "exact-sha-checkout",
+                  "autonomous-rollover-compile",
+                  "non-standard-json-constant-rejection",
+                  "duplicate-json-key-rejection",
+                  "provider-retry-regressions",
+                  "provider-publication-regressions",
+                  "zero-cost-boundary"
+              ],
+              "paid_cloud_budget_usd": "0.00",
+              "research_outcomes_accessed": False,
+              "walk_forward_accessed": False,
+              "final_holdout_accessed": False,
+              "live_broker_authority_opened": False
+          }, indent=2, sort_keys=True))
+          PY
+          encoded="$(base64 -w0 "$receipt")"
+          destination="runtime-evidence/ftmo-pr500-autonomous-json-proof-$GITHUB_RUN_ID.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$destination"             -f message="Record FTMO PR500 exact-head proof $GITHUB_RUN_ID"             -f content="$encoded" >/dev/null
+          echo "FTMO_PR500_ZCLOUD_PROOF_RECEIPT=$destination"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/ftmo-pr500-zcloud-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$RUNNER_TEMP/ftmo-pr500-zcloud-venv-$GITHUB_RUN_ID"
