@@ -274,6 +274,10 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("problem", result["summary"]["firefox_automation"])
 
+    def test_deep_status_timeout_matches_measured_production_budget(self):
+        self.assertEqual(40.0, health.STATUS_REQUEST_TIMEOUT_SECONDS)
+        self.assertEqual(8.0, health.FAST_REQUEST_TIMEOUT_SECONDS)
+
     def test_database_is_opened_read_only(self):
         result = self.store()
         self.assertTrue(result["ok"])
