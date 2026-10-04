@@ -2110,14 +2110,30 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
-def _portfolio_project_soft_cap():
-    """Keep at least one global slot available for another runnable project.
+def _portfolio_project_soft_cap(project_id=None):
+    """Return the preferred browser-worker share for one runnable project.
 
-    The cap is soft: when no other project has eligible work, the busiest project
-    may consume every slot. Running/verifying work is never preempted for diversity.
+    This is deliberately a *soft* cap. A project whose canonical autonomy state
+    currently says AI should yield gets no preferred slot while another project
+    has runnable work, but may still borrow otherwise-idle capacity. That keeps
+    FTMO/HaxLab gate waits from monopolising browser workers without turning their
+    maintenance backlog into a permanent hard block. Running/verifying work is
+    still never preempted for diversity.
     """
     limit=max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))
-    return 1 if limit <= 2 else limit - 1
+    base=1 if limit <= 2 else limit - 1
+    pid=str(project_id or '').strip().lower()
+    if not pid:
+        return base
+    mode=str((_autonomy_config(pid) or {}).get('mode') or 'manual').lower()
+    if mode in {'ftmo_status','haxlab_status','zcloud_stopgate'}:
+        try:
+            if not bool(project_autonomy_state(pid).get('allow_ai')):
+                return 0
+        except Exception:
+            logging.exception('Could not evaluate project autonomy soft-cap for %s',pid)
+            return 0
+    return base
 
 
 def _portfolio_project_hard_cap(project_id):
@@ -2610,8 +2626,6 @@ def portfolio_queue_allocate():
             for item in selected:
                 pid=str(item.get('project_id') or '')
                 used_counts[pid]=used_counts.get(pid,0)+1
-            soft_cap=_portfolio_project_soft_cap()
-
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
                 row_mode=str((_autonomy_config(row_project) or {}).get('mode') or 'manual').lower()
@@ -2627,11 +2641,13 @@ def portfolio_queue_allocate():
                     hard_cap=_portfolio_project_hard_cap(row_project)
                     alternate_project_available=any(
                         str(pair[0]['project_id'] or '') != row_project
-                        and used_counts.get(str(pair[0]['project_id'] or ''),0) < soft_cap
+                        and used_counts.get(str(pair[0]['project_id'] or ''),0)
+                            < _portfolio_project_soft_cap(pair[0]['project_id'])
                         for pair in lane_candidates
                     )
                     should_enforce_hard_cap=used_counts.get(row_project,0) >= hard_cap
-                    should_diversify=used_counts.get(row_project,0) >= soft_cap and alternate_project_available
+                    row_soft_cap=_portfolio_project_soft_cap(row_project)
+                    should_diversify=used_counts.get(row_project,0) >= row_soft_cap and alternate_project_available
                     should_preempt_priority=(
                         higher and
                         _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority'])
@@ -2666,7 +2682,8 @@ def portfolio_queue_allocate():
 
             diverse_candidates=[
                 pair for pair in lane_candidates
-                if used_counts.get(str(pair[0]['project_id'] or ''),0) < soft_cap
+                if used_counts.get(str(pair[0]['project_id'] or ''),0)
+                    < _portfolio_project_soft_cap(pair[0]['project_id'])
             ]
             if diverse_candidates:
                 lane_candidates=diverse_candidates
