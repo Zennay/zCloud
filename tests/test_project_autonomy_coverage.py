@@ -52,6 +52,12 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
         self.assertNotIn("PROJECT_AI_WORKER_LIMITS", server_source)
         self.assertIn("project_runtime.ai_worker_cap", server_source)
 
+    def test_legacy_concise_prompt_promotion_lane_is_removed(self):
+        self.assertFalse(
+            (ROOT / ".github/workflows/zcloud-concise-worker-prompt-promotion.yml").exists(),
+            "prompt/backend promotion must use the canonical guarded production deploy lane",
+        )
+
     def test_legacy_autonomy_file_cannot_drift_during_migration(self):
         canonical = self.contracts["projects"]
         legacy = self.legacy.get("projects") or {}
