@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-runner-duplicate-listener-zssh-recovery
-  cancel-in-progress: false
+  group: zcloud-runner-duplicate-listener-zssh-recovery-ftmo-v2
+  cancel-in-progress: true
 
 jobs:
   enqueue:
