@@ -671,6 +671,17 @@ jobs:
             --state "$ZCLOUD_RUN_STATE_DIR/zcloud-deploy-safe-idle.json" \
             --json
 
+      - name: Reconcile stale browser commands before final health evidence
+        if: steps.prewrite.outputs.deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_worker_watchdog.py \
+            --db /home/ubuntu/zennay-cloud/history.db \
+            --clear-stale-pending-only \
+            --json \
+            | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-stale-command-final-reconcile.json"
+
       - name: Capture green production deploy evidence
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
