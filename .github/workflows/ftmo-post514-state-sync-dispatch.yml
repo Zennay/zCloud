@@ -1,14 +1,16 @@
-# Exact-current-main trigger for the post-PR521 receipt commit.\nname: Dispatch FTMO post-PR521 receipt state sync
+name: Dispatch FTMO post-PR521 research-state and runtime verify
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
-      - .github/workflows/ftmo-post514-state-sync-dispatch.yml
+      - '.github/workflows/ftmo-post514-state-sync-dispatch.yml'
+
+permissions:
+  contents: write
 
 concurrency:
-  group: ftmo-post521-receipt-state-sync
+  group: ftmo-post521-preservation-dispatch
   cancel-in-progress: true
 
 jobs:
@@ -16,28 +18,65 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     env:
-      RECEIPT_MAIN_SHA: d813fc3e9305ed61db360953ecb65d00668ecfb2
+      MERGED_MAIN_SHA: 4bd86264403dffcca6d699e6f82ac7a9dda0803f
     steps:
-      - name: Dispatch exact-current-main research-state sync
+      - name: Dispatch exact-main research-state sync and runtime verify
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
           gh auth status >/dev/null 2>&1
           current="$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)"
-          test "$current" = "$RECEIPT_MAIN_SHA"
-          existing="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$RECEIPT_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.RECEIPT_MAIN_SHA)] | length')"
-          if [[ "$existing" == "0" ]]; then
+          test "$current" = "$MERGED_MAIN_SHA"
+
+          existing_sync="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$MERGED_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.MERGED_MAIN_SHA)] | length')"
+          existing_deploy="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/deploy-autonomous-vps.yml/runs -f head_sha="$MERGED_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.MERGED_MAIN_SHA)] | length')"
+
+          if [[ "$existing_sync" == "0" ]]; then
             gh workflow run sync-autonomous-research-state.yml --repo Zennay/Ftmo --ref main
-            echo "FTMO_POST521_RECEIPT_STATE_SYNC_ACTION=dispatched"
+            sync_action=dispatched
           else
-            echo "FTMO_POST521_RECEIPT_STATE_SYNC_ACTION=existing-exact-main-run"
+            sync_action=existing-exact-main-run
           fi
+
+          if [[ "$existing_deploy" == "0" ]]; then
+            gh workflow run deploy-autonomous-vps.yml --repo Zennay/Ftmo --ref main
+            deploy_action=dispatched
+          else
+            deploy_action=existing-exact-main-run
+          fi
+
           sync_run=""
+          deploy_run=""
           for _ in $(seq 1 24); do
-            sync_run="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$RECEIPT_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.RECEIPT_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty')"
-            [[ -n "$sync_run" ]] && break
+            sync_run="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/sync-autonomous-research-state.yml/runs -f head_sha="$MERGED_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.MERGED_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty')"
+            deploy_run="$(gh api -X GET repos/Zennay/Ftmo/actions/workflows/deploy-autonomous-vps.yml/runs -f head_sha="$MERGED_MAIN_SHA" -f per_page=20 --jq '[.workflow_runs[] | select(.head_sha == env.MERGED_MAIN_SHA)] | sort_by(.created_at) | last | .id // empty')"
+            [[ -n "$sync_run" && -n "$deploy_run" ]] && break
             sleep 5
           done
           test -n "$sync_run"
-          echo "FTMO_POST521_RECEIPT_STATE_SYNC_RUN=$sync_run"
+          test -n "$deploy_run"
+
+          echo "FTMO_POST521_STATE_SYNC_ACTION=$sync_action"
+          echo "FTMO_POST521_STATE_SYNC_RUN=$sync_run"
+          echo "FTMO_POST521_VPS_VERIFY_ACTION=$deploy_action"
+          echo "FTMO_POST521_VPS_VERIFY_RUN=$deploy_run"
+
+          receipt="$RUNNER_TEMP/ftmo-post521-gates.json"
+          cat >"$receipt" <<EOF
+{
+  "schema_version": 1,
+  "scope": "ftmo-post-pr521-gates",
+  "merged_main_sha": "$MERGED_MAIN_SHA",
+  "state_sync_action": "$sync_action",
+  "state_sync_run_id": "$sync_run",
+  "vps_verify_action": "$deploy_action",
+  "vps_verify_run_id": "$deploy_run",
+  "dispatcher_run_id": "$GITHUB_RUN_ID"
+}
+EOF
+          encoded="$(base64 -w0 "$receipt")"
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post521-gates.json \
+            -f message="Record FTMO post-PR521 gate dispatch" \
+            -f content="$encoded" \
+            -f branch=main >/dev/null
