@@ -18,7 +18,7 @@ permissions:
 
 concurrency:
   group: zssh-vps-release-runner
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   release:
