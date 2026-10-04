@@ -58,7 +58,7 @@ jobs:
 
             if [[ "$current" != "$resolved" ]]; then
               echo "MAIN_MOVED_DURING_GREEN_WAIT resolved=$resolved current=$current"
-              git fetch --no-tags --depth=64 origin main
+              git fetch --no-tags --depth=513 origin main
               git checkout --detach "$current"
               resolved="$(git rev-parse HEAD)"
               if [[ "$resolved" != "$current" ]]; then
@@ -70,15 +70,31 @@ jobs:
 
             export RESOLVED_SHA="$resolved"
             set +e
-            regression_id="$(python3 - <<'PY'
+            regression_match="$(python3 - <<'PY'
           import json
           import os
-          import sys
+          import subprocess
           import urllib.request
 
           repo = os.environ["GITHUB_REPOSITORY"]
-          sha = os.environ["RESOLVED_SHA"]
+          current_sha = os.environ["RESOLVED_SHA"]
           token = os.environ["GITHUB_TOKEN"]
+          protected_paths = [
+              ".github/workflows/zcloud-vps-deploy.yml",
+              "server.py",
+              "enhancements.py",
+              "project_runtime.py",
+              "lane_generator.py",
+              "project-contracts.json",
+              "autonomy-policy.json",
+              "vps-execution-policy.json",
+              "portfolio_queue.seed.json",
+              "firefox-extension",
+              "public",
+              "deploy",
+              "scripts",
+          ]
+
           request = urllib.request.Request(
               f"https://api.github.com/repos/{repo}/actions/workflows/zcloud-regression-smoke.yml/runs"
               "?branch=main&status=success&per_page=100",
@@ -91,35 +107,70 @@ jobs:
           )
           with urllib.request.urlopen(request, timeout=15) as response:
               payload = json.load(response)
-          matched = next(
-              (
-                  run for run in payload.get("workflow_runs", [])
-                  if str(run.get("head_sha") or "") == sha
-                  and str(run.get("conclusion") or "") == "success"
-                  and str(run.get("event") or "") in {"push", "workflow_dispatch"}
-                  and str(run.get("head_branch") or "") == "main"
-              ),
-              None,
-          )
-          if matched is None:
-              raise SystemExit(3)
-          print(int(matched["id"]))
+
+          eligible = [
+              run
+              for run in payload.get("workflow_runs", [])
+              if str(run.get("conclusion") or "") == "success"
+              and str(run.get("event") or "") in {"push", "workflow_dispatch"}
+              and str(run.get("head_branch") or "") == "main"
+          ]
+
+          for run in eligible:
+              green_sha = str(run.get("head_sha") or "")
+              if not green_sha:
+                  continue
+              if green_sha == current_sha:
+                  print(f'{int(run["id"])}|{green_sha}|exact')
+                  raise SystemExit(0)
+
+              ancestor = subprocess.run(
+                  ["git", "merge-base", "--is-ancestor", green_sha, current_sha],
+                  check=False,
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+              )
+              if ancestor.returncode != 0:
+                  continue
+
+              diff = subprocess.run(
+                  ["git", "diff", "--quiet", green_sha, current_sha, "--", *protected_paths],
+                  check=False,
+              )
+              if diff.returncode == 0:
+                  print(f'{int(run["id"])}|{green_sha}|runtime-equivalent')
+                  raise SystemExit(0)
+              if diff.returncode not in {0, 1}:
+                  raise SystemExit(4)
+
+          raise SystemExit(3)
           PY
             )"
             regression_rc=$?
             set -e
 
             if [[ "$regression_rc" -eq 0 ]]; then
+              IFS='|' read -r regression_id regression_sha regression_mode <<<"$regression_match"
+              if [[ -z "$regression_id" || -z "$regression_sha" || -z "$regression_mode" ]]; then
+                echo "Malformed regression evidence: $regression_match" >&2
+                exit 2
+              fi
               {
                 echo "deploy=true"
                 echo "deploy_sha=$resolved"
                 echo "regression_run_id=$regression_id"
+                echo "regression_sha=$regression_sha"
+                echo "regression_mode=$regression_mode"
               } >> "$GITHUB_OUTPUT"
-              echo "GREEN_MAIN_CONFIRMED sha=$resolved regression_run_id=$regression_id"
+              if [[ "$regression_mode" == "exact" ]]; then
+                echo "GREEN_MAIN_CONFIRMED sha=$resolved regression_run_id=$regression_id"
+              else
+                echo "GREEN_RUNTIME_EQUIVALENT current_sha=$resolved regression_sha=$regression_sha regression_run_id=$regression_id"
+              fi
               exit 0
             fi
             if [[ "$regression_rc" -ne 3 ]]; then
-              echo "Failed to query exact green regression for sha=$resolved rc=$regression_rc" >&2
+              echo "Failed to resolve green regression evidence for sha=$resolved rc=$regression_rc" >&2
               exit "$regression_rc"
             fi
 
