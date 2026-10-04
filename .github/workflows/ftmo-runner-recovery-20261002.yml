@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   recover:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Check out exact main
@@ -148,3 +148,5 @@ jobs:
 # PR507 exact-head queue recovery trigger 2026-10-04T02:14Z
 
 # PR510 exact-head queue recovery trigger 2026-10-04T02:45Z
+
+# TASK-37 PR509 queued-lane recovery trigger 2026-10-04T02:46Z
