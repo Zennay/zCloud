@@ -11,10 +11,10 @@
   "runner_host": "vps-bb300bba",
   "schema_version": 1,
   "scope": "restart-safe provider bundle integration exact-head proof",
-  "target_sha": "a3cd0a08ccd24dec1edee31a7e2b126c3f990830",
+  "target_sha": "fcde6de6b73408737eadc075e95493e3efe92b14",
   "task": "TASK-78",
   "verified_snapshot_promotion": true,
   "walk_forward_access_relaxed": false,
   "workflow_run_attempt": 1,
-  "workflow_run_id": 37176606023
+  "workflow_run_id": 37177771436
 }
