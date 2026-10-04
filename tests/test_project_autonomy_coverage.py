@@ -52,15 +52,14 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
         self.assertNotIn("PROJECT_AI_WORKER_LIMITS", server_source)
         self.assertIn("project_runtime.ai_worker_cap", server_source)
 
-    def test_legacy_autonomy_file_cannot_drift_during_migration(self):
-        canonical = self.contracts["projects"]
-        legacy = self.legacy.get("projects") or {}
-        self.assertEqual(set(canonical), set(legacy))
-        for pid, contract in canonical.items():
-            old = legacy[pid]
-            new = contract["autonomy"]
-            self.assertEqual(old.get("mode"), new.get("mode"), pid)
-            self.assertEqual(bool(old.get("auto_start")), bool(new.get("auto_start")), pid)
+    def test_legacy_autonomy_file_contains_no_runtime_truth(self):
+        self.assertEqual(1, self.legacy.get("schema_version"))
+        self.assertEqual({}, self.legacy.get("default"))
+        self.assertEqual({}, self.legacy.get("projects"))
+        self.assertIn(
+            "compatibility",
+            str(self.legacy.get("description") or "").lower(),
+        )
 
 
 if __name__ == "__main__":
