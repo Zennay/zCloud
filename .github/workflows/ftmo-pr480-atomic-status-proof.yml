@@ -18,8 +18,9 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
     env:
-      TARGET_SHA: dd155a80246730d2673715f6f32fb951959c3923
+      TARGET_SHA: 0ac78390f1c4f6a2684bcd52ca42d09a6f90f9e9
       TARGET_PR: "480"
+      EXPECTED_MAIN_SHA: 86dc06dbed0965a8a71891dfe165a58b2a517833
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
       FTMO_ALLOW_PAID_AWS: ""
     steps:
@@ -49,6 +50,12 @@ jobs:
           ))
           assert pr["state"] == "open"
           assert pr["head"]["sha"] == os.environ["TARGET_SHA"]
+          assert pr["base"]["sha"] == os.environ["EXPECTED_MAIN_SHA"]
+          main=subprocess.check_output(
+              ["gh","api","repos/Zennay/Ftmo/commits/main","--jq",".sha"],
+              text=True,
+          ).strip()
+          assert main == os.environ["EXPECTED_MAIN_SHA"]
           print("FTMO_PR480_IDENTITY=verified")
           PY
 
@@ -95,7 +102,9 @@ jobs:
               "proof": [
                   "exact-sha-checkout",
                   "autonomous-runtime-compile",
-                  "random-exclusive-status-temp",
+                  "descriptor-bound-exclusive-status-temp",
+                  "no-follow-status-parent-ancestry",
+                  "status-parent-permission-seal",
                   "stale-temp-symlink-regression",
                   "symlink-parent-rejection",
                   "file-and-parent-fsync",
