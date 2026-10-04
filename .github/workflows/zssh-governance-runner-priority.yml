@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   prioritize:
-    name: Cancel older queued zSSH read-only VPS audits behind governance
+    name: Cancel older queued zSSH read-only VPS audits behind release blockers
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
@@ -39,6 +39,7 @@ jobs:
 
           runs = json.loads(Path(os.environ["QUEUED_JSON"]).read_text(encoding="utf-8")).get("workflow_runs", [])
           governance_name = "zSSH main protection VPS apply"
+          cloudflare_probe_name = "zSSH Cloudflare credential metadata probe"
           allow = {
               "zSSH production origin readiness (zCloud lane)",
               "zSSH Caddy topology audit (zCloud lane)",
@@ -46,19 +47,22 @@ jobs:
           }
 
           governance = [run for run in runs if run.get("name") == governance_name and run.get("status") == "queued"]
-          if not governance:
+          cloudflare_probe = [run for run in runs if run.get("name") == cloudflare_probe_name and run.get("status") == "queued"]
+          priority_runs = governance or cloudflare_probe
+          if not priority_runs:
               result = {
                   "schema_version": 1,
                   "governance_run_present": False,
+                  "priority_run_present": False,
                   "cancelled_run_ids": [],
                   "cancelled_names": [],
-                  "reason": "no queued zSSH governance apply run",
+                  "reason": "no queued zSSH governance apply or Cloudflare credential metadata probe run",
               }
               Path(os.environ["CANCEL_IDS"]).write_text("", encoding="utf-8")
               Path(os.environ["EVIDENCE"]).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
               raise SystemExit(0)
 
-          target = max(governance, key=lambda run: run.get("created_at") or "")
+          target = max(priority_runs, key=lambda run: run.get("created_at") or "")
           target_created = target.get("created_at") or ""
           stale = [
               run for run in runs
@@ -73,12 +77,14 @@ jobs:
           )
           result = {
               "schema_version": 1,
-              "governance_run_present": True,
-              "governance_run_id": int(target["id"]),
-              "governance_created_at": target_created,
+              "governance_run_present": target.get("name") == governance_name,
+              "priority_run_present": True,
+              "priority_run_name": target.get("name"),
+              "priority_run_id": int(target["id"]),
+              "priority_created_at": target_created,
               "cancelled_run_ids": [int(run["id"]) for run in stale],
               "cancelled_names": [run["name"] for run in stale],
-              "policy": "queued-only older allowlisted zSSH read-only VPS audits",
+              "policy": "queued-only older allowlisted zSSH read-only VPS audits behind governance or credential discovery",
           }
           Path(os.environ["EVIDENCE"]).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
