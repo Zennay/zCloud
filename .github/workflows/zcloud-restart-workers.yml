@@ -248,24 +248,66 @@ jobs:
               }, ensure_ascii=False, sort_keys=True))
               time.sleep(8)
 
+          # Reconcile the pool before selecting workers. ai_global_slots may
+          # temporarily contain stale identities after a queue transition; the
+          # canonical API allocation is rebuilt from runnable queue work.
+          settings_status, settings_payload = api_call("GET", "/api/dynamic-workers")
+          if settings_status >= 300:
+              raise SystemExit(
+                  f"Dynamic worker settings unavailable: HTTP {settings_status} {settings_payload}"
+              )
+          settings = settings_payload.get("dynamic_workers") or {}
+          reconcile_payload = {
+              key: settings[key]
+              for key in (
+                  "chatgpt_count",
+                  "claude_count",
+                  "chatgpt_cooldown_seconds",
+                  "claude_cooldown_seconds",
+                  "check_interval_ms",
+                  "tick_interval_ms",
+                  "heartbeat_interval_ms",
+                  "generation_start_timeout_ms",
+                  "scheduler_interval_seconds",
+              )
+              if key in settings
+          }
+          reconcile_status, reconciled = api_call(
+              "POST", "/api/dynamic-workers", reconcile_payload
+          )
+          if reconcile_status >= 300 or not reconciled.get("ok"):
+              raise SystemExit(
+                  f"Dynamic worker reconcile failed: HTTP {reconcile_status} {reconciled}"
+              )
+
+          targets_status, targets = api_call("GET", "/api/runner-targets")
+          if targets_status >= 300:
+              raise SystemExit(
+                  f"Runner targets unavailable: HTTP {targets_status} {targets}"
+              )
+          allocation = (targets.get("global_allocation") or {}).get("workers") or []
+          if not allocation:
+              print(json.dumps({
+                  "ok": True,
+                  "state": "no-allocated-workers",
+                  "reconciled": reconciled.get("dynamic_workers"),
+                  "queued": [],
+              }, sort_keys=True))
+              raise SystemExit(0)
+
           with sqlite3.connect(DB, timeout=10) as conn:
               conn.row_factory = sqlite3.Row
               conn.execute("PRAGMA busy_timeout=10000")
               conn.execute("BEGIN IMMEDIATE")
-              slots = conn.execute(
-                  "SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot"
-              ).fetchall()
-
-              if not slots:
-                  print(json.dumps({"ok": True, "state": "no-allocated-workers", "queued": []}, sort_keys=True))
-                  raise SystemExit(0)
 
               queued = []
               ts = now()
-              for row in slots:
-                  project = str(row["project_id"])
-                  worker_slot = int(row["worker_slot"] or 1)
-                  key = f"{project}::w{worker_slot}"
+              for row in allocation:
+                  project = str(row.get("project_id") or "").strip()
+                  worker_slot = int(row.get("worker_slot") or 1)
+                  if not project:
+                      raise SystemExit(f"Invalid allocated worker payload: {row}")
+                  key = str(row.get("worker_key") or f"{project}::w{worker_slot}")
                   conn.execute(
                       "UPDATE runner_workers SET desired_state='running' WHERE project_id=? AND worker_slot=?",
                       (project, worker_slot),
