@@ -1,0 +1,99 @@
+name: FTMO PR519 provider-bundle focused proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr519-provider-bundle-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr519-provider-bundle-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: self-hosted
+    timeout-minutes: 12
+    env:
+      TARGET_SHA: 17403b1cfc98c03aa5d6db56b6009444a4dee0ab
+      RECEIPT_PATH: runtime-evidence/ftmo-pr519-provider-bundle-proof.json
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
+      FTMO_ALLOW_PAID_AWS: ""
+    steps:
+      - name: Checkout zCloud receipt workspace
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+
+      - name: Fetch exact FTMO PR519 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = "0.00"
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+          src="$RUNNER_TEMP/ftmo-pr519-provider-bundle"
+          rm -rf "$src"
+          gh repo clone Zennay/Ftmo "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Install isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr519-provider-bundle"
+          venv="$RUNNER_TEMP/ftmo-pr519-provider-bundle-venv"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+
+      - name: Run focused TASK-78 regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr519-provider-bundle"
+          venv="$RUNNER_TEMP/ftmo-pr519-provider-bundle-venv"
+          cd "$src"
+          "$venv/bin/python" -m py_compile             src/prop_trading_ai/data/market/provider_evidence_bundle.py             tests/test_provider_evidence_bundle.py
+          "$venv/bin/python" -m pytest -q             tests/test_provider_evidence_bundle.py             tests/test_dataset_evidence_bundle.py
+
+      - name: Record focused proof receipt
+        if: always()
+        shell: bash
+        env:
+          PROOF_STATUS: ${{ job.status }}
+          PROOF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          mkdir -p "$(dirname "$RECEIPT_PATH")"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              "project": "ftmo",
+              "pull_request": 519,
+              "target_sha": os.environ["TARGET_SHA"],
+              "workflow_run_id": int(os.environ["PROOF_RUN_ID"]),
+              "result": os.environ["PROOF_STATUS"],
+              "runner_host": "vps-bb300bba",
+              "cloud_budget_usd": "0.00",
+              "proof_scope": "provider bundle contract + existing dataset evidence regressions",
+          }
+          Path(os.environ["RECEIPT_PATH"]).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          git config user.name "zCloud FTMO proof"
+          git config user.email "zcloud-ftmo-proof@users.noreply.github.com"
+          git add "$RECEIPT_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Record FTMO PR519 provider-bundle proof"
+            git push origin HEAD:main
+          fi
