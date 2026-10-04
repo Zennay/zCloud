@@ -1,0 +1,74 @@
+name: zCloud live state-receipt coverage audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-state-receipt-coverage-audit.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-state-receipt-coverage-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: self-hosted
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Read live receipt coverage without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          url = "http://127.0.0.1:8765/api/status"
+          with urllib.request.urlopen(url, timeout=12) as response:
+              status = json.load(response)
+
+          coverage = status.get("state_receipt_coverage")
+          if not isinstance(coverage, dict):
+              raise SystemExit("state_receipt_coverage missing or invalid")
+
+          projects = []
+          for project in status.get("projects") or []:
+              if not isinstance(project, dict):
+                  continue
+              projects.append({
+                  "id": project.get("id"),
+                  "state_source": project.get("state_source"),
+                  "ci_status": project.get("ci_status"),
+                  "phase": project.get("phase"),
+                  "next_gate": project.get("next_gate"),
+              })
+
+          payload = {
+              "api_version": status.get("version"),
+              "coverage": coverage,
+              "projects": projects,
+          }
+          print("ZCLOUD_RECEIPT_COVERAGE_AUDIT=" + json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          print("ZCLOUD_RECEIPT_COVERAGE_READY=" + str(bool(coverage.get("ready"))).lower())
+          PY
