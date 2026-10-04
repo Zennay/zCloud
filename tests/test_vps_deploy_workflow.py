@@ -223,7 +223,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("GREEN_WAIT_CURRENT_MAIN", resolve)
         self.assertIn("CURRENT_MAIN_NOT_GREEN_TIMEOUT", resolve)
         self.assertIn("GREEN_RUNTIME_EQUIVALENT", resolve)
-        self.assertIn('"runtime-equivalent"', resolve)
+        self.assertIn("runtime-equivalent", resolve)
         self.assertIn('"git", "merge-base", "--is-ancestor"', resolve)
         self.assertIn('"git", "diff", "--quiet"', resolve)
         for protected in (
