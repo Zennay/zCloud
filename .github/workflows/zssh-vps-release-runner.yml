@@ -120,7 +120,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     env:
-      ZSSH_PROOF_SHA: 78d019ad460198f1a891b64cc9fd5655ef9815fe
+      ZSSH_PROOF_SHA: c197b50bd4c87d763144ed3bcaf7d5a1b72ce16a
     steps:
       - name: Check out zCloud control plane for proof
         uses: actions/checkout@v4
