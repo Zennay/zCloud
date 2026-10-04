@@ -42,7 +42,7 @@ jobs:
             echo "Caddy already exists; use the topology/promotion lane instead of bootstrap" >&2
             exit 1
           fi
-          if dpkg-query -W -f='\${Status}' caddy 2>/dev/null | grep -Fq "install ok installed"; then
+          if dpkg-query -W -f='${Status}' caddy 2>/dev/null | grep -Fq "install ok installed"; then
             echo "Caddy package already installed; refusing first-install bootstrap" >&2
             exit 1
           fi
@@ -86,7 +86,7 @@ jobs:
 
           sudo -n systemctl disable --now caddy
           command -v caddy >/dev/null
-          dpkg-query -W -f='\${Status}' caddy | grep -Fq "install ok installed"
+          dpkg-query -W -f='${Status}' caddy | grep -Fq "install ok installed"
           sudo -n test -f /etc/caddy/Caddyfile
           sudo -n caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
@@ -111,7 +111,7 @@ jobs:
           export REPORT="$report"
           export CADDY_VERSION="$(caddy version)"
           export CADDYFILE_SHA256="$(sudo -n sha256sum /etc/caddy/Caddyfile | awk '{print $1}')"
-          export CADDY_PACKAGE_VERSION="$(dpkg-query -W -f='\${Version}' caddy)"
+          export CADDY_PACKAGE_VERSION="$(dpkg-query -W -f='${Version}' caddy)"
           export UBUNTU_VERSION="${{ steps.preflight.outputs.ubuntu_version }}"
           python3 - <<'PY'
           import json
