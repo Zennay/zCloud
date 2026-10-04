@@ -161,7 +161,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.index("- name: Promote backend runtime core"):
             text.index("- name: Promote autonomy policies and queue seed")
         ]
-        known_sha = "66f51bda39a722d79745c74e852e32a43afe8085928eab6d415c988d231d49be"
+        known_sha = "160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
         known_lkg = "20261002T105256Z-a57439eb"
         self.assertIn(f'expected_live_sha="{known_sha}"', authorize)
         self.assertIn(f'expected_lkg="{known_lkg}"', authorize)
@@ -178,6 +178,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn(f'"server.py={known_sha}"', core)
         self.assertIn('"${reconcile_args[@]}"', core)
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
+
+
+    def test_direct_live_server_prompt_writers_are_removed(self):
+        for rel in (
+            ".github/workflows/zcloud-live-prompt-surgical-patch.yml",
+            ".github/workflows/repair-live-exact-worker-prompt.yml",
+        ):
+            self.assertFalse(
+                (ROOT / rel).exists(),
+                f"direct live server writer must stay removed: {rel}",
+            )
+
 
     def test_deploy_rejects_temporary_haxlab_runner_before_writes(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
