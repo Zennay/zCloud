@@ -150,6 +150,35 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("queue_scope_conflict", critical_lane["blocked_by"][0]["reason"])
         self.assertEqual(["research/shared.py"], critical_lane["blocked_by"][0]["overlap"]["files"])
 
+    def test_product_research_is_a_distinct_execution_lane(self):
+        project = self.project("supa", "product")
+        research = {
+            "queue_id": "supa-user-research",
+            "project_id": "supa",
+            "title": "Interview users and review competitor feedback",
+            "completion_criteria": "Research user pain points and translate findings into product priorities.",
+            "priority": "P1",
+            "status": "queued",
+            "created_at": "2026-10-04T00:00:00+00:00",
+            "metadata": {},
+        }
+        build = {
+            "queue_id": "supa-product-build",
+            "project_id": "supa",
+            "title": "Implement planner UI feature",
+            "completion_criteria": "Implement the product flow with tests.",
+            "priority": "P1",
+            "status": "queued",
+            "created_at": "2026-10-04T00:00:01+00:00",
+            "metadata": {},
+        }
+
+        self.assertEqual("user-research", classify_backlog_item(project, research)["lane_id"])
+        lanes = generate_execution_lanes(project, [research, build])
+        selected = {lane["lane_id"]: lane["queue_id"] for lane in lanes if lane["queue_id"]}
+        self.assertEqual("supa-user-research", selected["user-research"])
+        self.assertEqual("supa-product-build", selected["product-core"])
+
     def test_keyword_matching_does_not_treat_ui_as_substring_of_build(self):
         project = self.project("supa", "product")
         item = {
