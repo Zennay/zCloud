@@ -1,0 +1,44 @@
+name: FTMO PR516 focused TASK37 proof
+
+on:
+  push:
+    branches:
+      - ops/ftmo-pr516-focused-proof
+    paths:
+      - .github/workflows/ftmo-pr516-focused-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on:
+      - self-hosted
+      - zcloud
+      - vps
+    timeout-minutes: 5
+    env:
+      FTMO_BASE: ac2a2563283c286b66aa409280339286bc05b366
+      FTMO_HEAD: c4a6b3ea0130ccdab823fa0f4458ff5d7dd22c30
+    steps:
+      - name: Prove exact TASK37 focused suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$FTMO_BASE"
+          test "$(gh api repos/Zennay/Ftmo/pulls/516 --jq .state)" = "open"
+          test "$(gh api repos/Zennay/Ftmo/pulls/516 --jq .head.sha)" = "$FTMO_HEAD"
+          test "$(gh api repos/Zennay/Ftmo/pulls/516 --jq .base.sha)" = "$FTMO_BASE"
+          work="$RUNNER_TEMP/ftmo-pr516-$GITHUB_RUN_ID"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$FTMO_HEAD"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          cd "$work"
+          test "$(git rev-parse HEAD)" = "$FTMO_HEAD"
+          PYTHONPATH="$work/src" nice -n 15 /opt/ftmo-autonomous/.venv/bin/python -m pytest -q tests/test_research_readiness_cli.py
+          test "$(git rev-parse HEAD)" = "$FTMO_HEAD"
+          echo "FTMO_PR516_FOCUSED_PROOF_GREEN=1"
