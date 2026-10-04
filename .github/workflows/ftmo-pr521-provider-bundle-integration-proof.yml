@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
     env:
-      TARGET_SHA: 6b9f6b8b2db903de313643abe95ae4f267bc6000
+      TARGET_SHA: a3cd0a08ccd24dec1edee31a7e2b126c3f990830
       RECEIPT_PATH: runtime-evidence/ftmo-pr521-provider-bundle-integration-proof.json
       FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: '0.00'
       FTMO_ALLOW_PAID_AWS: ''
