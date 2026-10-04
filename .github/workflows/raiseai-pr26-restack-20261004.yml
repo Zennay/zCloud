@@ -1,0 +1,185 @@
+name: Restack RaiseAI PR26 onto merged main
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/raiseai-pr26-restack-20261004.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: raiseai-pr26-restack-20261004
+  cancel-in-progress: false
+
+jobs:
+  restack:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      RAISE_REPO: Zennay/RaiseAI
+      PR_NUMBER: '26'
+      BRANCH: hardening/install-device-binding-20261004
+      EXPECTED_HEAD: 5e6ab40a011afc6bfa8e9606d7cc6af5813f2a8e
+      EXPECTED_OLD_BASE: hardening/retry-safe-physical-handoff-20261004
+      EXPECTED_MERGE_BASE: 226815612a9dd795d7f2bea852934c4c0dad6832
+      RECEIPT_PATH: runtime-evidence/raiseai-pr26-restack.json
+
+    steps:
+      - name: Verify exact PR26 stack identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/$RAISE_REPO/pulls/25 --jq .merged)" = "true"
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .state)" = "open"
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .head.sha)" = "$EXPECTED_HEAD"
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .base.ref)" = "$EXPECTED_OLD_BASE"
+
+      - name: Rebase cumulative hardening stack safely
+        id: restack
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/raiseai-pr26-restack-state"
+          : > "$state"
+          echo "status=started" >> "$state"
+          echo "old_head=$EXPECTED_HEAD" >> "$state"
+
+          work="$RUNNER_TEMP/raiseai-pr26-restack"
+          rm -rf "$work"
+          gh repo clone "$RAISE_REPO" "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git fetch origin main "$BRANCH" "$EXPECTED_OLD_BASE"
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+
+          original="$(git rev-parse "origin/$BRANCH")"
+          main_sha="$(git rev-parse origin/main)"
+          test "$original" = "$EXPECTED_HEAD"
+          merge_base="$(git merge-base origin/main "origin/$BRANCH")"
+          test "$merge_base" = "$EXPECTED_MERGE_BASE"
+          echo "main_sha=$main_sha" >> "$state"
+          echo "merge_base=$merge_base" >> "$state"
+
+          backup="backup/pr26-pre-restack-20261004-$(printf '%s' "$original" | cut -c1-12)"
+          git push origin "$original:refs/heads/$backup"
+          echo "backup_ref=$backup" >> "$state"
+
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          if ! git rebase --onto origin/main "$merge_base"; then
+            conflicts="$(git diff --name-only --diff-filter=U | sort -u | paste -sd, -)"
+            echo "status=rebase_conflict" >> "$state"
+            echo "conflicts=$conflicts" >> "$state"
+            git rebase --abort || true
+            exit 1
+          fi
+
+          new_head="$(git rev-parse HEAD)"
+          echo "new_head=$new_head" >> "$state"
+          git diff --check origin/main...HEAD
+
+          git diff --name-only origin/main...HEAD | sort -u > "$RUNNER_TEMP/pr26-changed"
+          cat > "$RUNNER_TEMP/pr26-allowed" <<'EOF'
+.github/workflows/watch-app-test.yml
+START-HERE.md
+install-watch-apk.command
+physical-validation.command
+provision-watch-gateway.command
+pull-diagnostics.command
+pull-watch-data.command
+start-physical-handoff.command
+tests/test_adb_device_binding.py
+tests/test_start_physical-handoff.py
+tests/test_watch_apk_identity.py
+tools/verify-watch-apk-identity.py
+EOF
+          sort -u -o "$RUNNER_TEMP/pr26-allowed" "$RUNNER_TEMP/pr26-allowed"
+          unexpected="$(comm -23 "$RUNNER_TEMP/pr26-changed" "$RUNNER_TEMP/pr26-allowed" || true)"
+          if [ -n "$unexpected" ]; then
+            echo "status=unexpected_paths" >> "$state"
+            echo "unexpected_paths=$(printf '%s' "$unexpected" | paste -sd, -)" >> "$state"
+            exit 1
+          fi
+
+          grep -Fxq "install-watch-apk.command" "$RUNNER_TEMP/pr26-changed"
+          grep -Fxq "physical-validation.command" "$RUNNER_TEMP/pr26-changed"
+          grep -Fxq "provision-watch-gateway.command" "$RUNNER_TEMP/pr26-changed"
+          grep -Fxq "tests/test_adb_device_binding.py" "$RUNNER_TEMP/pr26-changed"
+
+          bash -n install-watch-apk.command
+          bash -n physical-validation.command
+          bash -n provision-watch-gateway.command
+          bash -n pull-diagnostics.command
+          bash -n pull-watch-data.command
+          bash -n start-physical-handoff.command
+          python3 -m unittest discover -s tests -p 'test_start_physical_handoff.py'
+          python3 -m unittest discover -s tests -p 'test_adb_device_binding.py'
+
+          git push --force-with-lease="refs/heads/$BRANCH:$original" origin "HEAD:refs/heads/$BRANCH"
+          remote_head="$(git ls-remote origin "refs/heads/$BRANCH" | awk '{print $1}')"
+          test "$remote_head" = "$new_head"
+
+          gh api -X PATCH "repos/$RAISE_REPO/pulls/$PR_NUMBER" -f base=main >/dev/null
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .base.ref)" = "main"
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .head.sha)" = "$new_head"
+
+          changed_csv="$(paste -sd, "$RUNNER_TEMP/pr26-changed")"
+          echo "changed_paths=$changed_csv" >> "$state"
+          echo "status=success" >> "$state"
+
+      - name: Persist sanitized restack receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/raiseai-pr26-restack-state"
+          work="$RUNNER_TEMP/zcloud-pr26-restack-receipt"
+          rm -rf "$work"
+          gh repo clone Zennay/zCloud "$work" -- --filter=blob:none >/dev/null
+          cd "$work"
+          git checkout main >/dev/null
+          git pull --rebase origin main
+          mkdir -p "$(dirname "$RECEIPT_PATH")"
+          STATE_FILE="$state" OUT_FILE="$RECEIPT_PATH" WORKFLOW_RUN_ID="$GITHUB_RUN_ID" WORKFLOW_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          state = {}
+          path = Path(os.environ["STATE_FILE"])
+          if path.exists():
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  if "=" in line:
+                      key, value = line.split("=", 1)
+                      state[key] = value
+
+          payload = {
+              "schema_version": 1,
+              "project": "raiseai",
+              "pull_request": 26,
+              "runner_name": os.environ.get("RUNNER_NAME"),
+              "workflow_run_id": int(os.environ["WORKFLOW_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["WORKFLOW_RUN_ATTEMPT"]),
+              **state,
+          }
+          Path(os.environ["OUT_FILE"]).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name "zcloud-automation"
+          git config user.email "zcloud-automation@users.noreply.github.com"
+          git add "$RECEIPT_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Record RaiseAI PR26 restack"
+            for _ in 1 2 3; do
+              if git push origin HEAD:main; then exit 0; fi
+              git fetch origin main
+              git rebase origin/main
+            done
+            exit 1
+          fi
