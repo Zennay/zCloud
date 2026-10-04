@@ -357,8 +357,11 @@ jobs:
                       )
                       command_id = int(cur.lastrowid)
                       deduplicated = False
+                  global_slot = int(row.get("global_worker_slot") or 0)
+                  if global_slot < 1:
+                      raise SystemExit(f"Allocated worker missing global_worker_slot: {row}")
                   queued.append({
-                      "slot": int(row["slot"]),
+                      "slot": global_slot,
                       "worker": key,
                       "command_id": command_id,
                       "deduplicated": deduplicated,
