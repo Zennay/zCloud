@@ -67,4 +67,4 @@ Exit code 75 means the pool is currently occupied; callers must queue/retry rath
 
 New projects are fail-closed. An active project is incomplete until it has an explicit runtime contract. Runtime code must not silently invent autonomy or compute defaults for an unregistered project.
 
-The compatibility `autonomy-policy.json` remains during migration only. Runtime reads use `project-contracts.json`; a regression test prevents compatibility metadata from drifting until the old file is removed.
+The compatibility `autonomy-policy.json` is now an empty metadata-only placeholder. Production runtime reads use `project-contracts.json`; only explicitly redirected test/recovery paths may still provide an isolated legacy policy. A regression test prevents runtime truth from being reintroduced into the placeholder.
