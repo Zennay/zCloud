@@ -51,6 +51,16 @@ jobs:
           if (( count == 0 )); then
             echo "SUPA_RUNNER_RECOVERY=no-existing-service"
             systemctl list-unit-files --type=service --no-legend 'actions.runner.*.service' || true
+            echo "=== EXISTING RUNNER DIRECTORIES ==="
+            find /home/ubuntu -maxdepth 2 -type d -name 'actions-runner*' -print 2>/dev/null | sort || true
+            echo "=== GH AUTH STATUS ==="
+            if command -v gh >/dev/null 2>&1; then
+              gh auth status -h github.com || true
+              echo "=== SUPA RUNNER API READ ==="
+              gh api repos/Zennay/Supa/actions/runners --jq '{total_count, runners: [.runners[] | {name,status,busy,labels:[.labels[].name]}]}' || true
+            else
+              echo "GH_CLI=missing"
+            fi
             exit 2
           fi
           if (( count != 1 )); then
