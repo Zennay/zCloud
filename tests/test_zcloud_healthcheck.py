@@ -234,6 +234,7 @@ class ZCloudHealthcheckTests(unittest.TestCase):
                 "UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'"
             )
             conn.commit()
+        targets["projects"].pop("cloud::w2")
         targets["projects"]["cloud::w3"] = {
             "project_id": "cloud::w3",
             "base_project_id": "cloud",
