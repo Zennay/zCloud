@@ -1,0 +1,20 @@
+{
+  "final_holdout_access_relaxed": false,
+  "live_or_broker_access_relaxed": false,
+  "paid_cloud_enabled": false,
+  "project": "ftmo",
+  "provider_thresholds_changed": false,
+  "pull_request": 521,
+  "research_stage": "provider_foundation",
+  "reserve_chronology_changed": false,
+  "result": "success",
+  "runner_host": "vps-bb300bba",
+  "schema_version": 1,
+  "scope": "restart-safe provider bundle integration exact-head proof",
+  "target_sha": "6b9f6b8b2db903de313643abe95ae4f267bc6000",
+  "task": "TASK-78",
+  "verified_snapshot_promotion": true,
+  "walk_forward_access_relaxed": false,
+  "workflow_run_attempt": 1,
+  "workflow_run_id": 37176488801
+}
