@@ -1,0 +1,139 @@
+name: FTMO PR482 research-checkpoint exact-head proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr482-research-checkpoint-proof.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-pr482-research-checkpoint-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: 033dcd851430e1f09d0bc8a6aa8a851e2d717e62
+      TARGET_PR: "482"
+      EXPECTED_MAIN_SHA: 351606ca80900b9778567b89075b14d19275e74c
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
+      FTMO_ALLOW_PAID_AWS: ""
+    steps:
+      - name: Checkout exact FTMO PR482 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          src="$RUNNER_TEMP/ftmo-pr482-zcloud-$GITHUB_RUN_ID"
+          rm -rf "$src"
+          git init -q "$src"
+          git -C "$src" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$src" -c protocol.version=2 fetch -q --depth=1 origin "$TARGET_SHA"
+          git -C "$src" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          python3 - <<'PY'
+          import json, os, subprocess
+          pr=json.loads(subprocess.check_output(
+              ["gh","api",f"repos/Zennay/Ftmo/pulls/{os.environ['TARGET_PR']}"],
+              text=True,
+          ))
+          assert pr["state"] == "open"
+          assert pr["head"]["sha"] == os.environ["TARGET_SHA"]
+          assert pr["base"]["sha"] == os.environ["EXPECTED_MAIN_SHA"]
+          main=subprocess.check_output(
+              ["gh","api","repos/Zennay/Ftmo/commits/main","--jq",".sha"],
+              text=True,
+          ).strip()
+          assert main == os.environ["EXPECTED_MAIN_SHA"]
+          print("FTMO_PR482_IDENTITY=verified")
+          PY
+
+      - name: Prove research checkpoint integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/ftmo-pr482-zcloud-$GITHUB_RUN_ID"
+          venv="$RUNNER_TEMP/ftmo-pr482-zcloud-venv-$GITHUB_RUN_ID"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$src/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$src"
+          cd "$src"
+          "$venv/bin/python" -m py_compile src/prop_trading_ai/cli/v1_research_machine_tick.py
+          "$venv/bin/python" -m pytest -q             tests/test_research_machine_checkpoint_integrity.py             tests/test_research_machine.py
+          "$venv/bin/python" -m pytest -q             tests/test_zero_cost_workflow_boundary.py::test_every_repository_workflow_has_no_github_hosted_runner             tests/test_zero_cost_workflow_boundary.py::test_diagnostic_zero_cost_workflows_are_self_hosted_and_secret_free
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = "0.00"
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+          echo "FTMO_PR482_RESEARCH_CHECKPOINT_PROOF=success"
+
+      - name: Persist durable proof receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/ftmo-pr482-proof-$GITHUB_RUN_ID.json"
+          python3 - <<'PY' > "$receipt"
+          import json, os
+          print(json.dumps({
+              "schema_version":1,
+              "project":"ftmo",
+              "pull_request":482,
+              "target_sha":os.environ["TARGET_SHA"],
+              "expected_main_sha":os.environ["EXPECTED_MAIN_SHA"],
+              "workflow_run_id":os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner":os.environ.get("RUNNER_NAME",""),
+              "host":"vps-bb300bba",
+              "result":"success",
+              "proof":[
+                  "exact-sha-checkout",
+                  "exact-pr-and-main-identity",
+                  "research-machine-checkpoint-compile",
+                  "research-machine-regression-suite",
+                  "descriptor-bound-checkpoint-parent",
+                  "exclusive-no-follow-checkpoint-temp",
+                  "checkpoint-symlink-regressions",
+                  "checkpoint-parent-permission-seal",
+                  "file-and-parent-fsync",
+                  "zero-cost-boundary"
+              ],
+              "paid_cloud_budget_usd":"0.00",
+              "research_outcomes_accessed":False,
+              "walk_forward_accessed":False,
+              "final_holdout_accessed":False,
+              "live_or_broker_access_opened":False
+          },sort_keys=True))
+          PY
+          encoded="$(base64 -w0 "$receipt")"
+          path="runtime-evidence/ftmo-pr482-research-checkpoint-proof-$GITHUB_RUN_ID.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$path"             -f message="Record FTMO PR482 exact-head proof $GITHUB_RUN_ID"             -f content="$encoded" >/dev/null
+          echo "FTMO_PR482_RECEIPT_PATH=$path"
+
+      - name: Merge exact green FTMO PR482 when identity is unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main="$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)"
+          current_head="$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)"
+          current_base="$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)"
+          current_state="$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)"
+          if [[ "$current_main" != "$EXPECTED_MAIN_SHA" || "$current_head" != "$TARGET_SHA" || "$current_base" != "$EXPECTED_MAIN_SHA" || "$current_state" != "open" ]]; then
+            echo "FTMO_PR482_MERGE_SKIPPED=identity_changed"
+            exit 0
+          fi
+          result="$(gh api --method PUT "repos/Zennay/Ftmo/pulls/$TARGET_PR/merge"             -f merge_method=squash             -f sha="$TARGET_SHA")"
+          test "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged")).lower())' <<<"$result")" = "true"
+          merge_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha") or "")' <<<"$result")"
+          test -n "$merge_sha"
+          echo "FTMO_PR482_MERGE_SHA=$merge_sha"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/ftmo-pr482-zcloud-$GITHUB_RUN_ID" "$RUNNER_TEMP/ftmo-pr482-zcloud-venv-$GITHUB_RUN_ID"
