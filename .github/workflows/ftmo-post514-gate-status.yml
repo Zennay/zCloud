@@ -1,0 +1,71 @@
+name: Capture FTMO post514 gate status
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ftmo-post514-gate-status.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftmo-post514-gate-status
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      EXPECTED_MAIN: 2c161be49331bd20e7dc9a2e35d9916b81200776
+    steps:
+      - name: Capture exact-main gate runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$EXPECTED_MAIN"
+
+          python3 - <<'PY' > "$RUNNER_TEMP/ftmo-post514-gate-status.json"
+          import json, os, subprocess
+
+          repo = "Zennay/Ftmo"
+          sha = os.environ["EXPECTED_MAIN"]
+          workflows = {
+              "state_sync": "sync-autonomous-research-state.yml",
+              "vps_verify": "deploy-autonomous-vps.yml",
+          }
+
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", path], text=True))
+
+          result = {
+              "schema_version": 1,
+              "scope": "ftmo-post514-gate-status",
+              "main_sha": sha,
+              "capture_workflow_run_id": os.environ["GITHUB_RUN_ID"],
+          }
+
+          for key, wf in workflows.items():
+              data = api(f"repos/{repo}/actions/workflows/{wf}/runs?per_page=20")
+              exact = [r for r in data.get("workflow_runs", []) if r.get("head_sha") == sha]
+              exact.sort(key=lambda r: r.get("created_at") or "")
+              row = exact[-1] if exact else None
+              result[key] = None if row is None else {
+                  "run_id": row.get("id"),
+                  "event": row.get("event"),
+                  "status": row.get("status"),
+                  "conclusion": row.get("conclusion"),
+                  "head_sha": row.get("head_sha"),
+                  "created_at": row.get("created_at"),
+                  "updated_at": row.get("updated_at"),
+              }
+
+          print(json.dumps(result, sort_keys=True, indent=2))
+          PY
+
+          cat "$RUNNER_TEMP/ftmo-post514-gate-status.json"
+          encoded="$(base64 -w0 "$RUNNER_TEMP/ftmo-post514-gate-status.json")"
+          gh api --method PUT repos/Zennay/zCloud/contents/runtime-evidence/ftmo-post514-gate-status.json             -f message="Record FTMO post514 gate status"             -f content="$encoded"             -f branch=main >/dev/null
