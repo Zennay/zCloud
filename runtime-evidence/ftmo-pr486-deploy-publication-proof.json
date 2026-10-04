@@ -1,0 +1,27 @@
+{
+  "final_holdout_accessed": false,
+  "host": "vps-bb300bba",
+  "live_or_broker_access_opened": false,
+  "paid_cloud_budget_usd": "0.00",
+  "project": "ftmo",
+  "proof": [
+    "exact-sha-checkout",
+    "deploy-publisher-compile",
+    "descriptor-bound-no-follow-destination-ancestry",
+    "runtime-parent-owner-permission-seal",
+    "exclusive-randomized-deploy-temp",
+    "file-and-directory-fsync",
+    "safe-revision-and-run-marker-publication",
+    "deploy-lockstep-regressions",
+    "zero-cost-boundary"
+  ],
+  "pull_request": 486,
+  "research_outcomes_accessed": false,
+  "result": "success",
+  "runner": "zcloud-vps-1",
+  "schema_version": 1,
+  "target_sha": "496a7e21ff22a783c80d9738fab6737d0db53445",
+  "walk_forward_accessed": false,
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "37165001574"
+}
