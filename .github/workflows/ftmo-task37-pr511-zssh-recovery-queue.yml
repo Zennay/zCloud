@@ -1,0 +1,134 @@
+name: Enqueue FTMO TASK-37 PR511 runner recovery on zSSH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ftmo-task37-pr511-zssh-recovery-queue.yml
+
+permissions:
+  contents: write
+
+jobs:
+  enqueue:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Enqueue exact FTMO runner recovery on live SQLite queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-ftmo-task37-pr511-runner-recovery-20261004"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Recover FTMO runner for TASK-37 PR511",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba recover only the GitHub Actions runner used by Zennay/Ftmo "
+                  "(service actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service, runner "
+                  "vps-bb300bba-ftmo). Current FTMO main is expected at "
+                  "77134b142952f590ba19f4666a616d0e0001621d. Protected work is PR #511 "
+                  "head baac36f317348487d9c461172a17b9db0872d48c with Test suite run "
+                  "37172359837 and research-state sync run 37171444603 from source main "
+                  "e5363979dd40097ede98234554ed49b262514fa1. Diagnose listener/service health, "
+                  "active Runner.Worker state and fresh OOM evidence. If no valid Runner.Worker is "
+                  "active and the listener is inactive/unhealthy, reset-failed/restart only that "
+                  "FTMO Actions runner service. If a valid worker is active, preserve it. Verify "
+                  "the service is active/listening and at least one protected run leaves queued "
+                  "state. Do not cancel or rerun protected runs. Do not modify FTMO application "
+                  "runtime, marathon service, strategy outcomes, provider evidence, preregistration, "
+                  "development, walk-forward, final holdout, broker/live permissions, paid-cloud "
+                  "boundary, secrets, or repository branches. Return service name, pre/post state, "
+                  "recovery action, OOM evidence summary, and protected-run scheduling evidence."
+              ),
+              "source_url": "https://github.com/Zennay/Ftmo/pull/511",
+          }
+
+          def post(path, body):
+              req = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=10) as response:
+                  return json.load(response)
+
+          enqueue = post("/api/portfolio-queue", payload)
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("QUEUE", json.dumps(enqueue, sort_keys=True))
+          print("START", json.dumps(start, sort_keys=True))
+          print("PUSH", json.dumps(push, sort_keys=True))
+
+          command_ids = {
+              int(v) for v in (start.get("command_id"), push.get("command_id")) if v
+          }
+          if not command_ids:
+              raise RuntimeError("zSSH start/push returned no command ids")
+
+          deadline = time.monotonic() + 75
+          pending = set(command_ids)
+          while pending and time.monotonic() < deadline:
+              with urllib.request.urlopen(base + "/api/runner-commands?limit=200", timeout=10) as response:
+                  commands = json.load(response).get("commands") or []
+              pending = {
+                  int(row["id"]) for row in commands
+                  if row.get("id") is not None and int(row["id"]) in command_ids
+              }
+              if pending:
+                  time.sleep(5)
+          if pending:
+              raise RuntimeError("zSSH worker did not consume command ids: " + ",".join(map(str, sorted(pending))))
+          print("ZSSH_COMMANDS_CONSUMED", json.dumps(sorted(command_ids)))
+          PY
+
+      - name: Persist queue receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/ftmo-task37-pr511-zssh-queue.json"
+          python3 - <<'PY' > "$receipt"
+          import json, urllib.request, os
+          qid="zssh-ftmo-task37-pr511-runner-recovery-20261004"
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/portfolio-queue?all=1", timeout=10) as response:
+              data=json.load(response)
+          def find(v):
+              if isinstance(v, dict):
+                  if v.get("queue_id")==qid:
+                      return v
+                  for c in v.values():
+                      r=find(c)
+                      if r: return r
+              if isinstance(v, list):
+                  for c in v:
+                      r=find(c)
+                      if r: return r
+              return None
+          item=find(data)
+          if not item:
+              raise SystemExit("queue item missing after enqueue")
+          print(json.dumps({
+              "schema_version":1,
+              "scope":"ftmo-task37-pr511-zssh-recovery-queue",
+              "workflow_run_id":os.environ.get("GITHUB_RUN_ID"),
+              "queue_id":qid,
+              "queue":item,
+              "protected_runs":[37171444603,37172359837],
+              "target_pr":511,
+              "target_head":"baac36f317348487d9c461172a17b9db0872d48c",
+              "current_main":"77134b142952f590ba19f4666a616d0e0001621d"
+          },sort_keys=True,indent=2))
+          PY
+          encoded="$(base64 -w0 "$receipt")"
+          dest="runtime-evidence/ftmo-task37-pr511-zssh-recovery-queue-$GITHUB_RUN_ID.json"
+          gh api --method PUT "repos/Zennay/zCloud/contents/$dest"             -f message="Record FTMO TASK-37 PR511 zSSH recovery queue $GITHUB_RUN_ID"             -f content="$encoded"             -f branch=main >/dev/null
+          echo "ZSSH_QUEUE_RECEIPT=$dest"
