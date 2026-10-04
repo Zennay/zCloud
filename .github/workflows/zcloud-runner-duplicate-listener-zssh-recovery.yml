@@ -1,0 +1,99 @@
+name: Enqueue duplicate zCloud runner recovery on zSSH
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-runner-duplicate-listener-zssh-recovery.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runner-duplicate-listener-zssh-recovery
+  cancel-in-progress: false
+
+jobs:
+  enqueue:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Enqueue bounded duplicate-listener recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, time, urllib.request
+
+          base = "http://127.0.0.1:8765"
+          queue_id = "zssh-zcloud-duplicate-listener-recovery-20261004"
+          payload = {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Recover duplicate zCloud Actions listener",
+              "priority": "P0",
+              "completion_criteria": (
+                  "On vps-bb300bba repair only the zCloud Actions runner rooted at "
+                  "/home/ubuntu/actions-runner-zcloud. Evidence from runs 37234936291 attempt 1/2 "
+                  "proves two Runner.Listener processes (old PID lineage started Oct 1 and canonical "
+                  "systemd lineage started 2026-10-04 21:09:22 UTC) are concurrently using the same "
+                  "_work/_temp, with two Runner.Workers and GITHUB_EVENT_PATH plus sentinel files "
+                  "disappearing within 8 seconds. Exact service is "
+                  "actions.runner.Zennay-zCloud.zcloud-vps-1.service. Preserve every active "
+                  "Runner.Worker: do not terminate/restart a listener while its worker is active. "
+                  "Identify the canonical service cgroup, quarantine/remove only orphan listener/"
+                  "supervisor processes outside that cgroup once their workers are idle, and prevent "
+                  "them respawning. Verify exactly one zCloud Runner.Listener remains, the canonical "
+                  "service is active/listening, and no duplicate worker can share the runner temp. "
+                  "Then rerun exact-main regression run 37234164421 (same a270e1f7 SHA) to generate "
+                  "a fresh attempt-1 production deploy; verify the fresh deploy ID is greater than "
+                  "37234528493 and starts scheduling. Do not modify zCloud application/runtime data, "
+                  "browser workers, project queue priorities other than this recovery item, secrets, "
+                  "or production code. Return pre/post process trees, service/cgroup identity, the "
+                  "concrete recovery action, and the fresh regression/deploy IDs."
+              ),
+              "source_url": "https://github.com/Zennay/zCloud/pull/401",
+          }
+
+          def post(path, body):
+              req = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=10) as response:
+                  return json.load(response)
+
+          enqueue = post("/api/portfolio-queue", payload)
+          start = post("/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = post("/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("ZCLOUD_RUNNER_RECOVERY_ENQUEUE", json.dumps(enqueue, sort_keys=True))
+          print("ZSSH_START", json.dumps(start, sort_keys=True))
+          print("ZSSH_PUSH", json.dumps(push, sort_keys=True))
+
+          command_ids = {
+              int(v) for v in (start.get("command_id"), push.get("command_id")) if v
+          }
+          if not command_ids:
+              raise SystemExit("zSSH start/push returned no command ids")
+
+          deadline = time.monotonic() + 60
+          pending = set(command_ids)
+          while pending and time.monotonic() < deadline:
+              with urllib.request.urlopen(base + "/api/runner-commands?limit=200", timeout=10) as r:
+                  commands = json.load(r).get("commands") or []
+              pending = {
+                  int(row["id"])
+                  for row in commands
+                  if row.get("id") is not None and int(row["id"]) in command_ids
+              }
+              if pending:
+                  time.sleep(3)
+          print("ZCLOUD_RUNNER_RECOVERY_COMMANDS_PENDING", sorted(pending))
+          if pending:
+              raise SystemExit("zSSH worker did not consume runner recovery command")
+          PY
