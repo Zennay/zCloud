@@ -82,6 +82,14 @@ PROFILE_LANES = {
                 "release", "health", "rollback", "promotion", "ci",
             ),
         },
+        {
+            "id": "user-research",
+            "keywords": (
+                "user research", "customer research", "user feedback", "customer feedback",
+                "interview", "survey", "reviews", "competitor", "market research",
+                "demand", "pain point", "persona", "usability test", "discovery",
+            ),
+        },
     ),
     "product": (
         {
@@ -89,6 +97,14 @@ PROFILE_LANES = {
             "keywords": (
                 "ui", "ux", "screen", "planner", "feature", "flow", "state",
                 "component", "product", "mobile",
+            ),
+        },
+        {
+            "id": "user-research",
+            "keywords": (
+                "user research", "customer research", "user feedback", "customer feedback",
+                "interview", "survey", "reviews", "competitor", "market research",
+                "demand", "pain point", "persona", "usability test", "discovery",
             ),
         },
         {
@@ -112,6 +128,14 @@ PROFILE_LANES = {
             "keywords": (
                 "ui", "flow", "state", "gesture", "dictation", "compose",
                 "screen", "app",
+            ),
+        },
+        {
+            "id": "user-research",
+            "keywords": (
+                "user research", "customer research", "user feedback", "customer feedback",
+                "interview", "survey", "reviews", "competitor", "market research",
+                "demand", "pain point", "persona", "usability test", "discovery",
             ),
         },
         {
