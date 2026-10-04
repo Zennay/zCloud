@@ -74,6 +74,24 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         release_pos = text.index("Release coordination claim")
         self.assertLess(receipt_pos, release_pos)
 
+    def test_public_gateway_validate_only_proof_uses_zcloud_runner_lane(self):
+        text = (ROOT / ".github/workflows/zssh-public-gateway-vps-preflight.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: self-hosted", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("ZSSH_SHA: e2dee8b5e07a41c13408954348c05412b1d66e5d", text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn('test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"', text)
+        self.assertIn('ZSSH_PUBLIC_BASE_URL="https://mcp.zssh-preflight.invalid"', text)
+        self.assertIn('ZSSH_PUBLIC_GATEWAY_VALIDATE_ONLY=1', text)
+        self.assertIn('test "$after_env" = "$before_env"', text)
+        self.assertIn('test "$after_current" = "$before_current"', text)
+        self.assertIn('test "$after_active" = "$before_active"', text)
+        self.assertIn('test "$after_enabled" = "$before_enabled"', text)
+        self.assertIn("ZSSH_PUBLIC_GATEWAY_VPS_PREFLIGHT_GREEN", text)
+        self.assertIn('--project zssh', text)
+        self.assertIn('--commit "$ZSSH_SHA"', text)
+        self.assertIn('--source "github-actions:zssh-public-gateway-vps-preflight"', text)
+
 
 if __name__ == "__main__":
     unittest.main()
