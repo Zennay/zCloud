@@ -1,11 +1,11 @@
 name: zSSH seed deterministic OpenAI release variables
 
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [closed]
     paths:
-      - ".github/workflows/zssh-seed-deterministic-release-vars.yml"
-      - "tests/test_zssh_seed_release_vars.py"
+      - ".github/zssh-seed-release-vars-trigger"
   workflow_dispatch:
 
 permissions:
@@ -13,11 +13,12 @@ permissions:
 
 concurrency:
   group: zssh-seed-deterministic-release-vars
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   seed:
     name: Seed exact non-secret zSSH production release variables
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
@@ -25,6 +26,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Require reviewed merged-PR activation
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${{ github.event.pull_request.merged }}" = "true"
+          test "${{ github.event.pull_request.base.ref }}" = "main"
+          test "$(cat .github/zssh-seed-release-vars-trigger)" = "SEED_ZSSH_DETERMINISTIC_RELEASE_VARS"
+          echo "ZSSH_RELEASE_VAR_SEED_MERGED_PR_ACTIVATION_GREEN pr=${{ github.event.pull_request.number }}"
 
       - name: Enforce permanent VPS runner identity
         shell: bash
