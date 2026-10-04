@@ -1,0 +1,66 @@
+name: zSSH canonical commit-object VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zssh-pr294-focused-proof.yml
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-pr294-focused-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: self-hosted
+    timeout-minutes: 10
+    env:
+      ZSSH_PROOF_SHA: 0ee15438c61180441b84a4aacf07232881a43fca
+    steps:
+      - name: Check out zCloud guard source
+        uses: actions/checkout@v4
+        with:
+          path: zcloud-proof-control
+          persist-credentials: false
+
+      - name: Verify VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 zcloud-proof-control/scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+
+      - name: Check out canonical zSSH revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_PROOF_SHA }}
+          path: zssh-proof
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-proof rev-parse HEAD)" = "$ZSSH_PROOF_SHA"
+          echo "runner=$RUNNER_NAME"
+          echo "hostname=$(hostname)"
+          echo "sha=$ZSSH_PROOF_SHA"
+          node --version
+
+      - name: Run focused release-provenance proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh-proof
+          node --test test/release-provenance-verifier.test.mjs
+          node --check scripts/verify-release-provenance.mjs
+          echo "ZSSH_CANONICAL_COMMIT_OBJECT_FOCUSED_VPS_PROOF_GREEN"
