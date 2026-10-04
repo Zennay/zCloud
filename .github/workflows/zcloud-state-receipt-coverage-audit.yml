@@ -22,53 +22,86 @@ jobs:
       (github.event_name == 'pull_request' &&
        github.actor == 'Zennay' &&
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Verify VPS runner identity
+      - name: Verify permanent zCloud VPS runner
         shell: bash
         run: |
           set -euo pipefail
           test "$(id -un)" = ubuntu
           python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Read live receipt coverage without mutation
+      - name: Read receipt coverage directly from VPS source of truth
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
-          import urllib.request
+          import sqlite3
+          from pathlib import Path
 
-          url = "http://127.0.0.1:8765/api/status"
-          with urllib.request.urlopen(url, timeout=12) as response:
-              status = json.load(response)
+          import project_runtime
 
-          coverage = status.get("state_receipt_coverage")
-          if not isinstance(coverage, dict):
-              raise SystemExit("state_receipt_coverage missing or invalid")
+          runtime_root = Path("/home/ubuntu/zennay-cloud")
+          projects_path = runtime_root / "projects.json"
+          db_path = runtime_root / "history.db"
 
-          projects = []
-          for project in status.get("projects") or []:
-              if not isinstance(project, dict):
+          projects = json.loads(projects_path.read_text(encoding="utf-8"))
+          if not isinstance(projects, list):
+              raise SystemExit("runtime-owned projects.json must be a list")
+          active = sorted(
+              str(project.get("id") or "").strip()
+              for project in projects
+              if str(project.get("status") or "active").lower() != "archived"
+              and str(project.get("id") or "").strip()
+          )
+          if not active:
+              raise SystemExit("no active runtime projects found")
+
+          connection = sqlite3.connect(db_path, timeout=15)
+          connection.row_factory = sqlite3.Row
+          connection.execute("PRAGMA busy_timeout=15000")
+          try:
+              project_runtime.init_tables(connection)
+              coverage = project_runtime.receipt_coverage(
+                  connection,
+                  active,
+                  max_age_seconds=7200,
+              )
+              latest = project_runtime.latest_receipts(connection)
+          finally:
+              connection.close()
+
+          receipts = {}
+          for project_id in active:
+              receipt = latest.get(project_id)
+              if not isinstance(receipt, dict):
+                  receipts[project_id] = None
                   continue
-              projects.append({
-                  "id": project.get("id"),
-                  "state_source": project.get("state_source"),
-                  "ci_status": project.get("ci_status"),
-                  "phase": project.get("phase"),
-                  "next_gate": project.get("next_gate"),
-              })
+              receipts[project_id] = {
+                  "id": receipt.get("id"),
+                  "ci_status": receipt.get("ci_status"),
+                  "source": receipt.get("source"),
+                  "phase": receipt.get("phase"),
+                  "next_gate": receipt.get("next_gate"),
+                  "observed_at": receipt.get("observed_at"),
+              }
 
           payload = {
-              "api_version": status.get("version"),
               "coverage": coverage,
-              "projects": projects,
+              "receipts": receipts,
           }
-          print("ZCLOUD_RECEIPT_COVERAGE_AUDIT=" + json.dumps(payload, sort_keys=True, separators=(",", ":")))
-          print("ZCLOUD_RECEIPT_COVERAGE_READY=" + str(bool(coverage.get("ready"))).lower())
+          print(
+              "ZCLOUD_RECEIPT_COVERAGE_AUDIT="
+              + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+          )
+          print(
+              "ZCLOUD_RECEIPT_COVERAGE_READY="
+              + str(bool(coverage.get("ready"))).lower()
+          )
           PY
