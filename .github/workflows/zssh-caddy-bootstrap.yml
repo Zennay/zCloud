@@ -1,4 +1,4 @@
-name: zSSH Caddy bootstrap (zCloud lane)
+name: zSSH Caddy bootstrap retired
 
 on:
   push:
@@ -10,172 +10,23 @@ on:
 permissions:
   contents: read
 
+# Intentionally shares the legacy bootstrap concurrency group. A run from this
+# retired definition supersedes/cancels any queued or in-progress copy of the
+# old dormant-bootstrap workflow before it can mutate the VPS.
 concurrency:
   group: zssh-caddy-bootstrap-zcloud
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  bootstrap:
-    name: Bootstrap dormant Caddy for zSSH public ingress
-    runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 12
+  retired:
+    name: Use canonical DNS-gated public ingress bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - name: Check out zCloud coordination
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Enforce canonical VPS and pristine Caddy preconditions
-        id: preflight
+      - name: Confirm legacy bootstrap is retired
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$GITHUB_REF" = "refs/heads/main"
-          test "$GITHUB_REF_NAME" = "main"
-          python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-caddy-bootstrap-runner-guard.json"
-          test "$(hostname)" = "vps-bb300bba"
-          test "$(id -un)" = "ubuntu"
-          test "$(id -u)" -ne 0
-          sudo -n true
-
-          if command -v caddy >/dev/null 2>&1; then
-            echo "Caddy already exists; use the topology/promotion lane instead of bootstrap" >&2
-            exit 1
-          fi
-          if dpkg-query -W -f='${Status}' caddy 2>/dev/null | grep -Fq "install ok installed"; then
-            echo "Caddy package already installed; refusing first-install bootstrap" >&2
-            exit 1
-          fi
-          if sudo -n test -e /etc/caddy/Caddyfile; then
-            echo "/etc/caddy/Caddyfile already exists; refusing to overwrite existing ingress state" >&2
-            exit 1
-          fi
-
-          listeners="$RUNNER_TEMP/zssh-caddy-bootstrap-listeners-before.txt"
-          sudo -n ss -H -ltnp | awk '$4 ~ /:80$|:443$/ {print}' > "$listeners"
-          if [[ -s "$listeners" ]]; then
-            echo "Port 80/443 listener already exists; refusing Caddy bootstrap" >&2
-            cat "$listeners" >&2
-            exit 1
-          fi
-
-          . /etc/os-release
-          test "$ID" = "ubuntu"
-          echo "ubuntu_version=$VERSION_ID" >> "$GITHUB_OUTPUT"
-          echo "ZSSH_CADDY_BOOTSTRAP_PREFLIGHT_GREEN ubuntu=$VERSION_ID"
-
-      - name: Install Caddy package, then keep it dormant
-        id: install
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          installed=0
-          cleanup_on_error() {
-            rc=$?
-            if [[ "$rc" -ne 0 && "$installed" -eq 1 ]]; then
-              sudo -n systemctl disable --now caddy >/dev/null 2>&1 || true
-              sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y caddy >/dev/null 2>&1 || true
-            fi
-            exit "$rc"
-          }
-          trap cleanup_on_error EXIT
-
-          sudo -n apt-get update
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends caddy
-          installed=1
-
-          sudo -n systemctl disable --now caddy
-          command -v caddy >/dev/null
-          dpkg-query -W -f='${Status}' caddy | grep -Fq "install ok installed"
-          sudo -n test -f /etc/caddy/Caddyfile
-          sudo -n caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-
-          if sudo -n systemctl is-active --quiet caddy; then
-            echo "Caddy unexpectedly active after dormant bootstrap" >&2
-            exit 1
-          fi
-          if sudo -n systemctl is-enabled --quiet caddy; then
-            echo "Caddy unexpectedly enabled after dormant bootstrap" >&2
-            exit 1
-          fi
-
-          listeners="$RUNNER_TEMP/zssh-caddy-bootstrap-listeners-after.txt"
-          sudo -n ss -H -ltnp | awk '$4 ~ /:80$|:443$/ {print}' > "$listeners"
-          if [[ -s "$listeners" ]]; then
-            echo "Port 80/443 listener appeared after dormant bootstrap" >&2
-            cat "$listeners" >&2
-            exit 1
-          fi
-
-          report="$RUNNER_TEMP/zssh-caddy-bootstrap.json"
-          export REPORT="$report"
-          export CADDY_VERSION="$(caddy version)"
-          export CADDYFILE_SHA256="$(sudo -n sha256sum /etc/caddy/Caddyfile | awk '{print $1}')"
-          export CADDY_PACKAGE_VERSION="$(dpkg-query -W -f='${Version}' caddy)"
-          export UBUNTU_VERSION="${{ steps.preflight.outputs.ubuntu_version }}"
-          python3 - <<'PY'
-          import json
-          import os
-          import socket
-          from pathlib import Path
-
-          evidence = {
-              "ok": True,
-              "project": "zssh",
-              "proof": "caddy-dormant-bootstrap",
-              "coordination_repository": os.environ["GITHUB_REPOSITORY"],
-              "coordination_commit_sha": os.environ["GITHUB_SHA"],
-              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
-              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "runner_name": os.environ["RUNNER_NAME"],
-              "hostname": socket.gethostname(),
-              "ubuntu_version": os.environ["UBUNTU_VERSION"],
-              "caddy_version": os.environ["CADDY_VERSION"],
-              "caddy_package_version": os.environ["CADDY_PACKAGE_VERSION"],
-              "caddyfile_sha256": os.environ["CADDYFILE_SHA256"],
-              "caddy_service_active": False,
-              "caddy_service_enabled": False,
-              "ports_80_443_unbound_after_bootstrap": True,
-              "production_host_added": False,
-              "public_upstream_added": False,
-          }
-          Path(os.environ["REPORT"]).write_text(
-              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          print("ZSSH_CADDY_DORMANT_BOOTSTRAP_GREEN", json.dumps({
-              "caddy_version": evidence["caddy_version"],
-              "package_version": evidence["caddy_package_version"],
-              "service_active": evidence["caddy_service_active"],
-              "service_enabled": evidence["caddy_service_enabled"],
-          }, sort_keys=True))
-          PY
-
-          installed=0
-          trap - EXIT
-
-      - name: Record zSSH Caddy bootstrap receipt
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          evidence_json="$(python3 - "$RUNNER_TEMP/zssh-caddy-bootstrap.json" <<'PY'
-          import json
-          import sys
-          row = json.load(open(sys.argv[1], encoding="utf-8"))
-          print(json.dumps(row, sort_keys=True, separators=(",", ":")))
-          PY
-          )"
-          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Bootstrapped Caddy package on canonical VPS and left service disabled/inactive pending real DNS/OAuth"             --ci-status success             --next-gate "Re-run Caddy topology audit; then create DNS A record and configure production OAuth before guarded public ingress promotion"             --source "github-actions:zssh-caddy-bootstrap"             --evidence-json "$evidence_json"
-
-      - name: Upload non-secret bootstrap evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zssh-caddy-bootstrap-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/zssh-caddy-bootstrap.json
-            ${{ runner.temp }}/zssh-caddy-bootstrap-runner-guard.json
-            ${{ runner.temp }}/zssh-caddy-bootstrap-listeners-before.txt
-            ${{ runner.temp }}/zssh-caddy-bootstrap-listeners-after.txt
-          if-no-files-found: error
-          retention-days: 30
+          echo "ZSSH_CADDY_BOOTSTRAP_RETIRED"
+          echo "Canonical lane: .github/workflows/zssh-public-ingress-bootstrap.yml"
+          echo "Reason: the canonical lane owns first Caddy installation plus transactional zSSH ingress promotion only after DNS and public-gateway gates are green."
