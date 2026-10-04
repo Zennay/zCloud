@@ -32,9 +32,39 @@ jobs:
             exit 1
           fi
 
-          # Never restart the runner underneath this very recovery job.
+          # If this recovery job itself is running on zcloud-vps-1, never
+          # restart underneath Runner.Worker. Schedule a one-shot post-job
+          # recovery instead; the deferred unit repeats the Worker guard before
+          # touching the listener, so a newly claimed production job wins.
           if [[ "${RUNNER_NAME:-}" == "zcloud-vps-1" ]]; then
-            echo "ZCLOUD_RUNNER_RECOVERY=preserve_self runner=${RUNNER_NAME}"
+            deferred="/run/zcloud-runner-deferred-recovery-${GITHUB_RUN_ID}.sh"
+            local_script="$RUNNER_TEMP/zcloud-runner-deferred-recovery.sh"
+            cat > "$local_script" <<'RECOVERY'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          self="$1"
+          trap 'rm -f "$self"' EXIT
+          group="$(systemctl show "$service" -p ControlGroup --value || true)"
+          if [[ -n "$group" && -r "/sys/fs/cgroup${group}/cgroup.procs" ]]; then
+            while read -r pid; do
+              [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+              [[ -r "/proc/$pid/cmdline" ]] || continue
+              cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" || true)"
+              if [[ "$cmd" == *"Runner.Worker"* ]]; then
+                logger -t zcloud-runner-recovery "deferred restart skipped: Runner.Worker active pid=$pid"
+                exit 0
+              fi
+            done < "/sys/fs/cgroup${group}/cgroup.procs"
+          fi
+          logger -t zcloud-runner-recovery "deferred restart of idle zcloud-vps-1 listener"
+          systemctl restart "$service"
+          RECOVERY
+            chmod 0755 "$local_script"
+            sudo -n install -m 0755 "$local_script" "$deferred"
+            unit="zcloud-runner-deferred-recovery-${GITHUB_RUN_ID}"
+            sudo -n systemd-run --unit "$unit" --on-active=10s "$deferred" "$deferred"
+            echo "ZCLOUD_RUNNER_RECOVERY=deferred_self_restart unit=$unit"
             exit 0
           fi
 
