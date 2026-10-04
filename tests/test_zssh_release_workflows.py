@@ -61,6 +61,18 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         match = re.search(r"ZSSH_RELEASE_SHA:\s*([0-9a-f]{40})", text)
         self.assertIsNotNone(match)
 
+    def test_legacy_vps_release_runner_is_pinned_to_current_green_zssh_and_permanent_runner(self):
+        text = (ROOT / ".github/workflows/zssh-vps-release-runner.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn("ZSSH_RELEASE_SHA: fdde4082cfec9eb81c84c5ea9e84304dc915fca3", text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn("ref: ${{ env.ZSSH_RELEASE_SHA }}", text)
+        self.assertIn('test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_RELEASE_SHA"', text)
+        self.assertIn("ZSSH_LIVE_PROVENANCE_GREEN", text)
+        self.assertIn("ZSSH_HOSTED_CLIENT_CANARIES_GREEN", text)
+
     def test_vps_release_records_evidence_backed_zssh_receipt(self):
         text = (ROOT / ".github/workflows/zssh-standalone-vps-release.yml").read_text(encoding="utf-8")
         self.assertIn("Record evidence-backed zSSH release state receipt", text)
