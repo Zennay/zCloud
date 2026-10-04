@@ -36,7 +36,7 @@ jobs:
               "https://app.notion.com/p/3ed9e19ac9558117b639f2254fe0e165"),
             "zssh-openai-public-plugin-release":(
               "zssh","P1","Finish the next zSSH public plugin release increment",
-              "Make a material production-grade code/config/workflow change that advances the self-hosted public OpenAI plugin route while LightUp retains the portfolio P0 build lane.",
+              "Drive only the canonical zSSH M5 gate. Read managed zSSH issue #159 (or its successor) before any mutation. If execution_state=external_input_only, do not invent repository hardening or unrelated PRs; restrict work to the exact secret-safe provider/control-plane transition and existing zCloud DNS/VPS gateway/ingress lanes. When the gate becomes provider_execution or advances, execute only that lane from exact zSSH main and record immutable run evidence. Never expose provider/OAuth/reviewer secret values. LightUp retains the portfolio P0 build lane.",
               "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634"),
             "ftmo-current-generation-safe-gate":(
               "ftmo","P1","Keep FTMO autonomous progression healthy and self-recovering",
