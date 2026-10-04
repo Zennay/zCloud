@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.5
+// @version      1.3.6
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.5";
+  const SCRIPT_VERSION = "1.3.6";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -1050,6 +1050,13 @@
     for (const command of commands) {
       const id = Number(command.id || 0);
       if (command.action === "push") {
+        // A force-push may arrive while ChatGPT is still generating the current
+        // answer. Do not consume/fail that command: keep it pending so the next
+        // tick sends it as soon as the worker is safely idle.
+        if (generationActive() || sending || awaitingGeneration) {
+          await reportSendBlocked("push-deferred-busy");
+          continue;
+        }
         const ok = await sendPrompt("database-push");
         await commandResult(id, ok ? "completed" : "failed", ok ? "Prompt sent by Violentmonkey worker" : "Violentmonkey worker could not send safely");
         lastHandledCommandId = Math.max(lastHandledCommandId, id);
