@@ -1,0 +1,252 @@
+name: zSSH Caddy topology audit (zCloud lane)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-caddy-topology-audit.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-caddy-topology-audit-zcloud
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit Caddy topology for zSSH public ingress
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_PUBLIC_UPSTREAM: 127.0.0.1:8789
+    steps:
+      - name: Check out zCloud coordination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce canonical zCloud VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_NAME" = "main"
+          python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-caddy-topology-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+
+      - name: Audit live Caddy topology without exposing configuration
+        id: topology
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          report="$RUNNER_TEMP/zssh-caddy-topology.json"
+          caddyfile="/etc/caddy/Caddyfile"
+
+          sudo_nopasswd=false
+          if sudo -n true 2>/dev/null; then
+            sudo_nopasswd=true
+          fi
+
+          caddy_binary="$(command -v caddy || true)"
+          caddy_version=""
+          if [[ -n "$caddy_binary" ]]; then
+            caddy_version="$(caddy version 2>/dev/null || true)"
+          fi
+
+          service_active=false
+          service_enabled=false
+          service_user=""
+          exec_reload_present=false
+          if sudo -n systemctl is-active --quiet caddy 2>/dev/null; then
+            service_active=true
+          fi
+          if sudo -n systemctl is-enabled --quiet caddy 2>/dev/null; then
+            service_enabled=true
+          fi
+          service_user="$(sudo -n systemctl show caddy -p User --value 2>/dev/null || true)"
+          exec_reload="$(sudo -n systemctl show caddy -p ExecReload --value 2>/dev/null || true)"
+          if [[ -n "$exec_reload" ]]; then
+            exec_reload_present=true
+          fi
+
+          config_exists=false
+          config_valid=false
+          config_sha256=""
+          config_mode=""
+          config_owner=""
+          config_group=""
+          imports_conf_d=false
+          imports_sites_enabled=false
+          has_any_import=false
+          host_already_present=false
+          upstream_already_present=false
+
+          if sudo -n test -f "$caddyfile" 2>/dev/null; then
+            config_exists=true
+            config_sha256="$(sudo -n sha256sum "$caddyfile" | awk '{print $1}')"
+            config_mode="$(sudo -n stat -c '%a' "$caddyfile")"
+            config_owner="$(sudo -n stat -c '%U' "$caddyfile")"
+            config_group="$(sudo -n stat -c '%G' "$caddyfile")"
+
+            if sudo -n grep -Eq '^[[:space:]]*import[[:space:]]+' "$caddyfile"; then
+              has_any_import=true
+            fi
+            if sudo -n grep -Eq '^[[:space:]]*import[[:space:]]+([^[:space:]]*/)?conf\.d(/|/\*|/\*\*)?' "$caddyfile"; then
+              imports_conf_d=true
+            fi
+            if sudo -n grep -Eq '^[[:space:]]*import[[:space:]]+([^[:space:]]*/)?sites-enabled(/|/\*|/\*\*)?' "$caddyfile"; then
+              imports_sites_enabled=true
+            fi
+            if sudo -n grep -Fq "$ZSSH_PRODUCTION_HOST" "$caddyfile"; then
+              host_already_present=true
+            fi
+            if sudo -n grep -Fq "$ZSSH_PUBLIC_UPSTREAM" "$caddyfile"; then
+              upstream_already_present=true
+            fi
+
+            if [[ -n "$caddy_binary" ]] && sudo -n "$caddy_binary" validate --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
+              config_valid=true
+            fi
+          fi
+
+          conf_d_dir=false
+          sites_enabled_dir=false
+          if sudo -n test -d /etc/caddy/conf.d 2>/dev/null; then
+            conf_d_dir=true
+          fi
+          if sudo -n test -d /etc/caddy/sites-enabled 2>/dev/null; then
+            sites_enabled_dir=true
+          fi
+
+          strategy="unavailable"
+          candidate_path=""
+          if [[ "$config_exists" == true && "$config_valid" == true && "$sudo_nopasswd" == true ]]; then
+            if [[ "$imports_conf_d" == true && "$conf_d_dir" == true ]]; then
+              strategy="imported-snippet"
+              candidate_path="/etc/caddy/conf.d/zssh-public.caddy"
+            elif [[ "$imports_sites_enabled" == true && "$sites_enabled_dir" == true ]]; then
+              strategy="imported-snippet"
+              candidate_path="/etc/caddy/sites-enabled/zssh-public.caddy"
+            else
+              strategy="root-caddyfile-transaction"
+              candidate_path="$caddyfile"
+            fi
+          fi
+
+          export REPORT="$report"
+          export SUDO_NOPASSWD="$sudo_nopasswd"
+          export CADDY_BINARY="$caddy_binary"
+          export CADDY_VERSION="$caddy_version"
+          export SERVICE_ACTIVE="$service_active"
+          export SERVICE_ENABLED="$service_enabled"
+          export SERVICE_USER="$service_user"
+          export EXEC_RELOAD_PRESENT="$exec_reload_present"
+          export CONFIG_EXISTS="$config_exists"
+          export CONFIG_VALID="$config_valid"
+          export CONFIG_SHA256="$config_sha256"
+          export CONFIG_MODE="$config_mode"
+          export CONFIG_OWNER="$config_owner"
+          export CONFIG_GROUP="$config_group"
+          export HAS_ANY_IMPORT="$has_any_import"
+          export IMPORTS_CONF_D="$imports_conf_d"
+          export IMPORTS_SITES_ENABLED="$imports_sites_enabled"
+          export CONF_D_DIR="$conf_d_dir"
+          export SITES_ENABLED_DIR="$sites_enabled_dir"
+          export HOST_ALREADY_PRESENT="$host_already_present"
+          export UPSTREAM_ALREADY_PRESENT="$upstream_already_present"
+          export STRATEGY="$strategy"
+          export CANDIDATE_PATH="$candidate_path"
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          b = lambda name: os.environ[name].lower() == "true"
+          evidence = {
+              "ok": True,
+              "project": "zssh",
+              "proof": "caddy-topology-audit",
+              "coordination_repository": os.environ["GITHUB_REPOSITORY"],
+              "coordination_commit_sha": os.environ["GITHUB_SHA"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_name": os.environ["RUNNER_NAME"],
+              "hostname": "vps-bb300bba",
+              "production_host": os.environ["ZSSH_PRODUCTION_HOST"],
+              "public_upstream": os.environ["ZSSH_PUBLIC_UPSTREAM"],
+              "sudo_noninteractive": b("SUDO_NOPASSWD"),
+              "caddy_binary_present": bool(os.environ["CADDY_BINARY"]),
+              "caddy_version": os.environ["CADDY_VERSION"],
+              "caddy_service_active": b("SERVICE_ACTIVE"),
+              "caddy_service_enabled": b("SERVICE_ENABLED"),
+              "caddy_service_user": os.environ["SERVICE_USER"],
+              "caddy_exec_reload_present": b("EXEC_RELOAD_PRESENT"),
+              "caddyfile_exists": b("CONFIG_EXISTS"),
+              "caddyfile_valid": b("CONFIG_VALID"),
+              "caddyfile_sha256": os.environ["CONFIG_SHA256"],
+              "caddyfile_mode": os.environ["CONFIG_MODE"],
+              "caddyfile_owner": os.environ["CONFIG_OWNER"],
+              "caddyfile_group": os.environ["CONFIG_GROUP"],
+              "caddyfile_has_any_import": b("HAS_ANY_IMPORT"),
+              "caddyfile_imports_conf_d": b("IMPORTS_CONF_D"),
+              "caddyfile_imports_sites_enabled": b("IMPORTS_SITES_ENABLED"),
+              "conf_d_dir_exists": b("CONF_D_DIR"),
+              "sites_enabled_dir_exists": b("SITES_ENABLED_DIR"),
+              "production_host_already_present": b("HOST_ALREADY_PRESENT"),
+              "public_upstream_already_present": b("UPSTREAM_ALREADY_PRESENT"),
+              "promotion_strategy": os.environ["STRATEGY"],
+              "promotion_candidate_path": os.environ["CANDIDATE_PATH"],
+              "configuration_content_exposed": False,
+              "configuration_mutated": False,
+          }
+          Path(os.environ["REPORT"]).write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print("ZSSH_CADDY_TOPOLOGY_AUDIT_GREEN", json.dumps({
+              "caddy_service_active": evidence["caddy_service_active"],
+              "caddyfile_valid": evidence["caddyfile_valid"],
+              "promotion_strategy": evidence["promotion_strategy"],
+              "promotion_candidate_path": evidence["promotion_candidate_path"],
+              "production_host_already_present": evidence["production_host_already_present"],
+          }, sort_keys=True))
+          PY
+
+          echo "strategy=$strategy" >> "$GITHUB_OUTPUT"
+          echo "candidate_path=$candidate_path" >> "$GITHUB_OUTPUT"
+
+      - name: Record evidence-backed Caddy topology receipt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          report="$RUNNER_TEMP/zssh-caddy-topology.json"
+          strategy="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["promotion_strategy"])' "$report")"
+          candidate="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["promotion_candidate_path"])' "$report")"
+          evidence_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True, separators=(",", ":")))' "$report")"
+
+          if [[ "$strategy" == "unavailable" ]]; then
+            next_gate="Repair/establish a valid Caddy service/config and non-interactive sudo before public ingress promotion"
+          else
+            next_gate="Implement guarded zSSH Caddy promotion using strategy=$strategy candidate=$candidate, with pre-validate, backup, reload and rollback"
+          fi
+
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Audited live Caddy topology for zSSH production ingress without exposing or mutating configuration"             --ci-status success             --next-gate "$next_gate"             --source "github-actions:zssh-caddy-topology-audit"             --evidence-json "$evidence_json"
+
+      - name: Upload non-secret Caddy topology evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-caddy-topology-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-caddy-topology.json
+            ${{ runner.temp }}/zssh-caddy-topology-runner-guard.json
+          if-no-files-found: error
+          retention-days: 30
