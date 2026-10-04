@@ -539,8 +539,9 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIn("supa", projects)
         self.assertIn("raiseai", projects)
         self.assertIn("zssh", projects)
+        self.assertIn("zguard", projects)
         self.assertNotIn("ulab", projects)
-        self.assertGreaterEqual(audit["ready"], 6)
+        self.assertGreaterEqual(audit["ready"], 7)
 
     def test_allocator_assigns_distinct_ftmo_lanes_and_persists_metadata(self):
         server.MAX_CHATGPT_WORKERS = 3
