@@ -1,4 +1,4 @@
-name: Recover HaxLab runner for RaiseAI PR23
+name: Recover RaiseAI PR23 runners
 
 on:
   push:
@@ -18,64 +18,102 @@ concurrency:
 jobs:
   recover:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 6
+    timeout-minutes: 8
     env:
       HAXLAB_SERVICE: actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service
-      HAXLAB_RUN_USER: haxlab-runner
-      TARGET_RUN: "37167797726"
+      RAISEAI_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+      HAXLAB_RUN: "37167797726"
+      RAISEAI_RUN: "37167773363"
     steps:
-      - name: Recover idle HaxLab listener
+      - name: Recover idle RaiseAI proof listeners
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
 
-          service="$HAXLAB_SERVICE"
-          pre_state="$(systemctl is-active "$service" || true)"
-          pre_pid="$(systemctl show "$service" -p MainPID --value || true)"
-          worker=0
-          pgrep -u "$HAXLAB_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1 && worker=1 || true
+          recover_service() {
+            local label="$1"
+            local service="$2"
+            local pre_state pre_pid cgroup worker pid state cmdline action
+            pre_state="$(systemctl is-active "$service" || true)"
+            pre_pid="$(systemctl show "$service" -p MainPID --value || true)"
+            cgroup="$(systemctl show "$service" -p ControlGroup --value || true)"
+            worker=0
 
-          if [ "$worker" -eq 1 ]; then
-            action=preserve-active-worker
-          elif [ "$pre_state" = "active" ]; then
-            sudo -n systemctl restart "$service"
-            action=restart-idle-listener
-          else
-            sudo -n systemctl reset-failed "$service" || true
-            sudo -n systemctl start "$service"
-            action=start-inactive-listener
-          fi
-
-          for _ in $(seq 1 20); do
-            state="$(systemctl is-active "$service" || true)"
-            pid="$(systemctl show "$service" -p MainPID --value || true)"
-            if [ "$state" = "active" ] && [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [ -r "/proc/$pid/cmdline" ]; then
-              cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
-              if [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]; then
-                echo "HAXLAB_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid"
-                exit 0
-              fi
+            if [ -n "$cgroup" ] && [ -r "/sys/fs/cgroup${cgroup}/cgroup.procs" ]; then
+              while read -r pid; do
+                [ -r "/proc/$pid/cmdline" ] || continue
+                cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+                if [[ "$cmdline" == *"Runner.Worker"* ]]; then
+                  worker=1
+                  break
+                fi
+              done < "/sys/fs/cgroup${cgroup}/cgroup.procs"
             fi
-            sleep 2
-          done
 
-          systemctl --no-pager --full status "$service" || true
-          exit 1
+            if [ "$worker" -eq 1 ]; then
+              action=preserve-active-worker
+            elif [ "$pre_state" = "active" ]; then
+              sudo -n systemctl restart "$service"
+              action=restart-idle-listener
+            else
+              sudo -n systemctl reset-failed "$service" || true
+              sudo -n systemctl start "$service"
+              action=start-inactive-listener
+            fi
 
-      - name: Prove RaiseAI PR23 proof leaves queue
+            for _ in $(seq 1 20); do
+              state="$(systemctl is-active "$service" || true)"
+              pid="$(systemctl show "$service" -p MainPID --value || true)"
+              if [ "$worker" -eq 1 ]; then
+                if [ "$state" = "active" ]; then
+                  echo "${label}_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid worker=1"
+                  return 0
+                fi
+              elif [ "$state" = "active" ] && [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [ -r "/proc/$pid/cmdline" ]; then
+                cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+                if [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]; then
+                  echo "${label}_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid worker=0"
+                  return 0
+                fi
+              fi
+              sleep 2
+            done
+
+            systemctl --no-pager --full status "$service" || true
+            return 1
+          }
+
+          recover_service HAXLAB "$HAXLAB_SERVICE"
+          recover_service RAISEAI "$RAISEAI_SERVICE"
+
+      - name: Prove one PR23 lane leaves queue
         shell: bash
         run: |
           set -euo pipefail
-          for _ in $(seq 1 36); do
-            payload="$(curl -fsSL --max-time 10               -H 'Accept: application/vnd.github+json'               -H 'X-GitHub-Api-Version: 2022-11-28'               "https://api.github.com/repos/Zennay/HaxLab/actions/runs/$TARGET_RUN")"
-            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$payload")"
-            conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion") or "")' <<<"$payload")"
-            echo "RAISEAI_PR23_PROOF run=$TARGET_RUN status=$status conclusion=$conclusion"
-            if [ "$status" = "in_progress" ] || [ "$status" = "completed" ]; then
+          read_status() {
+            local repo="$1"
+            local run="$2"
+            curl -fsSL --max-time 10 \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Zennay/$repo/actions/runs/$run"
+          }
+
+          for _ in $(seq 1 48); do
+            hax_payload="$(read_status HaxLab "$HAXLAB_RUN")"
+            raise_payload="$(read_status RaiseAI "$RAISEAI_RUN")"
+            hax_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$hax_payload")"
+            hax_conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion") or "")' <<<"$hax_payload")"
+            raise_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$raise_payload")"
+            raise_conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion") or "")' <<<"$raise_payload")"
+            echo "PR23_LANES haxlab=$hax_status/$hax_conclusion raiseai=$raise_status/$raise_conclusion"
+            if [ "$hax_status" = "in_progress" ] || [ "$hax_status" = "completed" ] || \
+               [ "$raise_status" = "in_progress" ] || [ "$raise_status" = "completed" ]; then
               exit 0
             fi
             sleep 5
           done
-          echo "RaiseAI PR23 proof remained queued after HaxLab listener recovery" >&2
+
+          echo "Neither RaiseAI PR23 proof lane left the queue after listener recovery" >&2
           exit 1
