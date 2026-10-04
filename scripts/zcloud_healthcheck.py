@@ -36,6 +36,12 @@ REQUIRED_TABLES = {
     "worker_preflights",
 }
 VALID_DESIRED_STATES = {"running", "paused", "draining"}
+STATUS_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_STATUS_REQUEST_TIMEOUT_SECONDS", "40")
+)
+FAST_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("ZCLOUD_FAST_REQUEST_TIMEOUT_SECONDS", "8")
+)
 
 
 def utc_now() -> datetime:
@@ -345,15 +351,23 @@ def live_health(
     runtime_extension: Path = DEFAULT_RUNTIME_EXTENSION,
     legacy_disable_path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE,
     max_pending_age_seconds: int = 300,
+    status_timeout_seconds: float = STATUS_REQUEST_TIMEOUT_SECONDS,
+    targets_timeout_seconds: float = FAST_REQUEST_TIMEOUT_SECONDS,
 ) -> dict:
     transport_errors = []
     try:
-        status = http_json(base_url.rstrip("/") + "/api/status")
+        status = http_json(
+            base_url.rstrip("/") + "/api/status",
+            timeout=max(1.0, float(status_timeout_seconds)),
+        )
     except Exception as exc:
         status = {"errors": [f"status unavailable: {exc}"]}
         transport_errors.append(str(exc))
     try:
-        targets = http_json(base_url.rstrip("/") + "/api/runner-targets")
+        targets = http_json(
+            base_url.rstrip("/") + "/api/runner-targets",
+            timeout=max(1.0, float(targets_timeout_seconds)),
+        )
     except Exception as exc:
         targets = {}
         transport_errors.append(str(exc))
@@ -391,6 +405,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--runtime-extension", type=Path, default=DEFAULT_RUNTIME_EXTENSION)
     parser.add_argument("--max-pending-age-seconds", type=int, default=300)
+    parser.add_argument(
+        "--status-timeout-seconds",
+        type=float,
+        default=STATUS_REQUEST_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
+        "--targets-timeout-seconds",
+        type=float,
+        default=FAST_REQUEST_TIMEOUT_SECONDS,
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = live_health(
@@ -399,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         runtime_extension=args.runtime_extension.resolve(),
         max_pending_age_seconds=max(30, args.max_pending_age_seconds),
+        status_timeout_seconds=max(1.0, args.status_timeout_seconds),
+        targets_timeout_seconds=max(1.0, args.targets_timeout_seconds),
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
