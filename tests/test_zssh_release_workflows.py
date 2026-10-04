@@ -334,6 +334,13 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
     def test_vps_cloudflare_dns_apply_is_exact_inherited_env_and_secret_safe(self):
         text = (ROOT / ".github/workflows/zssh-cloudflare-vps-dns-apply.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [closed]", text)
+        self.assertIn(".github/zssh-production-dns-vps-trigger", text)
+        self.assertIn("github.event.pull_request.merged == true", text)
+        self.assertIn("PUBLISH_ZSSH_PRODUCTION_DNS_VIA_VPS", text)
+        self.assertIn("ZSSH_DNS_VPS_MERGED_PR_ACTIVATION_GREEN", text)
+        self.assertNotIn("\n  push:\n", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
