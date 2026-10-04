@@ -41,6 +41,8 @@ jobs:
           git -C "$src" fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
           git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
           test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+          current_main_sha="$(git -C "$src" rev-parse refs/remotes/origin/main)"
+          echo "CURRENT_MAIN_SHA=$current_main_sha" >> "$GITHUB_ENV"
 
       - name: Prove historical tested-head to guarded-merge equivalence
         shell: bash
@@ -52,7 +54,8 @@ jobs:
             --repo "$src" \
             --tested-head "$TESTED_HEAD" \
             --merge-commit "$MERGE_COMMIT" \
-            --expected-base "$EXPECTED_BASE"
+            --expected-base "$EXPECTED_BASE" \
+            --current-main origin/main
 
       - name: Persist sanitized proof receipt
         if: always()
@@ -82,6 +85,7 @@ jobs:
               "tested_head": os.environ["TESTED_HEAD"],
               "merge_commit": os.environ["MERGE_COMMIT"],
               "expected_base": os.environ["EXPECTED_BASE"],
+              "current_main_sha": os.environ.get("CURRENT_MAIN_SHA"),
               "result": os.environ["PROOF_RESULT"],
               "runner_host": socket.gethostname(),
               "scope": "guarded squash merge tree-equivalence integration proof",
