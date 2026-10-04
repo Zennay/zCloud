@@ -186,7 +186,7 @@ def validate_project_contracts(
         add(errors, isinstance(contract.get("queue_mode"), str) and bool(contract.get("queue_mode", "").strip()), f"{prefix}.queue_mode: non-empty string required")
         add(errors, isinstance(contract.get("lane_profile"), str) and bool(contract.get("lane_profile", "").strip()), f"{prefix}.lane_profile: non-empty string required")
         cap = contract.get("ai_worker_cap")
-        add(errors, isinstance(cap, int) and not isinstance(cap, bool) and cap >= 1, f"{prefix}.ai_worker_cap: integer >= 1 required")
+        add(errors, isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0, f"{prefix}.ai_worker_cap: integer >= 0 required")
 
         autonomy = contract.get("autonomy")
         if not isinstance(autonomy, dict):
@@ -194,6 +194,12 @@ def validate_project_contracts(
             autonomy = {}
         add(errors, autonomy.get("mode") in ALLOWED_AUTONOMY_MODES, f"{prefix}.autonomy.mode: unsupported mode")
         add(errors, isinstance(autonomy.get("auto_start"), bool), f"{prefix}.autonomy.auto_start: boolean required")
+        if isinstance(cap, int) and not isinstance(cap, bool) and cap == 0:
+            add(
+                errors,
+                autonomy.get("mode") in {"external_gate", "manual"} and autonomy.get("auto_start") is False,
+                f"{prefix}: ai_worker_cap=0 requires external_gate/manual with auto_start=false",
+            )
 
         compute = contract.get("compute")
         if not isinstance(compute, dict):
