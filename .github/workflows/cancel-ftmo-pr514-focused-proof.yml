@@ -1,0 +1,19 @@
+name: Cancel obsolete FTMO PR514 focused proof
+
+on:
+  push:
+    branches:
+      - ops/cancel-ftmo-pr514-focused-proof
+    paths:
+      - ".github/workflows/cancel-ftmo-pr514-focused-proof.yml"
+
+concurrency:
+  group: ftmo-pr514-runtime-private-proof
+  cancel-in-progress: true
+
+jobs:
+  tombstone:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "server-side concurrency tombstone only"
