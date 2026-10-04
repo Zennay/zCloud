@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: zssh-production-origin-readiness-zcloud
@@ -245,6 +246,57 @@ jobs:
             --next-gate "$next_gate" \
             --source "github-actions:zssh-production-origin-readiness" \
             --evidence-json "$evidence_json"
+
+      - name: Publish non-secret production-origin audit status
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DNS_READY: ${{ steps.readiness.outputs.dns_ready }}
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          dns_ready = os.environ.get("DNS_READY") == "1"
+          description = (
+              "DNS ready: zssh.cheapgpt.shop -> 198.244.191.182"
+              if dns_ready
+              else "DNS pending: zssh.cheapgpt.shop != 198.244.191.182"
+          )
+          payload = json.dumps({
+              "state": "success",
+              "context": "zssh/production-origin-readiness-audit",
+              "description": description,
+              "target_url": (
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+              ),
+          }).encode("utf-8")
+          request = urllib.request.Request(
+              (
+                  f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/statuses/{os.environ['GITHUB_SHA']}"
+              ),
+              data=payload,
+              headers={
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-zssh-production-origin-readiness",
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              if response.status != 201:
+                  raise SystemExit(f"unexpected GitHub status response: {response.status}")
+          print(
+              "ZSSH_PRODUCTION_ORIGIN_STATUS_PUBLISHED",
+              json.dumps({"dns_ready": dns_ready, "description": description}, sort_keys=True),
+          )
+          PY
 
       - name: Upload non-secret readiness evidence
         if: always()
