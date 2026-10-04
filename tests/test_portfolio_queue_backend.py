@@ -138,14 +138,14 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "Implement provider provenance checks with deterministic tests.",
         )
         server.portfolio_queue_enqueue(
-            "zssh", "Implement runner deploy recovery", "P2",
+            "raiseai", "Implement runner deploy recovery", "P2",
             "Implement deploy recovery with deterministic tests.",
         )
 
         selected = server.portfolio_queue_allocate()
 
         self.assertEqual(3, len(selected))
-        self.assertEqual(["ftmo", "ftmo", "zssh"], [item["project_id"] for item in selected])
+        self.assertEqual(["ftmo", "ftmo", "raiseai"], [item["project_id"] for item in selected])
 
     def test_ftmo_hard_cap_keeps_third_slot_unallocated_without_alternative(self):
         server.MAX_CHATGPT_WORKERS = 3
