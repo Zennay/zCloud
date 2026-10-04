@@ -136,6 +136,28 @@ assert.ok(
   "replacement handoff may only be cleared after the first prompt was actually sent"
 );
 
+const configUpdateStart = runBlock.indexOf('if (message.type === "runner-config-update")');
+const configUpdateEnd = runBlock.indexOf('if (message.type === "runner-push")', configUpdateStart);
+assert.ok(configUpdateStart >= 0 && configUpdateEnd > configUpdateStart, "runner config-update block missing");
+const configUpdateBlock = runBlock.slice(configUpdateStart, configUpdateEnd);
+assert.ok(
+  configUpdateBlock.includes('paused = next.desired_state === "paused"'),
+  "config refresh must apply backend paused state inside an already-open worker tab"
+);
+assert.ok(
+  configUpdateBlock.includes('draining = next.desired_state === "draining"'),
+  "config refresh must apply backend draining state so deploy safe-idle can be acknowledged"
+);
+
+const userscript = fs.readFileSync(
+  path.join(root, "public", "zcloud-worker.user.js"),
+  "utf8"
+);
+assert.ok(
+  userscript.includes('draining = target.desired_state === "draining"'),
+  "Violentmonkey primary runner must remain driven by backend desired_state"
+);
+
 const refreshTargetStart = background.indexOf("async function refreshTargets");
 const refreshTargetEnd = background.indexOf("async function inject");
 assert.ok(refreshTargetStart >= 0 && refreshTargetEnd > refreshTargetStart, "refreshTargets block missing");
