@@ -1,0 +1,54 @@
+name: LightUp VPS verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-vps-verification.yml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: LightUp git ref to verify
+        required: false
+        default: origin/main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Test isolated LightUp snapshot
+        shell: bash
+        env:
+          LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+          REQUESTED_REF: ${{ inputs.ref || 'origin/main' }}
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          git -C "${LIGHTUP_REPO}" fetch --prune origin main
+          TARGET_REF="${REQUESTED_REF:-origin/main}"
+          TARGET_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse "${TARGET_REF}^{commit}")"
+
+          TMP_ROOT="$(mktemp -d)"
+          trap 'rm -rf "${TMP_ROOT}"' EXIT
+          SNAPSHOT="${TMP_ROOT}/lightup"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${TARGET_SHA}" | tar -x -C "${SNAPSHOT}"
+
+          cd "${SNAPSHOT}"
+          export PYTHONPATH=src
+
+          python3 -m compileall -q src tests
+          python3 -m unittest discover -s tests -v
+
+          printf 'LIGHTUP_VPS_PROOF target_sha=%s host=%s\n' "${TARGET_SHA}" "$(hostname)"
