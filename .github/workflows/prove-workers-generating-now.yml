@@ -1,4 +1,5 @@
 name: Prove zCloud workers are generating now
+# retriggered on user force-all request 2026-10-04T14:25Z
 
 on:
   push:
