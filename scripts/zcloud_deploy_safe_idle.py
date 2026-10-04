@@ -71,6 +71,7 @@ def write_state(path: Path, payload: dict) -> None:
 
 def restore_snapshot(db: Path, payload: dict) -> dict:
     restored: list[dict] = []
+    cancelled_commands: list[int] = []
     with connect(db) as conn:
         conn.execute("BEGIN IMMEDIATE")
         for item in payload.get("workers") or []:
@@ -87,8 +88,20 @@ def restore_snapshot(db: Path, payload: dict) -> dict:
                     "desired_state": previous_state,
                 }
             )
+        for command_id in payload.get("drain_command_ids") or []:
+            cursor = conn.execute(
+                "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                "WHERE id=? AND status='pending'",
+                (
+                    utc_now(),
+                    "deploy safe-idle ended before pending drain command was consumed",
+                    int(command_id),
+                ),
+            )
+            if cursor.rowcount == 1:
+                cancelled_commands.append(int(command_id))
         conn.commit()
-    return {"restored": restored}
+    return {"restored": restored, "cancelled_commands": cancelled_commands}
 
 
 def enter_safe_idle(
@@ -104,6 +117,7 @@ def enter_safe_idle(
         "entered_at": utc_now(),
         "db": str(db),
         "workers": [],
+        "drain_command_ids": [],
         "safe_idle": False,
     }
     by_key: dict[str, dict] = {}
@@ -124,6 +138,13 @@ def enter_safe_idle(
                     }
                     by_key[key] = record
                     snapshot["workers"].append(record)
+                    command = conn.execute(
+                        "INSERT INTO runner_commands("
+                        "project_id,action,status,created_at,updated_at,result"
+                        ") VALUES(?,?,?,?,?,NULL)",
+                        (key, "drain", "pending", utc_now(), utc_now()),
+                    )
+                    snapshot["drain_command_ids"].append(int(command.lastrowid))
                     changed = True
                 if item["desired_state"] != "paused":
                     conn.execute(
@@ -201,6 +222,7 @@ def restore_safe_idle(db: Path, state_path: Path) -> dict:
         "ok": True,
         "safe_idle": bool(payload.get("safe_idle")),
         "restored": result["restored"],
+        "cancelled_commands": result["cancelled_commands"],
     }
 
 

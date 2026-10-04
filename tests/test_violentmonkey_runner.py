@@ -81,11 +81,28 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('diagnostic: diagnostic', background)
         self.assertNotIn('"high-thinking-required|" + diagnostic', background)
 
+    def test_bridge_required_version_matches_userscript_metadata_and_runtime(self):
+        import re
+
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        required = re.search(r'VIOLENTMONKEY_REQUIRED_VERSION = "([^"]+)"', background)
+        metadata = re.search(r"^// @version\s+([^\s]+)", userscript, re.MULTILINE)
+        runtime = re.search(r'SCRIPT_VERSION = "([^"]+)"', userscript)
+
+        self.assertIsNotNone(required)
+        self.assertIsNotNone(metadata)
+        self.assertIsNotNone(runtime)
+        self.assertEqual(required.group(1), metadata.group(1))
+        self.assertEqual(required.group(1), runtime.group(1))
+        self.assertEqual("1.3.5", required.group(1))
+
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.1.4";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.5";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)

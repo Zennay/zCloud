@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.4
+// @version      1.3.5
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.4";
+  const SCRIPT_VERSION = "1.3.5";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -1107,6 +1107,11 @@
         awaitingGeneration = false;
         await status("generation-not-started", {reason: "no-generation-after-send"});
       }
+      return;
+    }
+
+    if (draining && !sawGeneration) {
+      await status("runner-drained", {reason: "already-idle"});
       return;
     }
 
