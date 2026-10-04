@@ -78,12 +78,18 @@ jobs:
               fh.write(f"dns_ready={'1' if dns_ready else '0'}\n")
           PY
 
+      - name: Summarize DNS state
+        shell: bash
+        env:
+          DNS_READY: ${{ steps.probe.outputs.dns_ready }}
+        run: |
+          set -Eeuo pipefail
           {
             echo "## zSSH production DNS proof"
             echo
             echo "- Host: `$ZSSH_PRODUCTION_HOST`"
             echo "- Expected IPv4: `$ZSSH_EXPECTED_IPV4`"
-            if [[ "${{ steps.probe.outputs.dns_ready }}" == "1" ]]; then
+            if [[ "$DNS_READY" == "1" ]]; then
               echo "- Result: **DNS ready**"
             else
               echo "- Result: **DNS pending**"
