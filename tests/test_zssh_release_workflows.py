@@ -245,7 +245,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("PROTECT_ZSSH_MAIN", text)
         self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", text)
         self.assertIn("repository: Zennay/zSSH", text)
-        self.assertIn('ref: \${{ steps.zssh_target.outputs.sha }}', text)
+        self.assertIn('ref: ${{ steps.zssh_target.outputs.sha }}', text)
         self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
         self.assertIn("gh auth status --hostname github.com", text)
         self.assertIn("gh api repos/Zennay/zSSH --jq '.permissions.admin // false'", text)
@@ -257,7 +257,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('test "$live_main_after" = "$ZSSH_SHA"', text)
         self.assertNotIn('echo "$token"', text)
         self.assertNotIn("set -x", text)
-        self.assertNotIn("ZSSH_REPO_ADMIN_TOKEN: \${{", text)
+        self.assertNotIn("ZSSH_REPO_ADMIN_TOKEN: ${{", text)
 
 
 if __name__ == "__main__":
