@@ -133,6 +133,21 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertLess(primary, bridge_return)
         self.assertLess(bridge_return, legacy_injection)
 
+    def test_drain_handoff_keeps_command_pending_when_violentmonkey_takes_over(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        start = background.index("async function drainProject(projectId, commandId)")
+        end = background.index("async function pushProject(", start)
+        block = background[start:end]
+
+        self.assertIn("const injected = await inject(tabId, target);", block)
+        self.assertIn('if (injected?.mode === "violentmonkey") return;', block)
+        self.assertIn("const rebound = await inject(tabId, target);", block)
+        self.assertIn('if (rebound?.mode === "violentmonkey") return;', block)
+        self.assertLess(
+            block.index('if (injected?.mode === "violentmonkey") return;'),
+            block.index('commandResult(commandId, "failed"'),
+        )
+
     def test_start_command_for_existing_tab_forces_initial_dispatch(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
         start = background.index("async function startProject(projectId, commandId)")
