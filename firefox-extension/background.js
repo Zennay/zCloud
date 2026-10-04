@@ -1036,6 +1036,11 @@ function runProject(cfg) {
       }
       const previousQueueId = String(cfg.queue_item?.queue_id || "").trim();
       Object.assign(cfg, next);
+      // Backend desired-state changes arrive through the config refresh path.
+      // Keep the in-tab state machine aligned so deploy safe-idle can drain
+      // already-open workers without needing a separate dashboard command.
+      paused = next.desired_state === "paused";
+      draining = next.desired_state === "draining";
       BASE_PROMPT = nextPrompt;
       if (previousQueueId !== queueId) {
         weakCycleStreak = 0;
