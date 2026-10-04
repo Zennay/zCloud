@@ -53,6 +53,18 @@ jobs:
             exit 1
           fi
 
+          if ! curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null 2>&1; then
+            sudo -n systemctl reset-failed zennay-cloud.service || true
+            sudo -n systemctl restart zennay-cloud.service
+            for _ in $(seq 1 20); do
+              if curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null 2>&1; then
+                break
+              fi
+              sleep 2
+            done
+          fi
+          curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null
+
           python3 - <<'PY'
           import json, time, urllib.request, urllib.error
           BASE="http://127.0.0.1:8765"
