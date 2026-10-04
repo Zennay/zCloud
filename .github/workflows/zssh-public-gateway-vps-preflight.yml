@@ -18,7 +18,7 @@ concurrency:
 jobs:
   validate:
     name: Validate zSSH public gateway on vps-bb300bba
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
       ZSSH_SHA: e362d8c2d053d99ed7acac8a74d6de0889397ef3
