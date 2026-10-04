@@ -23,14 +23,9 @@ class ZsshCloudflareCapabilityProbeTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.merged == true", text)
         self.assertIn('".github/zssh-cloudflare-capability-trigger"', text)
 
-        self.assertIn("CLOUDFLARE_API_TOKEN", text)
-        self.assertIn("CF_API_TOKEN", text)
-        self.assertIn("CLOUDFLARE_ZONE_ID", text)
-        self.assertIn("https://api.cloudflare.com/client/v4/user/tokens/verify", text)
-        self.assertIn(
-            "https://api.cloudflare.com/client/v4/zones?name=cheapgpt.shop&status=active",
-            text,
-        )
+        self.assertNotIn("CLOUDFLARE_API_TOKEN", text)
+        self.assertNotIn("CF_API_TOKEN", text)
+        self.assertNotIn("CLOUDFLARE_ZONE_ID", text)
         self.assertIn("scripts/zssh_cloudflare_capability_probe.py", text)
         script = (ROOT / "scripts/zssh_cloudflare_capability_probe.py").read_text(encoding="utf-8")
         compile(script, "zssh_cloudflare_capability_probe.py", "exec")
