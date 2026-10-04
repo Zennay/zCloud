@@ -5,14 +5,12 @@ on:
     paths:
       - '.github/workflows/zcloud-dashboard-access-recovery.yml'
   workflow_dispatch:
-
-concurrency:
-  group: zcloud-dashboard-access-recovery
-  cancel-in-progress: false
+  pull_request:
+    branches: [main]
 
 jobs:
   recover:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - name: Recover zCloud dashboard listener
