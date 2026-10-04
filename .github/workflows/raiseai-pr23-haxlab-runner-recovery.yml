@@ -1,4 +1,4 @@
-name: Recover RaiseAI PR23 runners
+name: Prove RaiseAI v1.5.2 build identity
 
 on:
   push:
@@ -16,104 +16,93 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  recover:
+  prove:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 8
+    timeout-minutes: 35
     env:
-      HAXLAB_SERVICE: actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service
-      RAISEAI_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
-      HAXLAB_RUN: "37168176409"
-      RAISEAI_RUN: "37168153969"
+      RAISE_SHA: 1c9b9ef75503a4555d35c4c8bc4714b07e946e56
+      RAISE_BUILD_REVISION: 1c9b9ef75503a4555d35c4c8bc4714b07e946e56
     steps:
-      - name: Recover idle RaiseAI proof listeners
+      - name: Verify VPS execution host
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
+          echo "runner=${RUNNER_NAME:-unknown}"
 
-          recover_service() {
-            local label="$1"
-            local service="$2"
-            local pre_state pre_pid cgroup worker pid state cmdline action
-            pre_state="$(systemctl is-active "$service" || true)"
-            pre_pid="$(systemctl show "$service" -p MainPID --value || true)"
-            cgroup="$(systemctl show "$service" -p ControlGroup --value || true)"
-            worker=0
+      - name: Configure Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
-            if [ -n "$cgroup" ] && [ -r "/sys/fs/cgroup${cgroup}/cgroup.procs" ]; then
-              while read -r pid; do
-                [ -r "/proc/$pid/cmdline" ] || continue
-                cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
-                if [[ "$cmdline" == *"Runner.Worker"* ]]; then
-                  worker=1
-                  break
-                fi
-              done < "/sys/fs/cgroup${cgroup}/cgroup.procs"
-            fi
-
-            if [ "$worker" -eq 1 ]; then
-              action=preserve-active-worker
-            elif [ "$pre_state" = "active" ]; then
-              sudo -n systemctl restart "$service"
-              action=restart-idle-listener
-            else
-              sudo -n systemctl reset-failed "$service" || true
-              sudo -n systemctl start "$service"
-              action=start-inactive-listener
-            fi
-
-            for _ in $(seq 1 20); do
-              state="$(systemctl is-active "$service" || true)"
-              pid="$(systemctl show "$service" -p MainPID --value || true)"
-              if [ "$worker" -eq 1 ]; then
-                if [ "$state" = "active" ]; then
-                  echo "${label}_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid worker=1"
-                  return 0
-                fi
-              elif [ "$state" = "active" ] && [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [ -r "/proc/$pid/cmdline" ]; then
-                cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
-                if [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]; then
-                  echo "${label}_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid worker=0"
-                  return 0
-                fi
-              fi
-              sleep 2
-            done
-
-            systemctl --no-pager --full status "$service" || true
-            return 1
-          }
-
-          recover_service HAXLAB "$HAXLAB_SERVICE"
-          recover_service RAISEAI "$RAISEAI_SERVICE"
-
-      - name: Prove one PR23 lane leaves queue
+      - name: Install Android 35 toolchain
         shell: bash
         run: |
           set -euo pipefail
-          read_status() {
-            local repo="$1"
-            local run="$2"
-            curl -fsSL --max-time 10 \
-              -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/Zennay/$repo/actions/runs/$run"
-          }
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          java -version
+          python3 --version
 
-          for _ in $(seq 1 48); do
-            hax_payload="$(read_status HaxLab "$HAXLAB_RUN")"
-            raise_payload="$(read_status RaiseAI "$RAISEAI_RUN")"
-            hax_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$hax_payload")"
-            hax_conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion") or "")' <<<"$hax_payload")"
-            raise_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$raise_payload")"
-            raise_conclusion="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("conclusion") or "")' <<<"$raise_payload")"
-            echo "PR23_LANES haxlab=$hax_status/$hax_conclusion raiseai=$raise_status/$raise_conclusion"
-            if [ "$hax_status" = "in_progress" ] || [ "$hax_status" = "completed" ] || \
-               [ "$raise_status" = "in_progress" ] || [ "$raise_status" = "completed" ]; then
-              exit 0
-            fi
-            sleep 5
-          done
+      - name: Checkout exact RaiseAI PR23 head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/RaiseAI
+          ref: ${{ env.RAISE_SHA }}
+          path: raise-pr23
 
-          echo "Neither RaiseAI PR23 proof lane left the queue after listener recovery" >&2
-          exit 1
+      - name: Prove exact v1.5.2 build identity
+        working-directory: raise-pr23
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RAISE_SHA"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          test "$(tr -d '\r\n' < VERSION.txt)" = "1.5.2"
+          grep -F 'versionCode = 19' app/build.gradle.kts >/dev/null
+          bash -n upgrade-watch.command
+          bash -n physical-validation.command
+          bash physical-validation.command --help >/dev/null
+          python3 -m unittest discover -s tests -p 'test_watch_e2e_evidence_validator.py'
+          python3 -m unittest discover -s tests -p 'test_watch_sensor_trace_analyzer.py'
+          python3 -m unittest discover -s tests -p 'test_watch_sensor_trial_analyzer.py'
+          ./gradlew --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx1280m -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.workers.max=1 \
+            :app:verifyEvidenceBuildIdentity testDebugUnitTest assembleDebug
+          grep -R --fixed-strings "$RAISE_SHA" app/build/generated >/dev/null
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          python3 - <<'PY'
+          import os
+          import zipfile
+          apk = "app/build/outputs/apk/debug/app-debug.apk"
+          needle = os.environ["RAISE_SHA"].encode("ascii")
+          with zipfile.ZipFile(apk) as archive:
+              dex_files = [name for name in archive.namelist() if name.endswith(".dex")]
+              hits = [name for name in dex_files if needle in archive.read(name)]
+          if not hits:
+              raise SystemExit("exact source revision not embedded in APK DEX")
+          print("Exact source revision embedded in:", ", ".join(hits))
+          PY
+
+      - name: Record exact-head proof
+        working-directory: raise-pr23
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "RaiseAI v1.5.2 PR23 build identity proof"
+            echo "host=$(hostname)"
+            echo "runner=${RUNNER_NAME:-unknown}"
+            echo "source_revision=$(git rev-parse HEAD)"
+            echo "version=$(tr -d '\r\n' < VERSION.txt)"
+            echo "apk_sha256=$(sha256sum app/build/outputs/apk/debug/app-debug.apk | awk '{print $1}')"
+          } | tee ../raiseai-pr23-v1.5.2-proof.txt
+
+      - name: Upload proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RaiseAI-v1.5.2-pr23-proof-${{ github.run_id }}
+          path: |
+            raiseai-pr23-v1.5.2-proof.txt
+            raise-pr23/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
