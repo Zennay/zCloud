@@ -53,8 +53,8 @@
       "lane_profile": "platform",
       "ai_worker_cap": 1,
       "autonomy": {
-        "mode": "ai_worker",
-        "auto_start": true
+        "mode": "external_gate",
+        "auto_start": false
       },
       "compute": {
         "class": "control-plane",
