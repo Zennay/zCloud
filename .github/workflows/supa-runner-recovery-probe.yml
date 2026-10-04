@@ -42,6 +42,35 @@ jobs:
             echo "bridge_reason=exact-head-independent-evidence"
           fi
 
+      - name: Inspect existing browser automation capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== browser binaries ==="
+          for cmd in firefox firefox-esr chromium chromium-browser google-chrome geckodriver chromedriver; do
+            if command -v "$cmd" >/dev/null 2>&1; then
+              echo "$cmd=$(command -v "$cmd")"
+              "$cmd" --version 2>/dev/null | head -n 1 || true
+            else
+              echo "$cmd=missing"
+            fi
+          done
+
+          echo "=== python browser modules ==="
+          python3 - <<'PY'
+          import importlib.util
+          for name in ("selenium", "playwright"):
+              print(f"{name}={'present' if importlib.util.find_spec(name) else 'missing'}")
+          PY
+
+          echo "=== node browser modules in control checkout ==="
+          node - <<'NODE'
+          for (const name of ['playwright','puppeteer','selenium-webdriver']) {
+            try { console.log(name + '=' + require.resolve(name)) }
+            catch { console.log(name + '=missing') }
+          }
+          NODE
+
       - name: Check out exact Supa PR 3 head
         uses: actions/checkout@v4
         with:
