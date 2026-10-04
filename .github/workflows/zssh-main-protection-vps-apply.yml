@@ -106,7 +106,7 @@ jobs:
         working-directory: zssh-source
         run: |
           set -Eeuo pipefail
-          npm ci --ignore-scripts
+          npm install --ignore-scripts --no-audit --no-fund
           node --test test/main-protection*.test.mjs
 
       - name: Apply and deep-verify canonical zSSH main protection
