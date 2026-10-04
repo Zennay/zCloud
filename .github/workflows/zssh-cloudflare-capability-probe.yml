@@ -1,0 +1,176 @@
+name: zSSH Cloudflare capability probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-cloudflare-capability-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-cloudflare-capability-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Probe persistent VPS Cloudflare auth for zSSH
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-runner-guard.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Probe persistent Cloudflare authorization without mutation
+        id: capability
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          token_present=false
+          zone_id_present=false
+          token_verified=false
+          zone_readable=false
+          wrangler_present=false
+          wrangler_authenticated=false
+          cloudflared_present=false
+
+          if bash -lc 'test -n "${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"' >/dev/null 2>&1; then
+            token_present=true
+          fi
+          if bash -lc 'test -n "${CLOUDFLARE_ZONE_ID:-}"' >/dev/null 2>&1; then
+            zone_id_present=true
+          fi
+
+          if [ "$token_present" = "true" ]; then
+            if timeout 20s bash -lc '
+              set -Eeuo pipefail
+              token="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
+              auth_cfg="$(mktemp)"
+              verify_json="$(mktemp)"
+              zone_json="$(mktemp)"
+              cleanup() { rm -f "$auth_cfg" "$verify_json" "$zone_json"; }
+              trap cleanup EXIT
+              chmod 600 "$auth_cfg"
+              printf "header = \"Authorization: Bearer %s\"\n" "$token" > "$auth_cfg"
+              curl --fail --silent --show-error --config "$auth_cfg" \
+                https://api.cloudflare.com/client/v4/user/tokens/verify > "$verify_json"
+              python3 - "$verify_json" <<"PY"
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+if payload.get("success") is not True:
+    raise SystemExit(1)
+result = payload.get("result") or {}
+if result.get("status") != "active":
+    raise SystemExit(1)
+PY
+            ' >/dev/null 2>&1; then
+              token_verified=true
+            fi
+
+            if [ "$token_verified" = "true" ] && timeout 20s bash -lc '
+              set -Eeuo pipefail
+              token="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
+              auth_cfg="$(mktemp)"
+              zone_json="$(mktemp)"
+              cleanup() { rm -f "$auth_cfg" "$zone_json"; }
+              trap cleanup EXIT
+              chmod 600 "$auth_cfg"
+              printf "header = \"Authorization: Bearer %s\"\n" "$token" > "$auth_cfg"
+              curl --fail --silent --show-error --config "$auth_cfg" \
+                "https://api.cloudflare.com/client/v4/zones?name=cheapgpt.shop&status=active" > "$zone_json"
+              python3 - "$zone_json" <<"PY"
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+if payload.get("success") is not True:
+    raise SystemExit(1)
+result = payload.get("result") or []
+if len(result) != 1 or result[0].get("name") != "cheapgpt.shop":
+    raise SystemExit(1)
+PY
+            ' >/dev/null 2>&1; then
+              zone_readable=true
+            fi
+          fi
+
+          if bash -lc 'command -v wrangler >/dev/null 2>&1'; then
+            wrangler_present=true
+            if timeout 20s bash -lc 'wrangler whoami >/dev/null 2>&1'; then
+              wrangler_authenticated=true
+            fi
+          fi
+
+          if bash -lc 'command -v cloudflared >/dev/null 2>&1'; then
+            cloudflared_present=true
+          fi
+
+          TOKEN_PRESENT="$token_present" \
+          ZONE_ID_PRESENT="$zone_id_present" \
+          TOKEN_VERIFIED="$token_verified" \
+          ZONE_READABLE="$zone_readable" \
+          WRANGLER_PRESENT="$wrangler_present" \
+          WRANGLER_AUTHENTICATED="$wrangler_authenticated" \
+          CLOUDFLARED_PRESENT="$cloudflared_present" \
+          python3 - <<'PY' | tee "$RUNNER_TEMP/zssh-cloudflare-capability.json"
+          import json
+          import os
+          import socket
+
+          def flag(name: str) -> bool:
+              return os.environ[name].lower() == "true"
+
+          result = {
+              "schema_version": 1,
+              "project": "zssh",
+              "probe": "persistent-vps-cloudflare-capability",
+              "runner_name": os.environ.get("RUNNER_NAME", ""),
+              "hostname": socket.gethostname().split(".", 1)[0],
+              "zone": "cheapgpt.shop",
+              "persistent_token_present": flag("TOKEN_PRESENT"),
+              "persistent_zone_id_present": flag("ZONE_ID_PRESENT"),
+              "token_verified": flag("TOKEN_VERIFIED"),
+              "zone_readable": flag("ZONE_READABLE"),
+              "wrangler_present": flag("WRANGLER_PRESENT"),
+              "wrangler_authenticated": flag("WRANGLER_AUTHENTICATED"),
+              "cloudflared_present": flag("CLOUDFLARED_PRESENT"),
+              "mutation_attempted": False,
+          }
+          result["persistent_provider_session_present"] = (
+              result["token_verified"] and result["zone_readable"]
+          ) or result["wrangler_authenticated"]
+          print(json.dumps(result, sort_keys=True, indent=2))
+          PY
+
+          if [ "$token_verified" = "true" ] && [ "$zone_readable" = "true" ]; then
+            echo "ZSSH_VPS_CLOUDFLARE_API_SESSION_PRESENT zone=cheapgpt.shop"
+          elif [ "$wrangler_authenticated" = "true" ]; then
+            echo "ZSSH_VPS_CLOUDFLARE_WRANGLER_SESSION_PRESENT zone=cheapgpt.shop"
+          else
+            echo "ZSSH_VPS_CLOUDFLARE_SESSION_ABSENT zone=cheapgpt.shop"
+          fi
+
+      - name: Upload non-secret capability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-cloudflare-capability-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-cloudflare-capability.json
+            ${{ runner.temp }}/zssh-cloudflare-runner-guard.json
+          if-no-files-found: error
+          retention-days: 30
