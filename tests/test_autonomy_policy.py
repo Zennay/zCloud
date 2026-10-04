@@ -90,6 +90,27 @@ class AutonomyPolicyTests(unittest.TestCase):
         }
         server.AUTONOMY_POLICY_FILE.write_text(json.dumps(payload), encoding="utf-8")
 
+    def test_missing_compatibility_file_derives_from_canonical_contracts(self):
+        self.assertTrue(server.AUTONOMY_POLICY_FILE.exists())
+        server.AUTONOMY_POLICY_FILE.unlink()
+
+        policy = server._legacy_autonomy_policy()
+        canonical = server.project_runtime.autonomy_policy()
+
+        self.assertEqual(canonical, policy)
+        self.assertIn("lightup", policy["projects"])
+        self.assertEqual("ai_worker", policy["projects"]["lightup"]["mode"])
+
+    def test_invalid_compatibility_file_fails_closed(self):
+        server.AUTONOMY_POLICY_FILE.write_text(
+            json.dumps({"schema_version": 99, "default": {}, "projects": {}}),
+            encoding="utf-8",
+        )
+        policy = server._legacy_autonomy_policy()
+        self.assertEqual("manual", policy["default"]["mode"])
+        self.assertFalse(policy["default"]["auto_start"])
+        self.assertEqual({}, policy["projects"])
+
     def test_haxlab_only_calls_ai_when_vps_requests_it(self):
         self.hax_status.write_text(json.dumps({"state": "RUNNING"}), encoding="utf-8")
         state = server.project_autonomy_state("haxlab")
