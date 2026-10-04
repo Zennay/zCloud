@@ -98,13 +98,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.6", required.group(1))
+        self.assertEqual("1.3.7", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.6";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.7";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -157,6 +157,26 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertLess(
             block.index('event: "runner-drain-deferred"'),
             block.index('"Drain kon niet veilig worden bevestigd"'),
+        )
+
+    def test_userscript_retries_drain_when_command_ack_is_transiently_unavailable(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        result_start = userscript.index("async function commandResult(commandId, resultStatus, result)")
+        result_end = userscript.index("function handoffKey()", result_start)
+        result_block = userscript[result_start:result_end]
+        self.assertIn("return true;", result_block)
+        self.assertIn("return false;", result_block)
+
+        command_start = userscript.index("async function handleCommands()")
+        command_end = userscript.index("async function tick()", command_start)
+        command_block = userscript[command_start:command_end]
+        drain_start = command_block.index('command.action === "drain"')
+        drain_block = command_block[drain_start:]
+        self.assertIn("const acknowledged = await commandResult(", drain_block)
+        self.assertIn("if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);", drain_block)
+        self.assertNotIn(
+            'await commandResult(id, "completed", "Violentmonkey worker will stop after current generation");\n        lastHandledCommandId',
+            drain_block,
         )
 
     def test_start_command_for_existing_tab_forces_initial_dispatch(self):
