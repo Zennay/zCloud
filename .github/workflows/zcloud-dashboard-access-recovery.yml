@@ -1,0 +1,74 @@
+name: zCloud dashboard access recovery
+
+on:
+  push:
+    paths:
+      - '.github/workflows/zcloud-dashboard-access-recovery.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: zcloud-dashboard-access-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Recover zCloud dashboard listener
+        shell: bash
+        run: |
+          set -euo pipefail
+          service='zennay-cloud.service'
+          public_ip='198.244.191.182'
+          port='8765'
+
+          echo '=== before ==='
+          systemctl --user is-active "$service" || true
+          systemctl --user status "$service" --no-pager -n 40 || true
+          ss -lntp | grep -E '(:8765[[:space:]])' || true
+          curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null || true
+
+          systemctl --user restart "$service"
+          for _ in $(seq 1 24); do
+            if curl -fsS --max-time 4 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null
+
+          listener="$(ss -lntp | awk '$4 ~ /:8765$/ {print $4; exit}')"
+          echo "listener_after_restart=${listener:-missing}"
+
+          if [[ "${listener:-}" == 127.0.0.1:8765 || "${listener:-}" == localhost:8765 ]]; then
+            mkdir -p "$HOME/.config/systemd/user/${service}.d"
+            cat > "$HOME/.config/systemd/user/${service}.d/20-dashboard-public-bind.conf" <<'DROPIN'
+          [Service]
+          Environment=ZENNAY_BIND=0.0.0.0
+          Environment=ZENNAY_PORT=8765
+          DROPIN
+            systemctl --user daemon-reload
+            systemctl --user restart "$service"
+            for _ in $(seq 1 24); do
+              if curl -fsS --max-time 4 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+                break
+              fi
+              sleep 2
+            done
+          fi
+
+          echo '=== after ==='
+          systemctl --user is-active "$service"
+          ss -lntp | grep -E '(:8765[[:space:]])'
+          curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null
+
+          sudo -n ufw status 2>/dev/null || true
+          sudo -n nft list ruleset 2>/dev/null | grep -C 2 -E '8765|reject|drop' || true
+
+          if curl -fsS --max-time 8 "http://${public_ip}:${port}/" >/dev/null 2>&1; then
+            echo 'ZCLOUD_DASHBOARD_PUBLIC_GREEN'
+          else
+            echo 'ZCLOUD_DASHBOARD_PUBLIC_SELFTEST_FAILED'
+            exit 22
+          fi
