@@ -805,6 +805,7 @@ jobs:
           import json
           import sys
           import time
+          import http.client
           import urllib.error
           import urllib.request
 
@@ -816,7 +817,7 @@ jobs:
                       payload = json.load(response)
                   print(f"ZCLOUD_PRODUCTION_RECEIPT_STATUS_READ attempt={attempt}")
                   break
-              except (TimeoutError, urllib.error.URLError) as exc:
+              except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected) as exc:
                   if attempt == 3:
                       raise
                   print(
