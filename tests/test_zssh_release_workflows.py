@@ -263,5 +263,25 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("ZSSH_REPO_ADMIN_TOKEN: ${{", text)
 
 
+    def test_zssh_governance_runner_priority_only_cancels_older_queued_read_only_audits(self):
+        text = (ROOT / ".github/workflows/zssh-governance-runner-priority.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("actions: write", text)
+        self.assertIn("contents: read", text)
+        self.assertIn("-f status=queued", text)
+        self.assertIn('"zSSH main protection VPS apply"', text)
+        self.assertIn('"zSSH production origin readiness (zCloud lane)"', text)
+        self.assertIn('"zSSH Caddy topology audit (zCloud lane)"', text)
+        self.assertIn('"zSSH public gateway VPS preflight (zCloud lane)"', text)
+        self.assertIn('run.get("status") == "queued"', text)
+        self.assertIn('(run.get("created_at") or "") < target_created', text)
+        self.assertIn('actions/runs/$run_id/cancel', text)
+        self.assertIn("queued-only older allowlisted zSSH read-only VPS audits", text)
+        self.assertNotIn("runs-on: [self-hosted", text)
+        self.assertNotIn("runs-on: self-hosted", text)
+        self.assertNotIn("zSSH main protection VPS apply\",\\n              \"", text)
+
+
+
 if __name__ == "__main__":
     unittest.main()
