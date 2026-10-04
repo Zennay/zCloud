@@ -1,0 +1,259 @@
+name: Supa PLUS repeat drift evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/supa-plus-repeat-drift.yml"
+
+concurrency:
+  group: supa-plus-repeat-drift-evidence
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  render-plus:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      SUPA_SHA: b4554a0adb16d89b559b0754a47bbeeef36e3816
+      PLUS_PRODUCT_URL: https://www.plus.nl/product/zuivelmeester-halfvolle-melk-pak-1000-ml-579010
+    steps:
+      - name: Verify bounded browser route
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test -x /usr/bin/firefox
+          command -v geckodriver
+          firefox --version
+          geckodriver --version > /tmp/supa-geckodriver-version.txt
+          sed -n '1p' /tmp/supa-geckodriver-version.txt
+          echo "runner=${RUNNER_NAME:-unknown}"
+          echo "supa_sha=$SUPA_SHA"
+          echo "target=$PLUS_PRODUCT_URL"
+
+      - name: Check out exact Supa PR 3 head for evidence identity
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Supa
+          ref: b4554a0adb16d89b559b0754a47bbeeef36e3816
+          path: supa-exact
+          persist-credentials: false
+
+      - name: Verify exact Supa source identity
+        shell: bash
+        working-directory: supa-exact
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "expected=$SUPA_SHA"
+          echo "actual=$actual"
+          test "$actual" = "$SUPA_SHA"
+
+      - name: Render public PLUS product page
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/plus-rendered-evidence"
+          mkdir -p "$out"
+
+          geckodriver --port 4444 --log debug >"$out/geckodriver.log" 2>&1 &
+          driver_pid=$!
+          cleanup() {
+            kill "$driver_pid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4444/status >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4444/status >"$out/webdriver-status.json"
+
+          cat >"$out/render.mjs" <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { writeFile } from 'node:fs/promises'
+
+          const base = 'http://127.0.0.1:4444'
+          const target = process.env.PLUS_PRODUCT_URL
+          const out = process.env.RENDER_OUT
+
+          async function request(path, options = {}) {
+            const response = await fetch(base + path, {
+              ...options,
+              headers: {
+                'content-type': 'application/json',
+                ...(options.headers || {}),
+              },
+            })
+            const text = await response.text()
+            let body
+            try { body = JSON.parse(text) } catch { body = { raw: text } }
+            if (!response.ok || body?.value?.error) {
+              throw new Error(`WebDriver ${path} failed: ${response.status} ${text}`)
+            }
+            return body
+          }
+
+          const created = await request('/session', {
+            method: 'POST',
+            body: JSON.stringify({
+              capabilities: {
+                alwaysMatch: {
+                  browserName: 'firefox',
+                  acceptInsecureCerts: false,
+                  'moz:firefoxOptions': {
+                    args: ['-headless'],
+                  },
+                },
+              },
+            }),
+          })
+
+          const sessionId = created.value?.sessionId
+          if (!sessionId) throw new Error('No WebDriver session id')
+
+          try {
+            await request(`/session/${sessionId}/url`, {
+              method: 'POST',
+              body: JSON.stringify({ url: target }),
+            })
+
+            const samples = []
+            let lastLength = -1
+            let stable = 0
+            for (let i = 0; i < 15; i += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 1000))
+              const state = await request(`/session/${sessionId}/execute/sync`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  script: `
+                    return {
+                      readyState: document.readyState,
+                      href: location.href,
+                      title: document.title,
+                      htmlLength: document.documentElement?.outerHTML?.length || 0,
+                      textLength: document.body?.innerText?.length || 0,
+                      textPreview: (document.body?.innerText || '').slice(0, 800)
+                    }
+                  `,
+                  args: [],
+                }),
+              })
+              samples.push({ second: i + 1, ...state.value })
+              if (state.value?.readyState === 'complete' && state.value?.htmlLength === lastLength) {
+                stable += 1
+              } else {
+                stable = 0
+              }
+              lastLength = state.value?.htmlLength ?? -1
+              if (stable >= 2 && i >= 4) break
+            }
+
+            const current = await request(`/session/${sessionId}/url`)
+            const sourceResponse = await request(`/session/${sessionId}/source`)
+            const screenshotResponse = await request(`/session/${sessionId}/screenshot`)
+
+            const html = sourceResponse.value
+            const sha256 = createHash('sha256').update(html, 'utf8').digest('hex')
+            const screenshot = Buffer.from(screenshotResponse.value, 'base64')
+            const capturedAt = new Date().toISOString()
+
+            await writeFile(`${out}/plus-product-rendered.html`, html, 'utf8')
+            await writeFile(`${out}/plus-product-rendered.png`, screenshot)
+            await writeFile(
+              `${out}/metadata.json`,
+              JSON.stringify({
+                schemaVersion: 1,
+                evidenceType: 'browser-rendered-public-page',
+                supermarket: 'plus',
+                sourceKind: 'product',
+                requestedUrl: target,
+                finalUrl: current.value,
+                capturedAt,
+                renderedHtmlSha256: sha256,
+                renderedHtmlBytes: Buffer.byteLength(html, 'utf8'),
+                screenshotBytes: screenshot.length,
+                browser: 'Firefox 157.0',
+                driver: 'geckodriver 0.37.1',
+                supaSha: process.env.SUPA_SHA,
+                safety: {
+                  login: false,
+                  privateApiCalls: false,
+                  networkInterception: false,
+                  antiBotBypass: false,
+                  targetCount: 1,
+                },
+                samples,
+              }, null, 2) + '\n',
+              'utf8',
+            )
+
+            console.log(JSON.stringify({
+              finalUrl: current.value,
+              capturedAt,
+              renderedHtmlSha256: sha256,
+              renderedHtmlBytes: Buffer.byteLength(html, 'utf8'),
+              screenshotBytes: screenshot.length,
+              lastSample: samples.at(-1),
+            }, null, 2))
+          } finally {
+            await request(`/session/${sessionId}`, { method: 'DELETE' }).catch(() => {})
+          }
+          NODE
+
+          RENDER_OUT="$out" node "$out/render.mjs"
+
+      - name: Inspect rendered evidence without guessing selectors
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/plus-rendered-evidence"
+          node - "$out/plus-product-rendered.html" "$out/render-inspection.json" <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+
+          const html = readFileSync(process.argv[2], 'utf8')
+          const text = html
+            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/\s+/g, ' ')
+            .trim()
+
+          const probes = [
+            'Zuivelmeester',
+            'Halfvolle melk',
+            '1000 ml',
+            '1 l',
+            '€',
+            'In winkelmand',
+            'Niet beschikbaar',
+          ]
+
+          const inspection = {
+            schemaVersion: 1,
+            htmlBytes: Buffer.byteLength(html, 'utf8'),
+            visibleTextLength: text.length,
+            visibleTextPreview: text.slice(0, 3000),
+            observedProbePresence: Object.fromEntries(
+              probes.map((probe) => [probe, text.toLocaleLowerCase('nl-NL').includes(probe.toLocaleLowerCase('nl-NL'))]),
+            ),
+          }
+          writeFileSync(process.argv[3], JSON.stringify(inspection, null, 2) + '\n')
+          console.log(JSON.stringify(inspection, null, 2))
+          NODE
+
+      - name: Upload rendered PLUS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supa-plus-rendered-product-repeat-evidence
+          path: plus-rendered-evidence/
+          if-no-files-found: error
+          retention-days: 14
