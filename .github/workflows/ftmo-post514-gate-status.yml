@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     env:
-      EXPECTED_MAIN: 2c161be49331bd20e7dc9a2e35d9916b81200776
+      EXPECTED_MAIN: ac2a2563283c286b66aa409280339286bc05b366
     steps:
       - name: Capture exact-main gate runs
         shell: bash
