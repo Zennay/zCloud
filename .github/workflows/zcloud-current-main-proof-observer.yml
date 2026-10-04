@@ -1,10 +1,6 @@
 name: zCloud current-main proof observer
 
 on:
-  push:
-    branches: [ops/current-main-proof-observer-20261004]
-    paths:
-      - .github/workflows/zcloud-current-main-proof-observer.yml
   pull_request:
     branches: [main]
     paths:
