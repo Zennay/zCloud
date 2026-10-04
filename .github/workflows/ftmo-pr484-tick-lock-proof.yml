@@ -147,3 +147,4 @@ jobs:
         shell: bash
         run: |
           rm -rf "$RUNNER_TEMP/ftmo-pr484-$GITHUB_RUN_ID" "$RUNNER_TEMP/ftmo-pr484-venv-$GITHUB_RUN_ID"
+# retrigger exact-head proof after runner churn
