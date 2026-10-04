@@ -49,19 +49,64 @@ jobs:
           printf 'SUPA_RUNNER_SERVICE=%s\n' "${services[@]:-}"
 
           if (( count == 0 )); then
-            echo "SUPA_RUNNER_RECOVERY=no-existing-service"
-            systemctl list-unit-files --type=service --no-legend 'actions.runner.*.service' || true
-            echo "=== EXISTING RUNNER DIRECTORIES ==="
-            find /home/ubuntu -maxdepth 2 -type d -name 'actions-runner*' -print 2>/dev/null | sort || true
-            echo "=== GH AUTH STATUS ==="
-            if command -v gh >/dev/null 2>&1; then
-              gh auth status -h github.com || true
-              echo "=== SUPA RUNNER API READ ==="
-              gh api repos/Zennay/Supa/actions/runners --jq '{total_count, runners: [.runners[] | {name,status,busy,labels:[.labels[].name]}]}' || true
-            else
-              echo "GH_CLI=missing"
+            echo "SUPA_RUNNER_RECOVERY=register-dedicated-runner"
+            command -v gh >/dev/null 2>&1
+            gh auth status -h github.com >/dev/null
+
+            api_count="$(gh api repos/Zennay/Supa/actions/runners --jq '.total_count')"
+            test "$api_count" = "0"
+
+            source_dir="/home/ubuntu/actions-runner-zcloud"
+            target_dir="/home/ubuntu/actions-runner-supa"
+            test -x "$source_dir/config.sh"
+
+            if [[ -e "$target_dir/.runner" ]]; then
+              echo "SUPA_RUNNER_REGISTER=unexpected-local-registration"
+              exit 4
             fi
-            exit 2
+
+            rm -rf "$target_dir"
+            mkdir -p "$target_dir"
+            (
+              cd "$source_dir"
+              tar \
+                --exclude='.runner' \
+                --exclude='.credentials' \
+                --exclude='.credentials_rsaparams' \
+                --exclude='.service' \
+                --exclude='_work' \
+                --exclude='_diag' \
+                -cf - .
+            ) | (
+              cd "$target_dir"
+              tar -xf -
+            )
+
+            token="$(gh api --method POST repos/Zennay/Supa/actions/runners/registration-token --jq '.token')"
+            test -n "$token"
+            (
+              cd "$target_dir"
+              ./config.sh \
+                --url https://github.com/Zennay/Supa \
+                --token "$token" \
+                --name vps-bb300bba-supa \
+                --labels supa,vps \
+                --work _work \
+                --unattended
+              sudo -n ./svc.sh install ubuntu
+              sudo -n ./svc.sh start
+            )
+            unset token
+            sleep 5
+
+            gh api repos/Zennay/Supa/actions/runners \
+              --jq '{total_count, runners: [.runners[] | {name,status,busy,labels:[.labels[].name]}]}'
+            service="$(systemctl list-unit-files --type=service --no-legend 'actions.runner.Zennay-Supa*.service' | awk '{print $1}' | head -n1)"
+            test -n "$service"
+            state="$(systemctl is-active "$service" || true)"
+            echo "SUPA_RUNNER_REGISTERED service=$service state=$state"
+            test "$state" = "active"
+            exit 0
           fi
           if (( count != 1 )); then
             echo "SUPA_RUNNER_RECOVERY=ambiguous-existing-services"
