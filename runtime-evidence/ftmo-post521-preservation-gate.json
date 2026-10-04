@@ -1,9 +1,28 @@
 {
+  "broker_order_submission_allowed": false,
   "dispatcher_run_id": 37179574026,
+  "expected_action": "provider_foundation_window_not_elapsed",
+  "final_holdout_access_allowed": false,
   "ftmo_main_sha": "4bd86264403dffcca6d699e6f82ac7a9dda0803f",
+  "generation_number": 30,
+  "live_trading_allowed": false,
+  "paid_cloud_budget_usd": "0.00",
   "project": "ftmo",
-  "schema_version": 1,
-  "scope": "post-pr521-preservation-dispatch",
-  "state_sync_run_id": 37179580736,
-  "vps_verify_run_id": 37179582403
+  "result": "success",
+  "schema_version": 2,
+  "scope": "post-pr521-preservation-proof",
+  "stage": "provider_foundation",
+  "state_sync": {
+    "conclusion": "success",
+    "head_sha": "4bd86264403dffcca6d699e6f82ac7a9dda0803f",
+    "run_id": 37179580736,
+    "url": "https://github.com/Zennay/Ftmo/actions/runs/37179580736"
+  },
+  "vps_verify": {
+    "conclusion": "success",
+    "head_sha": "4bd86264403dffcca6d699e6f82ac7a9dda0803f",
+    "run_id": 37179582403,
+    "url": "https://github.com/Zennay/Ftmo/actions/runs/37179582403"
+  },
+  "walk_forward_access_allowed": false
 }
