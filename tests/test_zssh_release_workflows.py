@@ -287,5 +287,28 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
 
 
+    def test_zssh_main_protection_attestation_is_evidence_gated_and_single_variable_scoped(self):
+        text = (ROOT / ".github/workflows/zssh-attest-main-protection.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
+        self.assertIn('repos/$repo/branches/main/protection', text)
+        self.assertIn('check.get("context") == "test"', text)
+        self.assertIn("15368", text)
+        self.assertIn('issue_state="$(gh api "repos/$repo/issues/100"', text)
+        self.assertIn("284dadd80a7e46fc9203ed5e5caa9a5709e3f24b", text)
+        self.assertIn("HTTP 422", text)
+        self.assertIn("Changes must be made through a pull request", text)
+        self.assertIn("environments/openai-production/variables", text)
+        self.assertIn("ZSSH_MAIN_PROTECTION_VERIFIED", text)
+        self.assertIn("-f value=1", text)
+        self.assertIn("ZSSH_MAIN_PROTECTION_ATTESTATION_GREEN", text)
+        self.assertNotIn("CLOUDFLARE_API_TOKEN", text)
+        self.assertNotIn("AUTH0_MANAGEMENT_API_TOKEN", text)
+        self.assertNotIn("secrets.", text)
+        self.assertNotIn("git push", text)
+
+
+
 if __name__ == "__main__":
     unittest.main()
