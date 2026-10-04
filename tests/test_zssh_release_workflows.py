@@ -447,5 +447,18 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
                         )
 
 
+    def test_zssh_release_queue_is_m5_gate_aware(self):
+        priority = (ROOT / ".github/workflows/zssh-public-plugin-priority.yml").read_text(encoding="utf-8")
+        normalizer = (ROOT / ".github/workflows/portfolio-priority-normalizer.yml").read_text(encoding="utf-8")
+        seed = (ROOT / "portfolio_queue.seed.json").read_text(encoding="utf-8")
+        for text in (priority, normalizer, seed):
+            self.assertIn("external_input_only", text)
+            self.assertIn("issue #159", text)
+            self.assertIn("exact zSSH main", text)
+        self.assertIn("do not invent zSSH repository hardening", priority)
+        self.assertIn("do not invent repository hardening", normalizer)
+        self.assertIn("Never expose provider/OAuth/reviewer secret values", normalizer)
+
+
 if __name__ == "__main__":
     unittest.main()
