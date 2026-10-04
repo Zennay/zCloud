@@ -34,6 +34,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("fetch-depth: 513", text)
         self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6", text)
         self.assertNotIn("actions/checkout@v4", text)
+        self.assertIn("ZCLOUD_RUN_STATE_DIR", text)
+        self.assertIn("Prepare stable deploy state", text)
+        self.assertNotIn("$RUNNER_TEMP/", text)
+        self.assertIn("Cleanup stable deploy state", text)
         self.assertLess(
             text.index("- name: Promote backend runtime core"),
             text.index("- name: Promote Violentmonkey worker"),
@@ -476,6 +480,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py release", text)
         self.assertIn("if: always()", text)
         self.assertIn("actions/upload-artifact@v4", text)
+        self.assertIn("Prepare stable probe state", text)
+        self.assertIn("Diagnose runner workspace isolation", text)
+        self.assertIn("zcloud-runner-topology.txt", text)
+        self.assertNotIn("$RUNNER_TEMP/", text)
+        self.assertIn("Cleanup stable probe state", text)
 
         audit = (ROOT / ".github/workflows/zcloud-state-receipt-coverage-audit.yml").read_text(encoding="utf-8")
         self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6", audit)
