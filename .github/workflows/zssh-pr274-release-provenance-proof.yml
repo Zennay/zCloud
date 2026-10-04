@@ -1,0 +1,77 @@
+name: zSSH PR274 release provenance proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-pr274-release-provenance-proof.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      ZSSH_PROOF_SHA: be7a74fcce87d31706cfa1b8b45ade614cc7127d
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          path: zcloud-control
+          persist-credentials: false
+
+      - name: Verify permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 zcloud-control/scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+
+      - name: Check out exact zSSH PR head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ env.ZSSH_PROOF_SHA }}
+          path: zssh
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact source revision
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh rev-parse HEAD)" = "$ZSSH_PROOF_SHA"
+          echo "runner=$RUNNER_NAME"
+          echo "hostname=$(hostname)"
+          echo "sha=$ZSSH_PROOF_SHA"
+          node --version
+          npm --version
+
+      - name: Install exact locked dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full zSSH test suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh
+          npm test
+
+      - name: Re-run release provenance regression set
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zssh
+          node --test             test/release-provenance-verifier.test.mjs             test/install-live-stage-provenance.test.mjs             test/release-workflow-trigger.test.mjs
+          bash -n deploy/install-live.sh
+          bash -n deploy/install-public-gateway.sh
+          bash -n deploy/install-target-agent.sh
+          node --check scripts/verify-release-provenance.mjs
+          echo "ZSSH_PR274_RELEASE_PROVENANCE_VPS_PROOF_GREEN"
