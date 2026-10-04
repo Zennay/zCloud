@@ -1,0 +1,66 @@
+name: FTMO PR512 queue hygiene
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr512-queue-hygiene.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      FTMO_MAIN: 77134b142952f590ba19f4666a616d0e0001621d
+      PR512_HEAD: ac1166a1cf6b161cd30c4db8c78c02c6a7758ee5
+      PR512_RUN: "37172454740"
+      STALE_SYNC_RUN: "37171444603"
+      STALE_PR510_RUN: "37172273849"
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+    steps:
+      - name: Cancel stale work and schedule PR512
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/pulls/512 --jq .state)" = "open"
+          test "$(gh api repos/Zennay/Ftmo/pulls/512 --jq .head.sha)" = "$PR512_HEAD"
+          for pr in 509 510 511; do
+            test "$(gh api repos/Zennay/Ftmo/pulls/$pr --jq .state)" = "closed"
+          done
+
+          for run_id in "$STALE_SYNC_RUN" "$STALE_PR510_RUN"; do
+            status="$(gh api repos/Zennay/Ftmo/actions/runs/$run_id --jq .status)"
+            echo "STALE_RUN pre run=$run_id status=$status"
+            if [[ "$status" == queued || "$status" == in_progress ]]; then
+              gh api --method POST "repos/Zennay/Ftmo/actions/runs/$run_id/cancel" >/dev/null || true
+            fi
+          done
+
+          for _ in $(seq 1 30); do
+            if ! pgrep -u ftmo-runner -f 'Runner\.Worker' >/dev/null 2>&1; then
+              sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+              sudo -n systemctl restart "$FTMO_SERVICE"
+              break
+            fi
+            sleep 2
+          done
+          test "$(systemctl is-active "$FTMO_SERVICE")" = active
+
+          started=""
+          for _ in $(seq 1 48); do
+            status="$(gh api repos/Zennay/Ftmo/actions/runs/$PR512_RUN --jq .status)"
+            echo "PR512_STATUS=$status"
+            if [[ "$status" == in_progress || "$status" == completed ]]; then
+              started=1
+              break
+            fi
+            sleep 5
+          done
+          test -n "$started"
+          echo "FTMO_PR512_QUEUE_GREEN=1"
