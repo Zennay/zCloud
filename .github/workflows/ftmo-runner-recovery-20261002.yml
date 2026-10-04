@@ -144,3 +144,5 @@ jobs:
           fi
 
 # PR500 exact-head queue recovery trigger 2026-10-04T01:12Z
+
+# PR507 exact-head queue recovery trigger 2026-10-04T02:14Z
