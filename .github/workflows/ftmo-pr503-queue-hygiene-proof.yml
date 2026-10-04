@@ -128,6 +128,19 @@ jobs:
           git commit -m "Record FTMO PR503 exact-head proof $GITHUB_RUN_ID"
           git push origin HEAD:main
 
+      - name: Require native FTMO full-suite success
+        shell: bash
+        env:
+          REQUIRED_NATIVE_RUN: "37168203152"
+        run: |
+          set -euo pipefail
+          native_status="$(gh api "repos/Zennay/Ftmo/actions/runs/$REQUIRED_NATIVE_RUN" --jq .status)"
+          native_conclusion="$(gh api "repos/Zennay/Ftmo/actions/runs/$REQUIRED_NATIVE_RUN" --jq '.conclusion // ""')"
+          native_head="$(gh api "repos/Zennay/Ftmo/actions/runs/$REQUIRED_NATIVE_RUN" --jq .head_sha)"
+          test "$native_status" = "completed"
+          test "$native_conclusion" = "success"
+          test "$native_head" = "$TARGET_SHA"
+
       - name: Merge exact green FTMO PR503
         shell: bash
         run: |
