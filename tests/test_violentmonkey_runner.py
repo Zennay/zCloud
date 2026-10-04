@@ -145,7 +145,11 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('if (rebound?.mode === "violentmonkey") return;', block)
         self.assertLess(
             block.index('if (injected?.mode === "violentmonkey") return;'),
-            block.index('commandResult(commandId, "failed"'),
+            block.index('"Drain kon niet veilig worden bevestigd"'),
+        )
+        self.assertLess(
+            block.index('if (rebound?.mode === "violentmonkey") return;'),
+            block.index('"Drain kon niet veilig worden bevestigd"'),
         )
 
     def test_start_command_for_existing_tab_forces_initial_dispatch(self):
