@@ -1,0 +1,185 @@
+name: zSSH production DNS via persistent VPS Cloudflare credentials
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-cloudflare-vps-dns-apply.yml"
+      - "tests/test_zssh_release_workflows.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-production-dns-vps-apply
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish exact zSSH production DNS from permanent VPS
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      ZSSH_PUBLIC_BASE_URL: https://zssh.cheapgpt.shop
+      ZSSH_PUBLIC_IPV4: 198.244.191.182
+    steps:
+      - name: Check out zCloud control plane
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-vps-runner.json"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Resolve exact canonical zSSH main
+        id: zssh_target
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          zssh_sha="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          [[ "$zssh_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$zssh_sha" >> "$GITHUB_OUTPUT"
+          echo "ZSSH_CANONICAL_MAIN_RESOLVED sha=$zssh_sha"
+
+      - name: Check out exact zSSH source
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zSSH
+          ref: ${{ steps.zssh_target.outputs.sha }}
+          path: zssh-source
+          persist-credentials: false
+
+      - name: Reconfirm canonical zSSH governance
+        shell: bash
+        env:
+          ZSSH_SHA: ${{ steps.zssh_target.outputs.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C zssh-source rev-parse HEAD)" = "$ZSSH_SHA"
+          live_main="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main" = "$ZSSH_SHA"
+
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+          test "$(gh api repos/Zennay/zSSH/branches/main --jq '.protected // false')" = "true"
+          test "$(gh api repos/Zennay/zSSH/issues/100 --jq '.state')" = "closed"
+          echo "ZSSH_DNS_VPS_GOVERNANCE_GREEN sha=$ZSSH_SHA"
+
+      - name: Require pre-existing Cloudflare credentials from runner process environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          token_present=false
+          zone_present=false
+          if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then token_present=true; fi
+          if [ -n "${CLOUDFLARE_ZONE_ID:-}" ]; then zone_present=true; fi
+
+          TOKEN_PRESENT="$token_present" ZONE_PRESENT="$zone_present" python3 - <<'PY' \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-vps-credential-capability.json"
+          import json
+          import os
+          result = {
+              "schema_version": 1,
+              "project": "zssh",
+              "credential_source": "runner-process-environment",
+              "cloudflare_api_token_present": os.environ["TOKEN_PRESENT"] == "true",
+              "cloudflare_zone_id_present": os.environ["ZONE_PRESENT"] == "true",
+              "credential_values_emitted": False,
+              "mutation_attempted": False,
+          }
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+          if [ "$token_present" != "true" ] || [ "$zone_present" != "true" ]; then
+            echo "ZSSH_VPS_CLOUDFLARE_CREDENTIALS_ABSENT token_present=$token_present zone_present=$zone_present" >&2
+            exit 1
+          fi
+          echo "ZSSH_VPS_CLOUDFLARE_CREDENTIALS_PRESENT"
+
+      - name: Validate exact Cloudflare DNS change without mutation
+        working-directory: zssh-source
+        shell: bash
+        env:
+          ZSSH_DNS_APPLY: "0"
+        run: |
+          set -Eeuo pipefail
+          node scripts/publish-cloudflare-dns.mjs \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-vps-dns-plan.json"
+
+      - name: Publish exact DNS-only A record
+        working-directory: zssh-source
+        shell: bash
+        env:
+          ZSSH_DNS_APPLY: "1"
+        run: |
+          set -Eeuo pipefail
+          node scripts/publish-cloudflare-dns.mjs \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-vps-dns-result.json"
+
+      - name: Re-read Cloudflare and prove desired state is idempotent
+        working-directory: zssh-source
+        shell: bash
+        env:
+          ZSSH_DNS_APPLY: "0"
+        run: |
+          set -Eeuo pipefail
+          node scripts/publish-cloudflare-dns.mjs \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-vps-dns-verify.json"
+          node --input-type=module - "$RUNNER_TEMP/zssh-cloudflare-vps-dns-verify.json" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const evidence = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (evidence.ok !== true || evidence.action !== "noop" || evidence.proxied !== false) {
+            throw new Error("Cloudflare DNS did not converge to the exact DNS-only A-record state");
+          }
+          NODE
+
+      - name: Prove external resolution and expose next live stage
+        working-directory: zssh-source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MCP_URL="${ZSSH_PUBLIC_BASE_URL%/}/mcp"
+          report="$RUNNER_TEMP/zssh-cloudflare-vps-origin-after-dns.json"
+          for attempt in 1 2 3 4 5 6; do
+            node scripts/observe-public-origin-readiness.mjs "$MCP_URL" | tee "$report"
+            stage="$(node --input-type=module - "$report" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const result = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          process.stdout.write(String(result.stage || "unknown"));
+          NODE
+            )"
+            if [ "$stage" != "dns" ]; then
+              echo "ZSSH_PRODUCTION_DNS_VPS_GREEN stage=$stage"
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "Public DNS still does not resolve after bounded convergence checks" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+          live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
+          test "$live_main_after" = "${{ steps.zssh_target.outputs.sha }}"
+
+      - name: Upload non-secret DNS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zssh-cloudflare-vps-dns-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zssh-cloudflare-vps-runner.json
+            ${{ runner.temp }}/zssh-cloudflare-vps-credential-capability.json
+            ${{ runner.temp }}/zssh-cloudflare-vps-dns-plan.json
+            ${{ runner.temp }}/zssh-cloudflare-vps-dns-result.json
+            ${{ runner.temp }}/zssh-cloudflare-vps-dns-verify.json
+            ${{ runner.temp }}/zssh-cloudflare-vps-origin-after-dns.json
+          if-no-files-found: warn
+          retention-days: 7

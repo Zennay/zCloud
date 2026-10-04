@@ -332,5 +332,30 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
 
 
 
+    def test_vps_cloudflare_dns_apply_is_exact_inherited_env_and_secret_safe(self):
+        text = (ROOT / ".github/workflows/zssh-cloudflare-vps-dns-apply.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn("repository: Zennay/zSSH", text)
+        self.assertIn("git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main", text)
+        self.assertIn("https://zssh.cheapgpt.shop", text)
+        self.assertIn("198.244.191.182", text)
+        self.assertIn("CLOUDFLARE_API_TOKEN", text)
+        self.assertIn("CLOUDFLARE_ZONE_ID", text)
+        self.assertIn("runner-process-environment", text)
+        self.assertIn("credential_values_emitted", text)
+        self.assertIn("scripts/publish-cloudflare-dns.mjs", text)
+        self.assertIn('ZSSH_DNS_APPLY: "0"', text)
+        self.assertIn('ZSSH_DNS_APPLY: "1"', text)
+        self.assertIn("scripts/observe-public-origin-readiness.mjs", text)
+        self.assertIn("ZSSH_PRODUCTION_DNS_VPS_GREEN", text)
+        self.assertNotIn("set -x", text)
+        self.assertNotIn('echo "$CLOUDFLARE_API_TOKEN"', text)
+        self.assertNotIn('echo "$CLOUDFLARE_ZONE_ID"', text)
+        self.assertNotIn("gh secret", text)
+        self.assertNotIn("cat ~/.config", text)
+
+
 if __name__ == "__main__":
     unittest.main()
