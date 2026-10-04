@@ -1,0 +1,77 @@
+name: zSSH 7f8d exact-head proof via zCloud VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-agent-7f8d-vps-proof.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zssh-agent-7f8d-proof-via-zcloud
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: 7f8d9715e79ec5714d7a100d98283b8636fbe582
+    steps:
+      - name: Verify VPS and exact zSSH head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          src="$RUNNER_TEMP/zssh-agent-7f8d-zcloud"
+          rm -rf "$src"
+          gh repo clone Zennay/zSSH "$src" -- --filter=blob:none --no-checkout >/dev/null
+          git -C "$src" checkout --detach "$TARGET_SHA" >/dev/null
+          test "$(git -C "$src" rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/zssh-agent-7f8d-zcloud"
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run exact-head transport and full tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/zssh-agent-7f8d-zcloud"
+          node --check agent-transport.mjs
+          node --check agent-runtime.mjs
+          node --check agent.mjs
+          node --test test/agent-runtime.test.mjs test/agent-client.test.mjs test/agent-transport.test.mjs
+          npm test
+          echo "ZSSH_7F8D_VPS_GREEN=1"
+
+      - name: Persist sanitized proof receipt
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/zssh-7f8d-proof.json"
+          python3 - <<'PY' > "$receipt"
+          import json, os, socket
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "zssh",
+              "proof": "outbound-agent-canonical-exact-head",
+              "target_sha": os.environ["TARGET_SHA"],
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "execution_runner": os.environ.get("RUNNER_NAME"),
+              "hostname": socket.gethostname(),
+              "tests": ["agent-runtime", "agent-client", "agent-transport", "full-npm-test"],
+              "result": "success"
+          }, sort_keys=True, indent=2))
+          PY
+          encoded="$(base64 -w0 "$receipt")"
+          gh api --method PUT             "repos/Zennay/zCloud/contents/runtime-evidence/zssh-agent-7f8d-vps-proof.json"             -f message="Record zSSH 7f8d exact-head VPS proof $GITHUB_RUN_ID"             -f content="$encoded" >/dev/null
