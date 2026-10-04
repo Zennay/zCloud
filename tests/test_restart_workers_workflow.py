@@ -8,7 +8,8 @@ WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-restart-workers.yml"
 class RestartWorkersWorkflowTests(unittest.TestCase):
     def test_restart_uses_reconciled_live_allocation(self):
         text = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn('api_call("POST", "/api/dynamic-workers", reconcile_payload)', text)
+        self.assertIn('reconcile_status, reconciled = api_call(', text)
+        self.assertIn('"/api/dynamic-workers", reconcile_payload', text)
         self.assertIn('api_call("GET", "/api/runner-targets")', text)
         self.assertIn('get("global_allocation")', text)
         self.assertNotIn(
