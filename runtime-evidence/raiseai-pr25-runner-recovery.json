@@ -1,18 +1,18 @@
 {
-  "post_pid": "",
-  "post_state": "",
-  "pre_pid": "",
-  "pre_state": "",
+  "post_pid": "523157",
+  "post_state": "active",
+  "pre_pid": "405216",
+  "pre_state": "active",
   "project": "raiseai",
-  "pull_request": 25,
-  "recovery_action": "",
+  "pull_request": 24,
+  "recovery_action": "restart-idle-or-unhealthy-listener",
   "runner_name": "zcloud-vps-1",
   "runner_service": "actions.runner.Zennay-RaiseAI.vps-bb300bba.service",
   "schema_version": 1,
-  "target_sha": "34289435dcca7840d5f6c3d43d458a75f740bc6a",
+  "target_sha": "abd2f2c5cb67135c4cfb6d6d516a060ac98b2522",
   "watch_conclusion_after_recovery": "",
-  "watch_run_id": 37236532119,
-  "watch_status_after_recovery": "",
+  "watch_run_id": 37236655065,
+  "watch_status_after_recovery": "in_progress",
   "workflow_run_attempt": 1,
-  "workflow_run_id": 37236708525
+  "workflow_run_id": 37236987979
 }
