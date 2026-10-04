@@ -33,12 +33,42 @@ jobs:
           test -n "$current_main"
           echo "ZCLOUD_STALE_DEPLOY_CURRENT_MAIN=$current_main"
 
-          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=100" --paginate --jq '.workflow_runs[] | [.id, .status, .head_sha] | @tsv' |
-          while IFS=$'\t' read -r run_id status head_sha; do
-            [[ -n "$run_id" ]] || continue
+          mapfile -t deploy_runs < <(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=100" \
+              --paginate \
+              --jq '.workflow_runs[] | [.id, .status, .head_sha] | @tsv'
+          )
 
+          current_guard_ids=()
+          for row in "${deploy_runs[@]}"; do
+            IFS=\t' read -r run_id status head_sha <<<"$row"
+            [[ -n "$run_id" ]] || continue
+            [[ "$head_sha" == "$current_main" ]] || continue
             case "$status" in
               queued|in_progress|pending|waiting|requested)
+                current_guard_ids+=("$run_id")
+                ;;
+            esac
+          done
+
+          if [[ "${#current_guard_ids[@]}" -eq 0 ]]; then
+            echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
+            exit 0
+          fi
+
+          for row in "${deploy_runs[@]}"; do
+            IFS=\t' read -r run_id status head_sha <<<"$row"
+            [[ -n "$run_id" ]] || continue
+
+            # Never interrupt an active production transaction. Cleanup is only
+            # for stale waiting work; in-progress deploys keep their safe-idle /
+            # promotion / receipt sequence intact even if main moves.
+            case "$status" in
+              queued|pending|waiting|requested)
+                ;;
+              in_progress)
+                echo "ZCLOUD_STALE_DEPLOY_KEEP_IN_PROGRESS run_id=$run_id sha=$head_sha"
+                continue
                 ;;
               *)
                 continue
@@ -50,12 +80,37 @@ jobs:
               continue
             fi
 
+            latest_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            if [[ "$latest_main" != "$current_main" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_MAIN_MOVED_ABORT expected=$current_main actual=$latest_main"
+              exit 0
+            fi
+
+            guard_active=false
+            for guard_id in "${current_guard_ids[@]}"; do
+              guard_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$guard_id" --jq .status)"
+              case "$guard_status" in
+                queued|in_progress|pending|waiting|requested)
+                  guard_active=true
+                  break
+                  ;;
+              esac
+            done
+            if [[ "$guard_active" != "true" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_CURRENT_GUARD_GONE_ABORT sha=$current_main"
+              exit 0
+            fi
+
             fresh="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id")"
             fresh_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$fresh")"
             fresh_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$fresh")"
 
             case "$fresh_status" in
-              queued|in_progress|pending|waiting|requested)
+              queued|pending|waiting|requested)
+                ;;
+              in_progress)
+                echo "ZCLOUD_STALE_DEPLOY_KEEP_IN_PROGRESS run_id=$run_id sha=$fresh_sha"
+                continue
                 ;;
               *)
                 echo "ZCLOUD_STALE_DEPLOY_ALREADY_TERMINAL run_id=$run_id status=$fresh_status"
