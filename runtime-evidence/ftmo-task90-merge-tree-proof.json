@@ -4,16 +4,16 @@
   "merge_commit": "4bd86264403dffcca6d699e6f82ac7a9dda0803f",
   "paid_cloud_enabled": false,
   "project": "ftmo",
-  "pull_request": 523,
+  "pull_request": 537,
   "research_semantics_changed": false,
   "research_stage": "provider_foundation",
-  "result": "failure",
+  "result": "success",
   "runner_host": "vps-bb300bba",
   "schema_version": 1,
   "scope": "guarded squash merge tree-equivalence integration proof",
-  "target_sha": "f981452ea7494b6fc178bc7468d58d4b7fcc6c6b",
+  "target_sha": "2337a6600a9e9493fa65add50345158eb79c4b4d",
   "task": "TASK-90",
   "tested_head": "2c04e28dbf2f1f46f894f7d29f1be0b76ca895f9",
   "workflow_run_attempt": 1,
-  "workflow_run_id": 37180030071
+  "workflow_run_id": 37183857852
 }
