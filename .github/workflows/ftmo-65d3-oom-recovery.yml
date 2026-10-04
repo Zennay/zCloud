@@ -1,0 +1,110 @@
+name: Recover FTMO runner after 65d3 OOM
+
+on:
+  push:
+    branches:
+      - ops/ftmo-65d3-oom-recovery
+    paths:
+      - ".github/workflows/ftmo-65d3-oom-recovery.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-65d3-oom-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      FTMO_MAIN: 65d3b0ed8cadcf68bd781535bc04e285b5239f7d
+      FAILED_TEST_RUN: "37182188612"
+      VERIFY_RUN: "37182188618"
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+    steps:
+      - name: Prove exact FTMO identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/Ftmo/branches/main --jq .commit.sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$FAILED_TEST_RUN --jq .head_sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$FAILED_TEST_RUN --jq .name)" = "Test suite"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$FAILED_TEST_RUN --jq .status)" = "completed"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$FAILED_TEST_RUN --jq .conclusion)" = "failure"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$VERIFY_RUN --jq .head_sha)" = "$FTMO_MAIN"
+          test "$(gh api repos/Zennay/Ftmo/actions/runs/$VERIFY_RUN --jq .name)" = "Verify autonomous VPS runtime"
+          echo "FTMO_65D3_IDENTITIES=green"
+
+      - name: Diagnose OOM and recover only idle FTMO listener
+        id: recover
+        shell: bash
+        run: |
+          set -euo pipefail
+          pre_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+          pre_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+          worker=0
+          pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1 && worker=1 || true
+
+          echo "FTMO_RUNNER_PRE state=$pre_state pid=$pre_pid worker=$worker"
+          echo "FTMO_OOM_EVIDENCE_BEGIN"
+          (sudo -n journalctl -k --since "-20 min" --no-pager 2>/dev/null || journalctl -k --since "-20 min" --no-pager 2>/dev/null || true) \
+            | grep -Eai 'out of memory|oom|killed process|memory cgroup' | tail -120 || true
+          echo "FTMO_OOM_EVIDENCE_END"
+          echo "FTMO_SERVICE_JOURNAL_BEGIN"
+          journalctl -u "$FTMO_SERVICE" --since "-20 min" --no-pager 2>/dev/null \
+            | grep -Eai 'runner|worker|listener|shutdown|signal|oom|kill|stop|start' | tail -120 || true
+          echo "FTMO_SERVICE_JOURNAL_END"
+
+          if [[ "$worker" -eq 1 ]]; then
+            action=preserve-active-worker
+          else
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-idle-or-failed-listener
+          fi
+
+          post_state=""
+          post_pid=""
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+            post_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+            if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+              if [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$post_state" = "active"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          test -r "/proc/$post_pid/cmdline"
+          cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+          [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]]
+          echo "FTMO_RUNNER_RECOVERY_ACTION=$action"
+          echo "FTMO_RUNNER_POST state=$post_state pid=$post_pid cmd=$cmd"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+
+      - name: Prove protected current-main verify schedules
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 36); do
+            status="$(gh api repos/Zennay/Ftmo/actions/runs/$VERIFY_RUN --jq .status)"
+            conclusion="$(gh api repos/Zennay/Ftmo/actions/runs/$VERIFY_RUN --jq '.conclusion // ""')"
+            echo "FTMO_VERIFY_RUN status=$status conclusion=$conclusion"
+            case "$status" in
+              in_progress|completed)
+                echo "FTMO_65D3_VERIFY_SCHEDULING=green"
+                exit 0
+                ;;
+            esac
+            sleep 5
+          done
+          echo "protected verify remained queued" >&2
+          exit 1
