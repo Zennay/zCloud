@@ -369,14 +369,33 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "project_runtime.py",
             "project-contracts.json",
             "lane_generator.py",
+            "vps-execution-policy.json",
             "scripts/zcloud_recovery.py",
         ):
             self.assertIn(f"--path {path}", core)
             self.assertNotIn(f"--path {path}", policy)
-        for path in ("autonomy-policy.json", "vps-execution-policy.json", "portfolio_queue.seed.json"):
+        for path in ("autonomy-policy.json", "portfolio_queue.seed.json"):
             self.assertIn(f"--path {path}", policy)
             self.assertNotIn(f"--path {path}", core)
+        self.assertIn("--path vps-execution-policy.json", core)
+        self.assertNotIn("--path vps-execution-policy.json", policy)
         self.assertNotIn("high_blast_radius_promotion", core + policy)
+
+    def test_server_boot_policy_is_promoted_before_backend_restart(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        core = text[
+            text.index("- name: Promote backend runtime core"):
+            text.index("- name: Promote autonomy policies and queue seed")
+        ]
+        policy = text[
+            text.index("- name: Promote autonomy policies and queue seed"):
+            text.index("- name: Promote Violentmonkey worker")
+        ]
+        self.assertIn("--path server.py", core)
+        self.assertIn("--path vps-execution-policy.json", core)
+        self.assertNotIn("--path vps-execution-policy.json", policy)
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertIn("VPS_EXECUTION_POLICY = _load_vps_execution_policy()", server)
 
     def test_successful_deploy_records_and_verifies_live_state_receipt(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
