@@ -1,5 +1,5 @@
 name: Push all zCloud workers now
-# retrigger all workers on user request 2026-10-04T14:20Z
+# retrigger all workers on user request 2026-10-04T14:20Z-force-all-current
 
 on:
   schedule:
