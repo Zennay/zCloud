@@ -13,9 +13,20 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("github.run_attempt == 1", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("cancel-in-progress: false", text)
-        deploy_block = text[text.index("jobs:\n  deploy:"):text.index("    steps:")]
-        self.assertIn("    concurrency:\n      group: zcloud-production-deploy", deploy_block)
-        self.assertNotIn("\nconcurrency:\n  group: zcloud-production-deploy", text)
+        self.assertIn("\nconcurrency:\n  group: zcloud-production-deploy", text)
+        preflight = text[
+            text.index("jobs:\n  preflight:"):
+            text.index("\n  deploy:", text.index("jobs:\n  preflight:"))
+        ]
+        self.assertIn("runs-on: ubuntu-latest", preflight)
+        self.assertIn("Skip current main when production is already green", preflight)
+        self.assertIn("/commits/main/status", preflight)
+        self.assertIn('"context") or "") == "zcloud/vps-production"', preflight)
+        self.assertIn('latest.get("state") or "") == "success"', preflight)
+        deploy_block = text[text.index("\n  deploy:"):text.index("    steps:", text.index("\n  deploy:"))]
+        self.assertIn("needs: preflight", deploy_block)
+        self.assertIn("needs.preflight.outputs.deploy == 'true'", deploy_block)
+        self.assertNotIn("    concurrency:\n      group: zcloud-production-deploy", deploy_block)
         self.assertIn("Resolve latest green main revision", text)
         self.assertIn("actions: read", text)
         self.assertIn("ref: main", text)
