@@ -2,97 +2,98 @@ name: Recover pending zCloud workers
 
 on:
   push:
-    branches: [main]
+    branches:
+      - ops/recover-zcloud-vps-listener-20261004-1922
     paths:
       - .github/workflows/recover-pending-workers.yml
-  workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   recover:
     runs-on: self-hosted
-    timeout-minutes: 6
+    timeout-minutes: 5
     steps:
-      - name: Inspect allocation and recover inactive workers
+      - name: Recover exact queued zCloud VPS listener
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_RUN_ID: "37227941584"
+          EXPECTED_HOST: "vps-bb300bba"
+          RUNNER_NAME_FRAGMENT: "zcloud-vps-1"
+          ZCLOUD_RUNNER_USER: "ubuntu"
+          ZCLOUD_RUNNER_ROOT: "/home/ubuntu/actions-runner-zcloud"
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json,time,urllib.request
-          BASE="http://127.0.0.1:8765"
+          [[ "$(hostname)" == "$EXPECTED_HOST" ]] || { echo "RECOVERY_REFUSED wrong_host=$(hostname)"; exit 0; }
 
-          def call(method,path,payload=None,retries=8):
-              last=None
-              for attempt in range(retries):
-                  try:
-                      body=None
-                      headers={"User-Agent":"zcloud-recover-pending-workers/1"}
-                      if payload is not None:
-                          body=json.dumps(payload).encode()
-                          headers["Content-Type"]="application/json"
-                      req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
-                      with urllib.request.urlopen(req,timeout=15) as r:
-                          return json.load(r)
-                  except Exception as exc:
-                      last=exc
-                      time.sleep(min(2+attempt,8))
-              raise RuntimeError(f"{method} {path} unavailable: {last}")
-
-          targets=call("GET","/api/runner-targets")
-          allocation=(targets.get("global_allocation") or {}).get("workers") or []
-          print("TARGETS_BEFORE",json.dumps({
-              "dynamic_workers":targets.get("dynamic_workers"),
-              "allocation":allocation,
-              "projects":targets.get("projects"),
-          },sort_keys=True))
-
-          if not allocation:
-              raise SystemExit("no allocated workers")
-
-          recovered=[]
-          for item in allocation:
-              key=str(item.get("worker_key") or "").strip()
-              if not key:
-                  base=str(item.get("project_id") or "").strip()
-                  key=f"{base}::w{int(item.get('worker_slot') or 1)}"
-              project=(targets.get("projects") or {}).get(key) or {}
-              if bool(project.get("active")):
-                  continue
-              start=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
-              time.sleep(2)
-              fresh=call("GET","/api/runner-targets")
-              project=(fresh.get("projects") or {}).get(key) or {}
-              if not bool(project.get("active")):
-                  newchat=call("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
-                  recovered.append({"worker":key,"start":start,"new_chat":newchat})
-              else:
-                  recovered.append({"worker":key,"start":start,"new_chat":None})
-          print("RECOVERY_COMMANDS",json.dumps(recovered,sort_keys=True))
-
-          final=None
-          for _ in range(18):
-              time.sleep(5)
-              final=call("GET","/api/runner-targets")
-              projects=final.get("projects") or {}
-              active=[]
-              for item in allocation:
-                  key=str(item.get("worker_key") or "").strip()
-                  if not key:
-                      base=str(item.get("project_id") or "").strip()
-                      key=f"{base}::w{int(item.get('worker_slot') or 1)}"
-                  if bool((projects.get(key) or {}).get("active")):
-                      active.append(key)
-              print("ACTIVE_CHECK",json.dumps({"active":active,"needed":len(allocation)},sort_keys=True))
-              if len(active)==len(allocation):
-                  print("WORKERS_ACTIVE",json.dumps({
-                      "workers":active,
-                      "allocation":final.get("global_allocation"),
-                      "dynamic_workers":final.get("dynamic_workers"),
-                  },sort_keys=True))
-                  raise SystemExit(0)
-
-          print("TARGETS_FINAL",json.dumps(final,sort_keys=True))
-          raise SystemExit("not all allocated workers became active")
+          target_status() {
+            python3 - <<'PY'
+          import json, os, urllib.request
+          req=urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['TARGET_RUN_ID']}",
+              headers={
+                  "Authorization":f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept":"application/vnd.github+json",
+                  "X-GitHub-Api-Version":"2022-11-28",
+                  "User-Agent":"zcloud-listener-recovery",
+              },
+          )
+          with urllib.request.urlopen(req,timeout=15) as response:
+              print(json.load(response).get("status") or "")
           PY
+          }
+
+          status="$(target_status)"
+          [[ "$status" == "queued" ]] || { echo "RECOVERY_NOT_NEEDED run=$TARGET_RUN_ID status=$status"; exit 0; }
+
+          mapfile -t units < <(
+            systemctl list-unit-files --type=service --no-legend 'actions.runner.*' 2>/dev/null |
+              awk '{print $1}' |
+              grep -F "$RUNNER_NAME_FRAGMENT" || true
+          )
+          [[ "${#units[@]}" -eq 1 ]] || { echo "RECOVERY_REFUSED unit_matches=${#units[@]}"; exit 1; }
+          service="${units[0]}"
+
+          worker_active() {
+            pgrep -u "$ZCLOUD_RUNNER_USER" -f "$ZCLOUD_RUNNER_ROOT/.*/Runner\\.Worker|$ZCLOUD_RUNNER_ROOT/bin/Runner\\.Worker" >/dev/null
+          }
+
+          pre_state="$(systemctl is-active "$service" 2>/dev/null || true)"
+          pre_pid="$(systemctl show "$service" -p MainPID --value 2>/dev/null || true)"
+          echo "ZCLOUD_RUNNER_PRE service=$service state=$pre_state pid=${pre_pid:-0}"
+
+          if worker_active; then
+            echo "RECOVERY_PRESERVE_ACTIVE_WORKER service=$service"
+            exit 0
+          fi
+          sleep 5
+          if worker_active; then
+            echo "RECOVERY_PRESERVE_WORKER_APPEARED service=$service"
+            exit 0
+          fi
+          status="$(target_status)"
+          [[ "$status" == "queued" ]] || { echo "RECOVERY_ABORTED_RUN_MOVED run=$TARGET_RUN_ID status=$status"; exit 0; }
+
+          if [[ "$pre_state" == "active" ]]; then
+            sudo -n systemctl restart "$service"
+            action="restart-stale-idle-listener"
+          else
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl start "$service"
+            action="start-inactive-listener"
+          fi
+
+          for _ in $(seq 1 15); do
+            if systemctl is-active --quiet "$service"; then
+              post_pid="$(systemctl show "$service" -p MainPID --value)"
+              echo "ZCLOUD_RUNNER_RECOVERY_GREEN action=$action service=$service pid=$post_pid"
+              exit 0
+            fi
+            sleep 1
+          done
+          systemctl --no-pager --full status "$service" || true
+          echo "ZCLOUD_RUNNER_RECOVERY_FAILED action=$action service=$service"
+          exit 1
