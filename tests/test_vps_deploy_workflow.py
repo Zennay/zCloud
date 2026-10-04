@@ -458,6 +458,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/zcloud-live-debug.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertNotIn("runs-on: self-hosted\n", text)
+        self.assertNotIn("uses: actions/checkout@", text)
+        self.assertIn("Manual checkout diagnostic candidate", text)
+        self.assertIn("ZCLOUD_MANUAL_CHECKOUT_GREEN", text)
 
     def test_execution_probe_uploads_sanitized_prechange_evidence(self):
         text = (ROOT / ".github/workflows/zcloud-vps-execution-probe.yml").read_text(encoding="utf-8")
@@ -475,6 +478,10 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_deploylane_coordination.py release", text)
         self.assertIn("if: always()", text)
         self.assertIn("actions/upload-artifact@v4", text)
+        self.assertNotIn("uses: actions/checkout@", text)
+        self.assertIn("Manual checkout the zCloud control plane", text)
+        self.assertIn('git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune --depth=513 origin "$TARGET_SHA"', text)
+        self.assertIn("ZCLOUD_MANUAL_CHECKOUT_GREEN", text)
 
         coordination = (ROOT / "scripts/zcloud_vps_deploylane_coordination.py").read_text(encoding="utf-8")
         self.assertIn('PROJECT = "cloud"', coordination)
