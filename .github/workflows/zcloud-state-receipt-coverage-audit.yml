@@ -1,4 +1,5 @@
 name: zCloud live state-receipt coverage audit
+# audit carrier: exact deployed main 5d44680836e7ccf4bef1bc109e0cbeab21e9b72a at 2026-10-04T23:04Z
 
 on:
   pull_request:
