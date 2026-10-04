@@ -1,0 +1,102 @@
+name: Recover zCloud Actions runner temp state
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-runner-temp-recovery-20261004.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-runner-temp-recovery-20261004.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runner-temp-recovery-20261004
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: github.actor == 'Zennay'
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    steps:
+      - name: Recover zCloud runner temp state from independent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+          temp_root="$runner_root/_work/_temp"
+          recovery_root="/home/ubuntu/.local/state/zcloud/runner-temp-recovery"
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+
+          state="$(systemctl is-active "$service" || true)"
+          pid="$(systemctl show "$service" -p MainPID --value || true)"
+          cgroup="$(systemctl show "$service" -p ControlGroup --value || true)"
+          echo "ZCLOUD_RUNNER_PRE state=$state pid=$pid cgroup=$cgroup"
+
+          worker_active=0
+          for proc in /proc/[0-9]*; do
+            test -r "$proc/cgroup" || continue
+            test -r "$proc/cmdline" || continue
+            if [[ -n "$cgroup" && "$cgroup" != "/" ]] && grep -Fq "$cgroup" "$proc/cgroup"; then
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              if [[ "$cmdline" == *"Runner.Worker"* ]]; then
+                worker_active=1
+                echo "ZCLOUD_RUNNER_ACTIVE_WORKER pid=${proc##*/}"
+                break
+              fi
+            fi
+          done
+
+          if [[ "$worker_active" -eq 1 ]]; then
+            echo "Refusing recovery while a zCloud Runner.Worker is active" >&2
+            exit 75
+          fi
+
+          sudo -n mkdir -p "$recovery_root"
+          sudo -n chown ubuntu:ubuntu "$recovery_root"
+
+          if [[ -d "$temp_root" ]]; then
+            echo "ZCLOUD_TEMP_PRE"
+            sudo -n find "$temp_root" -maxdepth 2 -printf '%M %u:%g %p\n' 2>/dev/null | head -120 || true
+            backup="$recovery_root/temp.$stamp"
+            sudo -n mv "$temp_root" "$backup"
+            echo "ZCLOUD_TEMP_BACKUP=$backup"
+          fi
+
+          sudo -n install -d -o ubuntu -g ubuntu -m 0755 "$temp_root"
+          sudo -n systemctl reset-failed "$service" || true
+          sudo -n systemctl restart "$service"
+
+          post_state=""
+          post_pid=""
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$service" || true)"
+            post_pid="$(systemctl show "$service" -p MainPID --value || true)"
+            if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+              if [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+
+          test "$post_state" = "active"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          test "$(stat -c '%U:%G' "$temp_root")" = "ubuntu:ubuntu"
+
+          sentinel="$temp_root/.zcloud-recovery-sentinel-$stamp"
+          sudo -n -u ubuntu touch "$sentinel"
+          sleep 10
+          test -f "$sentinel"
+          rm -f "$sentinel"
+
+          echo "ZCLOUD_RUNNER_RECOVERY_GREEN service=$service state=$post_state pid=$post_pid temp_owner=$(stat -c '%U:%G' "$temp_root")"
