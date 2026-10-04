@@ -1,0 +1,141 @@
+name: FTMO PR505 full exact-head research-state proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-pr505-research-sync-full-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-pr505-research-sync-full-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 35
+    env:
+      TARGET_SHA: 2b169258b5cab8e7e967b6a4a27d8600c0a33ff0
+      TARGET_PR: "505"
+      EXPECTED_MAIN_SHA: b2fbd35cf970813d9428da4aa9668070778654fd
+      FTMO_AUTONOMOUS_CLOUD_BUDGET_USD: "0.00"
+      FTMO_ALLOW_PAID_AWS: ""
+    steps:
+      - name: Verify exact FTMO identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)" = "open"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)" = "$TARGET_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)" = "$EXPECTED_MAIN_SHA"
+
+      - name: Checkout exact FTMO PR505 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ftmo-pr505-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Ftmo.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$TARGET_SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Install exact-head test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ftmo-pr505-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          venv="$RUNNER_TEMP/ftmo-pr505-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          rm -rf "$venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install -q -r "$work/requirements-ci.txt"
+          "$venv/bin/python" -m pip install -q -e "$work"
+          echo "FTMO_WORK=$work" >> "$GITHUB_ENV"
+          echo "FTMO_VENV=$venv" >> "$GITHUB_ENV"
+
+      - name: Build exact memory-bounded full-suite plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$FTMO_WORK"
+          mkdir -p .scratch
+          "$FTMO_VENV/bin/python" - <<'PY'
+          from pathlib import Path
+          import contextlib
+          import io
+          import pytest
+
+          class Collector:
+              paths = None
+              count = None
+
+              def pytest_collection_finish(self, session):
+                  self.count = len(session.items)
+                  self.paths = sorted(
+                      {
+                          Path(str(item.path)).resolve().relative_to(Path.cwd().resolve()).as_posix()
+                          for item in session.items
+                      }
+                  )
+
+          collector = Collector()
+          captured = io.StringIO()
+          with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+              exit_code = pytest.main(["--collect-only", "-q"], plugins=[collector])
+          if exit_code != pytest.ExitCode.OK or collector.paths is None or collector.count is None:
+              raise SystemExit("pytest collection failed: " + captured.getvalue()[-2000:])
+          if not collector.paths or collector.count <= 0:
+              raise SystemExit("pytest collected no tests")
+          Path(".scratch/ci-test-files.txt").write_text(
+              "\n".join(collector.paths) + "\n", encoding="utf-8"
+          )
+          Path(".scratch/ci-test-count.txt").write_text(
+              str(collector.count) + "\n", encoding="utf-8"
+          )
+          print(f"collected_tests={collector.count}")
+          print(f"test_files={len(collector.paths)}")
+          PY
+
+      - name: Run full unit suite in memory-bounded file batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$FTMO_WORK"
+          expected_count="$(cat .scratch/ci-test-count.txt)"
+          executed_files=0
+          while IFS= read -r test_file; do
+            [[ -n "$test_file" ]] || continue
+            echo "::group::$test_file"
+            "$FTMO_VENV/bin/python" -m pytest -q "$test_file"
+            echo "::endgroup::"
+            executed_files=$((executed_files + 1))
+          done < .scratch/ci-test-files.txt
+          test "$executed_files" -gt 0
+          echo "planned_collected_tests=$expected_count"
+          echo "executed_test_files=$executed_files"
+
+      - name: Revalidate exact identities and sealed boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/Zennay/Ftmo/commits/main --jq .sha)" = "$EXPECTED_MAIN_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .state)" = "open"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .head.sha)" = "$TARGET_SHA"
+          test "$(gh api "repos/Zennay/Ftmo/pulls/$TARGET_PR" --jq .base.sha)" = "$EXPECTED_MAIN_SHA"
+          test "$FTMO_AUTONOMOUS_CLOUD_BUDGET_USD" = "0.00"
+          test -z "${FTMO_ALLOW_PAID_AWS:-}"
+          echo "FTMO_PR505_FULL_EXACT_HEAD_PROOF=success"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/ftmo-pr505-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+                 "$RUNNER_TEMP/ftmo-pr505-venv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
