@@ -62,6 +62,9 @@ jobs:
 
           BASE = "http://127.0.0.1:8765"
 
+          class AllocationChurn(Exception):
+              pass
+
           def call(method, path, payload=None):
               body = None
               headers = {"User-Agent": "zcloud-dynamic-worker-pool-activation/1"}
@@ -85,6 +88,18 @@ jobs:
                       if method == "GET" and exc.code == 503 and attempt + 1 < attempts:
                           time.sleep(2)
                           continue
+                      # A queue-owned worker can disappear from runner_worker_targets
+                      # between an allocation poll and the control POST. The server
+                      # reports that scheduler race as the generic 400 below. Let the
+                      # caller re-read allocation instead of turning churn into a
+                      # false terminal activation failure.
+                      if (
+                          method == "POST"
+                          and path == "/api/runner-control"
+                          and exc.code == 400
+                          and "Ongeldige runneractie" in detail
+                      ):
+                          raise AllocationChurn(detail[:1000]) from exc
                       raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
                   except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as exc:
                       if attempt + 1 >= attempts:
@@ -192,10 +207,17 @@ jobs:
               for key in current_keys:
                   if key in command_ids:
                       continue
-                  result = call("POST", "/api/runner-control", {
-                      "project_id": key,
-                      "action": "start",
-                  })
+                  try:
+                      result = call("POST", "/api/runner-control", {
+                          "project_id": key,
+                          "action": "start",
+                      })
+                  except AllocationChurn as exc:
+                      print(
+                          f"WORKER_ALLOCATION_CHURN action=start key={key} detail={exc}",
+                          flush=True,
+                      )
+                      continue
                   if not result.get("ok"):
                       raise SystemExit(f"worker start was not accepted for {key}: {result}")
                   command_id = int(result.get("command_id") or 0)
@@ -219,6 +241,15 @@ jobs:
                   live = {}
                   break
               start_keys(current_keys)
+              unstarted = [key for key in current_keys if key not in command_ids]
+              if unstarted:
+                  print(
+                      "WORKER_ALLOCATION_RESYNC pending_start="
+                      + json.dumps(unstarted, sort_keys=True),
+                      flush=True,
+                  )
+                  live = {key: None for key in current_keys}
+                  continue
               status = call("GET", "/api/runner-live")
               live = {
                   key: dispatched_worker(status, key, command_ids[key])
@@ -229,11 +260,30 @@ jobs:
 
           missing = [key for key in current_keys if not live.get(key)]
           if missing:
+              # Re-read the scheduler immediately before recovery. Never recover
+              # a worker that was removed from the live allocation after the last
+              # heartbeat poll.
+              recovery_targets = call("GET", "/api/runner-targets")
+              current_limit, _, current_keys = allocation_state(recovery_targets)
+              start_keys(current_keys)
+              missing = [key for key in current_keys if not live.get(key)]
               for key in missing:
-                  recovered = call("POST", "/api/runner-control", {
-                      "project_id": key,
-                      "action": "new_chat",
-                  })
+                  if key not in command_ids:
+                      continue
+                  try:
+                      recovered = call("POST", "/api/runner-control", {
+                          "project_id": key,
+                          "action": "new_chat",
+                      })
+                  except AllocationChurn as exc:
+                      print(
+                          f"WORKER_ALLOCATION_CHURN action=new_chat key={key} detail={exc}",
+                          flush=True,
+                      )
+                      # Force a fresh start admission if this key remains allocated
+                      # on the next poll; otherwise it naturally disappears.
+                      command_ids.pop(key, None)
+                      continue
                   if not recovered.get("ok"):
                       raise SystemExit(f"worker fresh-chat recovery was not accepted for {key}: {recovered}")
                   command_ids[key] = int(recovered.get("command_id") or 0)
@@ -247,6 +297,15 @@ jobs:
                       live = {}
                       break
                   start_keys(current_keys)
+                  unstarted = [key for key in current_keys if key not in command_ids]
+                  if unstarted:
+                      print(
+                          "WORKER_ALLOCATION_RESYNC pending_start="
+                          + json.dumps(unstarted, sort_keys=True),
+                          flush=True,
+                      )
+                      live = {key: None for key in current_keys}
+                      continue
                   status = call("GET", "/api/runner-live")
                   live = {
                       key: dispatched_worker(status, key, command_ids[key])
