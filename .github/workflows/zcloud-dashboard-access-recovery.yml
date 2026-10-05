@@ -84,7 +84,6 @@ jobs:
 
   external_verify:
     name: Verify dashboard from external runner
-    needs: recover
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
