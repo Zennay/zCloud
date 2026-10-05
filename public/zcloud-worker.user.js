@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.9
+// @version      1.3.10
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.9";
+  const SCRIPT_VERSION = "1.3.10";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -64,6 +64,7 @@
   let lastPromptSentAt = 0;
   let lastHandledCommandId = 0;
   let initialDispatchKey = "";
+  const bridgedInitialDispatchProjects = new Set();
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
   let lastThinkingDiagnostic = "";
@@ -321,6 +322,22 @@
       prompt.includes("Kijk in Notion in welke fase het project zit");
   }
 
+  function captureBridgedInitialDispatch() {
+    const root = document.documentElement;
+    if (!root) return;
+    const force = root.getAttribute("data-zcloud-force-initial-dispatch") === "true";
+    if (!force) return;
+    let projectId = String(root.getAttribute("data-zcloud-worker-id") || "").trim();
+    try {
+      const raw = root.getAttribute("data-zcloud-worker-config") || "";
+      const config = raw ? JSON.parse(raw) : null;
+      if (config?.project_id) projectId = String(config.project_id).trim();
+    } catch (_) {}
+    if (projectId) bridgedInitialDispatchProjects.add(projectId);
+  }
+
+  window.addEventListener("zcloud-worker-config", captureBridgedInitialDispatch);
+
   async function refreshTarget() {
     let payload;
     try { payload = await gmRequest("/runner-targets"); }
@@ -384,7 +401,12 @@
 
     clearNavigationMarkers();
     const previousConversation = target?.conversation_id || "";
-    target = {...target, ...next};
+    const bridgedForceInitialDispatch = bridgedInitialDispatchProjects.has(next.project_id);
+    target = {
+      ...target,
+      ...next,
+      force_initial_dispatch: bridgedForceInitialDispatch || target?.force_initial_dispatch === true
+    };
     draining = target.desired_state === "draining";
     renewClaim(target);
 
@@ -404,7 +426,12 @@
       // Fresh ChatGPT tabs can expose the worker binding before their composer is
       // ready; a failed first attempt must remain retryable on the next refresh.
       const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");
-      if (initialDispatchSent) initialDispatchKey = key;
+      if (initialDispatchSent) {
+        initialDispatchKey = key;
+        bridgedInitialDispatchProjects.delete(target.project_id);
+        target.force_initial_dispatch = false;
+        document.documentElement?.setAttribute("data-zcloud-force-initial-dispatch", "false");
+      }
     }
   }
 
@@ -1186,6 +1213,7 @@
 
   async function start() {
     document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready", SCRIPT_VERSION);
+    captureBridgedInitialDispatch();
     document.documentElement?.setAttribute("data-zcloud-provider", provider());
     window.dispatchEvent(new Event("zcloud-violentmonkey-ready"));
     await refreshTarget();
