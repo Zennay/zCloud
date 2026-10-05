@@ -98,13 +98,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.7", required.group(1))
+        self.assertEqual("1.3.8", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.7";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.8";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -225,6 +225,21 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("await inject(current, target)", block)
         self.assertIn("initial dispatch geforceerd", block)
         self.assertNotIn('"Project draait al"', block)
+
+    def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        self.assertIn("// @version      1.3.8", userscript)
+        self.assertIn('const SCRIPT_VERSION = "1.3.8";', userscript)
+        self.assertIn(
+            'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
+            userscript,
+        )
+        self.assertIn("if (initialDispatchSent) initialDispatchKey = key;", userscript)
+        self.assertNotIn(
+            'initialDispatchKey = key;\n      await sendPrompt("violentmonkey-initial-dispatch");',
+            userscript,
+        )
 
     def test_activation_requires_real_dispatch_evidence(self):
         workflow = (ROOT / ".github" / "workflows" / "zcloud-one-worker-testing-activation.yml").read_text(encoding="utf-8")
