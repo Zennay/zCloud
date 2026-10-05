@@ -238,6 +238,14 @@ assert.ok(
   configUpdateBlock.includes('draining = next.desired_state === "draining"'),
   "config refresh must apply backend draining state so deploy safe-idle can be acknowledged"
 );
+const legacyDrainStart = runBlock.indexOf('if (message.type === "runner-drain")');
+const legacyDrainEnd = runBlock.indexOf('if (message.type === "runner-stop")', legacyDrainStart);
+assert.ok(legacyDrainStart >= 0 && legacyDrainEnd > legacyDrainStart, "legacy runner drain handler missing");
+const legacyDrainBlock = runBlock.slice(legacyDrainStart, legacyDrainEnd);
+assert.ok(
+  legacyDrainBlock.includes('return Promise.resolve({ok: true, reason: "draining"});'),
+  "legacy runner drain must return a Promise so tabs.sendMessage receives the positive drain acknowledgement"
+);
 
 const userscript = fs.readFileSync(
   path.join(root, "public", "zcloud-worker.user.js"),
