@@ -3102,7 +3102,50 @@ def _autonomy_deactivate_project(project_id,reason):
         c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
     return True
 
+def _reconcile_stale_runner_commands_locked(
+    connection,
+    *,
+    at=None,
+    result='scheduler superseded stale pending command',
+):
+    pending_rows=connection.execute(
+        "SELECT id,created_at FROM runner_commands "
+        "WHERE status='pending' ORDER BY id"
+    ).fetchall()
+    stale_ids=[]
+    observed_at=at or datetime.now(timezone.utc)
+    for pending in pending_rows:
+        try:
+            created=datetime.fromisoformat(
+                str(pending['created_at']).replace('Z','+00:00')
+            ).astimezone(timezone.utc)
+            age=(observed_at-created).total_seconds()
+        except Exception:
+            age=RUNNER_COMMAND_STALE_SECONDS
+        if age >= RUNNER_COMMAND_STALE_SECONDS:
+            stale_ids.append(int(pending['id']))
+    if stale_ids:
+        placeholders=','.join('?' for _ in stale_ids)
+        connection.execute(
+            f"UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+            f"WHERE id IN ({placeholders}) AND status='pending'",
+            (now(),str(result)[:500],*stale_ids),
+        )
+    return stale_ids
+
+def reconcile_stale_runner_commands():
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        return _reconcile_stale_runner_commands_locked(c)
+
 def autonomy_scheduler_tick():
+    stale_commands=reconcile_stale_runner_commands()
+    if stale_commands:
+        logging.warning(
+            'Autonomy scheduler superseded %s stale runner command(s): %s',
+            len(stale_commands),
+            ','.join(str(command_id) for command_id in stale_commands),
+        )
     portfolio_queue_audit()
     portfolio_queue_allocate()
     states=autonomy_states()
@@ -3808,35 +3851,14 @@ class Handler(BaseHTTPRequestHandler):
                         )
                     elif not is_worker and action=='pause':
                         c.execute('DELETE FROM runtime_settings WHERE key=?',(_manual_start_priority_key(base_project_id),))
-                    # Health already treats pending browser commands older than the
-                    # canonical threshold as invalid. Reconcile that same global
-                    # stale set before admission so an abandoned command from any
-                    # project cannot poison health or absorb a fresh Start/Push.
-                    pending_rows=c.execute(
-                        "SELECT id,created_at FROM runner_commands "
-                        "WHERE status='pending' ORDER BY id"
-                    ).fetchall()
-                    stale_ids=[]
-                    admitted_at=datetime.now(timezone.utc)
-                    for pending in pending_rows:
-                        try:
-                            created=datetime.fromisoformat(str(pending['created_at']).replace('Z','+00:00')).astimezone(timezone.utc)
-                            age=(admitted_at-created).total_seconds()
-                        except Exception:
-                            age=RUNNER_COMMAND_STALE_SECONDS
-                        if age >= RUNNER_COMMAND_STALE_SECONDS:
-                            stale_ids.append(int(pending['id']))
-                    if stale_ids:
-                        placeholders=','.join('?' for _ in stale_ids)
-                        c.execute(
-                            f"UPDATE runner_commands SET status='failed',updated_at=?,result=? "
-                            f"WHERE id IN ({placeholders}) AND status='pending'",
-                            (
-                                now(),
-                                'runner-control superseded stale pending command before dedupe',
-                                *stale_ids,
-                            ),
-                        )
+                    # Health treats pending browser commands older than the
+                    # canonical threshold as invalid. Keep admission fail-safe too,
+                    # even though the scheduler now reconciles the same global set
+                    # continuously in the background.
+                    _reconcile_stale_runner_commands_locked(
+                        c,
+                        result='runner-control superseded stale pending command before dedupe',
+                    )
                     inflight=c.execute(
                         "SELECT id,action FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
                         (project_id,)
