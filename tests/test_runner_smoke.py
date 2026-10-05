@@ -146,6 +146,25 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual(first["command_id"], second["command_id"])
         self.assertTrue(second.get("deduplicated"))
 
+    def test_force_start_records_transient_force_allocation_intent(self):
+        status, body = self.request(
+            "/api/runner-control",
+            {"project_id": "cloud", "action": "start", "force": True},
+        )
+        self.assertEqual(200, status, body)
+        self.assertTrue(body["forced"])
+        with server.connect() as conn:
+            normal = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key=?",
+                (server._manual_start_priority_key("cloud"),),
+            ).fetchone()
+            forced = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key=?",
+                (server._manual_force_start_priority_key("cloud"),),
+            ).fetchone()
+        self.assertIsNotNone(normal)
+        self.assertIsNotNone(forced)
+
     def test_recently_completed_start_is_rate_limited(self):
         first_status, first = self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
