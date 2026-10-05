@@ -93,6 +93,7 @@ jobs:
       IMPLEMENTATION_SHA: a0db382819e777584c6dd8c0c051bbc0689a94bc
       PRODUCT_DRAIN_FIX_SHA: f01722db29fe809d4864495d6d8e167596fb0a4c
       RECOVERY_COLLISION_FIX_SHA: cbd34079e6fdc6c4e74a555e66ddb6c30ad3c0bb
+      LEGACY_DRAIN_RETRY_FIX_SHA: b7f1d0c878715245db38c97ed13e64d24b6398f6
       ZCLOUD_BASE: http://127.0.0.1:8765
       ZCLOUD_DB: /home/ubuntu/zennay-cloud/history.db
       EVIDENCE: /tmp/zcloud-pwq41-intentional-replacement-evidence.json
@@ -124,6 +125,7 @@ jobs:
           DB = os.environ["ZCLOUD_DB"]
           EXPECTED = os.environ["EXPECTED_MAIN_SHA"]
           IMPLEMENTATION = os.environ["IMPLEMENTATION_SHA"]
+          LEGACY_DRAIN_RETRY_FIX = os.environ["LEGACY_DRAIN_RETRY_FIX_SHA"]
           EVIDENCE = Path(os.environ["EVIDENCE"])
           REPO = os.environ["GITHUB_REPOSITORY"]
           GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
@@ -203,12 +205,18 @@ jobs:
                   raise SystemExit("zCloud healthcheck is not green: " + json.dumps(payload, sort_keys=True))
               return payload
 
-          ancestor = subprocess.run(
-              ["git", "merge-base", "--is-ancestor", IMPLEMENTATION, EXPECTED],
-              check=False,
-          )
-          if ancestor.returncode != 0:
-              raise SystemExit(f"production revision {EXPECTED} does not contain PWQ-41 implementation {IMPLEMENTATION}")
+          for required_sha, label in (
+              (IMPLEMENTATION, "PWQ-41 implementation"),
+              (LEGACY_DRAIN_RETRY_FIX, "PWQ-41 legacy drain retry fix"),
+          ):
+              ancestor = subprocess.run(
+                  ["git", "merge-base", "--is-ancestor", required_sha, EXPECTED],
+                  check=False,
+              )
+              if ancestor.returncode != 0:
+                  raise SystemExit(
+                      f"production revision {EXPECTED} does not contain {label} {required_sha}"
+                  )
 
           assert_current_main("pre-baseline")
           status = call("GET", "/api/status")
@@ -393,6 +401,7 @@ jobs:
                   "tested_at": now(),
                   "production_sha": EXPECTED,
                   "implementation_sha": IMPLEMENTATION,
+              "legacy_drain_retry_fix_sha": LEGACY_DRAIN_RETRY_FIX,
                   "reason": "no-safe-live-candidate",
                   "candidate_attempts": candidate_attempt,
                   "workers": last_diagnostics,
