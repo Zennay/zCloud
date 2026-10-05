@@ -1,6 +1,12 @@
 name: LightUp PR23 PR24 PR25 cross-lane exact-head proof
 
 on:
+  push:
+    branches:
+      - "chatgpt/lightup-pr23-pr25-cross-lane-proof-20261005"
+    paths:
+      - ".github/workflows/lightup-pr23-pr25-cross-lane-proof.yml"
+      - "tests/test_lightup_pr23_pr25_cross_lane_proof.py"
   pull_request:
     paths:
       - ".github/workflows/lightup-pr23-pr25-cross-lane-proof.yml"
