@@ -1,5 +1,5 @@
 name: PWQ-24 post-443 live acceptance
-# Exact production receipt for this acceptance: run 37258239188 / main 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
+# Exact production receipt is discovered dynamically for the expected main SHA.
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
+          EXPECTED_MAIN: e67789478fd681499f52ab14663752eebd486b01
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -88,13 +88,13 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     env:
-      EXPECTED_MAIN: 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
+      EXPECTED_MAIN: e67789478fd681499f52ab14663752eebd486b01
       DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
       DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
+          ref: e67789478fd681499f52ab14663752eebd486b01
           clean: true
           fetch-depth: 1
 
