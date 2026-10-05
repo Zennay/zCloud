@@ -2159,6 +2159,38 @@ def _manual_start_priority_active_locked(connection, project_id, at=None):
     except Exception:
         return False
 
+def _pending_worker_handoff_floor_locked(connection, project_id):
+    """Highest local worker ordinal that must remain stable for an in-flight browser handoff.
+
+    Worker keys are project-local ordinals (project::wN) derived from the ordered
+    queue claims. Protecting only the exact wN row is insufficient: if any earlier
+    project claim is preempted in the same allocation pass, the target row is
+    renumbered before Firefox consumes its pending command. Pin the full prefix
+    w1..wN while start/new_chat/push is pending so the command keeps the same
+    queue-backed identity until it is consumed.
+    """
+    project_id=str(project_id or '').strip().lower()
+    if not project_id:
+        return 0
+    prefix=project_id+'::w'
+    rows=connection.execute(
+        """SELECT project_id FROM runner_commands
+           WHERE project_id LIKE ?
+             AND action IN ('start','new_chat','push')
+             AND status='pending'""",
+        (prefix+'%',),
+    ).fetchall()
+    floor=0
+    for row in rows:
+        worker_key=str(row['project_id'] or '')
+        if not worker_key.startswith(prefix):
+            continue
+        try:
+            floor=max(floor,int(worker_key[len(prefix):]))
+        except (TypeError,ValueError):
+            continue
+    return max(0,min(GLOBAL_CHATGPT_WORKER_LIMIT,floor))
+
 def _portfolio_project_soft_cap(project_id=None):
     """Return the preferred browser-worker share for one runnable project.
 
@@ -2683,16 +2715,12 @@ def portfolio_queue_allocate():
                 # current VPS assignment vanished. Pin the claim until the command
                 # leaves pending, then resume normal priority/diversity preemption.
                 local_slot=used_counts.get(row_project,0)+1
-                worker_key=f'{row_project}::w{local_slot}'
-                command_inflight=c.execute(
-                    """SELECT id FROM runner_commands
-                       WHERE project_id=?
-                         AND action IN ('start','new_chat','push')
-                         AND status='pending'
-                       ORDER BY id DESC LIMIT 1""",
-                    (worker_key,),
-                ).fetchone()
-                if command_inflight:
+                handoff_floor=_pending_worker_handoff_floor_locked(c,row_project)
+                if 0 < local_slot <= handoff_floor:
+                    # A pending wN browser command depends on the stable project-local
+                    # ordinal of every preceding claim. Keep the prefix intact until
+                    # Firefox consumes the handoff; otherwise preempting w1 can silently
+                    # rename the intended w2 claim to w1 and orphan the accepted command.
                     c.execute(
                         'UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                         (lease_until,ts,row['queue_id']),
