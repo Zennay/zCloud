@@ -1,0 +1,48 @@
+{
+  "acceptance_green": false,
+  "captured_at": "2026-10-05T00:53:55.133390+00:00",
+  "evidence": {
+    "ftmo": {
+      "events": [],
+      "heartbeat": false,
+      "prompt_count": 0,
+      "prompt_sent": false,
+      "send_blocked": []
+    },
+    "supa": {
+      "events": [
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:48:20.248000+00:00",
+          "worker_slot": 1
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:49:20.248000+00:00",
+          "worker_slot": 1
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:50:20.325000+00:00",
+          "worker_slot": 1
+        }
+      ],
+      "heartbeat": true,
+      "prompt_count": 0,
+      "prompt_sent": false,
+      "send_blocked": []
+    }
+  },
+  "expected_main": "18a15723386316368be1bc8a03d23f24b26ef8d2",
+  "health_rc": 2,
+  "health_stderr_tail": "",
+  "health_stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: HTTP Error 503: Service Unavailable']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n",
+  "run_id": "37248951609",
+  "sha": "b999721afae241d7eab68c2ae880fd6d8b2a1915"
+}
