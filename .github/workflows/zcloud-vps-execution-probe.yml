@@ -14,7 +14,9 @@ on:
       - scripts/zcloud_vps_deploylane_coordination.py
       - scripts/zcloud_transactional_promote.py
       - scripts/zcloud_deploy_safe_idle.py
+      - scripts/zcloud_runtime_project_schema_repair.py
       - tests/test_deploy_safe_idle.py
+      - tests/test_runtime_project_schema_repair.py
       - tests/test_transactional_promote.py
       - tests/test_vps_runner_guard.py
       - server.py
@@ -73,6 +75,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest -v tests.test_portfolio_queue_backend
+
+      - name: Verify runtime project-schema migration on VPS runner
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_runtime_project_schema_repair \
+            tests.test_vps_deploy_workflow
 
       - name: Inspect sanitized deploy pre-change evidence
         run: |
