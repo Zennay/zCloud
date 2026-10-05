@@ -426,7 +426,7 @@
       // keep retrying until a prompt is actually sent, then clear the force edge.
       const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");
       if (initialDispatchSent) {
-remove consumed key assignment        bridgedInitialDispatchProjects.delete(target.project_id);
+        bridgedInitialDispatchProjects.delete(target.project_id);
         target.force_initial_dispatch = false;
         document.documentElement?.setAttribute("data-zcloud-force-initial-dispatch", "false");
       }
