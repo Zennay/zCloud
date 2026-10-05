@@ -71,17 +71,17 @@ jobs:
               if payload is not None:
                   body = json.dumps(payload).encode("utf-8")
                   headers["Content-Type"] = "application/json"
-              # /api/status can legitimately return 503 while its monitor starts.
-              # Keep worker activation alive through that bounded warm-up instead
-              # of abandoning already-allocated/queued workers.
-              if method == "GET" and path.startswith("/api/runner-live"):
-                  attempts = 10
-              else:
-                  attempts = 3 if method == "GET" else 1
+              # /api/runner-live is already polled by the bounded outer activation
+              # loops. Do not add a second long retry loop inside each poll: when
+              # Firefox/read-model is degraded that can monopolise the sole VPS
+              # runner for minutes and starve acceptance/recovery jobs behind it.
+              runner_live = method == "GET" and path.startswith("/api/runner-live")
+              attempts = 1 if runner_live else (3 if method == "GET" else 1)
+              request_timeout = 8 if runner_live else 15
               for attempt in range(attempts):
                   request = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
                   try:
-                      with urllib.request.urlopen(request, timeout=15) as response:
+                      with urllib.request.urlopen(request, timeout=request_timeout) as response:
                           return json.load(response)
                   except urllib.error.HTTPError as exc:
                       detail = exc.read().decode("utf-8", "replace")
