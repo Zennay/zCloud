@@ -1,4 +1,5 @@
 name: PWQ-24 post-459 live diagnostic
+# trigger: post-459 diagnostic
 
 on:
   push:
