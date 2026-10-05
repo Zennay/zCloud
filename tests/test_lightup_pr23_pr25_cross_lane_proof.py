@@ -10,6 +10,10 @@ class LightUpPR23PR25CrossLaneProofTests(unittest.TestCase):
     def test_cross_lane_proof_is_exact_head_and_bounded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 
+        self.assertIn(
+            'branches:\n      - "chatgpt/lightup-pr23-pr25-cross-lane-proof-20261005"',
+            text,
+        )
         self.assertIn("runs-on: [self-hosted, ftmo-research]", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         for pr in (23, 24, 25):
