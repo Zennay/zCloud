@@ -14,6 +14,8 @@ from pathlib import Path
 DEFAULT_DB = Path(os.environ.get("ZCLOUD_DB", "/home/ubuntu/zennay-cloud/history.db"))
 DRAIN_ACK_EVENTS = frozenset({"runner-config-updated", "runner-draining", "injection-success"})
 DRAIN_TERMINAL_EVENTS = frozenset({"runner-drained", "runner-stopped"})
+MAX_DRAIN_ATTEMPTS = 3
+DRAIN_RETRY_MIN_SECONDS = 2.0
 
 
 class SafeIdleError(RuntimeError):
@@ -78,17 +80,18 @@ def worker_observation(
 
 def drain_command_state(conn: sqlite3.Connection, worker_id: str) -> dict:
     row = conn.execute(
-        "SELECT id,status,action,created_at FROM runner_commands "
+        "SELECT id,status,action,created_at,updated_at FROM runner_commands "
         "WHERE project_id=? AND action='drain' ORDER BY id DESC LIMIT 1",
         (worker_id,),
     ).fetchone()
     if row is None:
-        return {"id": None, "status": None, "action": None, "created_at": None}
+        return {"id": None, "status": None, "action": None, "created_at": None, "updated_at": None}
     return {
         "id": int(row["id"]),
         "status": str(row["status"] or ""),
         "action": str(row["action"] or ""),
         "created_at": str(row["created_at"] or ""),
+        "updated_at": str(row["updated_at"] or ""),
     }
 
 
@@ -100,6 +103,22 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def failed_drain_retry_due(
+    command: dict,
+    attempts: int,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Retry a failed deploy drain only after a bounded cool-down."""
+    if attempts >= MAX_DRAIN_ATTEMPTS or str(command.get("status") or "") != "failed":
+        return False
+    failed_at = _parse_timestamp(command.get("updated_at"))
+    if failed_at is None:
+        return False
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (current - failed_at).total_seconds() >= DRAIN_RETRY_MIN_SECONDS
 
 
 def drain_acknowledged_idle(observation: dict, command: dict) -> bool:
@@ -274,6 +293,7 @@ def enter_safe_idle(
                         "worker_slot": item["worker_slot"],
                         "worker_id": key,
                         "previous_state": item["desired_state"],
+                        "drain_attempts": 1,
                     }
                     by_key[key] = record
                     snapshot["workers"].append(record)
@@ -308,6 +328,24 @@ def enter_safe_idle(
                     record["drain_command_id"] = command_id
                     snapshot["drain_command_ids"].append(command_id)
                     changed = True
+                elif item["desired_state"] == "draining":
+                    command = drain_command_state(conn, key)
+                    attempts = int(record.get("drain_attempts") or 1)
+                    if failed_drain_retry_due(command, attempts):
+                        replacement = conn.execute(
+                            "INSERT INTO runner_commands("
+                            "project_id,action,status,created_at,updated_at,result"
+                            ") VALUES(?,?,?,?,?,NULL)",
+                            (key, "drain", "pending", utc_now(), utc_now()),
+                        )
+                        replacement_id = int(replacement.lastrowid)
+                        record["drain_command_id"] = replacement_id
+                        record["drain_attempts"] = attempts + 1
+                        snapshot["drain_command_ids"].append(replacement_id)
+                        snapshot.setdefault("replacement_drain_command_ids", []).append(
+                            replacement_id
+                        )
+                        changed = True
                 if item["desired_state"] != "paused":
                     conn.execute(
                         "UPDATE runner_workers SET desired_state='draining' "
