@@ -24,6 +24,8 @@ class WorkerPromptStyleTests(unittest.TestCase):
         self.assertIn("Kijk in Notion in welke fase het project zit", prompt)
         self.assertIn("wat er nog gedaan moet worden", prompt)
         self.assertIn("werk dat concreet uit", prompt)
+        self.assertIn("research naar gebruikers", prompt)
+        self.assertIn("vertaal bevindingen naar product, UX en prioriteiten", prompt)
         self.assertLess(len(prompt), 500)
 
     def test_internal_queue_details_are_not_exposed_in_prompt(self):
@@ -56,7 +58,9 @@ class WorkerPromptStyleTests(unittest.TestCase):
         prompt = server.project_runner_prompt("zssh", "zSSH")
         self.assertEqual(
             "Werk verder aan zSSH. Kijk in Notion in welke fase het project zit, "
-            "bepaal wat er nog gedaan moet worden en werk dat concreet uit.",
+            "bepaal wat er nog gedaan moet worden en werk dat concreet uit. "
+            "Doe waar relevant eerst echte research naar gebruikers, feedback en markt/concurrenten "
+            "en vertaal bevindingen naar product, UX en prioriteiten.",
             prompt,
         )
 

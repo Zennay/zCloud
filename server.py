@@ -142,7 +142,7 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
-        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'
+        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. Doe waar relevant eerst echte research naar gebruikers, feedback en markt/concurrenten en vertaal bevindingen naar product, UX en prioriteiten.'
     )
 
 
