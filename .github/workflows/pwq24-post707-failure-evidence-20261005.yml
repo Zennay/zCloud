@@ -1,0 +1,73 @@
+name: PWQ-24 post-707 failure evidence
+
+on:
+  push:
+    branches:
+      - ops/pwq24-prioritize-acceptance-20261005-0258
+    paths:
+      - .github/workflows/pwq24-post707-failure-evidence-20261005.yml
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
+          clean: true
+          fetch-depth: 1
+      - name: Capture post-707 runtime evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          echo '=== self-heal installation ==='
+          sha256sum /usr/local/sbin/zcloud-self-heal /home/ubuntu/zennay-cloud/scripts/zcloud-self-heal.sh
+          grep -nE 'confirming before restart|health recovered during confirmation window|health failed twice|curl -fsS --max-time'             /usr/local/sbin/zcloud-self-heal /home/ubuntu/zennay-cloud/scripts/zcloud-self-heal.sh
+
+          echo '=== service and self-heal journal since acceptance ==='
+          systemctl show zennay-cloud.service             -p ActiveState -p SubState -p MainPID -p NRestarts             -p ActiveEnterTimestamp -p ExecMainStartTimestamp -p Result -p Restart
+          sudo -n journalctl -u zennay-cloud.service --since '2026-10-05 03:17:30 UTC' --no-pager -n 220             | grep -E 'Stopping zennay-cloud|Started zennay-cloud|Deactivated successfully|Consumed' || true
+          sudo -n journalctl -t zcloud-self-heal --since '2026-10-05 03:17:30 UTC' --no-pager -n 220 || true
+          sudo -n journalctl -k --since '2026-10-05 03:17:30 UTC' --no-pager             | grep -Ei 'oom|out of memory|killed process|segfault' || true
+
+          echo '=== runner DB evidence ==='
+          python3 - <<'PY'
+          import json, sqlite3
+          db="/home/ubuntu/zennay-cloud/history.db"
+          with sqlite3.connect(db, timeout=5) as c:
+              c.row_factory=sqlite3.Row
+              commands=[dict(r) for r in c.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at,result "
+                  "FROM runner_commands WHERE id>=21660 ORDER BY id"
+              ).fetchall()]
+              events=[dict(r) for r in c.execute(
+                  "SELECT id,ts,event,project_id,worker_slot,reason,error,generating,sending,tab_id,target "
+                  "FROM runner_events WHERE ts>='2026-10-05T03:17:30+00:00' "
+                  "AND project_id IN ('ftmo','supa') ORDER BY id"
+              ).fetchall()]
+              workers=[dict(r) for r in c.execute(
+                  "SELECT project_id,worker_slot,provider,desired_state,conversation_id "
+                  "FROM runner_workers WHERE project_id IN ('ftmo','supa') ORDER BY project_id,worker_slot"
+              ).fetchall()]
+              targets=[dict(r) for r in c.execute(
+                  "SELECT project_id,active,worker_count,conversation_id "
+                  "FROM runner_targets WHERE project_id IN ('ftmo','supa') ORDER BY project_id"
+              ).fetchall()]
+          print("PWQ24_COMMANDS="+json.dumps(commands,sort_keys=True))
+          print("PWQ24_EVENTS="+json.dumps(events,sort_keys=True))
+          print("PWQ24_WORKERS="+json.dumps(workers,sort_keys=True))
+          print("PWQ24_TARGETS="+json.dumps(targets,sort_keys=True))
+          PY
+
+          echo '=== canonical health ==='
+          set +e
+          python3 scripts/zcloud_healthcheck.py --json
+          rc=$?
+          set -e
+          echo "PWQ24_HEALTH_RC=$rc"
