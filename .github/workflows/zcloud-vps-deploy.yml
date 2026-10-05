@@ -977,6 +977,33 @@ jobs:
           print(f"PRODUCTION_DEPLOY_STATUS={state} sha={sha}")
           PY
 
+      - name: Write deploy operator summary
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
+          DEPLOY_DECISION: ${{ steps.freshness.outputs.deploy }}
+          PREWRITE_DECISION: ${{ steps.prewrite.outputs.deploy }}
+          DEPLOY_RESULT: ${{ job.status }}
+          REGRESSION_RUN_ID: ${{ steps.freshness.outputs.regression_run_id }}
+          REGRESSION_MODE: ${{ steps.freshness.outputs.regression_mode }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARTIFACT_NAME: zcloud-production-deploy-evidence-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deploy_summary.py \
+            --output "$GITHUB_STEP_SUMMARY" \
+            --evidence "$ZCLOUD_RUN_STATE_DIR/zcloud-production-deploy-evidence.json" \
+            --deploy-sha "$DEPLOY_SHA" \
+            --deploy-decision "$DEPLOY_DECISION" \
+            --prewrite-decision "$PREWRITE_DECISION" \
+            --job-status "$DEPLOY_RESULT" \
+            --regression-run-id "$REGRESSION_RUN_ID" \
+            --regression-mode "$REGRESSION_MODE" \
+            --run-url "$RUN_URL" \
+            --artifact-name "$ARTIFACT_NAME"
+
       - name: Cleanup stable deploy state
         if: always()
         shell: bash
