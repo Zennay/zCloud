@@ -52,12 +52,10 @@ jobs:
 
           now=datetime.now(timezone.utc)
           queued=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
-          stale=[]
+          candidates=[]
           for run in queued:
               created=datetime.fromisoformat(str(run["created_at"]).replace("Z","+00:00"))
               age=(now-created).total_seconds()
-              if age < 180:
-                  continue
               jobs=get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100").get("jobs") or []
               for job in jobs:
                   if job.get("status") != "queued":
@@ -65,20 +63,21 @@ jobs:
                   labels={str(x).lower() for x in (job.get("labels") or [])}
                   if "self-hosted" not in labels:
                       continue
-                  stale.append({
+                  candidates.append({
                       "run_id":run["id"],
                       "job_id":job.get("id"),
                       "name":run.get("name"),
+                      "path":run.get("path"),
                       "job":job.get("name"),
                       "age_s":int(age),
                       "labels":sorted(labels),
                   })
 
-          # Remove superseded duplicate queue entries so the surviving run can
-          # reach a runner instead of sitting behind obsolete copies.
+          # Remove superseded duplicate queue entries immediately so the
+          # surviving run never waits behind obsolete copies.
           by_path={}
-          for item in stale:
-              by_path.setdefault(item["name"] or str(item["run_id"]),[]).append(item)
+          for item in candidates:
+              by_path.setdefault(item["path"] or item["name"] or str(item["run_id"]),[]).append(item)
           cancelled=[]
           for _, items in by_path.items():
               items.sort(key=lambda x:(x["age_s"],x["run_id"]))
@@ -95,8 +94,10 @@ jobs:
                   except Exception:
                       pass
 
-          remaining=[x for x in stale if x["run_id"] not in set(cancelled)]
+          surviving=[x for x in candidates if x["run_id"] not in set(cancelled)]
+          remaining=[x for x in surviving if x["age_s"] >= 180]
           evidence={
+              "queued_self_hosted_jobs":surviving,
               "stale_self_hosted_jobs":remaining,
               "cancelled_superseded_runs":cancelled,
               "count":len(remaining),
