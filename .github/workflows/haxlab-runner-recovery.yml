@@ -1,0 +1,64 @@
+name: Recover HaxLab runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/haxlab-runner-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: haxlab-runner-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Recover HaxLab Actions listener
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          SERVICE=actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service
+          RUN_USER=haxlab-runner
+
+          pre_state="$(systemctl is-active "$SERVICE" || true)"
+          pre_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+          worker=0
+          if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            worker=1
+          fi
+
+          action=none
+          if [ "$pre_state" != "active" ]; then
+            sudo -n systemctl reset-failed "$SERVICE" || true
+            sudo -n systemctl start "$SERVICE"
+            action=start-inactive-listener
+          elif [ "$worker" -eq 1 ]; then
+            action=preserve-active-worker
+          else
+            sudo -n systemctl restart "$SERVICE"
+            action=restart-idle-listener
+          fi
+
+          for _ in $(seq 1 20); do
+            state="$(systemctl is-active "$SERVICE" || true)"
+            [ "$state" = "active" ] && break
+            sleep 2
+          done
+          test "$state" = "active"
+
+          pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+          cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+          [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]
+
+          echo "HAXLAB_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid"
+          echo "HAXLAB_SERVICES"
+          systemctl is-active haxlab-ingest.service haxlab-worker.service haxlab-analyzer.service || true
