@@ -491,6 +491,21 @@ function runProject(cfg) {
       testId.includes("reasoning");
   }
   function modelPickerButton() {
+    // Prefer the actual ChatGPT model picker over the generic "Switch mode"
+    // control. The current UI can render both; DOM-order selection may click the
+    // mode menu first, which contains no High effort option even though the
+    // dedicated model picker is visible.
+    const preferredSelectors = [
+      '[data-testid="model-switcher-dropdown-button"]',
+      'button[aria-label="Select ChatGPT model"]',
+      'button[title="Select ChatGPT model"]',
+      'button[aria-label="Model selector"]'
+    ];
+    for (const selector of preferredSelectors) {
+      const candidate = document.querySelector(selector);
+      if (visibleElement(candidate)) return candidate;
+    }
+
     const explicitPicker = [...document.querySelectorAll(MODEL_PICKER_SELECTOR)]
       .find(el => visibleElement(el));
     if (explicitPicker) return explicitPicker;
