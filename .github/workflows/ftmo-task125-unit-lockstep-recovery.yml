@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ftmo-task125-unit-lockstep-recovery-v2
+  group: ftmo-task125-unit-lockstep-recovery-v3
   cancel-in-progress: false
 
 jobs:
@@ -57,15 +57,13 @@ jobs:
           done
           test -f "$ZCLOUD_RESOURCE_DB"
 
-          # Match the actual FTMO Actions runner user. systemd's User property
-          # may be empty for a service that inherits root/default identity.
-          runner_pid="$(systemctl show "$RUNNER_SERVICE" -p MainPID --value)"
-          [[ "$runner_pid" =~ ^[1-9][0-9]*$ ]]
-          kill -0 "$runner_pid"
-          RUN_USER="$(ps -o user= -p "$runner_pid" | tr -d '[:space:]')"
-          test -n "$RUN_USER"
+          # The dedicated FTMO runtime and runner are intentionally isolated
+          # under the ftmo-runner account; do not depend on listener health to
+          # repair the marathon unit itself.
+          RUN_USER="ftmo-runner"
           id "$RUN_USER" >/dev/null
           echo "FTMO_TASK125_EXPECTED_RUN_USER=$RUN_USER"
+          echo "FTMO_TASK125_RESOURCE_DB_PRESENT=$([[ -f "$ZCLOUD_RESOURCE_DB" ]] && echo yes || echo no)"
 
           PYTHON_BIN="${FTMO_SYSTEM_PYTHON:-}"
           if [[ -z "$PYTHON_BIN" ]]; then
