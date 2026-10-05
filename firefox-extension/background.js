@@ -157,21 +157,27 @@ async function replacementDrainState(tabId) {
     ? result[0] : {ready:"",state:""};
 }
 
-async function drainRunnerBeforeReplacement(tabId, target, reason) {
-  if (tabId == null) return;
+async function signalReplacementDrain(tabId, reason) {
   const bridge = await browser.tabs.executeScript(tabId, {
-    code: "(() => { const root=document.documentElement; if(!root)return {ready:''}; root.removeAttribute('" +
+    code: "(() => { const root=document.documentElement; if(!root)return {ready:'',state:''}; root.removeAttribute('" +
       REPLACEMENT_DRAIN_STATE_ATTR +
       "'); window.dispatchEvent(new CustomEvent('zcloud-replacement-drain',{detail:{reason:" +
       JSON.stringify(String(reason || "project-chat-replaced").slice(0, 120)) +
-      "}})); return {ready:String(root.getAttribute('data-zcloud-violentmonkey-ready')||'')}; })()",
+      "}})); return {ready:String(root.getAttribute('data-zcloud-violentmonkey-ready')||''),state:String(root.getAttribute('" +
+      REPLACEMENT_DRAIN_STATE_ATTR + "')||'')}; })()",
     runAt: "document_idle"
   }).catch(() => []);
-  const vmVersions = Array.isArray(bridge)
-    ? bridge.map(value => String(value?.ready || "").trim()).filter(Boolean)
-    : [];
-  const vmReady = vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION);
-  if (vmVersions.length && !vmReady) {
+  const rows = Array.isArray(bridge) ? bridge.filter(value => value && typeof value === "object") : [];
+  const vmVersions = rows.map(value => String(value.ready || "").trim()).filter(Boolean);
+  return {
+    rows,
+    vmVersions,
+    vmReady: vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION)
+  };
+}
+
+function assertReplacementDrainVersion(vmVersions) {
+  if (vmVersions.length && !vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION)) {
     throw new Error(
       "Replacement geblokkeerd: Violentmonkey-versie " +
       vmVersions.join(",") +
@@ -179,16 +185,58 @@ async function drainRunnerBeforeReplacement(tabId, target, reason) {
       VIOLENTMONKEY_REQUIRED_VERSION
     );
   }
-  if (!vmReady) {
+}
+
+async function drainRunnerBeforeReplacement(tabId, target, reason) {
+  if (tabId == null) return;
+
+  let bridge = await signalReplacementDrain(tabId, reason);
+  assertReplacementDrainVersion(bridge.vmVersions);
+
+  // A worker can still be assigned to a live Firefox tab while its VM readiness
+  // marker or legacy content-script binding was lost during navigation/recovery.
+  // Rebind the existing tab before declaring the old worker undrainable. inject()
+  // is already fail-closed: it either proves the current VM version, restores the
+  // legacy runner, or returns no usable mode. No replacement tab is opened here.
+  let reboundMode = "";
+  if (!bridge.vmReady) {
+    const rebound = await inject(tabId, target);
+    reboundMode = String(rebound?.mode || "");
+    postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      globalWorkerSlot: target.global_worker_slot,
+      projectName: target.name,
+      target: target.url,
+      event: "replacement-drain-rebind",
+      reason: reboundMode ? "runtime-rebound-" + reboundMode : "runtime-rebind-unavailable",
+      at: new Date().toISOString(),
+      tabId
+    });
+
+    if (reboundMode === "violentmonkey") {
+      // inject() waits for the readiness marker, but dispatch the replacement
+      // drain only after that listener is known to exist.
+      bridge = await signalReplacementDrain(tabId, reason);
+      assertReplacementDrainVersion(bridge.vmVersions);
+      if (!bridge.vmReady) {
+        throw new Error("Replacement geblokkeerd: Violentmonkey drain-bridge verdween na veilige rebind");
+      }
+    }
+  }
+
+  if (!bridge.vmReady) {
     const legacy = await browser.tabs.sendMessage(tabId, {
       type: "runner-drain",
       projectId: target.project_id,
       reason: reason || "project-chat-replaced"
     }).catch(() => null);
     if (!legacy?.ok) {
-      throw new Error("Replacement geblokkeerd: oude worker kan niet veilig drainen");
+      throw new Error("Replacement geblokkeerd: oude worker kan niet veilig drainen na runtime-rebind");
     }
   }
+
   const deadline = Date.now() + (10 * 60 * 1000);
   while (Date.now() < deadline) {
     const state = await replacementDrainState(tabId);
