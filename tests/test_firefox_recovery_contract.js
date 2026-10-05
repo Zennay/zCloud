@@ -125,6 +125,11 @@ const closeIndex = replacementBlock.indexOf("await closeRunnerTab(oldTab)");
 const openIndex = replacementBlock.indexOf("browser.tabs.create({url: \"https://chatgpt.com/\"");
 assert.ok(drainIndex >= 0 && verifyIndex > drainIndex, "replacement must drain before revalidating ownership");
 assert.ok(closeIndex > verifyIndex, "old tab may close only after drain + handoff revalidation");
+const pendingDispatchIndex = replacementBlock.indexOf("pendingInitialDispatches.add(projectId)");
+assert.ok(
+  pendingDispatchIndex > verifyIndex && pendingDispatchIndex < openIndex,
+  "replacement initial dispatch may arm only after safe handoff and before replacement open"
+);
 assert.ok(openIndex > closeIndex, "replacement chat may open only after old worker is safely released");
 assert.ok(
   background.includes("queue_item: queueItem"),
