@@ -1,0 +1,64 @@
+name: zCloud governed-exec live proof
+
+on:
+  push:
+    branches:
+      - ops/governed-exec-live-proof-20261005
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-governed-exec-live-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+
+      - name: Prove live governed-exec provenance without source disclosure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+          live="/home/ubuntu/zennay-cloud/scripts/zcloud_governed_exec.py"
+          candidate="$GITHUB_WORKSPACE/scripts/zcloud_governed_exec.py"
+          test -f "$live"
+          test -f "$candidate"
+
+          live_sha="$(sha256sum "$live" | awk '{print $1}')"
+          candidate_sha="$(sha256sum "$candidate" | awk '{print $1}')"
+          live_mtime="$(stat -c '%y' "$live")"
+          echo "GOVERNED_EXEC_LIVE_SHA256=$live_sha"
+          echo "GOVERNED_EXEC_CANDIDATE_SHA256=$candidate_sha"
+          echo "GOVERNED_EXEC_LIVE_MTIME=$live_mtime"
+
+          if cmp -s "$live" "$candidate"; then
+            echo "GOVERNED_EXEC_MATCH=current-candidate"
+            exit 0
+          fi
+
+          match=""
+          while read -r commit; do
+            [[ -n "$commit" ]] || continue
+            blob="$RUNNER_TEMP/governed-exec-$commit"
+            if git show "$commit:scripts/zcloud_governed_exec.py" > "$blob" 2>/dev/null; then
+              if cmp -s "$live" "$blob"; then
+                match="$commit"
+                break
+              fi
+            fi
+          done < <(git rev-list --all --max-count=2048)
+
+          if [[ -n "$match" ]]; then
+            echo "GOVERNED_EXEC_MATCH=repository-commit:$match"
+          else
+            echo "GOVERNED_EXEC_MATCH=unknown-live-bytes"
+          fi
