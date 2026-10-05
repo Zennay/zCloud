@@ -38,6 +38,10 @@ DYNAMIC_WORKER_CHECK_INTERVAL_MS = 5000
 DYNAMIC_WORKER_TICK_INTERVAL_MS = 1500
 DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS = 30000
 DYNAMIC_WORKER_GENERATION_TIMEOUT_MS = 120000
+RUNNER_COMMAND_STALE_SECONDS = max(
+    30,
+    int(os.environ.get('ZCLOUD_RUNNER_COMMAND_STALE_SECONDS', '300')),
+)
 # Browser workers are memory-heavy (Firefox content processes can exceed multiple GiB).
 # Keep real RAM headroom before claiming *new* worker slots; existing work is left intact.
 WORKER_MEMORY_HEADROOM_MB = max(1536, int(os.environ.get('ZCLOUD_WORKER_MEMORY_HEADROOM_MB', '2048')))
@@ -3791,6 +3795,32 @@ class Handler(BaseHTTPRequestHandler):
                         )
                     elif not is_worker and action=='pause':
                         c.execute('DELETE FROM runtime_settings WHERE key=?',(_manual_start_priority_key(base_project_id),))
+                    pending_rows=c.execute(
+                        "SELECT id,action,created_at FROM runner_commands "
+                        "WHERE project_id=? AND status='pending' ORDER BY id",
+                        (project_id,),
+                    ).fetchall()
+                    stale_ids=[]
+                    admitted_at=datetime.now(timezone.utc)
+                    for pending in pending_rows:
+                        try:
+                            created=datetime.fromisoformat(str(pending['created_at']).replace('Z','+00:00')).astimezone(timezone.utc)
+                            age=(admitted_at-created).total_seconds()
+                        except Exception:
+                            age=RUNNER_COMMAND_STALE_SECONDS
+                        if age >= RUNNER_COMMAND_STALE_SECONDS:
+                            stale_ids.append(int(pending['id']))
+                    if stale_ids:
+                        placeholders=','.join('?' for _ in stale_ids)
+                        c.execute(
+                            f"UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                            f"WHERE id IN ({placeholders})",
+                            (
+                                now(),
+                                'runner-control superseded stale pending command before dedupe',
+                                *stale_ids,
+                            ),
+                        )
                     inflight=c.execute(
                         "SELECT id,action FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
                         (project_id,)
