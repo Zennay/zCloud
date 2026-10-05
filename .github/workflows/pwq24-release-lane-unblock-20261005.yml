@@ -1,0 +1,110 @@
+name: PWQ-24 release lane unblock
+
+on:
+  push:
+    branches:
+      - ops/pwq24-release-lane-unblock-20261005
+    paths:
+      - .github/workflows/pwq24-release-lane-unblock-20261005.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-stale-postdeploy-runs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_MAIN: 8990732a6c06f1b3af73d32ee5c18ea1f9d03a69
+      CURRENT_DEPLOY_RUN: "37301154936"
+      STALE_ACTIVATION_RUN: "37301333802"
+      STALE_PROBE_RUN: "37301333874"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Guard exact current-main release state
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+
+          current_main="$(gh api "repos/${repo}/branches/main" --jq '.commit.sha')"
+          test "${current_main}" = "${EXPECTED_MAIN}" || {
+            echo "MAIN_MOVED current=${current_main} expected=${EXPECTED_MAIN}"
+            exit 1
+          }
+
+          deploy_name="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.name')"
+          deploy_sha="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.head_sha')"
+          deploy_status="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
+          test "${deploy_name}" = "zCloud VPS deploy"
+          test "${deploy_sha}" = "${EXPECTED_MAIN}"
+          case "${deploy_status}" in
+            queued|in_progress|pending|waiting) ;;
+            *)
+              echo "CURRENT_DEPLOY_NOT_WAITING status=${deploy_status}"
+              exit 1
+              ;;
+          esac
+
+          echo "CURRENT_RELEASE_GUARD_GREEN main=${current_main} deploy_run=${CURRENT_DEPLOY_RUN} deploy_status=${deploy_status}"
+
+      - name: Cancel only stale previous-deploy postdeploy runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+
+          cancel_if_stale() {
+            local run_id="$1"
+            local expected_name="$2"
+            local run_name run_status run_sha
+
+            run_name="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.name')"
+            run_status="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.status')"
+            run_sha="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.head_sha')"
+
+            test "${run_name}" = "${expected_name}" || {
+              echo "REFUSE_NAME_MISMATCH run=${run_id} got=${run_name} expected=${expected_name}"
+              exit 1
+            }
+
+            # These workflow_run children were emitted by the previous deploy lane
+            # before the exact-current-main deploy could acquire the sole VPS runner.
+            # Refuse to cancel anything already terminal.
+            case "${run_status}" in
+              queued|in_progress|pending|waiting)
+                echo "CANCEL_STALE run=${run_id} name=${run_name} status=${run_status} displayed_head=${run_sha}"
+                gh api --method POST "repos/${repo}/actions/runs/${run_id}/cancel" >/dev/null
+                ;;
+              completed)
+                echo "ALREADY_TERMINAL run=${run_id} name=${run_name}"
+                ;;
+              *)
+                echo "REFUSE_UNKNOWN_STATUS run=${run_id} status=${run_status}"
+                exit 1
+                ;;
+            esac
+          }
+
+          cancel_if_stale "${STALE_ACTIVATION_RUN}" "zCloud dynamic worker pool activation"
+          cancel_if_stale "${STALE_PROBE_RUN}" "zCloud VPS execution lane probe"
+
+      - name: Verify current-main deploy is still the release owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          for i in {1..12}; do
+            activation_status="$(gh api "repos/${repo}/actions/runs/${STALE_ACTIVATION_RUN}" --jq '.status')"
+            probe_status="$(gh api "repos/${repo}/actions/runs/${STALE_PROBE_RUN}" --jq '.status')"
+            deploy_status="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
+            echo "VERIFY attempt=${i} activation=${activation_status} probe=${probe_status} deploy=${deploy_status}"
+            if [[ "${activation_status}" = "completed" && "${probe_status}" = "completed" ]]; then
+              echo "PWQ24_RELEASE_LANE_UNBLOCK_GREEN deploy_run=${CURRENT_DEPLOY_RUN} deploy_status=${deploy_status}"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "STALE_RUNS_DID_NOT_TERMINATE"
+          exit 1
