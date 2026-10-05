@@ -309,20 +309,31 @@ def _firefox_bootstrap_urls():
 
 def firefox_runner_status():
     standalone=_standalone_firefox_pids()
-    try:
-        try: service_state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
-        except subprocess.CalledProcessError as e: service_state=(e.output or '').strip() or 'inactive'
-        raw=user_systemctl('show',FIREFOX_RUNNER_SERVICE,'-p','MainPID','-p','ActiveEnterTimestamp','-p','NRestarts','-p','Restart')
-        fields=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
-    except Exception as e:
-        service_state='unknown'
+    violentmonkey_only=_violentmonkey_only_mode()
+    # In the explicit Violentmonkey-only deployment the legacy user service is
+    # intentionally disabled. A live standalone Firefox PID already proves the
+    # browser runtime is present, so querying the user systemd bus adds no health
+    # signal and can block /api/runner-live and /api/status for up to 2x12s when
+    # that bus is slow. Keep systemd probing for every other runtime mode.
+    if standalone and violentmonkey_only:
+        service_state='inactive'
         fields={}
-        service_error=str(e)[:200]
-    else:
         service_error=None
+    else:
+        try:
+            try: service_state=user_systemctl('is-active',FIREFOX_RUNNER_SERVICE)
+            except subprocess.CalledProcessError as e: service_state=(e.output or '').strip() or 'inactive'
+            raw=user_systemctl('show',FIREFOX_RUNNER_SERVICE,'-p','MainPID','-p','ActiveEnterTimestamp','-p','NRestarts','-p','Restart')
+            fields=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
+        except Exception as e:
+            service_state='unknown'
+            fields={}
+            service_error=str(e)[:200]
+        else:
+            service_error=None
     service_active=service_state=='active'
     active=service_active or bool(standalone)
-    runtime_mode='systemd' if service_active else ('standalone' if standalone else ('violentmonkey-only' if _violentmonkey_only_mode() else 'none'))
+    runtime_mode='systemd' if service_active else ('standalone' if standalone else ('violentmonkey-only' if violentmonkey_only else 'none'))
     result={
         'state':'active' if active else service_state,
         'service_state':service_state,
