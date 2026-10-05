@@ -13,54 +13,69 @@ jobs:
       - name: Rebalance VPS toward FTMO
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
 
-          echo "=== BEFORE ==="
-          uptime
-          free -h
-          systemctl is-active actions.runner.Zennay-RaiseAI.vps-bb300bba.service || true
-          systemctl is-active haxlab-analyzer.service || true
-          systemctl is-active ftmo-autonomous-marathon.service || true
-
-          echo "=== STOP RAISEAI RUNNER + BUILD ==="
+          echo "=== KEEP RAISEAI + HAXLAB ANALYZER STOPPED ==="
           sudo -n systemctl stop actions.runner.Zennay-RaiseAI.vps-bb300bba.service || true
           pkill -TERM -f '/home/ubuntu/actions-runner-raiseai/_work/RaiseAI/RaiseAI' || true
-          sleep 3
-          if pgrep -af '/home/ubuntu/actions-runner-raiseai/_work/RaiseAI/RaiseAI'; then
-            pkill -KILL -f '/home/ubuntu/actions-runner-raiseai/_work/RaiseAI/RaiseAI' || true
+          sudo -n systemctl stop haxlab-analyzer.service || true
+
+          echo "=== FTMO INSTALLED UNIT / PRE-STATE ==="
+          sudo -n systemctl cat ftmo-autonomous-marathon.service || true
+          sudo -n systemctl status ftmo-autonomous-marathon.service --no-pager -n 40 || true
+          sudo -n systemctl list-jobs --no-pager | grep -i ftmo || true
+
+          state="$(systemctl is-active ftmo-autonomous-marathon.service || true)"
+          echo "ftmo_initial_state=$state"
+
+          if [[ "$state" != "active" ]]; then
+            sudo -n systemctl reset-failed ftmo-autonomous-marathon.service || true
+            sudo -n systemctl start --no-block ftmo-autonomous-marathon.service || true
           fi
 
-          echo "=== STOP HAXLAB ANALYZER ==="
-          sudo -n systemctl stop haxlab-analyzer.service
+          echo "=== WAIT FOR FTMO ACTIVE ==="
+          for i in $(seq 1 30); do
+            state="$(systemctl is-active ftmo-autonomous-marathon.service || true)"
+            echo "attempt=$i state=$state"
+            [[ "$state" == "active" ]] && break
+            [[ "$state" == "failed" ]] && break
+            sleep 2
+          done
 
-          echo "=== START / KEEP FTMO MARATHON ==="
-          sudo -n systemctl reset-failed ftmo-autonomous-marathon.service || true
-          sudo -n systemctl start ftmo-autonomous-marathon.service
-          sleep 5
+          state="$(systemctl is-active ftmo-autonomous-marathon.service || true)"
+          if [[ "$state" != "active" ]]; then
+            echo "=== FTMO FIRST START DID NOT REACH ACTIVE; DIAGNOSE + ONE BOUNDED RESTART ==="
+            sudo -n systemctl status ftmo-autonomous-marathon.service --no-pager -n 80 || true
+            sudo -n journalctl -u ftmo-autonomous-marathon.service -n 100 --no-pager || true
+            sudo -n systemctl stop ftmo-autonomous-marathon.service || true
+            sudo -n systemctl reset-failed ftmo-autonomous-marathon.service || true
+            sudo -n systemctl start --no-block ftmo-autonomous-marathon.service || true
+            for i in $(seq 1 30); do
+              state="$(systemctl is-active ftmo-autonomous-marathon.service || true)"
+              echo "restart_attempt=$i state=$state"
+              [[ "$state" == "active" ]] && break
+              [[ "$state" == "failed" ]] && break
+              sleep 2
+            done
+          fi
 
-          echo "=== VERIFY ==="
+          echo "=== FINAL STATES ==="
           raise_state="$(systemctl is-active actions.runner.Zennay-RaiseAI.vps-bb300bba.service || true)"
-          hax_analyzer_state="$(systemctl is-active haxlab-analyzer.service || true)"
+          hax_state="$(systemctl is-active haxlab-analyzer.service || true)"
           ftmo_state="$(systemctl is-active ftmo-autonomous-marathon.service || true)"
           echo "raiseai_runner=$raise_state"
-          echo "haxlab_analyzer=$hax_analyzer_state"
+          echo "haxlab_analyzer=$hax_state"
           echo "ftmo_marathon=$ftmo_state"
-
-          test "$raise_state" != "active"
-          test "$hax_analyzer_state" != "active"
-          test "$ftmo_state" = "active"
-
-          echo "=== FTMO SERVICE ==="
-          systemctl show ftmo-autonomous-marathon.service \
-            -p ActiveState -p SubState -p MainPID -p CPUWeight -p CPUQuotaPerSecUSec -p MemoryCurrent \
-            --no-pager
-          sudo -n journalctl -u ftmo-autonomous-marathon.service -n 30 --no-pager || true
-
-          echo "=== REMAINING HEAVY PROCESSES ==="
-          ps -eo pid,ppid,user,psr,%cpu,%mem,etime,stat,cmd --sort=-%cpu | head -n 35
-          echo "=== LOAD AFTER ==="
+          systemctl show ftmo-autonomous-marathon.service -p ActiveState -p SubState -p MainPID -p CPUWeight -p CPUQuotaPerSecUSec -p MemoryCurrent --no-pager || true
+          sudo -n journalctl -u ftmo-autonomous-marathon.service -n 60 --no-pager || true
+          echo "=== CPU AFTER REBALANCE ==="
           uptime
           free -h
+          ps -eo pid,ppid,user,psr,%cpu,%mem,etime,stat,cmd --sort=-%cpu | head -n 35
+
+          test "$raise_state" != "active"
+          test "$hax_state" != "active"
+          test "$ftmo_state" = "active"
 
       - name: Host overview
         shell: bash
