@@ -155,9 +155,14 @@ function sinceLastVisitPanel(pid=''){
   if(!ACTIVITY_LOADED)return `<section class="panel visit-delta"><div class="panel-header"><div><span class="eyebrow">SINCE YOUR LAST VISIT</span><h2>Checking recorded changes…</h2><div class="panel-subtitle">${esc(subtitle)}</div></div>${icon('pulse')}</div></section>`;
   const visible=new Set(DATA.projects.map(p=>p.id));
   const list=ACTIVITY.filter(a=>Date.parse(a.ts)>since&&(pid?a.project===pid:visible.has(a.project)));
+  const oldestLoaded=ACTIVITY.length?Date.parse(ACTIVITY.at(-1).ts):NaN;
+  const coverageLimited=ACTIVITY.length>=80&&Number.isFinite(oldestLoaded)&&oldestLoaded>since;
   const commits=list.filter(a=>a.kind==='commit').length,steps=list.length-commits;
-  const headline=list.length?`${list.length} recorded change${list.length===1?'':'s'}`:'No recorded changes';
-  const summary=list.length?`${commits} code update${commits===1?'':'s'} · ${steps} project step${steps===1?'':'s'}`:'Nothing new has been recorded for this view.';
+  const headline=list.length
+    ? (coverageLimited?`At least ${list.length} recorded change${list.length===1?'':'s'}`:`${list.length} recorded change${list.length===1?'':'s'}`)
+    : (coverageLimited?'No matching changes in the latest activity window':'No recorded changes');
+  const counts=list.length?`${commits} code update${commits===1?'':'s'} · ${steps} project step${steps===1?'':'s'}`:'Nothing new has been found for this view.';
+  const summary=coverageLimited?counts+' · Older changes may be outside the 80-event feed.':counts;
   const items=list.slice(0,3).map(activityItem).join('');
   const href='#activity'+(pid?'?project='+encodeURIComponent(pid):'');
   return `<section class="panel visit-delta"><div class="panel-header"><div><span class="eyebrow">SINCE YOUR LAST VISIT</span><h2>${esc(headline)}</h2><div class="panel-subtitle">${esc(subtitle)} · ${esc(summary)}</div></div>${icon('pulse')}</div>${items?`<div class="activity-list visit-delta-list">${items}</div>`:''}<div class="panel-footer"><a href="${esc(href)}" class="text-link">See recorded changes ${icon('arrow')}</a></div></section>`;
