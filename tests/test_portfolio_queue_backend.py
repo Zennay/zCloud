@@ -297,7 +297,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(1, len(queued_ftmo))
         self.assertIsNone(queued_ftmo[0]["worker_slot"])
 
-    def test_memory_guard_blocks_new_claims_but_preserves_existing_assignment(self):
+    def test_guarded_memory_blocks_new_claims_but_preserves_existing_assignment(self):
         first = server.portfolio_queue_enqueue(
             "cloud", "first", "P0", "Implement first guarded worker task with tests."
         )
@@ -308,7 +308,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "raiseai", "second", "P1", "Implement second guarded worker task with tests."
         )
         server.worker_memory_status = lambda *args, **kwargs: {
-            "available_mb": 900,
+            "available_mb": 2564,
             "total_mb": 11000,
             "swap_total_mb": 0,
             "swap_free_mb": 0,
@@ -316,7 +316,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "effective_headroom_mb": 2560,
             "per_new_slot_mb": 1536,
             "new_worker_capacity": 0,
-            "pressure": "critical",
+            "pressure": "guarded",
             "healthy_for_new_worker": False,
             "swap_healthy": False,
         }
@@ -477,6 +477,100 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual([running["queue_id"]], [item["queue_id"] for item in selected])
         rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
         self.assertEqual("queued", rows[replacement["queue_id"]]["status"])
+
+    def test_critical_memory_releases_one_safe_idle_worker_per_tick(self):
+        server.MAX_CHATGPT_WORKERS = 3
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
+        cloud = server.portfolio_queue_enqueue(
+            "cloud", "control plane P0", "P0",
+            "Implement zCloud control-plane reliability with deterministic tests.",
+        )
+        lightup = server.portfolio_queue_enqueue(
+            "lightup", "security lab P1", "P1",
+            "Implement the LightUp infrastructure task with deterministic tests.",
+        )
+        supa = server.portfolio_queue_enqueue(
+            "supa", "product P2", "P2",
+            "Implement the Supa product task with deterministic tests.",
+        )
+        initial = server.portfolio_queue_allocate()
+        self.assertEqual(3, len(initial))
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',claim_expires=NULL "
+                "WHERE queue_id IN (?,?,?)",
+                (cloud["queue_id"], lightup["queue_id"], supa["queue_id"]),
+            )
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 867,
+            "total_mb": 11159,
+            "swap_total_mb": 4095,
+            "swap_free_mb": 0,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2560,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "critical",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(2, len(selected))
+        self.assertEqual(
+            {cloud["queue_id"], lightup["queue_id"]},
+            {item["queue_id"] for item in selected},
+        )
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[supa["queue_id"]]["status"])
+        self.assertIsNone(rows[supa["queue_id"]]["worker_slot"])
+
+    def test_critical_memory_keeps_busy_and_verifying_workers_pinned(self):
+        server.MAX_CHATGPT_WORKERS = 2
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        busy = server.portfolio_queue_enqueue(
+            "supa", "busy Supa P2", "P2",
+            "Implement the active Supa task with deterministic tests.",
+        )
+        verifying = server.portfolio_queue_enqueue(
+            "lightup", "verifying LightUp P1", "P1",
+            "Implement and verify the LightUp infrastructure task.",
+        )
+        server.portfolio_queue_allocate()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',claim_expires=NULL WHERE queue_id=?",
+                (busy["queue_id"],),
+            )
+            conn.execute(
+                "UPDATE portfolio_queue SET status='verifying',claim_expires=NULL WHERE queue_id=?",
+                (verifying["queue_id"],),
+            )
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) VALUES(?,?,?,?,?,?)",
+                (server.now(), "heartbeat", "supa", 1, 1, 0),
+            )
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 867,
+            "total_mb": 11159,
+            "swap_total_mb": 4095,
+            "swap_free_mb": 0,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2560,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "critical",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(
+            {busy["queue_id"], verifying["queue_id"]},
+            {item["queue_id"] for item in selected},
+        )
 
     def test_normal_start_intent_does_not_preempt_running_higher_priority_lane(self):
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
