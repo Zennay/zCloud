@@ -44,7 +44,7 @@
         "pool": "protected",
         "cpu_soft_cores": 1,
         "memory_soft_mb": 1536,
-        "priority": "high",
+        "priority": "normal",
         "protected": true
       }
     },
@@ -82,7 +82,7 @@
         "pool": "heavy",
         "cpu_soft_cores": 4,
         "memory_soft_mb": 4608,
-        "priority": "turbo",
+        "priority": "high",
         "protected": false
       }
     },
@@ -120,7 +120,7 @@
         "pool": "build",
         "cpu_soft_cores": 2,
         "memory_soft_mb": 2048,
-        "priority": "normal",
+        "priority": "background",
         "protected": false
       }
     },
@@ -137,7 +137,7 @@
         "pool": "build",
         "cpu_soft_cores": 2,
         "memory_soft_mb": 2048,
-        "priority": "normal",
+        "priority": "background",
         "protected": false
       }
     },
@@ -154,7 +154,7 @@
         "pool": "disabled",
         "cpu_soft_cores": 0,
         "memory_soft_mb": 0,
-        "priority": "normal",
+        "priority": "background",
         "protected": false
       }
     },
@@ -171,6 +171,23 @@
         "pool": "heavy",
         "cpu_soft_cores": 2,
         "memory_soft_mb": 3072,
+        "priority": "turbo",
+        "protected": false
+      }
+    },
+    "zguard": {
+      "queue_mode": "execution",
+      "lane_profile": "product",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "browser-product",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 1536,
         "priority": "normal",
         "protected": false
       }
