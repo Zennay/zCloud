@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: lightup-pr20-pr21-cross-lane-proof
@@ -70,6 +70,44 @@ jobs:
 
           prove 20 "$PR20_SHA"
           prove 21 "$PR21_SHA"
+
+      - name: Persist green proof receipt
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          dest="runtime-evidence/lightup-pr20-pr21-cross-lane-proof.json"
+          receipt="$RUNNER_TEMP/lightup-cross-lane-receipt.json"
+          python3 - <<'PY' > "$receipt"
+          import json, os, socket
+          print(json.dumps({
+              "schema_version": 1,
+              "result": "success",
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "heads": {
+                  "20": os.environ["PR20_SHA"],
+                  "21": os.environ["PR21_SHA"],
+              },
+          }, sort_keys=True, indent=2))
+          PY
+          encoded="$(base64 -w0 < "$receipt")"
+          existing="$(gh api "repos/Zennay/zCloud/contents/$dest?ref=main" --jq .sha 2>/dev/null || true)"
+          args=(
+            --method PUT
+            "repos/Zennay/zCloud/contents/$dest"
+            -f message="Record LightUp PR20 PR21 cross-lane proof"
+            -f content="$encoded"
+            -f branch=main
+          )
+          if [[ -n "$existing" ]]; then
+            args+=( -f sha="$existing" )
+          fi
+          gh api "${args[@]}" >/dev/null
+          cat "$receipt"
 
       - name: Emit proof receipt
         if: always()
