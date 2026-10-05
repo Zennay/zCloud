@@ -1,0 +1,274 @@
+name: PWQ-24 post-443 live acceptance
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post443-live-acceptance-20261005-0047
+    paths:
+      - .github/workflows/pwq24-post443-live-acceptance-20261005.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: pwq24-post443-live-acceptance
+  cancel-in-progress: true
+
+jobs:
+  wait-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      deploy_run_id: ${{ steps.wait.outputs.deploy_run_id }}
+      deployed_at: ${{ steps.wait.outputs.deployed_at }}
+    steps:
+      - name: Wait for exact-main guarded production deploy
+        id: wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN: 18a15723386316368be1bc8a03d23f24b26ef8d2
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          token = os.environ['GH_TOKEN']
+          expected = os.environ['EXPECTED_MAIN']
+          repo = os.environ['GITHUB_REPOSITORY']
+          output = os.environ['GITHUB_OUTPUT']
+
+          def get(url):
+              req = urllib.request.Request(url, headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'pwq24-production-waiter',
+              })
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          deadline = time.time() + 480
+          last = None
+          while time.time() < deadline:
+              main = get(f'https://api.github.com/repos/{repo}/branches/main')
+              actual = ((main.get('commit') or {}).get('sha') or '')
+              if actual != expected:
+                  raise SystemExit(f'main moved during PWQ-24 gate: expected={expected} actual={actual}')
+
+              payload = get(f'https://api.github.com/repos/{repo}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=30')
+              matches = [r for r in payload.get('workflow_runs', []) if r.get('head_sha') == expected]
+              matches.sort(key=lambda r: r.get('created_at') or '', reverse=True)
+              if matches:
+                  last = matches[0]
+                  print('DEPLOY_POLL ' + json.dumps({
+                      'id': last.get('id'), 'status': last.get('status'),
+                      'conclusion': last.get('conclusion'), 'created_at': last.get('created_at'),
+                      'updated_at': last.get('updated_at'),
+                  }, sort_keys=True), flush=True)
+                  if last.get('status') == 'completed' and last.get('conclusion') == 'success':
+                      with open(output, 'a', encoding='utf-8') as fh:
+                          fh.write(f"deploy_run_id={last.get('id')}\n")
+                          fh.write(f"deployed_at={last.get('updated_at')}\n")
+                      print('PWQ24_EXACT_PRODUCTION_DEPLOY_GREEN=1')
+                      raise SystemExit(0)
+              time.sleep(10)
+
+          raise SystemExit('exact-main production deploy did not become green in bounded wait: ' + json.dumps(last, sort_keys=True))
+          PY
+
+  accept:
+    needs: wait-production
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    env:
+      EXPECTED_MAIN: 18a15723386316368be1bc8a03d23f24b26ef8d2
+      DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
+      DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/pwq24-post443-live-acceptance-20261005-0047
+          clean: true
+          fetch-depth: 1
+
+      - name: Guard live exact-main receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          expected = os.environ['EXPECTED_MAIN']
+          last = None
+          for _ in range(6):
+              with urllib.request.urlopen('http://127.0.0.1:8765/api/status', timeout=40) as response:
+                  payload = json.load(response)
+              project = next((p for p in payload.get('projects', []) if p.get('id') == 'cloud'), None)
+              state = (project or {}).get('execution_state') or {}
+              last = {'state_source': (project or {}).get('state_source'), 'execution_state': state}
+              if (project or {}).get('state_source') == 'evidence_receipt' and state.get('commit_sha') == expected and state.get('ci_status') == 'success':
+                  print('PWQ24_LIVE_RECEIPT_GREEN=' + json.dumps(last, sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(5)
+          raise SystemExit('live production receipt mismatch: ' + json.dumps(last, sort_keys=True))
+          PY
+
+      - name: Prove Supa and FTMO prompt plus heartbeat
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p artifacts/ops
+          set +e
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE = 'http://127.0.0.1:8765'
+          DB = '/home/ubuntu/zennay-cloud/history.db'
+          REQUIRED = {'supa', 'ftmo'}
+          deployed_at = os.environ['DEPLOYED_AT']
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode('utf-8')
+              headers = {'User-Agent': 'pwq24-post443-acceptance/1'}
+              if data is not None:
+                  headers['Content-Type'] = 'application/json'
+              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
+
+          def allocation():
+              targets = call('GET', '/api/runner-targets')
+              workers = (targets.get('global_allocation') or {}).get('workers') or []
+              by_project = {}
+              for item in workers:
+                  project = str(item.get('project_id') or '').strip().lower()
+                  key = str(item.get('worker_key') or '').strip()
+                  if project in REQUIRED and key:
+                      by_project[project] = key
+              return targets, by_project
+
+          def evidence(selected):
+              out = {}
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  for project, key in selected.items():
+                      slot = int(key.rsplit('::w', 1)[1])
+                      rows = conn.execute(
+                          "SELECT ts,event,reason,error FROM runner_events WHERE project_id=? AND worker_slot=? AND ts>=? AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
+                          (project, slot, deployed_at),
+                      ).fetchall()
+                      items = [dict(r) for r in rows]
+                      prompts = [x for x in items if x['event'] == 'prompt-sent']
+                      heartbeats = [x for x in items if x['event'] == 'heartbeat']
+                      blocked = [x for x in items if x['event'] == 'send-blocked']
+                      parsed = []
+                      for p in prompts:
+                          try:
+                              parsed.append(datetime.fromisoformat(str(p['ts']).replace('Z', '+00:00')))
+                          except Exception:
+                              pass
+                      duplicate = any((b-a).total_seconds() <= 8 for a,b in zip(parsed, parsed[1:]))
+                      out[project] = {
+                          'worker': key,
+                          'prompt_sent': bool(prompts),
+                          'heartbeat': bool(heartbeats),
+                          'send_blocked': blocked,
+                          'duplicate_prompt_window': duplicate,
+                          'events': items[-12:],
+                      }
+              return out
+
+          targets = None
+          selected = {}
+          for _ in range(12):
+              targets, selected = allocation()
+              if REQUIRED.issubset(selected):
+                  break
+              time.sleep(5)
+
+          actions = []
+          if REQUIRED.issubset(selected):
+              auto_deadline = time.time() + 60
+              while time.time() < auto_deadline:
+                  ev = evidence(selected)
+                  if REQUIRED.issubset(ev) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in ev.values()):
+                      break
+                  time.sleep(5)
+              else:
+                  for project in sorted(REQUIRED):
+                      key = selected[project]
+                      result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                      actions.append({'worker': key, 'action': 'start', 'result': result})
+
+          final = {}
+          deadline = time.time() + 150
+          while time.time() < deadline:
+              targets, selected = allocation()
+              if REQUIRED.issubset(selected):
+                  final = evidence(selected)
+                  if REQUIRED.issubset(final) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values()):
+                      break
+              time.sleep(5)
+
+          health = subprocess.run(['/home/ubuntu/.local/bin/zcloud-healthcheck'], text=True, capture_output=True, timeout=90, check=False)
+          green = (
+              REQUIRED.issubset(selected)
+              and REQUIRED.issubset(final)
+              and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values())
+              and health.returncode == 0
+          )
+          result = {
+              'captured_at': datetime.now(timezone.utc).isoformat(),
+              'expected_main': os.environ['EXPECTED_MAIN'],
+              'deploy_run_id': os.environ.get('DEPLOY_RUN_ID'),
+              'deployed_at': deployed_at,
+              'selected': selected,
+              'actions': actions,
+              'evidence': final,
+              'health_rc': health.returncode,
+              'health_stdout_tail': health.stdout[-5000:],
+              'health_stderr_tail': health.stderr[-2000:],
+              'acceptance_green': green,
+          }
+          pathlib.Path('artifacts/ops/pwq24-post443-live-acceptance-result.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print('PWQ24_ACCEPTANCE_RESULT=' + json.dumps(result, sort_keys=True))
+          raise SystemExit(0 if green else 1)
+          PY
+          rc=$?
+          set -e
+          exit "$rc"
+
+      - name: Persist acceptance artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f artifacts/ops/pwq24-post443-live-acceptance-result.json ]; then
+            echo '{"acceptance_green":false,"error":"acceptance artifact missing"}' > artifacts/ops/pwq24-post443-live-acceptance-result.json
+          fi
+          git config user.name 'zCloud ops runner'
+          git config user.email 'actions@users.noreply.github.com'
+          git add artifacts/ops/pwq24-post443-live-acceptance-result.json
+          if git diff --cached --quiet; then
+            echo PWQ24_ARTIFACT_UNCHANGED=1
+            exit 0
+          fi
+          git commit -m 'Ops: capture PWQ-24 post-443 acceptance'
+          git push origin HEAD:ops/pwq24-post443-live-acceptance-20261005-0047
