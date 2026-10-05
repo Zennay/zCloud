@@ -1,0 +1,184 @@
+name: PWQ-24 bounded Supa FTMO recovery proof
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post461-live-acceptance-20261005-0442
+    paths:
+      - .github/workflows/pwq24-bounded-recovery-proof-20261005.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwq24-bounded-recovery-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b68562c2041ffd99f3ac15d7fbca220bef9d0549
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove bounded Start dispatch for Supa and FTMO
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+          echo "SELF_HEAL_TIMER=$(sudo -n systemctl is-active zcloud-self-heal.timer || true)"
+          sudo -n systemctl --no-pager --full status zcloud-self-heal.timer || true
+
+          # Use the already-deployed canonical stale-command reconciler before the
+          # bounded proof. This is the same 300s threshold as zCloud health.
+          python3 scripts/zcloud_worker_watchdog.py --clear-stale-pending-only --json
+
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          REQUIRED=("ftmo","supa")
+          started_at=datetime.now(timezone.utc).isoformat()
+
+          def call(method,path,payload=None):
+              data=None if payload is None else json.dumps(payload).encode()
+              headers={"User-Agent":"pwq24-bounded-recovery-proof/1"}
+              if data is not None:
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(BASE+path,data=data,headers=headers,method=method)
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  return json.load(response)
+
+          def selected():
+              targets=call("GET","/api/runner-targets")
+              out={}
+              for item in (targets.get("global_allocation") or {}).get("workers") or []:
+                  project=str(item.get("project_id") or "").strip().lower()
+                  key=str(item.get("worker_key") or "").strip()
+                  if project in REQUIRED and key:
+                      out[project]=key
+              return out
+
+          def evidence(keys):
+              result={}
+              with sqlite3.connect(DB,timeout=5) as conn:
+                  conn.row_factory=sqlite3.Row
+                  for project,key in keys.items():
+                      slot=int(key.rsplit("::w",1)[1])
+                      rows=conn.execute(
+                          "SELECT ts,event,reason,error FROM runner_events "
+                          "WHERE project_id=? AND worker_slot=? AND ts>=? "
+                          "AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
+                          (project,slot,started_at),
+                      ).fetchall()
+                      items=[dict(r) for r in rows]
+                      result[project]={
+                          "worker":key,
+                          "prompt_sent":any(x["event"]=="prompt-sent" for x in items),
+                          "heartbeat":any(x["event"]=="heartbeat" for x in items),
+                          "send_blocked":[x for x in items if x["event"]=="send-blocked"],
+                          "events":items[-10:],
+                      }
+              return result
+
+          # Reassert project-level Start for both projects up front. This gives both
+          # the same fresh 180s manual allocation intent before any worker Start.
+          actions=[]
+          for project in REQUIRED:
+              actions.append({"project":project,"result":call("POST","/api/runner-control",{"project_id":project,"action":"start"})})
+
+          deadline=time.time()+55
+          keys={}
+          while time.time()<deadline:
+              keys=selected()
+              if all(p in keys for p in REQUIRED):
+                  break
+              time.sleep(3)
+          if not all(p in keys for p in REQUIRED):
+              raise SystemExit("required allocation missing after fresh project Starts: "+json.dumps(keys,sort_keys=True))
+
+          for project in REQUIRED:
+              key=keys[project]
+              try:
+                  result=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read().decode("utf-8","replace")
+                  if exc.code!=400 or "Ongeldige runneractie" not in raw:
+                      raise
+                  fresh=selected()
+                  key=fresh.get(project)
+                  if not key:
+                      raise SystemExit(f"{project} deallocated during bounded worker Start")
+                  result=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
+                  keys=fresh
+              actions.append({"project":project,"worker":key,"result":result})
+
+          deadline=time.time()+105
+          final={}
+          while time.time()<deadline:
+              current=selected()
+              if all(p in current for p in REQUIRED):
+                  # Keep evidence tied to the current allocation. If a slot rebinds
+                  # inside the bounded window, explicitly Start the new slot once.
+                  for project in REQUIRED:
+                      if current[project] != keys.get(project):
+                          result=call("POST","/api/runner-control",{"project_id":current[project],"action":"start"})
+                          actions.append({"project":project,"worker":current[project],"action":"rebind-start","result":result})
+                  keys=current
+                  final=evidence(keys)
+                  if all(
+                      final.get(p,{}).get("prompt_sent")
+                      and final.get(p,{}).get("heartbeat")
+                      and not final.get(p,{}).get("send_blocked")
+                      for p in REQUIRED
+                  ):
+                      break
+              time.sleep(4)
+
+          # Run canonical stale cleanup once more immediately before the strict
+          # health gate; the production timer is expected to do the same every min.
+          cleanup=subprocess.run(
+              ["python3","scripts/zcloud_worker_watchdog.py","--clear-stale-pending-only","--json"],
+              text=True,capture_output=True,check=False,timeout=30,
+          )
+          health=subprocess.run(
+              ["python3","scripts/zcloud_healthcheck.py","--json"],
+              text=True,capture_output=True,check=False,timeout=90,
+          )
+          result={
+              "started_at":started_at,
+              "actions":actions,
+              "selected":keys,
+              "evidence":final,
+              "cleanup_rc":cleanup.returncode,
+              "cleanup":cleanup.stdout[-2000:],
+              "health_rc":health.returncode,
+              "health":health.stdout[-5000:],
+          }
+          print("PWQ24_BOUNDED_RESULT="+json.dumps(result,sort_keys=True))
+          green=(
+              all(p in keys for p in REQUIRED)
+              and all(
+                  final.get(p,{}).get("prompt_sent")
+                  and final.get(p,{}).get("heartbeat")
+                  and not final.get(p,{}).get("send_blocked")
+                  for p in REQUIRED
+              )
+              and cleanup.returncode==0
+              and health.returncode==0
+          )
+          raise SystemExit(0 if green else 1)
+          PY
