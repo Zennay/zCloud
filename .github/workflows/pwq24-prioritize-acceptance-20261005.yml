@@ -1,0 +1,47 @@
+name: PWQ-24 prioritize live acceptance
+
+on:
+  push:
+    branches:
+      - ops/pwq24-prioritize-acceptance-20261005-0258
+    paths:
+      - .github/workflows/pwq24-prioritize-acceptance-20261005.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  free-vps-lane:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel superseded queued VPS jobs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_id in 37257361744 37257361705; do
+            payload="$(curl -fsS \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${run_id}")"
+            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"${payload}")"
+            name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' <<<"${payload}")"
+            echo "PWQ24_CANCEL_CHECK run=${run_id} name=${name} status=${status}"
+            case "${status}" in
+              queued|in_progress|waiting|pending|requested)
+                curl -fsS -X POST \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${REPO}/actions/runs/${run_id}/cancel" >/dev/null
+                echo "PWQ24_CANCELLED run=${run_id}"
+                ;;
+              *)
+                echo "PWQ24_CANCEL_SKIP run=${run_id} status=${status}"
+                ;;
+            esac
+          done
