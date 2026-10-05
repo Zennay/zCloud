@@ -19,7 +19,7 @@ concurrency:
 jobs:
   wait-production:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     outputs:
       deploy_run_id: ${{ steps.wait.outputs.deploy_run_id }}
       deployed_at: ${{ steps.wait.outputs.deployed_at }}
@@ -52,7 +52,7 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as response:
                   return json.load(response)
 
-          deadline = time.time() + 480
+          deadline = time.time() + 720
           last = None
           while time.time() < deadline:
               main = get(f'https://api.github.com/repos/{repo}/branches/main')
