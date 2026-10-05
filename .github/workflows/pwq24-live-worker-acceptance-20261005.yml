@@ -10,10 +10,11 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: pwq24-live-worker-acceptance
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   accept:
@@ -175,3 +176,82 @@ jobs:
           set -euo pipefail
           /home/ubuntu/.local/bin/zcloud-healthcheck
           echo PWQ24_ZCLOUD_HEALTH_GREEN=1
+
+      - name: Publish PWQ-24 result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sqlite3
+          import subprocess
+          import urllib.request
+          from datetime import datetime, timedelta, timezone
+
+          db = pathlib.Path('/home/ubuntu/zennay-cloud/history.db')
+          since = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
+          evidence = {}
+          with sqlite3.connect(db, timeout=5) as conn:
+              conn.row_factory = sqlite3.Row
+              for project in ('supa', 'ftmo'):
+                  rows = conn.execute(
+                      "SELECT ts,event,reason,error,worker_slot FROM runner_events WHERE project_id=? AND ts>=? AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
+                      (project, since),
+                  ).fetchall()
+                  items = [dict(row) for row in rows]
+                  prompts = [x for x in items if x['event'] == 'prompt-sent']
+                  heartbeats = [x for x in items if x['event'] == 'heartbeat']
+                  blocked = [x for x in items if x['event'] == 'send-blocked']
+                  evidence[project] = {
+                      'prompt_sent': bool(prompts),
+                      'heartbeat': bool(heartbeats),
+                      'send_blocked': blocked,
+                      'prompt_count': len(prompts),
+                      'events': items[-12:],
+                  }
+
+          health = subprocess.run(
+              ['/home/ubuntu/.local/bin/zcloud-healthcheck'],
+              text=True, capture_output=True, timeout=90, check=False,
+          )
+          live_green = all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] for v in evidence.values())
+          payload_data = {
+              'job_status': os.environ.get('JOB_STATUS'),
+              'run_id': os.environ.get('GITHUB_RUN_ID'),
+              'branch': os.environ.get('GITHUB_REF_NAME'),
+              'sha': os.environ.get('GITHUB_SHA'),
+              'expected_main': '4a0f017fc871ab940d82986d8b76d3fff5488e0c',
+              'live_green': live_green,
+              'health_rc': health.returncode,
+              'evidence': evidence,
+          }
+          body = (
+              'Operational result for Notion work item PWQ-24. Temporary branch; do not merge.\n\n'
+              + json.dumps(payload_data, indent=2, sort_keys=True)
+              + '\n\nhealth_stdout:\n' + health.stdout[-6000:]
+              + '\nhealth_stderr:\n' + health.stderr[-3000:]
+          )
+          payload = json.dumps({
+              'title': f"PWQ-24 live acceptance result {os.environ.get('GITHUB_RUN_ID')}",
+              'body': body,
+          }).encode('utf-8')
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues",
+              data=payload,
+              headers={
+                  'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                  'Accept': 'application/vnd.github+json',
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'pwq24-live-acceptance-reporter',
+              },
+              method='POST',
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              result = json.load(response)
+          print('PWQ24_RESULT_ISSUE=' + str(result.get('html_url')))
+          PY
