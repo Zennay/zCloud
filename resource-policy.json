@@ -22,8 +22,5 @@
   },
   "lightup": {
     "priority": "turbo"
-  },
-  "zguard": {
-    "priority": "normal"
   }
 }
