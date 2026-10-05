@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 concurrency:
@@ -74,15 +74,41 @@ jobs:
                       "labels":sorted(labels),
                   })
 
-          evidence={"stale_zcloud_jobs":stale,"count":len(stale)}
-          print("recover=" + ("true" if stale else "false"))
+          # Remove superseded duplicate queue entries so the surviving run can
+          # reach a runner instead of sitting behind obsolete copies.
+          by_path={}
+          for item in stale:
+              by_path.setdefault(item["name"] or str(item["run_id"]),[]).append(item)
+          cancelled=[]
+          for _, items in by_path.items():
+              items.sort(key=lambda x:(x["age_s"],x["run_id"]))
+              # Lowest age is newest: keep it; cancel older queued duplicates.
+              for item in items[1:]:
+                  req=urllib.request.Request(
+                      f"https://api.github.com/repos/{repo}/actions/runs/{item['run_id']}/cancel",
+                      headers=headers, method="POST",
+                  )
+                  try:
+                      with urllib.request.urlopen(req,timeout=20) as r:
+                          r.read()
+                      cancelled.append(item["run_id"])
+                  except Exception:
+                      pass
+
+          remaining=[x for x in stale if x["run_id"] not in set(cancelled)]
+          evidence={
+              "stale_zcloud_jobs":remaining,
+              "cancelled_superseded_runs":cancelled,
+              "count":len(remaining),
+          }
+          print("recover=" + ("true" if remaining else "false"))
           print("evidence=" + json.dumps(evidence,separators=(",",":")))
           PY
 
   recover:
     needs: observe
     if: needs.observe.outputs.recover == 'true'
-    runs-on: [self-hosted, ftmo-research]
+    runs-on: self-hosted
     timeout-minutes: 5
     env:
       QUEUE_EVIDENCE: ${{ needs.observe.outputs.evidence }}
