@@ -49,6 +49,7 @@ class HostedStaleDeployCleanupWorkflowTests(unittest.TestCase):
         self.assertIn("ZCLOUD_STALE_DEPLOY_DUPLICATE_CURRENT_CANDIDATE", text)
         self.assertIn("ZCLOUD_STALE_DEPLOY_CANCEL_DUPLICATE_CURRENT", text)
         self.assertIn("queued|pending|waiting|requested", text)
+        self.assertEqual(2, text.count("IFS=$\'\\t\' read -r run_id status head_sha"))
         self.assertNotIn("queued|in_progress|pending|waiting|requested)\n                ;;\n              *)\n                echo", text)
         self.assertIn("ZCLOUD_STALE_DEPLOY_CANCEL_REQUESTED", text)
         self.assertIn('actions/runs/$run_id/cancel', text)
