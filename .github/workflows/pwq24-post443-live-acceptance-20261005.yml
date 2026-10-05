@@ -30,7 +30,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: 85afb3b63a8f83c03995b1451687b04e626c36ae
+          EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -88,13 +88,13 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     env:
-      EXPECTED_MAIN: 85afb3b63a8f83c03995b1451687b04e626c36ae
+      EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
       DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
       DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 85afb3b63a8f83c03995b1451687b04e626c36ae
+          ref: b68562c2041ffd99f3ac15d7fbca220bef9d0549
           clean: true
           fetch-depth: 1
 
