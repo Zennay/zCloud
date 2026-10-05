@@ -39,6 +39,15 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn('URL="${ZCLOUD_HEALTH_URL:-http://127.0.0.1:8765/}"', text)
         self.assertNotIn("http://127.0.0.1:8765/api/status", text)
         self.assertIn('systemctl restart "${SERVICE}"', text)
+        self.assertIn('systemctl is-active --quiet "${SERVICE}"', text)
+        self.assertIn('logger -t zcloud-self-heal "health probe timed out; confirming before restart"', text)
+        self.assertIn("sleep 3", text)
+        self.assertIn('logger -t zcloud-self-heal "health recovered during confirmation window"', text)
+        self.assertIn('logger -t zcloud-self-heal "health failed twice; restarting ${SERVICE}"', text)
+        self.assertLess(
+            text.index('health probe timed out; confirming before restart'),
+            text.index('systemctl restart "${SERVICE}"'),
+        )
         self.assertIn("for _ in {1..20}", text)
         self.assertIn(".disable-runtime-heal", text)
         self.assertIn("haxlab-autonomy.timer", text)
