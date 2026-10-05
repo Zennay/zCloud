@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   repair:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Check out exact zCloud recovery source
@@ -28,6 +28,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          echo "FTMO_TASK125_RECOVERY_RUNNER=verified"
 
           TARGET_SHA="0505a6b051dd63d828fd38cca54987fdf885c343"
           SERVICE="ftmo-autonomous-marathon.service"
