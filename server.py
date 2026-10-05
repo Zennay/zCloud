@@ -370,15 +370,11 @@ def restart_firefox_runtime():
     released=[]
     if browser_was_dead:
         recovery_guard=worker_memory_status()
-        safe_capacity=max(0,int(recovery_guard.get('new_worker_capacity') or 0))
-        if safe_capacity <= 0:
-            return {
-                **current,
-                'recovery_deferred':'memory-pressure',
-                'memory_guard':recovery_guard,
-                'released_slots':[],
-            }
-        released=_trim_dead_browser_allocations_for_recovery(safe_capacity)
+        # new_worker_capacity is an admission budget for NEW claims. After the
+        # kernel kills Firefox, refusing recovery because that budget is zero
+        # strands every already-allocated worker. Preserve the allocation and
+        # rehydrate those same worker tabs; the recovery hold prevents the
+        # scheduler from admitting extra workers while memory settles.
         _set_worker_recovery_hold()
         _persist_global_worker_allocation(portfolio_queue_allocation())
 
@@ -415,12 +411,14 @@ def restart_firefox_runtime():
                 status=firefox_runner_status()
                 status['memory_guard']=recovery_guard or worker_memory_status()
                 status['released_slots']=released
+                status['allocation_preserved']=bool(browser_was_dead)
                 return status
             time.sleep(1)
         status=firefox_runner_status()
         status['recovery_error']='standalone Firefox did not become active before timeout'
         status['memory_guard']=recovery_guard or worker_memory_status()
         status['released_slots']=released
+        status['allocation_preserved']=bool(browser_was_dead)
         return status
 
     for dependency in ('chatgpt-display.service','chatgpt-openbox.service'):
@@ -437,6 +435,7 @@ def restart_firefox_runtime():
         status=firefox_runner_status()
     status['memory_guard']=recovery_guard or worker_memory_status()
     status['released_slots']=released
+    status['allocation_preserved']=bool(browser_was_dead)
     return status
 
 def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
