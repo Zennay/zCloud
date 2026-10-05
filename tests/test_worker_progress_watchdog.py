@@ -210,6 +210,74 @@ class WorkerWatchdogCriticalMemoryRecoveryTests(unittest.TestCase):
 
 
 class WorkerWatchdogRuntimeRecoveryTests(unittest.TestCase):
+    def test_critical_memory_lost_runtime_restarts_firefox(self):
+        original_api_call = watchdog.api_call
+        calls = []
+
+        def fake_api_call(base_url, method, path, payload=None):
+            calls.append((method, path, payload))
+            if method == "GET" and path == "/api/runner-targets":
+                return 200, {
+                    "global_allocation": {
+                        "workers": [{
+                            "worker_key": "cloud::w1",
+                            "project_id": "cloud",
+                            "worker_slot": 1,
+                            "queue_id": "q1",
+                        }]
+                    }
+                }
+            if method == "GET" and path == "/api/status":
+                return 200, {
+                    "chatgpt_firefox": {
+                        "active": True,
+                        "state": "active",
+                        "runtime_mode": "standalone",
+                    },
+                    "chatgpt_runners": {
+                        "cloud": {
+                            "workers": [{
+                                "worker_id": "cloud::w1",
+                                "state": "offline",
+                                "generating": False,
+                                "sending": False,
+                            }]
+                        }
+                    },
+                    "dynamic_workers": {
+                        "memory_guard": {
+                            "pressure": "critical",
+                            "available_mb": 800,
+                            "swap_healthy": False,
+                        }
+                    },
+                }
+            if method == "POST" and path == "/api/runner-control":
+                return 200, {"ok": True, "status": {"active": True}}
+            raise AssertionError((method, path, payload))
+
+        watchdog.api_call = fake_api_call
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                result = watchdog.run_once(
+                    db_path=Path(tmp) / "history.db",
+                    state_path=Path(tmp) / "state.json",
+                    base_url="http://127.0.0.1:8765",
+                )
+        finally:
+            watchdog.api_call = original_api_call
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual("critical-memory-worker-runtime-lost", result["reason"])
+        self.assertEqual("restart_firefox", result["global_action"]["action"])
+        self.assertTrue(result["global_action"]["ok"])
+        self.assertTrue(any(
+            method == "POST"
+            and path == "/api/runner-control"
+            and payload == {"project_id": "", "action": "restart_firefox"}
+            for method, path, payload in calls
+        ))
+
     def test_inactive_firefox_is_recovered_before_stall_timers(self):
         original_api_call = watchdog.api_call
         calls = []
