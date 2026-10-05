@@ -278,6 +278,34 @@ def locate_worker(status: dict[str, Any], key: str) -> dict[str, Any] | None:
     return next((item for item in workers if str(item.get("worker_id") or "") == key), None)
 
 
+def critical_memory_firefox_recovery_needed(
+    *,
+    selected_keys: set[str],
+    runtime: dict[str, Any],
+    memory_guard: dict[str, Any],
+) -> bool:
+    """Recover Firefox when critical pressure has already taken every allocated worker offline.
+
+    This is intentionally narrower than "pressure == critical": active generation/sending
+    is always protected, and a single live worker is enough to suppress the global restart.
+    It covers the OOM failure mode where systemd/Firefox can still look nominally active
+    while the browser worker runtime has been lost.
+    """
+    if not selected_keys or str(memory_guard.get("pressure") or "").lower() != "critical":
+        return False
+
+    workers = [locate_worker(runtime, key) for key in sorted(selected_keys)]
+    if any(
+        bool(worker) and (bool(worker.get("generating")) or bool(worker.get("sending")))
+        for worker in workers
+    ):
+        return False
+
+    dead_states = {"offline", "stale", "disconnected", "unknown"}
+    states = [str((worker or {}).get("state") or "offline").lower() for worker in workers]
+    return bool(states) and all(state in dead_states for state in states)
+
+
 def latest_activity_age(worker: dict[str, Any] | None, now: datetime) -> int:
     if not worker:
         return 10**9
@@ -389,10 +417,21 @@ def run_once(
     memory_guard = (runtime.get("dynamic_workers") or {}).get("memory_guard") or {}
     firefox = runtime.get("chatgpt_firefox") or {}
 
-    # A kernel OOM kill can remove the Firefox host in one instant, long before
-    # per-worker stall timers fire. Recover the browser runtime immediately and
-    # let the next watchdog tick resume worker-level commands.
+    # A kernel OOM kill can remove Firefox outright, or leave the Firefox/systemd
+    # shell nominally active while every allocated browser worker is already gone.
+    # Recover immediately in either case, but never recycle Firefox while any
+    # allocated worker is still generating/sending or otherwise live.
+    firefox_recovery_reason = None
     if selected_keys and not bool(firefox.get("active")):
+        firefox_recovery_reason = "firefox-runtime-inactive"
+    elif critical_memory_firefox_recovery_needed(
+        selected_keys=selected_keys,
+        runtime=runtime,
+        memory_guard=memory_guard,
+    ):
+        firefox_recovery_reason = "critical-memory-worker-runtime-lost"
+
+    if firefox_recovery_reason:
         global_state = state.setdefault("global", {})
         last_restart_age = seconds_since(global_state.get("last_firefox_restart_at"), now)
         global_action = None
@@ -400,7 +439,7 @@ def run_once(
             if dry_run:
                 global_action = {
                     "action": "restart_firefox",
-                    "reason": "firefox-runtime-inactive",
+                    "reason": firefox_recovery_reason,
                     "ok": True,
                     "dry_run": True,
                 }
@@ -414,7 +453,7 @@ def run_once(
                 accepted = status_code < 300 and bool(payload.get("ok"))
                 global_action = {
                     "action": "restart_firefox",
-                    "reason": "firefox-runtime-inactive",
+                    "reason": firefox_recovery_reason,
                     "ok": accepted,
                     "http_status": status_code,
                     "response": payload,
@@ -434,7 +473,7 @@ def run_once(
             "global_action": global_action,
             "firefox": firefox,
             "memory_guard": memory_guard,
-            "reason": "firefox-runtime-inactive",
+            "reason": firefox_recovery_reason,
             "stale_commands_cleared": stale_commands_cleared,
             "thresholds": {
                 "firefox_runtime_restart_cooldown_seconds": FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS,

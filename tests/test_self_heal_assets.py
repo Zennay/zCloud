@@ -1,9 +1,19 @@
 from pathlib import Path
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 class SelfHealAssetsTest(unittest.TestCase):
+    def test_self_heal_shell_syntax(self):
+        result = subprocess.run(
+            ["bash", "-n", str(ROOT / "scripts/zcloud-self-heal.sh")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_restart_dropin_is_unbounded_and_delayed(self):
         text = (ROOT / "deploy/90-zcloud-self-heal.conf").read_text()
         self.assertIn("Restart=always", text)
@@ -30,6 +40,22 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertGreaterEqual(text.count("pgrep -u ftmo-runner -f 'Runner\\.Worker'"), 2)
         self.assertLess(text.index(guard), text.index(restart))
         self.assertLess(text.index("sleep 5"), text.index(restart))
+
+    def test_probe_recovers_only_inactive_zcloud_actions_runner(self):
+        text = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
+        self.assertIn('ZCLOUD_ACTIONS_RUNNER_NAME:-zcloud-vps-1', text)
+        self.assertIn('ZCLOUD_ACTIONS_RUNNER_ROOT:-/home/ubuntu/actions-runner-zcloud', text)
+        self.assertIn("systemctl list-unit-files --type=service --no-legend 'actions.runner.*'", text)
+        self.assertIn('runtime_disabled "${unit}"', text)
+        self.assertIn('systemctl is-active --quiet "${unit}"', text)
+        self.assertIn("Runner\\\\.Worker", text)
+        self.assertIn("sleep 3", text)
+        self.assertIn("Actions Runner.Worker appeared during guard window", text)
+        self.assertIn('systemctl start "${unit}"', text)
+        self.assertNotIn('systemctl restart "${unit}"', text)
+        self.assertGreaterEqual(text.count("Runner\\\\.Worker"), 2)
+        self.assertLess(text.index('systemctl is-active --quiet "${unit}"'), text.index('systemctl start "${unit}"'))
+        self.assertLess(text.index("sleep 3"), text.index('systemctl start "${unit}"'))
 
     def test_probe_has_disable_sentinel_and_bounded_health_checks(self):
         text = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
