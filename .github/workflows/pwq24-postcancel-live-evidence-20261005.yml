@@ -1,0 +1,58 @@
+name: PWQ-24 post-cancel live evidence
+
+on:
+  push:
+    branches:
+      - ops/pwq24-prioritize-acceptance-20261005-0258
+    paths:
+      - .github/workflows/pwq24-postcancel-live-evidence-20261005.yml
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
+          clean: true
+          fetch-depth: 1
+      - name: Capture exact post-cancel worker and health evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          python3 - <<'PY'
+          import json, sqlite3
+          db="/home/ubuntu/zennay-cloud/history.db"
+          floor="2026-10-05T03:14:33+00:00"
+          out={}
+          with sqlite3.connect(db, timeout=5) as c:
+              c.row_factory=sqlite3.Row
+              for project in ("supa","ftmo"):
+                  rows=c.execute(
+                      "SELECT id,ts,event,reason,error,worker_slot FROM runner_events "
+                      "WHERE project_id=? AND ts>=? "
+                      "AND event IN ('prompt-sent','heartbeat','send-blocked','generation-started','generation-finished') "
+                      "ORDER BY id ASC",
+                      (project,floor),
+                  ).fetchall()
+                  out[project]=[dict(r) for r in rows]
+          print("PWQ24_POSTCANCEL_EVENTS="+json.dumps(out,sort_keys=True))
+          PY
+
+          echo '=== self-heal contract ==='
+          sha256sum /usr/local/sbin/zcloud-self-heal /home/ubuntu/zennay-cloud/scripts/zcloud-self-heal.sh
+          grep -nE 'confirming before restart|health recovered during confirmation window|health failed twice'             /usr/local/sbin/zcloud-self-heal /home/ubuntu/zennay-cloud/scripts/zcloud-self-heal.sh
+
+          echo '=== service restart evidence since acceptance ==='
+          systemctl show zennay-cloud.service             -p ActiveState -p SubState -p MainPID -p ActiveEnterTimestamp -p ExecMainStartTimestamp -p NRestarts
+          sudo -n journalctl -u zennay-cloud.service --since '2026-10-05 03:14:00 UTC' --no-pager -n 160             | grep -E 'Stopping zennay-cloud|Started zennay-cloud|Deactivated successfully' || true
+          sudo -n journalctl -t zcloud-self-heal --since '2026-10-05 03:14:00 UTC' --no-pager -n 160 || true
+
+          echo '=== canonical health ==='
+          python3 scripts/zcloud_healthcheck.py --json
