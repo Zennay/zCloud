@@ -83,3 +83,17 @@ jobs:
           report["api_dynamic_workers"]=targets.get("dynamic_workers")
           print("PWQ24_ALLOCATION_DIAG="+json.dumps(report, ensure_ascii=False, sort_keys=True))
           PY
+          echo "=== MEMORY ==="
+          free -m
+          swapon --show || true
+          echo "=== TOP RSS ==="
+          ps -eo pid,ppid,rss,%mem,comm,args --sort=-rss | head -n 35
+          echo "=== FIREFOX RSS TOTAL ==="
+          ps -eo rss=,comm= | awk '$2 ~ /firefox/ {sum+=$1; n+=1} END {printf "firefox_processes=%d firefox_rss_mb=%.1f\\n", n, sum/1024}'
+          echo "=== RUNNER LIVE ==="
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=30) as r:
+              data=json.load(r)
+          print("PWQ24_RUNNER_LIVE="+json.dumps(data, ensure_ascii=False, sort_keys=True))
+          PY
