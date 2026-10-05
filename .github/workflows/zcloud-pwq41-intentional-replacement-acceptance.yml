@@ -192,15 +192,32 @@ jobs:
               raise SystemExit(f"live receipt is not exact production sha expected={EXPECTED} actual={live_sha}")
           baseline_health = health()
 
-          candidate_deadline = time.time() + 180
+          fixture_owner = "pwq41-acceptance-" + os.environ["GITHUB_RUN_ID"]
+          fixture_claim_key = "acceptance:pwq41:" + os.environ["GITHUB_RUN_ID"]
+          fixture_claim_created = False
+          fixture_project = ""
+          preflight_sources = {
+              "cloud": {
+                  "repo": "Zennay/zCloud",
+                  "main_sha": EXPECTED,
+              },
+              "lightup": {
+                  "repo": "Zennay/LightUp",
+                  "main_sha": "c46760a9860cb8771623eccaec77133d44b14338",
+              },
+          }
+
+          candidate_deadline = time.time() + 45
           candidate_attempt = 0
           candidates = []
+          claimless_candidates = []
           last_diagnostics = []
           while time.time() < candidate_deadline:
               candidate_attempt += 1
               target_data = call("GET", "/api/runner-targets")
               projects = target_data.get("projects") or {}
               candidates = []
+              claimless_candidates = []
               diagnostics = []
               for worker_key, target in projects.items():
                   if str(target.get("provider") or "chatgpt") != "chatgpt":
@@ -229,10 +246,11 @@ jobs:
                       continue
                   if not queue["queue_id"]:
                       continue
-                  if len(owned) != 1:
-                      continue
                   priority = 0 if base == "cloud" else 1
-                  candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
+                  if len(owned) == 1:
+                      candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
+                  elif len(owned) == 0 and base in preflight_sources:
+                      claimless_candidates.append((priority, worker_key, target, base, queue))
 
               last_diagnostics = diagnostics
               if candidates:
@@ -243,13 +261,90 @@ jobs:
                               "attempt": candidate_attempt,
                               "candidate_count": len(candidates),
                               "workers": [item[1] for item in candidates],
+                              "fixture": False,
                           },
                           sort_keys=True,
-                      )
+                      ),
+                      flush=True,
                   )
                   break
 
-              if candidate_attempt == 1 or candidate_attempt % 6 == 0:
+              if claimless_candidates and candidate_attempt >= 3:
+                  claimless_candidates.sort(key=lambda item: (item[0], item[1]))
+                  _, worker_key, target, base_project, before_queue = claimless_candidates[0]
+                  source = preflight_sources[base_project]
+                  preflight = call(
+                      "POST",
+                      "/api/worker-preflight",
+                      {
+                          "project_id": base_project,
+                          "worker_id": worker_key,
+                          "owner_id": fixture_owner,
+                          "notion": {"checked": False},
+                          "github": {
+                              "checked": True,
+                              "repo": source["repo"],
+                              "main_sha": source["main_sha"],
+                              "open_prs": [],
+                              "branches": ["main"],
+                          },
+                      },
+                  )
+                  if not preflight.get("ok"):
+                      raise SystemExit(
+                          "acceptance fixture preflight failed: "
+                          + json.dumps(preflight, sort_keys=True)
+                      )
+                  acquired = call(
+                      "POST",
+                      "/api/task-claims",
+                      {
+                          "action": "acquire",
+                          "project_id": base_project,
+                          "claim_key": fixture_claim_key,
+                          "owner_id": fixture_owner,
+                          "worker_id": worker_key,
+                          "lease_seconds": 900,
+                          "metadata": {
+                              "task": "PWQ-41 intentional replacement live acceptance fixture",
+                              "acceptance_fixture": True,
+                              "conflict_scope": {
+                                  "capabilities": ["pwq41-live-acceptance"],
+                                  "files": [
+                                      ".github/workflows/zcloud-pwq41-intentional-replacement-acceptance.yml"
+                                  ],
+                              },
+                          },
+                      },
+                  )
+                  if not acquired.get("acquired"):
+                      raise SystemExit(
+                          "acceptance fixture claim was not acquired: "
+                          + json.dumps(acquired, sort_keys=True)
+                      )
+                  fixture_claim_created = True
+                  fixture_project = base_project
+                  before_claim = compact_claim(acquired["claim"])
+                  candidates = [
+                      (0 if base_project == "cloud" else 1, worker_key, target, base_project, before_claim, before_queue)
+                  ]
+                  print(
+                      "PWQ41_FIXTURE_CLAIM_READY "
+                      + json.dumps(
+                          {
+                              "attempt": candidate_attempt,
+                              "worker_key": worker_key,
+                              "base_project": base_project,
+                              "queue_id": before_queue["queue_id"],
+                              "claim_key": fixture_claim_key,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+                  break
+
+              if candidate_attempt == 1 or candidate_attempt % 3 == 0:
                   print(
                       "PWQ41_CANDIDATE_WAIT "
                       + json.dumps(
@@ -279,8 +374,8 @@ jobs:
                   encoding="utf-8",
               )
               raise SystemExit(
-                  "no active assigned ChatGPT worker with exactly one live claim "
-                  "within 180s; diagnostic evidence written; refusing mutation"
+                  "no active assignment-ready ChatGPT worker available for native or "
+                  "isolated acceptance claim; diagnostic evidence written; refusing replacement"
               )
 
           candidates.sort(key=lambda item: (item[0], item[1]))
@@ -383,6 +478,9 @@ jobs:
               "tested_at": now(),
               "production_sha": EXPECTED,
               "implementation_sha": IMPLEMENTATION,
+              "fixture_claim_created": fixture_claim_created,
+              "fixture_project": fixture_project,
+              "fixture_claim_key": fixture_claim_key if fixture_claim_created else "",
               "worker_key": worker_key,
               "base_project": base_project,
               "worker_slot": slot,
@@ -407,6 +505,48 @@ jobs:
               "claim_key": before_claim["claim_key"],
               "command_id": command_id,
           }, sort_keys=True))
+          PY
+
+      - name: Release PWQ-41 acceptance fixture claim
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          base = os.environ["ZCLOUD_BASE"]
+          owner = "pwq41-acceptance-" + os.environ["GITHUB_RUN_ID"]
+          claim_key = "acceptance:pwq41:" + os.environ["GITHUB_RUN_ID"]
+          for project_id in ("cloud", "lightup"):
+              body = json.dumps({
+                  "action": "release",
+                  "project_id": project_id,
+                  "claim_key": claim_key,
+                  "owner_id": owner,
+              }).encode()
+              req = urllib.request.Request(
+                  base + "/api/task-claims",
+                  data=body,
+                  headers={
+                      "Content-Type": "application/json",
+                      "User-Agent": "zcloud-pwq41-live-acceptance-cleanup/1",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as response:
+                      result = json.load(response)
+                  if result.get("released"):
+                      print("PWQ41_FIXTURE_CLAIM_RELEASED " + project_id)
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 409:
+                      detail = exc.read().decode("utf-8", "replace")
+                      print(f"PWQ41_FIXTURE_CLEANUP_WARNING project={project_id} http={exc.code} detail={detail[:500]}")
+              except Exception as exc:
+                  print(f"PWQ41_FIXTURE_CLEANUP_WARNING project={project_id} error={exc}")
           PY
 
       - name: Upload PWQ-41 live evidence
