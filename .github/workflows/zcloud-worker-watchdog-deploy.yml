@@ -52,8 +52,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n /usr/local/sbin/zcloud-worker-watchdog --dry-run --json | tee "$RUNNER_TEMP/zcloud-worker-watchdog-dry-run.json"
+          # Run the recovery loop first. If an OOM left the control read-model or
+          # Firefox degraded, verification must not fail before self-heal gets a
+          # chance to repair it.
           sudo -n systemctl start zcloud-self-heal.service
+          sudo -n /usr/local/sbin/zcloud-worker-watchdog --dry-run --json | tee "$RUNNER_TEMP/zcloud-worker-watchdog-dry-run.json"
           sudo -n systemctl is-active --quiet zcloud-self-heal.timer
           sudo -n systemctl --no-pager --full status zcloud-self-heal.timer
           sudo -n journalctl -u zcloud-self-heal.service -n 80 --no-pager
