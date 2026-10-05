@@ -578,7 +578,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
         self.assertEqual("ftmo", continuation["project_id"])
-        self.assertEqual("P0", continuation["priority"])
+        self.assertEqual("P1", continuation["priority"])
         self.assertEqual("Execute substantial FTMO roadmap work package", continuation["title"])
 
     def test_haxlab_explicit_implementation_priority_is_preserved(self):
