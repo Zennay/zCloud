@@ -39,8 +39,16 @@ jobs:
 
           base="http://127.0.0.1:8765"
           def get(path, timeout=30):
-              with urllib.request.urlopen(base+path, timeout=timeout) as r:
-                  return json.load(r)
+              import time
+              last=None
+              for _ in range(12):
+                  try:
+                      with urllib.request.urlopen(base+path, timeout=timeout) as r:
+                          return json.load(r)
+                  except Exception as exc:
+                      last=exc
+                      time.sleep(2)
+              raise last
 
           db=Path("/home/ubuntu/zennay-cloud/history.db")
           conn=sqlite3.connect(db, timeout=5)
@@ -65,7 +73,7 @@ jobs:
               ),
               "portfolio_queue": rows(
                   "SELECT queue_id,project_id,title,priority,status,eligible,worker_slot,claimed_at,claim_expires,updated_at "
-                  "FROM portfolio_queue WHERE project_id IN ('ftmo','supa') "
+                  "FROM portfolio_queue WHERE project_id IN ('ftmo','supa','cloud') "
                   "ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at"
               ),
               "global_slots": rows(
@@ -87,13 +95,22 @@ jobs:
           free -m
           swapon --show || true
           echo "=== TOP RSS ==="
-          ps -eo pid,ppid,rss,%mem,comm,args --sort=-rss | head -n 35
+          ps -eo pid,ppid,rss,%mem,comm,args --sort=-rss | head -n 35 || true
           echo "=== FIREFOX RSS TOTAL ==="
           ps -eo rss=,comm= | awk '$2 ~ /firefox/ {sum+=$1; n+=1} END {printf "firefox_processes=%d firefox_rss_mb=%.1f\\n", n, sum/1024}'
           echo "=== RUNNER LIVE ==="
           python3 - <<'PY'
           import json, urllib.request
-          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=30) as r:
-              data=json.load(r)
-          print("PWQ24_RUNNER_LIVE="+json.dumps(data, ensure_ascii=False, sort_keys=True))
+          import time
+          data=None
+          error=None
+          for _ in range(12):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=30) as r:
+                      data=json.load(r)
+                  break
+              except Exception as exc:
+                  error=repr(exc)
+                  time.sleep(2)
+          print("PWQ24_RUNNER_LIVE="+json.dumps(data or {"error": error}, ensure_ascii=False, sort_keys=True))
           PY
