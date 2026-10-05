@@ -1,0 +1,149 @@
+name: Prove project-contract cutover production a755
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/project-contract-cutover-production-proof-a755-20261005.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Prove exact production receipt and canonical runtime contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          BASE="http://127.0.0.1:8765"
+          EXPECTED="a7550c4e51796ece8d52283d1d2cac3127a0ec5e"
+          ROOT=Path("/home/ubuntu/zennay-cloud")
+          DB=ROOT/"history.db"
+
+          def service_state():
+              raw=subprocess.check_output(
+                  ["systemctl","show","zennay-cloud.service",
+                   "-p","MainPID","-p","NRestarts","-p","ActiveState","-p","SubState"],
+                  text=True,
+              )
+              return dict(line.split("=",1) for line in raw.splitlines() if "=" in line)
+
+          def command_count():
+              with sqlite3.connect(f"file:{DB}?mode=ro",uri=True,timeout=5) as conn:
+                  return int(conn.execute("SELECT COUNT(*) FROM runner_commands").fetchone()[0])
+
+          def status():
+              with urllib.request.urlopen(BASE+"/api/status",timeout=30) as response:
+                  return json.load(response)
+
+          before_service=service_state()
+          before_commands=command_count()
+
+          payload=None
+          receipt=None
+          for attempt in range(72):
+              try:
+                  payload=status()
+                  cloud=next((p for p in payload.get("projects",[]) if p.get("id")=="cloud"),{})
+                  execution=cloud.get("execution_state") or {}
+                  receipt={
+                      "state_source":cloud.get("state_source"),
+                      "commit_sha":execution.get("commit_sha"),
+                      "ci_status":execution.get("ci_status"),
+                      "receipt_id":execution.get("receipt_id"),
+                  }
+                  if (
+                      receipt["state_source"]=="evidence_receipt"
+                      and receipt["commit_sha"]==EXPECTED
+                      and receipt["ci_status"]=="success"
+                  ):
+                      break
+              except Exception as exc:
+                  receipt={"error":str(exc)}
+              print(f"waiting for exact production receipt attempt={attempt+1} receipt={receipt}",flush=True)
+              time.sleep(8)
+          else:
+              raise SystemExit("CUTOVER_RECEIPT_TIMEOUT="+json.dumps(receipt,sort_keys=True))
+
+          registry=json.loads((ROOT/"projects.json").read_text(encoding="utf-8"))
+          contracts=json.loads((ROOT/"project-contracts.json").read_text(encoding="utf-8"))
+          contract_projects=contracts.get("projects") or {}
+          active=[p for p in registry if str(p.get("status") or "active")!="archived"]
+
+          duplicated={
+              str(p.get("id")):[
+                  key for key in ("queue_mode","lane_profile")
+                  if key in p
+              ]
+              for p in active
+              if any(key in p for key in ("queue_mode","lane_profile"))
+          }
+          if duplicated:
+              raise SystemExit("CUTOVER_REGISTRY_DUPLICATION="+json.dumps(duplicated,sort_keys=True))
+
+          api_projects={str(p.get("id")):p for p in payload.get("projects",[])}
+          mismatches={}
+          for project in active:
+              pid=str(project.get("id"))
+              contract=contract_projects.get(pid)
+              api=api_projects.get(pid)
+              if not isinstance(contract,dict) or not isinstance(api,dict):
+                  mismatches[pid]={"contract":bool(contract),"api":bool(api)}
+                  continue
+              expected={
+                  "queue_mode":contract.get("queue_mode"),
+                  "lane_profile":contract.get("lane_profile"),
+              }
+              observed={
+                  "queue_mode":api.get("queue_mode"),
+                  "lane_profile":api.get("lane_profile"),
+              }
+              runtime=api.get("runtime_contract") or {}
+              runtime_observed={
+                  "queue_mode":runtime.get("queue_mode"),
+                  "lane_profile":runtime.get("lane_profile"),
+              }
+              if observed!=expected or runtime_observed!=expected:
+                  mismatches[pid]={
+                      "expected":expected,
+                      "observed":observed,
+                      "runtime_contract":runtime_observed,
+                  }
+          if mismatches:
+              raise SystemExit("CUTOVER_API_MISMATCH="+json.dumps(mismatches,sort_keys=True))
+
+          after_commands=command_count()
+          after_service=service_state()
+          result={
+              "expected_main":EXPECTED,
+              "receipt":receipt,
+              "active_projects":len(active),
+              "registry_runtime_duplicates":0,
+              "api_contract_matches":len(active),
+              "runner_command_delta":after_commands-before_commands,
+              "service_before":before_service,
+              "service_after":after_service,
+          }
+          print("PROJECT_CONTRACT_CUTOVER_PROOF="+json.dumps(result,sort_keys=True))
+          if result["runner_command_delta"] != 0:
+              raise SystemExit("read-only cutover proof caused runner-command churn")
+          if (
+              before_service.get("MainPID")!=after_service.get("MainPID")
+              or before_service.get("NRestarts")!=after_service.get("NRestarts")
+          ):
+              raise SystemExit("zCloud service restarted during cutover proof")
+          print("PROJECT_CONTRACT_CUTOVER_PRODUCTION_GREEN")
+          PY
