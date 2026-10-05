@@ -17,7 +17,8 @@ class LightUpPR23PR25CrossLaneProofTests(unittest.TestCase):
         self.assertIn("pr23_sha: ${{ steps.heads.outputs.pr23_sha }}", text)
         self.assertIn("needs: preflight", text)
         self.assertIn("LIGHTUP_PR_HEAD_STILL_EXACT", text)
-        self.assertIn("runs-on: [self-hosted, ftmo-research]", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertNotIn("runs-on: [self-hosted, ftmo-research]", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         for pr in (23, 24, 25):
             self.assertIn(f"resolve {pr}", text)
