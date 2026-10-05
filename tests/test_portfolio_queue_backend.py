@@ -297,7 +297,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(1, len(queued_ftmo))
         self.assertIsNone(queued_ftmo[0]["worker_slot"])
 
-    def test_memory_guard_blocks_new_claims_but_preserves_existing_assignment(self):
+    def test_guarded_memory_blocks_new_claims_but_preserves_existing_assignment(self):
         first = server.portfolio_queue_enqueue(
             "cloud", "first", "P0", "Implement first guarded worker task with tests."
         )
@@ -308,7 +308,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "raiseai", "second", "P1", "Implement second guarded worker task with tests."
         )
         server.worker_memory_status = lambda *args, **kwargs: {
-            "available_mb": 900,
+            "available_mb": 2564,
             "total_mb": 11000,
             "swap_total_mb": 0,
             "swap_free_mb": 0,
@@ -316,7 +316,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "effective_headroom_mb": 2560,
             "per_new_slot_mb": 1536,
             "new_worker_capacity": 0,
-            "pressure": "critical",
+            "pressure": "guarded",
             "healthy_for_new_worker": False,
             "swap_healthy": False,
         }
