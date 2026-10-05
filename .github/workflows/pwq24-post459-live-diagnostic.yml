@@ -79,7 +79,7 @@ jobs:
                      ORDER BY project_id"""
               ),
               "runner_workers": rows(
-                  """SELECT project_id,worker_slot,desired_state,conversation_id,updated_at
+                  """SELECT project_id,worker_slot,desired_state,conversation_id
                      FROM runner_workers
                      WHERE project_id IN ('ftmo','supa')
                      ORDER BY project_id,worker_slot"""
