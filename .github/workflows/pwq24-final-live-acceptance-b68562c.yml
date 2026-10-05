@@ -1,0 +1,484 @@
+name: PWQ-24 final live acceptance b68562c
+# Exact production receipt is discovered dynamically for the expected main SHA.
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post443-live-acceptance-20261005-0047
+    paths:
+      - .github/workflows/pwq24-final-live-acceptance-b68562c.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: pwq24-final-b68562c-live-acceptance
+  cancel-in-progress: false
+
+jobs:
+  wait-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      deploy_run_id: ${{ steps.wait.outputs.deploy_run_id }}
+      deployed_at: ${{ steps.wait.outputs.deployed_at }}
+    steps:
+      - name: Wait for exact-main guarded production deploy
+        id: wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          import time
+          import urllib.request
+
+          token = os.environ['GH_TOKEN']
+          expected = os.environ['EXPECTED_MAIN']
+          repo = os.environ['GITHUB_REPOSITORY']
+          output = os.environ['GITHUB_OUTPUT']
+
+          def get(url):
+              req = urllib.request.Request(url, headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'pwq24-production-waiter',
+              })
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          deadline = time.time() + 720
+          last = None
+          while time.time() < deadline:
+              main = get(f'https://api.github.com/repos/{repo}/branches/main')
+              actual = ((main.get('commit') or {}).get('sha') or '')
+              if actual != expected:
+                  raise SystemExit(f'main moved during PWQ-24 gate: expected={expected} actual={actual}')
+
+              payload = get(f'https://api.github.com/repos/{repo}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=30')
+              matches = [r for r in payload.get('workflow_runs', []) if r.get('head_sha') == expected]
+              matches.sort(key=lambda r: r.get('created_at') or '', reverse=True)
+              if matches:
+                  last = matches[0]
+                  print('DEPLOY_POLL ' + json.dumps({
+                      'id': last.get('id'), 'status': last.get('status'),
+                      'conclusion': last.get('conclusion'), 'created_at': last.get('created_at'),
+                      'updated_at': last.get('updated_at'),
+                  }, sort_keys=True), flush=True)
+                  if last.get('status') == 'completed' and last.get('conclusion') == 'success':
+                      with open(output, 'a', encoding='utf-8') as fh:
+                          fh.write(f"deploy_run_id={last.get('id')}\n")
+                          fh.write(f"deployed_at={last.get('updated_at')}\n")
+                      print('PWQ24_EXACT_PRODUCTION_DEPLOY_GREEN=1')
+                      raise SystemExit(0)
+              time.sleep(10)
+
+          raise SystemExit('exact-main production deploy did not become green in bounded wait: ' + json.dumps(last, sort_keys=True))
+          PY
+
+  accept:
+    needs: wait-production
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
+      DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
+      DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b68562c2041ffd99f3ac15d7fbca220bef9d0549
+          clean: true
+          fetch-depth: 1
+
+      - name: Guard live exact-main receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          expected = os.environ['EXPECTED_MAIN']
+          last = None
+          for attempt in range(1, 7):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8765/api/status', timeout=40) as response:
+                      payload = json.load(response)
+              except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError) as exc:
+                  last = {
+                      'transport_error': type(exc).__name__,
+                      'attempt': attempt,
+                  }
+                  print('PWQ24_LIVE_RECEIPT_RETRY=' + json.dumps(last, sort_keys=True), flush=True)
+                  if attempt < 6:
+                      time.sleep(5)
+                      continue
+                  break
+              project = next((p for p in payload.get('projects', []) if p.get('id') == 'cloud'), None)
+              state = (project or {}).get('execution_state') or {}
+              last = {'state_source': (project or {}).get('state_source'), 'execution_state': state}
+              if (project or {}).get('state_source') == 'evidence_receipt' and state.get('commit_sha') == expected and state.get('ci_status') == 'success':
+                  print('PWQ24_LIVE_RECEIPT_GREEN=' + json.dumps(last, sort_keys=True))
+                  raise SystemExit(0)
+              if attempt < 6:
+                  time.sleep(5)
+          raise SystemExit('live production receipt mismatch: ' + json.dumps(last, sort_keys=True))
+          PY
+
+      - name: Prove Supa and FTMO prompt plus heartbeat
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p artifacts/ops
+          set +e
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          import pathlib
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE = 'http://127.0.0.1:8765'
+          DB = '/home/ubuntu/zennay-cloud/history.db'
+          REQUIRED = {'supa', 'ftmo'}
+          deployed_at = os.environ['DEPLOYED_AT']
+          # Acceptance must prove a fresh dispatch in this run. Using deploy time
+          # as the event floor lets stale prompt/send-blocked evidence from earlier
+          # activations poison or falsely satisfy the current proof.
+          acceptance_started_at = datetime.now(timezone.utc).isoformat()
+
+          def measure_endpoint(path, timeout):
+              started = time.monotonic()
+              request = urllib.request.Request(
+                  BASE + path,
+                  headers={'User-Agent': 'pwq24-post458-latency/1'},
+                  method='GET',
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=timeout) as response:
+                      json.load(response)
+                      return {
+                          'path': path,
+                          'ok': True,
+                          'http_status': int(response.status),
+                          'elapsed_seconds': round(time.monotonic() - started, 3),
+                      }
+              except Exception as exc:
+                  return {
+                      'path': path,
+                      'ok': False,
+                      'error': type(exc).__name__ + ': ' + str(exc),
+                      'elapsed_seconds': round(time.monotonic() - started, 3),
+                  }
+
+          endpoint_timings = [
+              measure_endpoint('/api/runner-live', 30),
+              measure_endpoint('/api/status', 45),
+          ]
+          print('PWQ24_POST458_ENDPOINT_TIMINGS=' + json.dumps(endpoint_timings, sort_keys=True), flush=True)
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode('utf-8')
+              headers = {'User-Agent': 'pwq24-post443-acceptance/1'}
+              if data is not None:
+                  headers['Content-Type'] = 'application/json'
+              attempts = 3 if method == 'GET' else 1
+              for attempt in range(1, attempts + 1):
+                  req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+                  try:
+                      with urllib.request.urlopen(req, timeout=20) as response:
+                          return json.load(response)
+                  except urllib.error.HTTPError:
+                      raise
+                  except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError):
+                      if attempt >= attempts:
+                          raise
+                      time.sleep(2)
+
+          def allocation():
+              last_error = None
+              for attempt in range(1, 5):
+                  try:
+                      targets = call('GET', '/api/runner-targets')
+                      workers = (targets.get('global_allocation') or {}).get('workers') or []
+                      by_project = {}
+                      for item in workers:
+                          project = str(item.get('project_id') or '').strip().lower()
+                          key = str(item.get('worker_key') or '').strip()
+                          if project in REQUIRED and key:
+                              by_project[project] = key
+                      return targets, by_project
+                  except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError) as exc:
+                      last_error = {
+                          'attempt': attempt,
+                          'transport_error': type(exc).__name__,
+                      }
+                      print('PWQ24_ALLOCATION_RETRY=' + json.dumps(last_error, sort_keys=True), flush=True)
+                      if attempt < 4:
+                          time.sleep(3)
+              raise RuntimeError('runner-target allocation unavailable after bounded retries: ' + json.dumps(last_error, sort_keys=True))
+
+          def evidence(selected):
+              out = {}
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  for project, key in selected.items():
+                      slot = int(key.rsplit('::w', 1)[1])
+                      rows = conn.execute(
+                          "SELECT ts,event,reason,error FROM runner_events WHERE project_id=? AND worker_slot=? AND ts>=? AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
+                          (project, slot, acceptance_started_at),
+                      ).fetchall()
+                      items = [dict(r) for r in rows]
+                      prompts = [x for x in items if x['event'] == 'prompt-sent']
+                      heartbeats = [x for x in items if x['event'] == 'heartbeat']
+                      blocked = [x for x in items if x['event'] == 'send-blocked']
+                      parsed = []
+                      for p in prompts:
+                          try:
+                              parsed.append(datetime.fromisoformat(str(p['ts']).replace('Z', '+00:00')))
+                          except Exception:
+                              pass
+                      duplicate = any((b-a).total_seconds() <= 8 for a,b in zip(parsed, parsed[1:]))
+                      out[project] = {
+                          'worker': key,
+                          'prompt_sent': bool(prompts),
+                          'heartbeat': bool(heartbeats),
+                          'send_blocked': blocked,
+                          'duplicate_prompt_window': duplicate,
+                          'events': items[-12:],
+                      }
+              return out
+
+          targets = None
+          selected = {}
+          for _ in range(12):
+              targets, selected = allocation()
+              if REQUIRED.issubset(selected):
+                  break
+              time.sleep(5)
+
+          actions = []
+          natural_green = False
+          if REQUIRED.issubset(selected):
+              auto_deadline = time.time() + 60
+              while time.time() < auto_deadline:
+                  ev = evidence(selected)
+                  if REQUIRED.issubset(ev) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in ev.values()):
+                      natural_green = True
+                      break
+                  time.sleep(5)
+
+          if not natural_green:
+              # Allocation can be incomplete from the start or churn during the
+              # natural-evidence wait. In both cases recover every required project
+              # through canonical project-level Start, wait boundedly for a concrete
+              # worker slot, then force the worker start. This keeps the proof tied
+              # to the same control path used by the dashboard.
+              targets, selected = allocation()
+              for project in sorted(REQUIRED):
+                  key = selected.get(project)
+                  if not key:
+                      project_result = call('POST', '/api/runner-control', {'project_id': project, 'action': 'start'})
+                      actions.append({
+                          'project': project,
+                          'action': 'start-project',
+                          'result': project_result,
+                      })
+                      allocation_deadline = time.time() + 60
+                      while time.time() < allocation_deadline:
+                          _, refreshed = allocation()
+                          key = refreshed.get(project)
+                          if key:
+                              selected = refreshed
+                              break
+                          time.sleep(3)
+                      if not key:
+                          actions.append({
+                              'project': project,
+                              'action': 'wait-allocation',
+                              'result': {'resync': 'allocation-timeout'},
+                          })
+                          continue
+                  try:
+                      result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                  except urllib.error.HTTPError as exc:
+                      raw = exc.read().decode('utf-8', 'replace')
+                      try:
+                          body = json.loads(raw)
+                      except Exception:
+                          body = {'error': raw}
+                      if exc.code != 400 or body.get('error') != 'Ongeldige runneractie':
+                          raise
+                      _, refreshed = allocation()
+                      fresh_key = refreshed.get(project)
+                      if not fresh_key:
+                          actions.append({
+                              'project': project,
+                              'worker': key,
+                              'action': 'start',
+                              'result': {
+                                  'resync': 'deallocated',
+                                  'http_status': 400,
+                                  'body': body,
+                              },
+                          })
+                          continue
+                      if fresh_key == key:
+                          raise SystemExit(
+                              'runner-control rejected current allocation: '
+                              + json.dumps(
+                                  {'project': project, 'worker': key, 'body': body},
+                                  sort_keys=True,
+                              )
+                          )
+                      key = fresh_key
+                      result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                  actions.append({'worker': key, 'action': 'start', 'result': result})
+
+          # The queue may legitimately rebind a project to another worker slot while
+          # this live proof is running. Re-drive exactly-once start for each newly
+          # selected worker key so the acceptance evaluates the current allocation
+          # instead of a stale slot that happened to be selected earlier.
+          started_workers = {
+              str(item.get('worker') or '')
+              for item in actions
+              if item.get('action') == 'start' and item.get('worker')
+          }
+          final = {}
+          deadline = time.time() + 150
+          while time.time() < deadline:
+              targets, selected = allocation()
+              if REQUIRED.issubset(selected):
+                  for project in sorted(REQUIRED):
+                      key = selected.get(project)
+                      if not key or key in started_workers:
+                          continue
+                      try:
+                          result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                      except urllib.error.HTTPError as exc:
+                          raw = exc.read().decode('utf-8', 'replace')
+                          try:
+                              body = json.loads(raw)
+                          except Exception:
+                              body = {'error': raw}
+                          if exc.code == 400 and body.get('error') == 'Ongeldige runneractie':
+                              actions.append({
+                                  'project': project,
+                                  'worker': key,
+                                  'action': 'rebind-start',
+                                  'result': {
+                                      'resync': 'stale-before-start',
+                                      'http_status': 400,
+                                      'body': body,
+                                  },
+                              })
+                              continue
+                          raise
+                      started_workers.add(key)
+                      actions.append({
+                          'project': project,
+                          'worker': key,
+                          'action': 'rebind-start',
+                          'result': result,
+                      })
+
+                  # Re-read allocation after any rebind start so evidence is tied to
+                  # the currently selected worker keys, not the pre-action snapshot.
+                  targets, selected = allocation()
+                  if REQUIRED.issubset(selected):
+                      final = evidence(selected)
+                      if REQUIRED.issubset(final) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values()):
+                          break
+              time.sleep(5)
+
+          # Worker activation can briefly overlap scheduler/browser reconciliation.
+          # Keep the health gate strict, but require bounded convergence instead of
+          # treating one transient connection-reset sample as definitive failure.
+          health_attempts = []
+          health = None
+          for attempt in range(1, 5):
+              health = subprocess.run(
+                  ['python3', 'scripts/zcloud_healthcheck.py', '--json'],
+                  text=True,
+                  capture_output=True,
+                  timeout=90,
+                  check=False,
+              )
+              health_attempts.append({
+                  'attempt': attempt,
+                  'rc': health.returncode,
+                  'stdout_tail': health.stdout[-1500:],
+                  'stderr_tail': health.stderr[-750:],
+              })
+              if health.returncode == 0:
+                  break
+              if attempt < 4:
+                  time.sleep(5)
+
+          green = (
+              REQUIRED.issubset(selected)
+              and REQUIRED.issubset(final)
+              and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values())
+              and health is not None
+              and health.returncode == 0
+          )
+          result = {
+              'captured_at': datetime.now(timezone.utc).isoformat(),
+              'expected_main': os.environ['EXPECTED_MAIN'],
+              'deploy_run_id': os.environ.get('DEPLOY_RUN_ID'),
+              'deployed_at': deployed_at,
+              'acceptance_started_at': acceptance_started_at,
+              'endpoint_timings': endpoint_timings,
+              'selected': selected,
+              'actions': actions,
+              'evidence': final,
+              'health_attempts': health_attempts,
+              'health_rc': None if health is None else health.returncode,
+              'health_stdout_tail': '' if health is None else health.stdout[-5000:],
+              'health_stderr_tail': '' if health is None else health.stderr[-2000:],
+              'acceptance_green': green,
+          }
+          pathlib.Path('artifacts/ops/pwq24-post443-live-acceptance-result.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print('PWQ24_ACCEPTANCE_RESULT=' + json.dumps(result, sort_keys=True))
+          raise SystemExit(0 if green else 1)
+          PY
+          rc=$?
+          set -e
+          exit "$rc"
+
+      - name: Ensure acceptance artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ops
+          if [ ! -f artifacts/ops/pwq24-post443-live-acceptance-result.json ]; then
+            echo '{"acceptance_green":false,"error":"acceptance artifact missing"}' > artifacts/ops/pwq24-post443-live-acceptance-result.json
+          fi
+
+      - name: Upload acceptance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwq24-final-live-acceptance-${{ github.run_id }}
+          path: artifacts/ops/pwq24-post443-live-acceptance-result.json
+          if-no-files-found: error
