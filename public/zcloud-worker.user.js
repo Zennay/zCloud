@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.11
+// @version      1.3.12
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.11";
+  const SCRIPT_VERSION = "1.3.12";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -1101,6 +1101,23 @@
         const ok = await sendPrompt("database-push");
         await commandResult(id, ok ? "completed" : "failed", ok ? "Prompt sent by Violentmonkey worker" : "Violentmonkey worker could not send safely");
         lastHandledCommandId = Math.max(lastHandledCommandId, id);
+      } else if (command.action === "start") {
+        // Direct worker Start belongs to the primary Violentmonkey runner once
+        // it has announced readiness. Keep the command pending until a real
+        // prompt send succeeds so an extension bridge acknowledgement cannot
+        // become a false-positive dispatch.
+        if (generationActive() || sending || awaitingGeneration) {
+          await reportSendBlocked("start-deferred-busy");
+          continue;
+        }
+        const ok = await sendPrompt("database-start");
+        if (!ok) continue;
+        const acknowledged = await commandResult(
+          id,
+          "completed",
+          "Prompt sent by Violentmonkey start command"
+        );
+        if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);
       } else if (command.action === "drain") {
         draining = true;
         await status("runner-draining", {reason: "database-drain"});
