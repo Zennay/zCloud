@@ -37,7 +37,17 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json
           actual="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           test "$actual" = "$EXPECTED_MAIN"
-          /home/ubuntu/.local/bin/zcloud-healthcheck
+          for attempt in $(seq 1 12); do
+            if /home/ubuntu/.local/bin/zcloud-healthcheck; then
+              echo "PWQ24_INITIAL_HEALTH_GREEN_ATTEMPT=$attempt"
+              break
+            fi
+            if [[ "$attempt" -eq 12 ]]; then
+              echo "PWQ24_INITIAL_HEALTH_WARMUP_EXHAUSTED=1"
+              exit 2
+            fi
+            sleep 5
+          done
 
       - name: Prove fresh Supa and FTMO initial dispatch
         shell: bash
@@ -174,8 +184,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          /home/ubuntu/.local/bin/zcloud-healthcheck
-          echo PWQ24_ZCLOUD_HEALTH_GREEN=1
+          for attempt in $(seq 1 12); do
+            if /home/ubuntu/.local/bin/zcloud-healthcheck; then
+              echo "PWQ24_FINAL_HEALTH_GREEN_ATTEMPT=$attempt"
+              echo PWQ24_ZCLOUD_HEALTH_GREEN=1
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "PWQ24_FINAL_HEALTH_WARMUP_EXHAUSTED=1"
+          exit 2
 
       - name: Publish PWQ-24 result
         if: always()
