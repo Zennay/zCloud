@@ -1707,7 +1707,6 @@ async function newProjectChat(projectId, reason, commandId) {
     }
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     const handoff = await prepareReplacementHandoff(target, reason);
-    pendingInitialDispatches.add(projectId);
     const oldTab = projectTabs[projectId];
     if (oldTab != null) {
       await drainRunnerBeforeReplacement(oldTab, target, reason);
@@ -1718,6 +1717,7 @@ async function newProjectChat(projectId, reason, commandId) {
       delete tabTargets[oldTab];
       delete pendingAdoptions[oldTab];
     }
+    pendingInitialDispatches.add(projectId);
     target.active = true;
     target.replacement_handoff = handoff;
     const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: true});
