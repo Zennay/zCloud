@@ -1337,7 +1337,10 @@ function runProject(cfg) {
       draining = true;
       setReplacementDrainState("draining");
       status("runner-draining", {reason: message.reason || "dashboard-drain"});
-      return {ok: true, reason: "draining"};
+      // browser.runtime.onMessage only propagates an async response when the
+      // listener returns a Promise. The replacement controller waits for this
+      // positive acknowledgement before it may close/open any worker tab.
+      return Promise.resolve({ok: true, reason: "draining"});
     }
     if (message.type === "runner-stop") {
       paused = true;
