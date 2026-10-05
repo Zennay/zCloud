@@ -40,13 +40,24 @@ jobs:
           )
 
           current_guard_ids=()
+          current_in_progress_ids=()
+          current_waiting_ids=()
+          keeper_current_waiting=""
           for row in "${deploy_runs[@]}"; do
             IFS=\t' read -r run_id status head_sha <<<"$row"
             [[ -n "$run_id" ]] || continue
             [[ "$head_sha" == "$current_main" ]] || continue
             case "$status" in
-              queued|in_progress|pending|waiting|requested)
+              in_progress)
                 current_guard_ids+=("$run_id")
+                current_in_progress_ids+=("$run_id")
+                ;;
+              queued|pending|waiting|requested)
+                current_guard_ids+=("$run_id")
+                current_waiting_ids+=("$run_id")
+                if [[ -z "$keeper_current_waiting" || "$run_id" -gt "$keeper_current_waiting" ]]; then
+                  keeper_current_waiting="$run_id"
+                fi
                 ;;
             esac
           done
@@ -54,6 +65,17 @@ jobs:
           if [[ "${#current_guard_ids[@]}" -eq 0 ]]; then
             echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
             exit 0
+          fi
+
+          # Never cancel a production transaction that already started. If one
+          # exists, it is the authoritative guard and every waiting same-SHA
+          # duplicate is stale. Otherwise keep only the newest waiting run.
+          if [[ "${#current_in_progress_ids[@]}" -gt 0 ]]; then
+            keeper_current_waiting=""
+            echo "ZCLOUD_STALE_DEPLOY_CURRENT_IN_PROGRESS count=${#current_in_progress_ids[@]}"
+          else
+            test -n "$keeper_current_waiting"
+            echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT_NEWEST run_id=$keeper_current_waiting sha=$current_main"
           fi
 
           for row in "${deploy_runs[@]}"; do
@@ -75,9 +97,12 @@ jobs:
                 ;;
             esac
 
-            if [[ "$head_sha" == "$current_main" ]]; then
-              echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT run_id=$run_id sha=$head_sha status=$status"
+            if [[ "$head_sha" == "$current_main" && "$run_id" == "$keeper_current_waiting" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT_NEWEST run_id=$run_id sha=$head_sha status=$status"
               continue
+            fi
+            if [[ "$head_sha" == "$current_main" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_DUPLICATE_CURRENT_CANDIDATE run_id=$run_id sha=$head_sha status=$status"
             fi
 
             latest_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
@@ -86,17 +111,24 @@ jobs:
               exit 0
             fi
 
-            guard_active=false
-            for guard_id in "${current_guard_ids[@]}"; do
-              guard_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$guard_id" --jq .status)"
+            authoritative_guard_active=false
+            if [[ -n "$keeper_current_waiting" ]]; then
+              guard_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$keeper_current_waiting" --jq .status)"
               case "$guard_status" in
                 queued|in_progress|pending|waiting|requested)
-                  guard_active=true
-                  break
+                  authoritative_guard_active=true
                   ;;
               esac
-            done
-            if [[ "$guard_active" != "true" ]]; then
+            else
+              for guard_id in "${current_in_progress_ids[@]}"; do
+                guard_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$guard_id" --jq .status)"
+                if [[ "$guard_status" == "in_progress" ]]; then
+                  authoritative_guard_active=true
+                  break
+                fi
+              done
+            fi
+            if [[ "$authoritative_guard_active" != "true" ]]; then
               echo "ZCLOUD_STALE_DEPLOY_CURRENT_GUARD_GONE_ABORT sha=$current_main"
               exit 0
             fi
@@ -118,11 +150,15 @@ jobs:
                 ;;
             esac
 
-            if [[ "$fresh_sha" == "$current_main" ]]; then
-              echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT run_id=$run_id sha=$fresh_sha status=$fresh_status"
+            if [[ "$fresh_sha" == "$current_main" && "$run_id" == "$keeper_current_waiting" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT_NEWEST run_id=$run_id sha=$fresh_sha status=$fresh_status"
               continue
             fi
 
             gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id/cancel" >/dev/null
-            echo "ZCLOUD_STALE_DEPLOY_CANCEL_REQUESTED run_id=$run_id sha=$fresh_sha status=$fresh_status"
+            if [[ "$fresh_sha" == "$current_main" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_CANCEL_DUPLICATE_CURRENT run_id=$run_id sha=$fresh_sha status=$fresh_status"
+            else
+              echo "ZCLOUD_STALE_DEPLOY_CANCEL_REQUESTED run_id=$run_id sha=$fresh_sha status=$fresh_status"
+            fi
           done
