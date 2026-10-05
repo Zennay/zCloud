@@ -13,6 +13,7 @@ from pathlib import Path
 
 DEFAULT_DB = Path(os.environ.get("ZCLOUD_DB", "/home/ubuntu/zennay-cloud/history.db"))
 DRAIN_ACK_EVENTS = frozenset({"runner-config-updated", "runner-draining", "injection-success"})
+DRAIN_TERMINAL_EVENTS = frozenset({"runner-drained", "runner-stopped"})
 
 
 class SafeIdleError(RuntimeError):
@@ -114,6 +115,20 @@ def drain_acknowledged_idle(observation: dict, command: dict) -> bool:
     if str(command.get("status") or "") != "pending":
         return False
     if str(observation.get("event") or "") not in DRAIN_ACK_EVENTS:
+        return False
+    observed_at = _parse_timestamp(observation.get("observed_at"))
+    created_at = _parse_timestamp(command.get("created_at"))
+    return bool(observed_at and created_at and observed_at >= created_at)
+
+
+def drain_terminal_idle(observation: dict, command: dict) -> bool:
+    """Accept terminal post-drain stop evidence even if command bookkeeping failed."""
+    if (
+        observation.get("available") is not True
+        or observation.get("generating") is not False
+        or observation.get("sending") is not False
+        or str(observation.get("event") or "") not in DRAIN_TERMINAL_EVENTS
+    ):
         return False
     observed_at = _parse_timestamp(observation.get("observed_at"))
     created_at = _parse_timestamp(command.get("created_at"))
@@ -341,7 +356,8 @@ def enter_safe_idle(
                         )
                         command = drain_command_state(conn, key)
                         acknowledged_idle = drain_acknowledged_idle(observation, command)
-                        if offline_idle or acknowledged_idle:
+                        terminal_idle = drain_terminal_idle(observation, command)
+                        if offline_idle or acknowledged_idle or terminal_idle:
                             conn.execute(
                                 "UPDATE runner_workers SET desired_state='paused' "
                                 "WHERE project_id=? AND worker_slot=? AND desired_state='draining'",
@@ -350,7 +366,9 @@ def enter_safe_idle(
                             command_id = record.get("drain_command_id")
                             if command_id:
                                 reason = (
-                                    "deploy safe-idle auto-quiesced acknowledged idle worker"
+                                    "deploy safe-idle auto-quiesced terminal-stopped worker"
+                                    if terminal_idle
+                                    else "deploy safe-idle auto-quiesced acknowledged idle worker"
                                     if acknowledged_idle
                                     else "deploy safe-idle auto-quiesced offline idle worker"
                                 )
@@ -366,7 +384,13 @@ def enter_safe_idle(
                             desired = "paused"
                             auto_quiesced.append({
                                 "worker_id": key,
-                                "reason": "acknowledged-idle" if acknowledged_idle else "offline-idle",
+                                "reason": (
+                                    "terminal-idle"
+                                    if terminal_idle
+                                    else "acknowledged-idle"
+                                    if acknowledged_idle
+                                    else "offline-idle"
+                                ),
                                 "last_event": observation.get("event"),
                                 "last_event_age_seconds": round(float(age), 1),
                             })
