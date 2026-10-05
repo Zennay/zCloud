@@ -11,6 +11,12 @@ class LightUpPR23PR25CrossLaneProofTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("branches: [main]", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("name: GitHub-hosted exact-head preflight", text)
+        self.assertIn("LIGHTUP_HOSTED_PREFLIGHT_GREEN", text)
+        self.assertIn("pr23_sha: ${{ steps.heads.outputs.pr23_sha }}", text)
+        self.assertIn("needs: preflight", text)
+        self.assertIn("LIGHTUP_PR_HEAD_STILL_EXACT", text)
         self.assertIn("runs-on: [self-hosted, ftmo-research]", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         for pr in (23, 24, 25):

@@ -20,18 +20,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prove:
-    runs-on: [self-hosted, ftmo-research]
-    timeout-minutes: 25
+  preflight:
+    name: GitHub-hosted exact-head preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      pr23_sha: ${{ steps.heads.outputs.pr23_sha }}
+      pr24_sha: ${{ steps.heads.outputs.pr24_sha }}
+      pr25_sha: ${{ steps.heads.outputs.pr25_sha }}
     steps:
-      - name: Guard VPS identity
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "$(hostname)" = "vps-bb300bba"
-          echo "LIGHTUP_CROSS_LANE_HOST=$(hostname) RUNNER_NAME=${RUNNER_NAME:-unknown}"
-
       - name: Resolve exact LightUp PR heads
+        id: heads
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,13 +42,93 @@ jobs:
             state="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .state)"
             sha="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .head.sha)"
             test "$state" = "open"
-            test -n "$sha"
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+            echo "pr${pr}_sha=$sha" >> "$GITHUB_OUTPUT"
             echo "PR${pr}_SHA=$sha" >> "$GITHUB_ENV"
-            echo "LIGHTUP_PR_HEAD_RESOLVED PR=$pr SHA=$sha"
+            echo "LIGHTUP_PREFLIGHT_HEAD_RESOLVED PR=$pr SHA=$sha"
           }
           resolve 23
           resolve 24
           resolve 25
+
+      - name: Verify exact LightUp heads before VPS scheduling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          prove() {
+            local pr="$1"
+            local sha="$2"
+            local work="$RUNNER_TEMP/lightup-preflight-pr$pr-$GITHUB_RUN_ID"
+            local scope="$RUNNER_TEMP/lightup-preflight-pr$pr-scope.json"
+            local plan="$RUNNER_TEMP/lightup-preflight-pr$pr-plan.json"
+
+            rm -rf "$work"
+            git init -q "$work"
+            git -C "$work" remote add origin https://github.com/Zennay/Lightup.git
+            git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$sha"
+            git -C "$work" checkout -q --detach FETCH_HEAD
+            test "$(git -C "$work" rev-parse HEAD)" = "$sha"
+
+            (
+              cd "$work"
+              export PYTHONPATH=src
+              python3 -m compileall -q src tests
+              python3 -m unittest discover -s tests -v
+
+              set +e
+              python3 -m lightup.cli scope-check 8.8.8.8 > "$scope"
+              code=$?
+              set -e
+              test "$code" -eq 2
+              grep -q '"allowed": false' "$scope"
+
+              python3 -m lightup.cli plan 127.0.0.1 > "$plan"
+              grep -q '"execution_enabled": false' "$plan"
+            )
+
+            echo "LIGHTUP_HOSTED_PREFLIGHT_GREEN PR=$pr SHA=$sha"
+          }
+
+          prove 23 "$PR23_SHA"
+          prove 24 "$PR24_SHA"
+          prove 25 "$PR25_SHA"
+
+  prove:
+    needs: preflight
+    runs-on: [self-hosted, ftmo-research]
+    env:
+      PR23_SHA: ${{ needs.preflight.outputs.pr23_sha }}
+      PR24_SHA: ${{ needs.preflight.outputs.pr24_sha }}
+      PR25_SHA: ${{ needs.preflight.outputs.pr25_sha }}
+    timeout-minutes: 25
+    steps:
+      - name: Guard VPS identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "LIGHTUP_CROSS_LANE_HOST=$(hostname) RUNNER_NAME=${RUNNER_NAME:-unknown}"
+
+      - name: Confirm exact LightUp PR heads are unchanged
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          confirm() {
+            local pr="$1"
+            local expected="$2"
+            local state live
+            state="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .state)"
+            live="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .head.sha)"
+            test "$state" = "open"
+            test "$live" = "$expected"
+            echo "LIGHTUP_PR_HEAD_STILL_EXACT PR=$pr SHA=$live"
+          }
+          confirm 23 "$PR23_SHA"
+          confirm 24 "$PR24_SHA"
+          confirm 25 "$PR25_SHA"
 
       - name: Verify exact LightUp heads
         shell: bash
