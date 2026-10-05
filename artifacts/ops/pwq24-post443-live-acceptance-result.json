@@ -6,8 +6,8 @@
       "project": "ftmo",
       "result": {
         "active": true,
-        "command_id": 20833,
-        "deduplicated": false,
+        "command_id": 21093,
+        "deduplicated": true,
         "desired_state": "running",
         "ok": true,
         "status": "pending"
@@ -17,7 +17,7 @@
       "action": "start",
       "result": {
         "active": true,
-        "command_id": 20836,
+        "command_id": 21113,
         "deduplicated": false,
         "desired_state": "running",
         "ok": true,
@@ -29,7 +29,7 @@
       "action": "start",
       "result": {
         "active": true,
-        "command_id": 20837,
+        "command_id": 21114,
         "deduplicated": false,
         "desired_state": "running",
         "ok": true,
@@ -38,54 +38,54 @@
       "worker": "supa::w1"
     }
   ],
-  "captured_at": "2026-10-05T01:43:27.483159+00:00",
-  "deploy_run_id": "37251674042",
-  "deployed_at": "2026-10-05T01:33:37Z",
+  "captured_at": "2026-10-05T02:18:18.135505+00:00",
+  "deploy_run_id": "37253797057",
+  "deployed_at": "2026-10-05T02:10:50Z",
   "evidence": {
     "ftmo": {
       "duplicate_prompt_window": false,
       "events": [
         {
           "error": "",
+          "event": "send-blocked",
+          "reason": "composer-missing",
+          "ts": "2026-10-05T02:15:54.589000+00:00"
+        },
+        {
+          "error": "",
           "event": "prompt-sent",
           "reason": "dashboard-push",
-          "ts": "2026-10-05T01:41:34.966000+00:00"
+          "ts": "2026-10-05T02:16:55.335000+00:00"
         },
         {
           "error": "",
           "event": "heartbeat",
           "reason": "",
-          "ts": "2026-10-05T01:41:37.390000+00:00"
-        },
-        {
-          "error": "",
-          "event": "heartbeat",
-          "reason": "",
-          "ts": "2026-10-05T01:42:39.117000+00:00"
+          "ts": "2026-10-05T02:17:09.311000+00:00"
         }
       ],
       "heartbeat": true,
       "prompt_sent": true,
-      "send_blocked": [],
+      "send_blocked": [
+        {
+          "error": "",
+          "event": "send-blocked",
+          "reason": "composer-missing",
+          "ts": "2026-10-05T02:15:54.589000+00:00"
+        }
+      ],
       "worker": "ftmo::w1"
     },
     "supa": {
       "duplicate_prompt_window": false,
-      "events": [
-        {
-          "error": "",
-          "event": "prompt-sent",
-          "reason": "dashboard-push",
-          "ts": "2026-10-05T01:36:45.508000+00:00"
-        }
-      ],
+      "events": [],
       "heartbeat": false,
-      "prompt_sent": true,
+      "prompt_sent": false,
       "send_blocked": [],
-      "worker": "supa::w1"
+      "worker": "supa::w2"
     }
   },
-  "expected_main": "b4c9c9726f91a10184e460d96d669e98faa95f00",
+  "expected_main": "c5b3fe20d2351a395cc70f8ca0c2b3ca7863b660",
   "health_attempts": [
     {
       "attempt": 1,
@@ -117,6 +117,6 @@
   "health_stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n",
   "selected": {
     "ftmo": "ftmo::w1",
-    "supa": "supa::w1"
+    "supa": "supa::w2"
   }
 }
