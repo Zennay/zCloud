@@ -42,6 +42,10 @@ jobs:
               "ftmo","P1","Keep FTMO autonomous progression healthy and self-recovering",
               "Do not manually act as the normal generation loop. FTMO research progression belongs to the persistent self-hosted runtime. Only intervene when that runtime cannot self-advance: fix the concrete code/config/service/data-gate cause, preserve provider provenance and sealed outcome boundaries, then prove the persistent runtime resumes autonomous safe progression with deterministic workflow/runtime evidence.",
               "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e"),
+            "zguard-runtime-hardening-focus":(
+              "zguard","P2","Harden zGuard and zBrowse runtime",
+              "Make a material code, configuration, or test change in Zennay/zGuard that improves browser runtime reliability, privacy, recovery, popup handling, or the TV-friendly UX. Completion requires deterministic tests and VPS workflow evidence when runtime validation is needed.",
+              "https://app.notion.com/p/3ef9e19ac9558156b449c37142ed8e34"),
             "supa-supermarket-html-scrapers":(
               "supa","P1","Build supermarket HTML snapshot scrapers and selector extraction",
               "Build real supermarket web scrapers from captured source HTML, not invented selectors. Select the first two target supermarkets for the M1 data-feasibility lane; download representative real public product/search/offer pages and store sanitized/versioned HTML fixtures with source URL and captured-at provenance; inspect those fixtures to derive resilient selectors or embedded-data extraction paths for product identity, name, price, unit/pack size, offer mechanics and availability; implement source-specific adapters/scrapers against the captured HTML; add parser regression tests using the real snapshots plus explicit failure/staleness handling. Re-fetch live pages through the VPS execution lane to prove at least one end-to-end extraction per target source when legally/technically accessible. Do not fabricate HTML or selectors and do not bypass authentication, anti-bot controls, paywalls or terms restrictions.",
@@ -86,6 +90,39 @@ jobs:
               },"portfolio-priority-normalizer")
               print("QUEUE_PRIORITY",qid,priority,json.dumps(result,sort_keys=True))
 
+          # Normalize every queued runnable item to the portfolio focus tiers.
+          # Running/verifying work is left intact; the next free slot follows:
+          # LightUp > zSSH > FTMO > zGuard > zCloud > rest.
+          lane_priority={
+              "lightup":"P0",
+              "zssh":"P1",
+              "ftmo":"P1",
+              "zguard":"P2",
+              "cloud":"P2",
+              "raiseai":"P3",
+              "supa":"P3",
+              "ulab":"P3",
+              "haxlab":"P3",
+          }
+          current=get("/api/portfolio-queue?all=1")
+          for item in current.get("items",[]):
+              project=str(item.get("project_id") or "")
+              target=lane_priority.get(project)
+              if not target or item.get("status")!="queued" or not item.get("eligible"):
+                  continue
+              if item.get("priority")==target:
+                  continue
+              result=post("/api/portfolio-queue",{
+                  "action":"enqueue",
+                  "queue_id":item.get("queue_id"),
+                  "project_id":project,
+                  "title":item.get("title") or "Continue portfolio work",
+                  "priority":target,
+                  "completion_criteria":item.get("completion_criteria") or "",
+                  "source_url":item.get("source_url") or "",
+              },"portfolio-priority-normalizer")
+              print("QUEUE_NORMALIZED",item.get("queue_id"),project,target,json.dumps(result,sort_keys=True))
+
           legacy_runtime_tasks=(
               "ftmo-useful-compute-cpu-attribution",
           )
@@ -117,8 +154,8 @@ jobs:
           focus=[
               {k:x.get(k) for k in ("queue_id","project_id","priority","status","worker_slot","title")}
               for x in final.get("items",[])
-              if x.get("eligible") and x.get("project_id") in {"lightup","ftmo","haxlab"}
+              if x.get("eligible") and x.get("project_id") in {"lightup","zssh","ftmo","zguard","cloud"}
           ]
-          print("LIGHTUP_FTMO_HAXLAB_FINAL",json.dumps(focus,sort_keys=True))
+          print("FOCUS_ORDER_FINAL",json.dumps(focus,sort_keys=True))
           print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))
           PY
