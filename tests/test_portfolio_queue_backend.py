@@ -1110,5 +1110,42 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIn("submission-readiness evidence", criteria)
 
 
+    def test_project_worker_prompt_includes_research_to_product_loop(self):
+        prompt = server.project_worker_prompt(
+            "supa",
+            "Supa",
+            "",
+            1,
+            1,
+            None,
+        )
+
+        self.assertIn("Doe niet alleen codewerk", prompt)
+        self.assertIn("gebruikersbehoeften", prompt)
+        self.assertIn("pijnpunten", prompt)
+        self.assertIn("feedback", prompt)
+        self.assertIn("concurrenten", prompt)
+        self.assertIn("markt-signalen", prompt)
+        self.assertIn("productkeuzes", prompt)
+        self.assertIn("UX-aanpassingen", prompt)
+        self.assertIn("backlog-items", prompt)
+        self.assertIn("materiële vervolgactie", prompt)
+
+    def test_continuation_requires_research_loop_when_assumptions_matter(self):
+        item = server.portfolio_write_continuation(
+            "supa",
+            parent_queue_id="test-supa-research-loop",
+        )
+
+        criteria = item["completion_criteria"]
+        self.assertIn("RESEARCH LOOP", criteria)
+        self.assertIn("user needs", criteria)
+        self.assertIn("pain points", criteria)
+        self.assertIn("competitors", criteria)
+        self.assertIn("market signals", criteria)
+        self.assertIn("product/UX/backlog/priority changes", criteria)
+        self.assertIn("Research-only is not enough", criteria)
+
+
 if __name__ == "__main__":
     unittest.main()
