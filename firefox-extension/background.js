@@ -227,11 +227,21 @@ async function drainRunnerBeforeReplacement(tabId, target, reason) {
   }
 
   if (!bridge.vmReady) {
-    const legacy = await browser.tabs.sendMessage(tabId, {
-      type: "runner-drain",
-      projectId: target.project_id,
-      reason: reason || "project-chat-replaced"
-    }).catch(() => null);
+    // executeScript() returning from a legacy rebind does not guarantee that the
+    // freshly registered runtime message listener is immediately reachable.
+    // Use the same bounded listener-settle retry shape as config refresh: never
+    // open/close a tab or alter ownership while waiting, and still fail closed
+    // when the old worker cannot positively acknowledge drain.
+    let legacy = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      legacy = await browser.tabs.sendMessage(tabId, {
+        type: "runner-drain",
+        projectId: target.project_id,
+        reason: reason || "project-chat-replaced"
+      }).catch(() => null);
+      if (legacy?.ok) break;
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+    }
     if (!legacy?.ok) {
       throw new Error("Replacement geblokkeerd: oude worker kan niet veilig drainen na runtime-rebind");
     }

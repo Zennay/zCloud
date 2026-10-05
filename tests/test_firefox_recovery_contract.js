@@ -166,6 +166,17 @@ assert.ok(
   "replacement drain must redispatch the drain event after proving a Violentmonkey rebind"
 );
 assert.ok(
+  replacementDrainBlock.includes("for (let attempt = 0; attempt < 4; attempt += 1)") &&
+    replacementDrainBlock.includes('type: "runner-drain"') &&
+    replacementDrainBlock.includes("250 * (attempt + 1)"),
+  "legacy replacement drain must bounded-retry listener delivery after runtime rebind"
+);
+assert.ok(
+  replacementDrainBlock.indexOf("for (let attempt = 0; attempt < 4; attempt += 1)") <
+    replacementDrainBlock.indexOf("oude worker kan niet veilig drainen na runtime-rebind"),
+  "legacy replacement drain may fail closed only after bounded listener-settle retries"
+);
+assert.ok(
   !replacementDrainBlock.includes("/runner-control") &&
     !replacementDrainBlock.includes('desired_state = "draining"') &&
     !replacementDrainBlock.includes("desired_state='draining'"),
