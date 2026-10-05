@@ -1,0 +1,39 @@
+name: PWQ-24 atomic runner-target snapshot validation
+
+on:
+  push:
+    branches:
+      - fix/pwq24-atomic-runner-target-snapshot-20261005
+    paths:
+      - server.py
+      - tests/test_runner_smoke.py
+      - tests/test_worker_prompt_contract.py
+      - tests/test_portfolio_queue_backend.py
+      - .github/workflows/pwq24-atomic-target-snapshot-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pwq24-atomic-runner-target-snapshot-20261005
+          clean: true
+          fetch-depth: 1
+      - name: Guard runner identity
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Run targeted control-plane regressions
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py
+          python3 -m unittest -v \
+            tests.test_runner_smoke \
+            tests.test_worker_prompt_contract \
+            tests.test_portfolio_queue_backend
