@@ -2,6 +2,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 import sys
@@ -582,6 +583,81 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertTrue(worker["work_area"])
         self.assertEqual("Veilige workerkaart bouwen", worker["current_task"]["title"])
         self.assertEqual("worker/test", worker["current_task"]["branch"])
+
+    def test_runner_targets_snapshot_never_cross_wires_queue_identity_during_slot_reassignment(self):
+        with server.connect() as conn:
+            conn.execute("DELETE FROM portfolio_queue")
+            conn.execute("DELETE FROM ai_global_slots")
+
+        cloud = server.portfolio_queue_enqueue(
+            "cloud",
+            "Fix atomic runner target binding",
+            "P0",
+            "Bind a worker to the exact queue identity from one allocation snapshot.",
+            queue_id="cloud-atomic-snapshot",
+        )
+        raiseai = server.portfolio_queue_enqueue(
+            "raiseai",
+            "Implement bounded smart-home route",
+            "P1",
+            "Implement the next scoped smart-home connector increment.",
+            queue_id="raiseai-slot-replacement",
+        )
+        ts = server.now()
+        with server.connect() as conn:
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=1,claimed_at=?,claim_expires='2999-01-01T00:00:00+00:00',updated_at=?
+                   WHERE queue_id=?""",
+                (ts, ts, cloud["queue_id"]),
+            )
+            conn.execute(
+                """INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at)
+                   VALUES(1,'cloud',1,?)""",
+                (ts,),
+            )
+
+        snapshot = server.portfolio_queue_allocation()
+        self.assertEqual("cloud::w1", snapshot["workers"][0]["worker_key"])
+        self.assertEqual(cloud["queue_id"], snapshot["workers"][0]["queue_id"])
+
+        original_allocation = server.global_worker_allocation
+
+        def race_after_snapshot(*args, **kwargs):
+            # Reproduce the production race: the public allocation snapshot still
+            # says slot 1 belongs to Cloud while SQLite has already reassigned that
+            # numeric slot to a different project's queue item.
+            with server.connect() as conn:
+                changed = server.now()
+                conn.execute(
+                    """UPDATE portfolio_queue
+                       SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                       WHERE queue_id=?""",
+                    (changed, cloud["queue_id"]),
+                )
+                conn.execute(
+                    """UPDATE portfolio_queue
+                       SET status='claimed',worker_slot=1,claimed_at=?,claim_expires='2999-01-01T00:00:00+00:00',updated_at=?
+                       WHERE queue_id=?""",
+                    (changed, changed, raiseai["queue_id"]),
+                )
+            return snapshot
+
+        with mock.patch.object(server, "global_worker_allocation", side_effect=race_after_snapshot):
+            status, targets = self.request("/api/runner-targets")
+
+        self.assertEqual(200, status)
+        self.assertEqual(cloud["queue_id"], targets["global_allocation"]["workers"][0]["queue_id"])
+        worker = targets["projects"]["cloud::w1"]
+        self.assertEqual(cloud["queue_id"], worker["queue_item"]["queue_id"])
+        self.assertEqual("cloud", worker["queue_item"]["project_id"])
+        self.assertNotEqual(raiseai["queue_id"], worker["queue_item"]["queue_id"])
+        self.assertFalse(worker["assignment_ready"])
+
+        # Sanity-check that the live numeric slot really did move to Raise AI;
+        # the target stayed coherent because it followed queue identity, not slot.
+        current = server.portfolio_queue_current_for_slot(1)
+        self.assertEqual(raiseai["queue_id"], current["queue_id"])
 
     def test_worker_status_exposes_queue_generated_execution_lane(self):
         self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
