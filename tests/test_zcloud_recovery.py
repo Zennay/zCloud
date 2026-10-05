@@ -109,10 +109,6 @@ class RecoveryTests(unittest.TestCase):
         with patch.object(recovery, "snapshot_stamp", return_value="20261005T183309Z"):
             first = self.capture()
             second = self.capture()
-        self.assertEqual(
-            "20261005T183309Z-working--tree"[:0],
-            "",
-        ) if False else None
         self.assertNotEqual(first["snapshot_id"], second["snapshot_id"])
         self.assertTrue(
             second["snapshot_id"].startswith(first["snapshot_id"] + "-")
