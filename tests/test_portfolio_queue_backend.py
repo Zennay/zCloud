@@ -648,6 +648,77 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(queued), 2)
 
+    def test_firefox_oom_recovery_preserves_existing_worker_allocation(self):
+        server.MAX_CHATGPT_WORKERS = 2
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        server.portfolio_queue_enqueue(
+            "cloud", "keep cloud worker through OOM", "P0",
+            "Keep the existing cloud worker allocated during browser recovery.",
+        )
+        server.portfolio_queue_enqueue(
+            "raiseai", "keep raise worker through OOM", "P1",
+            "Keep the existing raise worker allocated during browser recovery.",
+        )
+        server.portfolio_queue_allocate()
+        server._persist_global_worker_allocation(server.portfolio_queue_allocation())
+        before = [
+            item["worker_key"]
+            for item in server.portfolio_queue_allocation()["workers"]
+        ]
+        self.assertEqual(2, len(before))
+
+        original_pids = server._standalone_firefox_pids
+        original_status = server.firefox_runner_status
+        original_mode = server._violentmonkey_only_mode
+        original_memory = server.worker_memory_status
+        original_trim = server._trim_dead_browser_allocations_for_recovery
+        original_hold = server._set_worker_recovery_hold
+        original_user_systemctl = server.user_systemctl
+        statuses = iter([
+            {"active": False, "state": "inactive", "runtime_mode": "none"},
+            {"active": True, "state": "active", "runtime_mode": "systemd"},
+        ])
+        server._standalone_firefox_pids = lambda: []
+        server.firefox_runner_status = lambda: next(statuses)
+        server._violentmonkey_only_mode = lambda: False
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 700,
+            "total_mb": 11264,
+            "swap_total_mb": 4096,
+            "swap_free_mb": 0,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2048,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "critical",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+        server._trim_dead_browser_allocations_for_recovery = (
+            lambda capacity: self.fail("OOM recovery must not release existing worker slots")
+        )
+        server._set_worker_recovery_hold = lambda *args, **kwargs: None
+        server.user_systemctl = lambda *args: ""
+        try:
+            result = server.restart_firefox_runtime()
+        finally:
+            server._standalone_firefox_pids = original_pids
+            server.firefox_runner_status = original_status
+            server._violentmonkey_only_mode = original_mode
+            server.worker_memory_status = original_memory
+            server._trim_dead_browser_allocations_for_recovery = original_trim
+            server._set_worker_recovery_hold = original_hold
+            server.user_systemctl = original_user_systemctl
+
+        after = [
+            item["worker_key"]
+            for item in server.portfolio_queue_allocation()["workers"]
+        ]
+        self.assertTrue(result["active"], result)
+        self.assertTrue(result["allocation_preserved"], result)
+        self.assertEqual([], result["released_slots"])
+        self.assertEqual(before, after)
+
     def test_p0_preempts_lower_priority_claim_that_has_not_started(self):
         lower = server.portfolio_queue_enqueue("cloud", "lower", "P1", "Implement lower-priority change with tests.")
         server.portfolio_queue_allocate()
