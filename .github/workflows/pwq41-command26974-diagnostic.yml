@@ -1,0 +1,81 @@
+name: PWQ-41 command 26974 diagnostic
+
+on:
+  push:
+    branches:
+      - ops/pwq41-command26974-diagnostic-20261005
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Guard canonical VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "PWQ41_DIAG_HOST_OK $(hostname)"
+      - name: Read command and replacement telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import urllib.request
+          from pathlib import Path
+
+          db = "file:/home/ubuntu/zennay-cloud/history.db?mode=ro"
+          with sqlite3.connect(db, uri=True, timeout=10) as conn:
+              conn.row_factory = sqlite3.Row
+              command = conn.execute(
+                  "SELECT id,project_id,action,status,result,created_at,updated_at "
+                  "FROM runner_commands WHERE id=?",
+                  (26974,),
+              ).fetchone()
+              print("PWQ41_COMMAND " + json.dumps(dict(command) if command else None, sort_keys=True))
+              if not command:
+                  raise SystemExit("command 26974 missing")
+              created = str(command["created_at"])
+              rows = conn.execute(
+                  "SELECT id,ts,project_id,worker_slot,event,reason,error "
+                  "FROM runner_events "
+                  "WHERE project_id=? AND worker_slot=? AND ts>=? "
+                  "ORDER BY id",
+                  ("cloud", 1, created),
+              ).fetchall()
+              print("PWQ41_EVENTS " + json.dumps([dict(row) for row in rows], sort_keys=True))
+              worker = conn.execute(
+                  "SELECT project_id,worker_slot,conversation_id,desired_state,provider "
+                  "FROM runner_workers WHERE project_id=? AND worker_slot=?",
+                  ("cloud", 1),
+              ).fetchone()
+              print("PWQ41_WORKER " + json.dumps(dict(worker) if worker else None, sort_keys=True))
+              recent = conn.execute(
+                  "SELECT id,project_id,action,status,result,created_at,updated_at "
+                  "FROM runner_commands WHERE project_id=? AND created_at>=? ORDER BY id",
+                  ("cloud::w1", created),
+              ).fetchall()
+              print("PWQ41_RECENT_COMMANDS " + json.dumps([dict(row) for row in recent], sort_keys=True))
+
+          req = urllib.request.Request(
+              "http://127.0.0.1:8765/api/runner-targets",
+              headers={"User-Agent":"pwq41-command26974-diagnostic/1"},
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              targets = json.load(response)
+          target = (targets.get("projects") or {}).get("cloud::w1")
+          print("PWQ41_TARGET " + json.dumps(target, sort_keys=True, default=str))
+
+          live = Path("/home/ubuntu/zennay-cloud/firefox-extension/background.js")
+          if live.is_file():
+              text = live.read_text(encoding="utf-8")
+              print("PWQ41_LIVE_MARKER_RESET_PRESENT " + str("replacement-drain-marker-reset" in text).lower())
+              print("PWQ41_LIVE_LEGACY_LIVENESS_PRESENT " + str('type: "runner-config-update"' in text).lower())
+          else:
+              print("PWQ41_LIVE_BACKGROUND_MISSING")
+          PY
