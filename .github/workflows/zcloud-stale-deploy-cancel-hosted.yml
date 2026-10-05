@@ -45,7 +45,7 @@ jobs:
           current_waiting_ids=()
           keeper_current_waiting=""
           for row in "${deploy_runs[@]}"; do
-            IFS=\t' read -r run_id status head_sha <<<"$row"
+            IFS=$'\t' read -r run_id status head_sha <<<"$row"
             [[ -n "$run_id" ]] || continue
             [[ "$head_sha" == "$current_main" ]] || continue
             case "$status" in
@@ -96,7 +96,7 @@ jobs:
           fi
 
           for row in "${deploy_runs[@]}"; do
-            IFS=\t' read -r run_id status head_sha <<<"$row"
+            IFS=$'\t' read -r run_id status head_sha <<<"$row"
             [[ -n "$run_id" ]] || continue
 
             # Never interrupt an active production transaction. Cleanup is only
