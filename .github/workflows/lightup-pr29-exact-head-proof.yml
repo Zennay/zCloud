@@ -1,0 +1,129 @@
+name: LightUp PR29 exact-head VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-pr29-exact-head-proof-20261005
+    paths:
+      - ".github/workflows/lightup-pr29-exact-head-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr29-exact-head-vps-proof
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Resolve exact LightUp PR29 head
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - name: Guard exact open PR head
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          state="$(gh api repos/Zennay/Lightup/pulls/29 --jq .state)"
+          sha="$(gh api repos/Zennay/Lightup/pulls/29 --jq .head.sha)"
+          base="$(gh api repos/Zennay/Lightup/pulls/29 --jq .base.ref)"
+          test "$state" = "open"
+          test "$base" = "main"
+          test "$sha" = "6402ae5f1e3d193a1ddf3af6d6e0814875251281"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "LIGHTUP_PR29_HEAD=$sha BASE=$base"
+
+      - name: Hosted exact-head smoke
+        env:
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          set -Eeuo pipefail
+          work="$RUNNER_TEMP/lightup-pr29-hosted-$GITHUB_RUN_ID"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Lightup.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$SHA"
+          (
+            cd "$work"
+            export PYTHONPATH=src:tests
+            python3 -m compileall -q src tests
+            python3 -m unittest discover -s tests -v
+            python3 -m unittest discover -s tests/integration -v
+            python3 scripts/check_safety_canaries.py
+          )
+          echo "LIGHTUP_PR29_HOSTED_GREEN SHA=$SHA"
+
+  prove:
+    name: Exact PR29 proof on vps-bb300bba
+    needs: preflight
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      SHA: ${{ needs.preflight.outputs.sha }}
+    steps:
+      - name: Guard canonical host and unchanged PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          state="$(gh api repos/Zennay/Lightup/pulls/29 --jq .state)"
+          live="$(gh api repos/Zennay/Lightup/pulls/29 --jq .head.sha)"
+          base="$(gh api repos/Zennay/Lightup/pulls/29 --jq .base.ref)"
+          test "$state" = "open"
+          test "$base" = "main"
+          test "$live" = "$SHA"
+          echo "LIGHTUP_PR29_VPS_HEAD_EXACT SHA=$SHA HOST=$(hostname)"
+
+      - name: Run exact LightUp suite
+        run: |
+          set -Eeuo pipefail
+          work="$RUNNER_TEMP/lightup-pr29-vps-$GITHUB_RUN_ID"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Lightup.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$SHA"
+          (
+            cd "$work"
+            export PYTHONPATH=src:tests
+            python3 -m compileall -q src tests
+            python3 -m unittest discover -s tests -v
+            python3 -m unittest discover -s tests/integration -v
+            python3 scripts/check_safety_canaries.py
+          )
+          echo "LIGHTUP_PR29_VPS_GREEN SHA=$SHA HOST=$(hostname)"
+
+      - name: Build proof receipt
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-pr29-exact-head-proof.json
+          import json, os, socket
+          print(json.dumps({
+              "schema_version": 1,
+              "result": "success",
+              "repository": "Zennay/Lightup",
+              "pull_request": 29,
+              "head_sha": os.environ["SHA"],
+              "host": socket.gethostname(),
+              "runner": os.environ.get("RUNNER_NAME"),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-pr29-exact-head-proof.json
+
+      - name: Upload proof receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr29-exact-head-proof-${{ github.run_id }}
+          path: artifacts/lightup-pr29-exact-head-proof.json
+          if-no-files-found: error
+          retention-days: 14
