@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.12
+// @version      1.3.13
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.12";
+  const SCRIPT_VERSION = "1.3.13";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -47,6 +47,7 @@
     generationStartTimeoutMs: 120000
   });
   const TAB_CLAIM_LEASE_MS = 90000;
+  const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
   let timing = {...DEFAULT_TIMING};
 
   let target = null;
@@ -72,6 +73,13 @@
   let heartbeatTimer = null;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  function setReplacementDrainState(state) {
+    const root = document.documentElement;
+    if (!root) return;
+    if (state) root.setAttribute(REPLACEMENT_DRAIN_STATE_ATTR, state);
+    else root.removeAttribute(REPLACEMENT_DRAIN_STATE_ATTR);
+  }
 
   function gmRequest(path, options = {}) {
     const method = options.method || "GET";
@@ -871,6 +879,17 @@
     catch (_) {}
   }
 
+  window.addEventListener("zcloud-replacement-drain", event => {
+    draining = true;
+    setReplacementDrainState("draining");
+    const reason = String(event?.detail?.reason || "project-chat-replaced").slice(0, 120);
+    status("runner-draining", {reason: "replacement:" + reason}).catch(() => {});
+    if (!generationActive() && !sending && !awaitingGeneration && !sawGeneration) {
+      setReplacementDrainState("drained");
+      status("runner-drained", {reason: "replacement-already-idle"}).catch(() => {});
+    }
+  });
+
   async function commandResult(commandId, resultStatus, result) {
     if (!commandId) return false;
     try {
@@ -1179,6 +1198,7 @@
     }
 
     if (draining && !sawGeneration) {
+      setReplacementDrainState("drained");
       await status("runner-drained", {reason: "already-idle"});
       return;
     }
@@ -1204,6 +1224,7 @@
         await status("quality-retry-cleared", {reason: "valid-generation"});
       }
       if (draining) {
+        setReplacementDrainState("drained");
         await status("runner-drained", {reason: "current-task-finished"});
         return;
       }
