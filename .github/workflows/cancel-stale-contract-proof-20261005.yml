@@ -39,8 +39,18 @@ jobs:
           test "$event" = "pull_request"
           case "$status" in
             queued|in_progress|waiting|pending)
-              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/cancel"
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/cancel" || true
               echo "STALE_CONTRACT_PROOF_CANCEL_REQUESTED run_id=$RUN_ID status=$status"
+              for _ in 1 2 3 4 5; do
+                sleep 2
+                status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .status)"
+                if [[ "$status" == "completed" ]]; then
+                  echo "STALE_CONTRACT_PROOF_CANCELLED run_id=$RUN_ID"
+                  exit 0
+                fi
+              done
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/force-cancel"
+              echo "STALE_CONTRACT_PROOF_FORCE_CANCEL_REQUESTED run_id=$RUN_ID"
               ;;
             completed)
               echo "STALE_CONTRACT_PROOF_ALREADY_TERMINAL run_id=$RUN_ID"
