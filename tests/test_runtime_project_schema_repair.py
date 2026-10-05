@@ -28,6 +28,47 @@ class RuntimeProjectSchemaRepairTests(unittest.TestCase):
         self.assertEqual("", source[1]["milestone_revision"])
         self.assertNotIn("milestone_revision", source[2])
 
+    def test_repair_projects_removes_only_legacy_contract_fields_dropped_by_candidate(self):
+        source = [{
+            "id": "cloud",
+            "milestone_revision": "live-v4",
+            "phase": "runtime-owned phase",
+            "queue_mode": "autonomous",
+            "lane_profile": "legacy-profile",
+        }]
+        candidate = [{
+            "id": "cloud",
+            "milestone_revision": "candidate-v5",
+            "phase": "candidate phase",
+        }]
+
+        result, changed = repair.repair_projects(source, candidate)
+
+        self.assertEqual(["cloud"], changed)
+        self.assertNotIn("queue_mode", result[0])
+        self.assertNotIn("lane_profile", result[0])
+        self.assertEqual("runtime-owned phase", result[0]["phase"])
+        self.assertEqual("live-v4", result[0]["milestone_revision"])
+        self.assertIn("queue_mode", source[0])
+        self.assertIn("lane_profile", source[0])
+
+    def test_repair_projects_preserves_contract_fields_still_declared_by_candidate(self):
+        source = [{
+            "id": "cloud",
+            "milestone_revision": "live-v4",
+            "queue_mode": "legacy-live-value",
+        }]
+        candidate = [{
+            "id": "cloud",
+            "milestone_revision": "candidate-v4",
+            "queue_mode": "candidate-owned-for-compatibility",
+        }]
+
+        result, changed = repair.repair_projects(source, candidate)
+
+        self.assertEqual([], changed)
+        self.assertEqual("legacy-live-value", result[0]["queue_mode"])
+
     def test_repair_projects_adds_missing_candidate_without_overwriting_live(self):
         source = [{
             "id": "cloud",
