@@ -1,0 +1,79 @@
+name: LightUp PR20 PR21 cross-lane exact-head proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/lightup-pr20-pr21-cross-lane-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr20-pr21-cross-lane-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 15
+    env:
+      PR20_SHA: e2ffed835fa637acd14db0dd16870c9afbec3922
+      PR21_SHA: 113d31308baf397ca51f0d6f7cbcc9ff79001f53
+    steps:
+      - name: Guard VPS identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "LIGHTUP_CROSS_LANE_HOST=$(hostname) RUNNER_NAME=\${RUNNER_NAME:-unknown}"
+
+      - name: Verify exact LightUp heads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          prove() {
+            local pr="$1"
+            local sha="$2"
+            local work="$RUNNER_TEMP/lightup-pr$pr-$GITHUB_RUN_ID"
+            local scope="$RUNNER_TEMP/lightup-pr$pr-scope.json"
+            local plan="$RUNNER_TEMP/lightup-pr$pr-plan.json"
+
+            rm -rf "$work"
+            git init -q "$work"
+            git -C "$work" remote add origin https://github.com/Zennay/Lightup.git
+            git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$sha"
+            git -C "$work" checkout -q --detach FETCH_HEAD
+            test "$(git -C "$work" rev-parse HEAD)" = "$sha"
+
+            (
+              cd "$work"
+              export PYTHONPATH=src
+              python3 -m compileall -q src tests
+              python3 -m unittest discover -s tests -v
+
+              set +e
+              python3 -m lightup.cli scope-check 8.8.8.8 > "$scope"
+              code=$?
+              set -e
+              test "$code" -eq 2
+              grep -q '"allowed": false' "$scope"
+
+              python3 -m lightup.cli plan 127.0.0.1 > "$plan"
+              grep -q '"execution_enabled": false' "$plan"
+            )
+
+            echo "LIGHTUP_EXACT_HEAD_PROOF_GREEN PR=$pr SHA=$sha HOST=$(hostname)"
+          }
+
+          prove 20 "$PR20_SHA"
+          prove 21 "$PR21_SHA"
+
+      - name: Emit proof receipt
+        if: always()
+        shell: bash
+        run: |
+          printf 'LIGHTUP_CROSS_LANE_PROOF PR20=%s PR21=%s HOST=%s RUN_ID=%s\n' \
+            "$PR20_SHA" "$PR21_SHA" "$(hostname)" "$GITHUB_RUN_ID"
