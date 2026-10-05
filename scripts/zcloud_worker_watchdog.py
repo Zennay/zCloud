@@ -43,6 +43,10 @@ FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_F
 GENERATION_PROTECT_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GENERATION_PROTECT_SECONDS", "1200"))
 PROMPT_STALE_REFRESH_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_PROMPT_STALE_REFRESH_SECONDS", "300"))
 STALE_PENDING_COMMAND_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_STALE_PENDING_COMMAND_SECONDS", "300"))
+WORKER_MEMORY_WARN_MB = max(1024, int(os.environ.get("ZCLOUD_WORKER_MEMORY_WARN_MB", "2048")))
+WORKER_MEMORY_CRITICAL_MB = max(512, int(os.environ.get("ZCLOUD_WORKER_MEMORY_CRITICAL_MB", "1024")))
+WORKER_SWAP_MIN_TOTAL_MB = max(0, int(os.environ.get("ZCLOUD_WORKER_SWAP_MIN_TOTAL_MB", "1024")))
+WORKER_SWAP_MIN_FREE_MB = max(0, int(os.environ.get("ZCLOUD_WORKER_SWAP_MIN_FREE_MB", "512")))
 
 HUMAN_GATE_STATUSES = {"wait_human", "waiting_human", "human_gate", "needs_human", "approval_required"}
 
@@ -99,6 +103,72 @@ def api_call(base_url: str, method: str, path: str, payload: dict[str, Any] | No
         return int(exc.code), body if isinstance(body, dict) else {}
     except Exception as exc:
         return 599, {"error": str(exc)[:500]}
+
+
+def host_memory_guard(meminfo_path: Path = Path("/proc/meminfo")) -> dict[str, Any]:
+    """Read a minimal memory-pressure snapshot without depending on the zCloud API."""
+    values: dict[str, int] = {}
+    try:
+        for line in meminfo_path.read_text(encoding="utf-8").splitlines():
+            if ":" not in line:
+                continue
+            key, raw = line.split(":", 1)
+            number = "".join(ch for ch in raw if ch.isdigit())
+            if number:
+                values[key.strip()] = int(number) // 1024
+    except Exception as exc:
+        return {
+            "available_mb": None,
+            "swap_total_mb": None,
+            "swap_free_mb": None,
+            "swap_healthy": False,
+            "pressure": "unknown",
+            "error": str(exc)[:200],
+        }
+
+    available = max(0, int(values.get("MemAvailable") or values.get("MemFree") or 0))
+    swap_total = max(0, int(values.get("SwapTotal") or 0))
+    swap_free = max(0, int(values.get("SwapFree") or 0))
+    swap_healthy = (
+        swap_total >= WORKER_SWAP_MIN_TOTAL_MB
+        and swap_free >= min(WORKER_SWAP_MIN_FREE_MB, swap_total)
+    )
+    if available < WORKER_MEMORY_CRITICAL_MB:
+        pressure = "critical"
+    elif available < WORKER_MEMORY_WARN_MB:
+        pressure = "warning"
+    else:
+        pressure = "ok"
+    return {
+        "available_mb": available,
+        "swap_total_mb": swap_total,
+        "swap_free_mb": swap_free,
+        "swap_healthy": bool(swap_healthy),
+        "pressure": pressure,
+    }
+
+
+def degraded_memory_recovery_needed(memory_guard: dict[str, Any]) -> bool:
+    """Treat exhausted swap + warning RAM as post-OOM degraded, not merely advisory."""
+    pressure = str(memory_guard.get("pressure") or "").lower()
+    return pressure == "critical" or (
+        pressure == "warning" and not bool(memory_guard.get("swap_healthy"))
+    )
+
+
+def selected_worker_runtime_lost(selected_keys: set[str], runtime: dict[str, Any]) -> bool:
+    """Return true only when no selected worker is observably live or doing work."""
+    if not selected_keys:
+        return False
+    dead_states = {"offline", "stale", "disconnected", "unknown"}
+    for key in sorted(selected_keys):
+        worker = locate_worker(runtime, key)
+        if worker and (bool(worker.get("generating")) or bool(worker.get("sending"))):
+            return False
+        state = str((worker or {}).get("state") or "offline").lower()
+        if state not in dead_states:
+            return False
+    return True
 
 
 def load_state(path: Path) -> dict[str, Any]:
@@ -400,20 +470,113 @@ def run_once(
 
     targets_status, targets = api_call(base_url, "GET", "/api/runner-targets")
     runtime_status, runtime = api_call(base_url, "GET", "/api/status")
-    if targets_status >= 300 or runtime_status >= 300:
-        result = {
+    if targets_status >= 300:
+        return {
             "ok": False,
-            "error": "zCloud control API unavailable",
+            "error": "zCloud runner-target control API unavailable",
             "targets_status": targets_status,
             "runtime_status": runtime_status,
             "targets_error": targets.get("error"),
             "runtime_error": runtime.get("error"),
         }
-        return result
 
     allocation = targets.get("global_allocation") or {}
     selected = allocation.get("workers") or []
     selected_keys = {worker_key(item) for item in selected if worker_key(item)}
+
+    # /api/status is deliberately a rich read-model and can be the first endpoint
+    # to time out while the host is under browser-memory pressure. Do not make OOM
+    # recovery depend on that expensive endpoint: fall back to /proc/meminfo and
+    # the narrower runner-live view. If runner-live is also unavailable, degraded
+    # memory plus the absence of observable worker liveness is enough to recycle
+    # Firefox, while the existing cooldown prevents restart loops.
+    if runtime_status >= 300:
+        fallback_memory = host_memory_guard()
+        live_status, live_runtime = api_call(base_url, "GET", "/api/runner-live")
+        if (
+            selected_keys
+            and degraded_memory_recovery_needed(fallback_memory)
+            and selected_worker_runtime_lost(
+                selected_keys,
+                live_runtime if live_status < 300 else {},
+            )
+        ):
+            global_state = state.setdefault("global", {})
+            last_restart_age = seconds_since(global_state.get("last_firefox_restart_at"), now)
+            if last_restart_age < FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS:
+                state["updated_at"] = now.isoformat()
+                state["version"] = 1
+                if not dry_run:
+                    save_state(state_path, state)
+                return {
+                    "ok": True,
+                    "checked_at": now.isoformat(),
+                    "allocated_workers": sorted(selected_keys),
+                    "worker_count": len(selected_keys),
+                    "workers": [],
+                    "global_action": None,
+                    "memory_guard": fallback_memory,
+                    "reason": "status-unavailable-memory-pressure-recovery-cooldown",
+                    "targets_status": targets_status,
+                    "runtime_status": runtime_status,
+                    "runner_live_status": live_status,
+                }
+
+            if dry_run:
+                action = {
+                    "action": "restart_firefox",
+                    "reason": "status-unavailable-memory-pressure-worker-runtime-lost",
+                    "ok": True,
+                    "dry_run": True,
+                }
+            else:
+                status_code, payload = api_call(
+                    base_url,
+                    "POST",
+                    "/api/runner-control",
+                    {"project_id": "", "action": "restart_firefox"},
+                )
+                accepted = status_code < 300 and bool(payload.get("ok"))
+                action = {
+                    "action": "restart_firefox",
+                    "reason": "status-unavailable-memory-pressure-worker-runtime-lost",
+                    "ok": accepted,
+                    "http_status": status_code,
+                    "response": payload,
+                }
+                if accepted:
+                    global_state["last_firefox_restart_at"] = now.isoformat()
+
+            state["updated_at"] = now.isoformat()
+            state["version"] = 1
+            if not dry_run:
+                save_state(state_path, state)
+            return {
+                "ok": bool(action.get("ok")),
+                "checked_at": now.isoformat(),
+                "allocated_workers": sorted(selected_keys),
+                "worker_count": len(selected_keys),
+                "workers": [],
+                "global_action": action,
+                "memory_guard": fallback_memory,
+                "reason": "status-unavailable-memory-pressure-worker-runtime-lost",
+                "targets_status": targets_status,
+                "runtime_status": runtime_status,
+                "runner_live_status": live_status,
+            }
+
+        return {
+            "ok": False,
+            "error": "zCloud status API unavailable without safe Firefox recovery evidence",
+            "targets_status": targets_status,
+            "runtime_status": runtime_status,
+            "runner_live_status": live_status,
+            "targets_error": targets.get("error"),
+            "runtime_error": runtime.get("error"),
+            "runner_live_error": live_runtime.get("error"),
+            "memory_guard": fallback_memory,
+        }
+
     memory_guard = (runtime.get("dynamic_workers") or {}).get("memory_guard") or {}
     firefox = runtime.get("chatgpt_firefox") or {}
 
