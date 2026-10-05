@@ -223,5 +223,27 @@ class LaneGeneratorTests(unittest.TestCase):
                 self.assertEqual([], overlap["files"])
 
 
+    def test_security_lab_contract_derives_authorization_runtime_and_evidence_lanes(self):
+        project = self.project("lightup", "security-lab")
+        backlog = [
+            {**self.item("lightup-scope", "Harden authorization scope guardrail"), "project_id": "lightup"},
+            {**self.item("lightup-runtime", "Build passive assessment orchestration runtime"), "project_id": "lightup"},
+            {**self.item("lightup-evidence", "Implement findings remediation retest evidence"), "project_id": "lightup"},
+        ]
+
+        lanes = generate_execution_lanes(project, backlog)
+        selected = {lane["lane_id"]: lane["queue_id"] for lane in lanes}
+
+        self.assertEqual("lightup-scope", selected["scope-authorization"])
+        self.assertEqual("lightup-runtime", selected["assessment-runtime"])
+        self.assertEqual("lightup-evidence", selected["evidence-remediation"])
+
+    def test_unknown_explicit_lane_profile_fails_closed(self):
+        project = self.project("lightup", "unknown-profile")
+        item = {**self.item("lightup-unknown", "Implement assessment runtime"), "project_id": "lightup"}
+        with self.assertRaisesRegex(ValueError, "unsupported lane_profile"):
+            classify_backlog_item(project, item)
+
+
 if __name__ == "__main__":
     unittest.main()
