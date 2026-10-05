@@ -2,8 +2,7 @@ name: LightUp PR23 PR24 PR25 cross-lane exact-head proof
 
 on:
   push:
-    branches:
-      - "chatgpt/lightup-pr23-pr25-cross-lane-proof-20261005"
+    branches: [main]
     paths:
       - ".github/workflows/lightup-pr23-pr25-cross-lane-proof.yml"
       - "tests/test_lightup_pr23_pr25_cross_lane_proof.py"
@@ -134,3 +133,32 @@ jobs:
         run: |
           printf 'LIGHTUP_CROSS_LANE_PROOF PR23=%s PR24=%s PR25=%s HOST=%s RUN_ID=%s\n' \
             "${PR23_SHA:-unresolved}" "${PR24_SHA:-unresolved}" "${PR25_SHA:-unresolved}" "$(hostname)" "$GITHUB_RUN_ID"
+
+
+  publish:
+    needs: prove
+    if: success()
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Download exact-head proof receipt
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lightup-pr23-pr25-cross-lane-proof-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Publish green receipt to control-plane PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          receipt="artifacts/lightup-pr23-pr25-cross-lane-proof.json"
+          test -s "$receipt"
+          body="$(printf 'LightUp PR23/PR24/PR25 cross-lane exact-head proof is green.\n\n```json\n%s\n```' "$(cat "$receipt")")"
+          gh api repos/Zennay/zCloud/issues/491/comments -f body="$body" >/dev/null
+          echo "LIGHTUP_CROSS_LANE_RECEIPT_PUBLISHED issue=491"
