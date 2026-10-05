@@ -403,14 +403,27 @@ jobs:
                   actions.append({'worker': key, 'action': 'start', 'result': result})
 
           # The queue may legitimately rebind a project to another worker slot while
-          # this live proof is running. Re-drive exactly-once start for each newly
-          # selected worker key so the acceptance evaluates the current allocation
-          # instead of a stale slot that happened to be selected earlier.
-          started_workers = {
-              str(item.get('worker') or '')
-              for item in actions
-              if item.get('action') == 'start' and item.get('worker')
-          }
+          # this live proof is running. Track the last worker that actually accepted
+          # a start edge per project, not every worker ever seen. An allocation can
+          # validly oscillate w1 -> w2 -> w1; the returning w1 needs a fresh start
+          # edge because its earlier command may have been superseded while it was
+          # deallocated.
+          last_started_worker = {}
+          for item in actions:
+              worker = str(item.get('worker') or '')
+              result = item.get('result') or {}
+              project = str(item.get('project') or '').strip().lower()
+              if not project and '::w' in worker:
+                  project = worker.split('::w', 1)[0]
+              if (
+                  item.get('action') == 'start'
+                  and project in REQUIRED
+                  and worker
+                  and isinstance(result, dict)
+                  and result.get('ok') is True
+              ):
+                  last_started_worker[project] = worker
+
           final = {}
           deadline = time.time() + 150
           while time.time() < deadline:
@@ -418,7 +431,7 @@ jobs:
               if REQUIRED.issubset(selected):
                   for project in sorted(REQUIRED):
                       key = selected.get(project)
-                      if not key or key in started_workers:
+                      if not key or last_started_worker.get(project) == key:
                           continue
                       try:
                           result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
@@ -441,7 +454,7 @@ jobs:
                               })
                               continue
                           raise
-                      started_workers.add(key)
+                      last_started_worker[project] = key
                       actions.append({
                           'project': project,
                           'worker': key,
