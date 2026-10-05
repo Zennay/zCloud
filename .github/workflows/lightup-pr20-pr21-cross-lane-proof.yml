@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: lightup-pr20-pr21-cross-lane-proof
@@ -18,16 +18,32 @@ jobs:
   prove:
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 15
-    env:
-      PR20_SHA: 977e63bf322c33eac96841d068df61c70208870e
-      PR21_SHA: 5df27d93713df40d31d27b1da13d66998b47136d
     steps:
       - name: Guard VPS identity
         shell: bash
         run: |
           set -Eeuo pipefail
           test "$(hostname)" = "vps-bb300bba"
-          echo "LIGHTUP_CROSS_LANE_HOST=$(hostname) RUNNER_NAME=\${RUNNER_NAME:-unknown}"
+          echo "LIGHTUP_CROSS_LANE_HOST=$(hostname) RUNNER_NAME=${RUNNER_NAME:-unknown}"
+
+      - name: Resolve exact LightUp PR heads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          resolve() {
+            local pr="$1"
+            local state sha
+            state="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .state)"
+            sha="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .head.sha)"
+            test "$state" = "open"
+            test -n "$sha"
+            echo "PR${pr}_SHA=$sha" >> "$GITHUB_ENV"
+            echo "LIGHTUP_PR_HEAD_RESOLVED PR=$pr SHA=$sha"
+          }
+          resolve 20
+          resolve 21
 
       - name: Verify exact LightUp heads
         shell: bash
@@ -71,15 +87,13 @@ jobs:
           prove 20 "$PR20_SHA"
           prove 21 "$PR21_SHA"
 
-      - name: Persist green proof receipt
+      - name: Build green proof receipt
         if: success()
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          dest="runtime-evidence/lightup-pr20-pr21-cross-lane-proof.json"
-          receipt="$RUNNER_TEMP/lightup-cross-lane-receipt.json"
+          mkdir -p artifacts
+          receipt="artifacts/lightup-pr20-pr21-cross-lane-proof.json"
           python3 - <<'PY' > "$receipt"
           import json, os, socket
           print(json.dumps({
@@ -94,24 +108,20 @@ jobs:
               },
           }, sort_keys=True, indent=2))
           PY
-          encoded="$(base64 -w0 < "$receipt")"
-          existing="$(gh api "repos/Zennay/zCloud/contents/$dest?ref=main" --jq .sha 2>/dev/null || true)"
-          args=(
-            --method PUT
-            "repos/Zennay/zCloud/contents/$dest"
-            -f message="Record LightUp PR20 PR21 cross-lane proof"
-            -f content="$encoded"
-            -f branch=main
-          )
-          if [[ -n "$existing" ]]; then
-            args+=( -f sha="$existing" )
-          fi
-          gh api "${args[@]}" >/dev/null
           cat "$receipt"
+
+      - name: Upload green proof receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr20-pr21-cross-lane-proof-${{ github.run_id }}
+          path: artifacts/lightup-pr20-pr21-cross-lane-proof.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Emit proof receipt
         if: always()
         shell: bash
         run: |
           printf 'LIGHTUP_CROSS_LANE_PROOF PR20=%s PR21=%s HOST=%s RUN_ID=%s\n' \
-            "$PR20_SHA" "$PR21_SHA" "$(hostname)" "$GITHUB_RUN_ID"
+            "${PR20_SHA:-unresolved}" "${PR21_SHA:-unresolved}" "$(hostname)" "$GITHUB_RUN_ID"
