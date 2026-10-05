@@ -1,9 +1,19 @@
 from pathlib import Path
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 class SelfHealAssetsTest(unittest.TestCase):
+    def test_self_heal_shell_syntax(self):
+        result = subprocess.run(
+            ["bash", "-n", str(ROOT / "scripts/zcloud-self-heal.sh")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_restart_dropin_is_unbounded_and_delayed(self):
         text = (ROOT / "deploy/90-zcloud-self-heal.conf").read_text()
         self.assertIn("Restart=always", text)
