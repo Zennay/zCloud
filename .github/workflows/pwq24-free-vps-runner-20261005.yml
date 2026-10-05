@@ -1,0 +1,58 @@
+name: PWQ-24 free VPS runner for dedicated acceptance
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post443-live-acceptance-20261005-0047
+    paths:
+      - .github/workflows/pwq24-free-vps-runner-20261005.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  free-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel only the superseded generic activation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
+          GENERIC_RUN_ID: "37264634988"
+          ACCEPTANCE_RUN_ID: "37265142020"
+        run: |
+          set -euo pipefail
+
+          current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          test "$current_main" = "$EXPECTED_MAIN"
+
+          generic="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID")"
+          acceptance="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$ACCEPTANCE_RUN_ID")"
+
+          generic_name="$(jq -r .name <<<"$generic")"
+          generic_status="$(jq -r .status <<<"$generic")"
+          generic_sha="$(jq -r .head_sha <<<"$generic")"
+          acceptance_name="$(jq -r .name <<<"$acceptance")"
+          acceptance_status="$(jq -r .status <<<"$acceptance")"
+
+          test "$generic_name" = "zCloud dynamic worker pool activation"
+          test "$generic_sha" = "$EXPECTED_MAIN"
+          test "$acceptance_name" = "PWQ-24 post-443 live acceptance"
+
+          case "$acceptance_status" in
+            queued|in_progress) ;;
+            *) echo "PWQ24_ACCEPTANCE_NOT_ACTIVE status=$acceptance_status"; exit 0 ;;
+          esac
+
+          case "$generic_status" in
+            queued|in_progress|pending|waiting|requested)
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID/cancel" >/dev/null
+              echo "PWQ24_GENERIC_ACTIVATION_CANCEL_REQUESTED run=$GENERIC_RUN_ID status=$generic_status"
+              ;;
+            *)
+              echo "PWQ24_GENERIC_ACTIVATION_ALREADY_TERMINAL run=$GENERIC_RUN_ID status=$generic_status"
+              ;;
+          esac
