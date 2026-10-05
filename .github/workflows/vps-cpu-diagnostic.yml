@@ -1,0 +1,49 @@
+name: VPS CPU diagnostic snapshot
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  cpu-snapshot:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Host overview
+        shell: bash
+        run: |
+          set -u
+          echo "=== TIME/HOST ==="
+          date -Is
+          hostname
+          uname -a
+          echo
+          echo "=== LOAD/CPU/MEM ==="
+          uptime
+          nproc
+          cat /proc/loadavg
+          free -h
+          echo
+          echo "=== TOP CPU PROCESSES (ps lifetime avg) ==="
+          ps -eo pid,ppid,user,psr,%cpu,%mem,etime,stat,cmd --sort=-%cpu | head -n 80
+          echo
+          echo "=== INSTANTANEOUS TOP SAMPLE 1 ==="
+          COLUMNS=260 top -b -n1 -o %CPU | head -n 80 || true
+          sleep 2
+          echo
+          echo "=== INSTANTANEOUS TOP SAMPLE 2 ==="
+          COLUMNS=260 top -b -n1 -o %CPU | head -n 80 || true
+          sleep 2
+          echo
+          echo "=== INSTANTANEOUS TOP SAMPLE 3 ==="
+          COLUMNS=260 top -b -n1 -o %CPU | head -n 80 || true
+          echo
+          echo "=== PROJECT/WORKER MATCHES ==="
+          ps -ef | grep -Ei 'zcloud|ftmo|haxlab|lightup|raise|supa|firefox|chrom|python|node|runner|actions-runner|playwright|xvfb|openbox' | grep -v grep || true
+          echo
+          echo "=== RUNNING SYSTEMD SERVICES (selected) ==="
+          systemctl --no-pager --type=service --state=running 2>/dev/null | grep -Ei 'runner|zcloud|ftmo|hax|raise|firefox|xvfb|openbox|docker|containerd' || true
+          echo
+          echo "=== CGROUP CPU SNAPSHOT ==="
+          systemd-cgtop -b -n1 -d1 2>/dev/null | head -n 100 || true
