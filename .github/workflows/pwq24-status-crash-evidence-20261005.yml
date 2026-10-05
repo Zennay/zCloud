@@ -1,0 +1,81 @@
+name: PWQ-24 zCloud status crash evidence
+
+on:
+  push:
+    branches:
+      - ops/pwq24-status-crash-evidence-20261005-0244
+    paths:
+      - .github/workflows/pwq24-status-crash-evidence-20261005.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Capture service restart and endpoint evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          echo '=== service before ==='
+          systemctl show zennay-cloud.service             -p ActiveState -p SubState -p MainPID -p ExecMainPID             -p NRestarts -p ActiveEnterTimestamp -p ExecMainStartTimestamp             -p ExecMainExitTimestamp -p Result -p Restart
+          systemctl --no-pager --full status zennay-cloud.service || true
+
+          echo '=== recent service journal ==='
+          sudo -n journalctl -u zennay-cloud.service --since '2026-10-05 02:37:00 UTC' --no-pager -n 240 || true
+
+          echo '=== recent self-heal journal ==='
+          sudo -n journalctl -t zcloud-self-heal --since '2026-10-05 02:37:00 UTC' --no-pager -n 120 || true
+          sudo -n journalctl -t zcloud-worker-watchdog --since '2026-10-05 02:37:00 UTC' --no-pager -n 120 || true
+
+          echo '=== kernel OOM evidence ==='
+          sudo -n journalctl -k --since '2026-10-05 02:37:00 UTC' --no-pager             | grep -Ei 'oom|out of memory|killed process|segfault' || true
+
+          echo '=== bounded endpoint probes ==='
+          python3 - <<'PY'
+          import json, subprocess, time, urllib.request
+
+          def props():
+              raw=subprocess.check_output([
+                  "systemctl","show","zennay-cloud.service",
+                  "-p","MainPID","-p","NRestarts","-p","ActiveState","-p","SubState"
+              ],text=True)
+              return dict(line.split("=",1) for line in raw.splitlines() if "=" in line)
+
+          results=[]
+          for cycle in range(1,4):
+              for path, timeout in [("/",4),("/api/runner-live",12),("/",4),("/api/status",20),("/",4)]:
+                  before=props()
+                  started=time.monotonic()
+                  item={"cycle":cycle,"path":path,"service_before":before}
+                  try:
+                      with urllib.request.urlopen("http://127.0.0.1:8765"+path,timeout=timeout) as response:
+                          body=response.read(4096)
+                      item.update({
+                          "http_status":response.status,
+                          "elapsed_seconds":round(time.monotonic()-started,3),
+                          "bytes_read":len(body),
+                      })
+                  except Exception as exc:
+                      item.update({
+                          "elapsed_seconds":round(time.monotonic()-started,3),
+                          "error":type(exc).__name__+": "+str(exc),
+                      })
+                  time.sleep(0.3)
+                  item["service_after"]=props()
+                  results.append(item)
+                  print("PWQ24_STATUS_PROBE="+json.dumps(item,sort_keys=True))
+              time.sleep(1)
+          print("PWQ24_STATUS_PROBE_SUMMARY="+json.dumps(results,sort_keys=True))
+          PY
+
+          echo '=== service after ==='
+          systemctl show zennay-cloud.service             -p ActiveState -p SubState -p MainPID -p ExecMainPID             -p NRestarts -p ActiveEnterTimestamp -p ExecMainStartTimestamp             -p ExecMainExitTimestamp -p Result -p Restart
+
+          echo '=== post-probe journal ==='
+          sudo -n journalctl -u zennay-cloud.service --since '5 minutes ago' --no-pager -n 240 || true
