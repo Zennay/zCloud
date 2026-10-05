@@ -116,6 +116,30 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertTrue(ex, f"{worker['project_id']}: extension refuses real runner-targets payload")
                 self.assertEqual([], server.worker_contract_failures(worker), worker["project_id"])
 
+    def test_stale_global_slot_mapping_never_binds_another_projects_queue_item(self):
+        with WorkerEnv():
+            current = server.portfolio_queue_current_for_slot(2)
+            self.assertEqual("haxlab", current["project_id"])
+
+            # Simulate the one-tick race observed live: the persisted browser-slot map
+            # still says RaiseAI owns slot 2 while the queue has already moved slot 2
+            # to HaxLab. The worker payload must fail closed instead of inheriting the
+            # other project's queue item.
+            with server.connect() as conn:
+                conn.execute(
+                    "UPDATE ai_global_slots SET project_id=?,worker_slot=? WHERE slot=?",
+                    ("raiseai", 1, 2),
+                )
+                conn.execute("DELETE FROM ai_global_slots WHERE slot=?", (3,))
+
+            worker = server.runner_worker_targets()["raiseai::w1"]
+            self.assertTrue(worker["active"])
+            self.assertEqual(2, worker["global_worker_slot"])
+            self.assertIsNone(worker["queue_item"])
+            self.assertFalse(worker["assignment_ready"])
+            self.assertIn("server-assignment-not-ready", server.worker_contract_failures(worker))
+            self.assertIn("missing-queue-id", server.worker_contract_failures(worker))
+
     def test_bounded_senior_reviewer_is_valid_without_execution_queue_slot(self):
         with WorkerEnv():
             with server.connect() as conn:
