@@ -167,7 +167,18 @@ async function drainRunnerBeforeReplacement(tabId, target, reason) {
       "}})); return {ready:String(root.getAttribute('data-zcloud-violentmonkey-ready')||'')}; })()",
     runAt: "document_idle"
   }).catch(() => []);
-  const vmReady = Array.isArray(bridge) && bridge.some(value => value?.ready === VIOLENTMONKEY_REQUIRED_VERSION);
+  const vmVersions = Array.isArray(bridge)
+    ? bridge.map(value => String(value?.ready || "").trim()).filter(Boolean)
+    : [];
+  const vmReady = vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION);
+  if (vmVersions.length && !vmReady) {
+    throw new Error(
+      "Replacement geblokkeerd: Violentmonkey-versie " +
+      vmVersions.join(",") +
+      " ondersteunt veilige replacement drain niet; vereist " +
+      VIOLENTMONKEY_REQUIRED_VERSION
+    );
+  }
   if (!vmReady) {
     const legacy = await browser.tabs.sendMessage(tabId, {
       type: "runner-drain",
