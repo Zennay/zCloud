@@ -422,6 +422,59 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         selected = server.portfolio_queue_allocate()
         self.assertEqual(higher["queue_id"], selected[0]["queue_id"])
 
+    def test_pending_second_worker_handoff_pins_project_claim_prefix(self):
+        first = server.portfolio_queue_enqueue(
+            "supa", "first Supa handoff lane", "P1",
+            "Implement the first Supa change with deterministic tests.",
+        )
+        second = server.portfolio_queue_enqueue(
+            "supa", "second Supa handoff lane", "P1",
+            "Implement the second Supa change with deterministic tests.",
+        )
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual(
+            [first["queue_id"], second["queue_id"]],
+            [item["queue_id"] for item in selected],
+        )
+        self.assertEqual(
+            ["supa::w1", "supa::w2"],
+            [item["worker_key"] for item in server.portfolio_queue_allocation()["workers"]],
+        )
+
+        with server.connect() as conn:
+            ts = server.now()
+            command_id = conn.execute(
+                """INSERT INTO runner_commands(project_id,action,status,created_at,updated_at)
+                   VALUES(?,?,?,?,?)""",
+                ("supa::w2", "start", "pending", ts, ts),
+            ).lastrowid
+
+        urgent = server.portfolio_queue_enqueue(
+            "cloud", "urgent zCloud recovery", "P0",
+            "Implement the urgent recovery with deterministic tests.",
+        )
+        selected = server.portfolio_queue_allocate()
+
+        # w2 is an ordinal over Supa's ordered claims. Keeping only the second
+        # claim would let w1 be preempted and silently rename the pending w2 to w1.
+        self.assertEqual(
+            [first["queue_id"], second["queue_id"]],
+            [item["queue_id"] for item in selected],
+        )
+        self.assertEqual(
+            ["supa::w1", "supa::w2"],
+            [item["worker_key"] for item in server.portfolio_queue_allocation()["workers"]],
+        )
+
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE runner_commands SET status='completed',updated_at=? WHERE id=?",
+                (server.now(), command_id),
+            )
+
+        selected = server.portfolio_queue_allocate()
+        self.assertIn(urgent["queue_id"], [item["queue_id"] for item in selected])
+
     def test_p0_does_not_preempt_running_lower_priority_work(self):
         lower = server.portfolio_queue_enqueue("cloud", "running lower", "P1", "Implement lower-priority change with tests.")
         server.portfolio_queue_allocate()
