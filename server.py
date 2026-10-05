@@ -3634,12 +3634,24 @@ def runner_record(payload):
                 if t['conversation_id'] and t['conversation_id'] in target: project_id=pid; break
         c.execute('INSERT INTO runner_events(ts,event,target,title,generating,sending,reason,tab_id,error,project_id,progress_at,assistant_chars,worker_slot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                   (ts,event,target,title,int(bool(payload.get('generating'))),int(bool(payload.get('sending'))),reason,tab_id,error,project_id or None,progress_at,assistant_chars,worker_slot))
+        if event == 'conversation-reset-requested' and project_id in runner_targets():
+            c.execute("INSERT INTO runner_workers(project_id,worker_slot,conversation_id,provider) VALUES(?,?,?,?) ON CONFLICT(project_id,worker_slot) DO UPDATE SET conversation_id='',provider=excluded.provider",
+                      (project_id,worker_slot,'',event_provider))
+            if worker_slot==1:
+                c.execute("UPDATE runner_targets SET conversation_id='' WHERE project_id=?",(project_id,))
         if event == 'conversation-adopted' and project_id in runner_targets() and match:
             c.execute('INSERT INTO runner_workers(project_id,worker_slot,conversation_id,provider) VALUES(?,?,?,?) ON CONFLICT(project_id,worker_slot) DO UPDATE SET conversation_id=excluded.conversation_id,provider=excluded.provider',
                       (project_id,worker_slot,match.group(1),event_provider))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
-        if event in ('runner-drained','runner-paused') and project_id in runner_targets():
+        if event == 'runner-drained' and project_id in runner_targets():
+            state_row=c.execute('SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,worker_slot)).fetchone()
+            # Only a backend-requested drain may transition the durable worker state
+            # to paused. Replacement/new-chat drains are local tab lifecycle events
+            # and must keep the worker runnable for the fresh conversation.
+            if state_row and str(state_row['desired_state'] or '') == 'draining':
+                c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
+        elif event == 'runner-paused' and project_id in runner_targets():
             c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))

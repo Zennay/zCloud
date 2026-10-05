@@ -13,6 +13,11 @@ const processedCommands = new Set();
 const intentionalTabClosures = new Set();
 const pendingTabHandoffs = new Set();
 const pendingInitialDispatches = new Set();
+const CONVERSATION_LOAD_FAILURE_SCAN_MS = 5000;
+const MAX_GENERATIONS_PER_CHAT = 6;
+const conversationLoadRecoveryAt = new Map();
+const conversationGenerationBudget = new Map();
+const lastProactiveRotation = new Map();
 const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1";
 const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
 const Recovery = globalThis.ZCloudRecovery;
@@ -1815,6 +1820,24 @@ async function newProjectChat(projectId, reason, commandId) {
       delete tabTargets[oldTab];
       delete pendingAdoptions[oldTab];
     }
+    // Clear the durable conversation binding before the fresh tab is opened.
+    // Otherwise the Violentmonkey runner can fetch the old target during startup
+    // and bounce straight back to the broken /c/<id> URL.
+    await postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      globalWorkerSlot: target.global_worker_slot,
+      projectName: target.name,
+      target: target.url || "",
+      targetConversation: target.conversation_id || "",
+      event: "conversation-reset-requested",
+      reason: String(reason || "new-project-chat").slice(0, 120),
+      at: new Date().toISOString()
+    });
+    target.conversation_id = "";
+    target.url = "https://chatgpt.com/";
+
     pendingInitialDispatches.add(projectId);
     target.active = true;
     target.replacement_handoff = handoff;
@@ -2021,6 +2044,86 @@ async function pushProject(projectId, commandId) {
   await newProjectChat(projectId, "dashboard-push-recovery", commandId);
 }
 const lastHealthRecovery = Object.create(null);
+async function detectConversationLoadFailure(tabId) {
+  const code = `() => {
+    if (!/^\\/c\\/[0-9a-f-]{20,}(?:\\/|$)/i.test(location.pathname || "")) return null;
+    const main = document.querySelector("main");
+    const text = String((main && main.innerText) || document.body?.innerText || "").toLowerCase();
+    const patterns = [
+      "could not load this chatgpt conversation",
+      "could not load this conversation",
+      "unable to load this chatgpt conversation",
+      "unable to load conversation",
+      "conversation not found"
+    ];
+    const match = patterns.find(value => text.includes(value));
+    if (!match) return null;
+    const retry = [...document.querySelectorAll("button")].some(button =>
+      /^(retry|try again|opnieuw|opnieuw proberen)$/i.test(String(button.innerText || button.textContent || "").trim())
+    );
+    return {match, retry, path: location.pathname, title: document.title};
+  }`;
+  try {
+    const rows = await browser.tabs.executeScript(tabId, {code: "(" + code + ")()", runAt: "document_idle"});
+    return Array.isArray(rows) ? rows.find(Boolean) || null : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function recoverConversationLoadFailure(tabId, target) {
+  if (!target?.project_id || !target.active || target.desired_state !== "running") return false;
+  if (!portfolioAssignmentReady(target) || runningActions.has(target.project_id)) return false;
+  const failure = await detectConversationLoadFailure(tabId);
+  if (!failure) return false;
+  const nowMs = Date.now();
+  if (nowMs - Number(conversationLoadRecoveryAt.get(target.project_id) || 0) < 30000) return false;
+  conversationLoadRecoveryAt.set(target.project_id, nowMs);
+  await postStatus({
+    projectId: target.project_id,
+    baseProjectId: target.base_project_id,
+    workerSlot: target.worker_slot,
+    globalWorkerSlot: target.global_worker_slot,
+    projectName: target.name,
+    target: failure.path,
+    targetConversation: target.conversation_id || "",
+    event: "conversation-load-failed-detected",
+    reason: failure.match + (failure.retry ? ";retry-button" : ""),
+    at: new Date().toISOString(),
+    tabId
+  });
+  await newProjectChat(target.project_id, "chatgpt-conversation-load-failed", null);
+  return true;
+}
+
+async function watchConversationLoadFailures() {
+  for (const [projectId, tabId] of Object.entries(projectTabs)) {
+    const target = targets[projectId] || tabTargets[tabId];
+    if (!target || projectTabs[projectId] !== tabId) continue;
+    await recoverConversationLoadFailure(Number(tabId), target);
+  }
+}
+
+function generationRotationDue(projectId, status) {
+  const target = targets[projectId];
+  const conversationId = String(target?.conversation_id || "");
+  if (!conversationId) return false;
+  let state = conversationGenerationBudget.get(projectId);
+  if (!state || state.conversationId !== conversationId) {
+    state = {conversationId, lastFinished: "", count: 0};
+  }
+  const finished = String(status?.last_generation_finished?.time || "");
+  const prompt = String(status?.last_prompt_sent?.time || "");
+  if (finished && finished !== state.lastFinished) {
+    state.lastFinished = finished;
+    const finishedAt = Date.parse(finished);
+    const promptAt = Date.parse(prompt);
+    if (Number.isFinite(finishedAt) && (!Number.isFinite(promptAt) || finishedAt >= promptAt)) state.count += 1;
+  }
+  conversationGenerationBudget.set(projectId, state);
+  return state.count >= MAX_GENERATIONS_PER_CHAT;
+}
+
 async function watchRunnerHealth() {
   try {
     const response = await fetch(API + "/status", {cache: "no-store"});
@@ -2028,6 +2131,16 @@ async function watchRunnerHealth() {
     const data = await response.json();
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
       if (!status.active || status.auto_continue === false) continue;
+      if (generationRotationDue(projectId, status) &&
+          !status.generating && !status.sending &&
+          !runningActions.has(projectId) &&
+          Date.now() - Number(lastProactiveRotation.get(projectId) || 0) >= 120000) {
+        lastProactiveRotation.set(projectId, Date.now());
+        const state = conversationGenerationBudget.get(projectId);
+        if (state) state.count = 0;
+        await newProjectChat(projectId, "generation-budget-rotation", null);
+        continue;
+      }
       const stale = status.age_seconds != null && status.age_seconds > 300;
       const stalled = status.stalled === true;
       if ((!stale && !stalled) || Date.now() - (lastHealthRecovery[projectId] || 0) < 900000) continue;
@@ -2114,7 +2227,10 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {
       adoptConversation(tabId, assigned, tab.url).catch(() => {});
     }
-    if (changeInfo.status === "complete") inject(tabId, assigned);
+    if (changeInfo.status === "complete") {
+      inject(tabId, assigned);
+      recoverConversationLoadFailure(tabId, assigned).catch(() => {});
+    }
   } else if (changeInfo.status === "complete") {
     const target = Object.values(targets).find(t => tab.url.includes("/c/" + t.conversation_id));
     if (target) inject(tabId, target);
@@ -2137,3 +2253,5 @@ pollCommands();
 setInterval(pollCommands, 15000);
 watchRunnerHealth();
 setInterval(watchRunnerHealth, 60000);
+watchConversationLoadFailures();
+setInterval(watchConversationLoadFailures, CONVERSATION_LOAD_FAILURE_SCAN_MS);
