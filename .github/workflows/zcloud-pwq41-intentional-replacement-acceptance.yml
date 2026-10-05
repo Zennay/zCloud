@@ -192,30 +192,71 @@ jobs:
               raise SystemExit(f"live receipt is not exact production sha expected={EXPECTED} actual={live_sha}")
           baseline_health = health()
 
-          target_data = call("GET", "/api/runner-targets")
-          projects = target_data.get("projects") or {}
+          candidate_deadline = time.time() + 180
+          candidate_attempt = 0
           candidates = []
-          for worker_key, target in projects.items():
-              if str(target.get("provider") or "chatgpt") != "chatgpt":
-                  continue
-              if target.get("active") is not True:
-                  continue
-              if target.get("assignment_ready") is not True:
-                  continue
-              if str(target.get("desired_state") or "running") in {"paused", "draining"}:
-                  continue
-              queue = compact_queue(target)
-              if not queue["queue_id"]:
-                  continue
-              base = str(target.get("base_project_id") or worker_key.split("::w", 1)[0])
-              owned = [c for c in claims(base) if str(c.get("worker_id") or "") == worker_key]
-              if len(owned) != 1:
-                  continue
-              priority = 0 if base == "cloud" else 1
-              candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
+          while time.time() < candidate_deadline:
+              candidate_attempt += 1
+              target_data = call("GET", "/api/runner-targets")
+              projects = target_data.get("projects") or {}
+              candidates = []
+              for worker_key, target in projects.items():
+                  if str(target.get("provider") or "chatgpt") != "chatgpt":
+                      continue
+                  if target.get("active") is not True:
+                      continue
+                  if target.get("assignment_ready") is not True:
+                      continue
+                  if str(target.get("desired_state") or "running") in {"paused", "draining"}:
+                      continue
+                  queue = compact_queue(target)
+                  if not queue["queue_id"]:
+                      continue
+                  base = str(target.get("base_project_id") or worker_key.split("::w", 1)[0])
+                  owned = [c for c in claims(base) if str(c.get("worker_id") or "") == worker_key]
+                  if len(owned) != 1:
+                      continue
+                  priority = 0 if base == "cloud" else 1
+                  candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
+
+              if candidates:
+                  print(
+                      "PWQ41_CANDIDATE_READY "
+                      + json.dumps(
+                          {
+                              "attempt": candidate_attempt,
+                              "candidate_count": len(candidates),
+                              "workers": [item[1] for item in candidates],
+                          },
+                          sort_keys=True,
+                      )
+                  )
+                  break
+
+              if candidate_attempt == 1 or candidate_attempt % 6 == 0:
+                  active = [
+                      key
+                      for key, target in projects.items()
+                      if str(target.get("provider") or "chatgpt") == "chatgpt"
+                      and target.get("active") is True
+                  ]
+                  print(
+                      "PWQ41_CANDIDATE_WAIT "
+                      + json.dumps(
+                          {
+                              "attempt": candidate_attempt,
+                              "active_chatgpt_workers": active,
+                          },
+                          sort_keys=True,
+                      )
+                  )
+              time.sleep(5)
 
           if not candidates:
-              raise SystemExit("no active assigned ChatGPT worker with exactly one live claim; refusing mutation")
+              raise SystemExit(
+                  "no active assigned ChatGPT worker with exactly one live claim "
+                  "within 180s; refusing mutation"
+              )
 
           candidates.sort(key=lambda item: (item[0], item[1]))
           _, worker_key, target, base_project, before_claim, before_queue = candidates[0]
