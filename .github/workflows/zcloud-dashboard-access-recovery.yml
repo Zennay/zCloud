@@ -1,5 +1,7 @@
 name: zCloud dashboard access recovery
 
+# Manual recovery retrigger 2026-10-05T07:13Z: user cannot reach dashboard.
+
 on:
   push:
     paths:
