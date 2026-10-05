@@ -2695,6 +2695,18 @@ def portfolio_queue_allocate():
     preempted=set()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        # A persisted global slot already corresponds to an existing browser worker
+        # resource. Reassigning that slot does not create another Firefox tab and
+        # therefore must not consume the fresh-memory admission budget. This is
+        # especially important after a queue item finishes or is preempted while
+        # MemAvailable only permits the already-running browser footprint.
+        reusable_slots={
+            int(row['slot'])
+            for row in c.execute(
+                'SELECT slot FROM ai_global_slots WHERE slot>=1 AND slot<=?',
+                (GLOBAL_CHATGPT_WORKER_LIMIT,),
+            ).fetchall()
+        }
         c.execute("""UPDATE portfolio_queue
                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                      WHERE eligible=1 AND status IN ('claimed','running','verifying')
@@ -2797,7 +2809,8 @@ def portfolio_queue_allocate():
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
-            if new_workers_claimed >= new_worker_capacity:
+            reuses_existing_slot=slot in reusable_slots
+            if not reuses_existing_slot and new_workers_claimed >= new_worker_capacity:
                 continue
             if not lane_candidates:
                 continue
@@ -2847,7 +2860,8 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
-            new_workers_claimed += 1
+            if not reuses_existing_slot:
+                new_workers_claimed += 1
     return selected
 
 def portfolio_queue_drop(queue_id,evidence=''):
