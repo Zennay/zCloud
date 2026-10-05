@@ -1,5 +1,5 @@
 name: Push all zCloud workers now
-# retrigger all workers on user request 2026-10-04T14:20Z-force-all-current
+# enforce seven desired ChatGPT workers + push all 2026-10-05T15:29Z
 
 on:
   schedule:
@@ -40,6 +40,31 @@ jobs:
               req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
               with urllib.request.urlopen(req, timeout=20) as response:
                   return json.load(response)
+
+          # Keep the owner-requested seven ChatGPT workers as desired capacity.
+          # The backend memory/OOM admission guard remains authoritative and may
+          # safely admit fewer slots when the VPS does not have enough headroom.
+          dynamic = (call("GET", "/api/dynamic-workers").get("dynamic_workers") or {})
+          desired = {
+              key: dynamic.get(key)
+              for key in (
+                  "chatgpt_count",
+                  "claude_count",
+                  "chatgpt_cooldown_seconds",
+                  "claude_cooldown_seconds",
+                  "check_interval_ms",
+                  "tick_interval_ms",
+                  "heartbeat_interval_ms",
+                  "generation_start_timeout_ms",
+                  "scheduler_interval_seconds",
+              )
+              if key in dynamic
+          }
+          desired["chatgpt_count"] = 7
+          reconciled = call("POST", "/api/dynamic-workers", desired)
+          print("WORKER_CAPACITY_RECONCILED=" + json.dumps(reconciled, sort_keys=True))
+          if not reconciled.get("ok"):
+              raise SystemExit("failed to reconcile seven-worker desired capacity")
 
           before = call("GET", "/api/runner-targets")
           allocation = (before.get("global_allocation") or {}).get("workers") or []
