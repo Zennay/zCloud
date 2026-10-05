@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for run_id in 37258148493 37258202160 37258158238; do
+          for run_id in 37258519200 37258519161; do
             payload="$(curl -fsS \
               -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
