@@ -217,6 +217,37 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual("pending", unrelated_fresh["status"])
         self.assertEqual([second["command_id"]], [row["id"] for row in pending])
 
+    def test_background_reconcile_expires_stale_pending_without_new_admission(self):
+        with server.connect() as conn:
+            stale = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("raiseai", "start", "pending", "2000-01-01T00:00:00+00:00", server.now()),
+            ).lastrowid
+            fresh_ts = server.now()
+            fresh = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("supa", "start", "pending", fresh_ts, fresh_ts),
+            ).lastrowid
+
+        reconciled = server.reconcile_stale_runner_commands()
+
+        self.assertIn(stale, reconciled)
+        self.assertNotIn(fresh, reconciled)
+        with server.connect() as conn:
+            stale_row = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?",
+                (stale,),
+            ).fetchone()
+            fresh_row = conn.execute(
+                "SELECT status FROM runner_commands WHERE id=?",
+                (fresh,),
+            ).fetchone()
+        self.assertEqual("failed", stale_row["status"])
+        self.assertIn("scheduler superseded stale pending command", stale_row["result"])
+        self.assertEqual("pending", fresh_row["status"])
+
     def test_concurrent_duplicate_push_creates_one_pending_command(self):
         self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
