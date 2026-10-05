@@ -287,3 +287,41 @@ assert.ok(
   refreshBlock.includes("target, recoveryTabs, restoredAssignments, claimedTabIds"),
   "recovery selection must not reuse tabs already pruned for inactive or unassigned workers"
 );
+
+
+const server = fs.readFileSync(path.join(root, "server.py"), "utf8");
+for (const marker of [
+  'const CONVERSATION_LOAD_FAILURE_SCAN_MS = 5000',
+  'const MAX_GENERATIONS_PER_CHAT = 6',
+  'async function detectConversationLoadFailure',
+  'could not load this chatgpt conversation',
+  'async function watchConversationLoadFailures',
+  'chatgpt-conversation-load-failed',
+  'generation-budget-rotation',
+  'setInterval(watchConversationLoadFailures, CONVERSATION_LOAD_FAILURE_SCAN_MS)',
+]) {
+  assert.ok(background.includes(marker), "missing worker-chat recovery marker: " + marker);
+}
+
+const freshChatStart = background.indexOf("async function newProjectChat");
+const freshChatEnd = background.indexOf("async function startProject", freshChatStart);
+assert.ok(freshChatStart >= 0 && freshChatEnd > freshChatStart, "fresh-chat replacement block missing");
+const freshChatBlock = background.slice(freshChatStart, freshChatEnd);
+const resetBindingIndex = freshChatBlock.indexOf('event: "conversation-reset-requested"');
+const clearBindingIndex = freshChatBlock.indexOf('target.conversation_id = ""');
+const openFreshChatIndex = freshChatBlock.indexOf('browser.tabs.create({url: "https://chatgpt.com/"');
+assert.ok(resetBindingIndex >= 0, "fresh chat must reset the durable conversation binding");
+assert.ok(clearBindingIndex > resetBindingIndex, "local stale conversation id must clear after backend reset request");
+assert.ok(openFreshChatIndex > clearBindingIndex, "fresh tab must open after stale binding is cleared");
+assert.ok(
+  server.includes("if event == 'conversation-reset-requested'"),
+  "backend must handle explicit conversation reset requests"
+);
+assert.ok(
+  server.includes("DO UPDATE SET conversation_id='',provider=excluded.provider"),
+  "worker-slot conversation binding must clear durably"
+);
+assert.ok(
+  server.includes("UPDATE runner_targets SET conversation_id='' WHERE project_id=?"),
+  "primary runner target must not redirect a fresh tab to the stale conversation"
+);
