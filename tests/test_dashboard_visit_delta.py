@@ -16,6 +16,10 @@ class DashboardVisitDeltaTests(unittest.TestCase):
         self.assertIn("SINCE YOUR LAST VISIT", app)
         self.assertIn("Date.parse(a.ts)>since", app)
         self.assertIn("ACTIVITY_LOADED=true", app)
+        self.assertIn("ACTIVITY.length>=80", app)
+        self.assertIn("At least ", app)
+        self.assertIn("Older changes may be outside the 80-event feed.", app)
+        self.assertIn("No matching changes in the latest activity window", app)
         self.assertNotIn("/api/visit-delta", app)
 
     def test_delta_is_visible_before_secondary_reporting_on_overview_and_detail(self):
