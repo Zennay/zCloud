@@ -76,6 +76,7 @@ jobs:
           python3 - <<'PY'
           import json
           import urllib.request
+          import server as candidate_server
 
           with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=10) as response:
               payload = json.load(response)
@@ -92,9 +93,10 @@ jobs:
               name = names.get(base)
               if not name:
                   raise SystemExit(f"unknown project name for {key}: {base}")
-              expected = (
-                  f"Werk verder aan {name}. "
-                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+              slot = int(cfg.get("global_worker_slot") or 1)
+              total = int(cfg.get("global_worker_count") or 1)
+              expected = candidate_server.project_worker_prompt(
+                  base, name, "", slot, total, cfg.get("queue_item")
               )
               actual = str(cfg.get("prompt") or "")
               if actual != expected:
