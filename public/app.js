@@ -101,8 +101,7 @@ function projectPrimaryActions(p,placement='card'){
   }else{
     primary=`<button type="button" class="project-primary-button" data-runner-push="${esc(p.id)}" ${pending?'disabled':''}>${pending?'Working…':'Continue work'}</button>`;
   }
-  const forceDisabled=pending||r.generating;
-  const force=`<button type="button" class="project-secondary-button" data-runner-force-start="${esc(p.id)}" ${forceDisabled?'disabled title="A worker is already starting or generating"':''}>Force start</button>`;
+  const force=`<button type="button" class="project-secondary-button" data-runner-force-start="${esc(p.id)}" title="Force a fresh start for the allocated workers">Force start</button>`;
   const pause=active?`<button type="button" class="project-secondary-button" data-runner-toggle="${esc(p.id)}" data-runner-action="pause" ${pending?'disabled':''}>Pause</button>`:'';
   return `<div class="project-primary-actions project-primary-actions-${esc(placement)}"><div class="project-action-copy"><small>${placement==='detail'?'PROJECT CONTROL':'WORK'}</small><span><i class="${active?'is-active':''}"></i>${esc(state)}</span></div><div class="project-action-buttons">${primary}${force}${pause}</div></div>`;
 }
