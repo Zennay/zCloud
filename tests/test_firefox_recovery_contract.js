@@ -179,3 +179,28 @@ assert.ok(
     refreshBlock.indexOf('browser.tabs.create({url: target.url'),
   "invalid assignments must fail closed before opening a worker tab"
 );
+
+const automaticRefreshCreate = 'browser.tabs.create({url: target.url, active: false})';
+assert.ok(
+  refreshBlock.includes(automaticRefreshCreate),
+  "automatic refresh recovery must not steal browser focus"
+);
+
+const recoverStart2 = background.indexOf("async function recoverClosedWorker");
+const recoverEnd2 = background.indexOf("async function sessionAssignments", recoverStart2);
+assert.ok(recoverStart2 >= 0 && recoverEnd2 > recoverStart2, "recoverClosedWorker block missing");
+const recoverBlock2 = background.slice(recoverStart2, recoverEnd2);
+assert.ok(
+  recoverBlock2.includes('browser.tabs.create({url: target.url || "https://chatgpt.com/", active: false})'),
+  "unexpected-close recovery must reopen the worker in the background"
+);
+
+const startProjectStart2 = background.indexOf("async function startProject");
+const startProjectEnd2 = background.indexOf("async function pauseProject", startProjectStart2);
+assert.ok(startProjectStart2 >= 0 && startProjectEnd2 > startProjectStart2, "startProject block missing");
+const startProjectBlock2 = background.slice(startProjectStart2, startProjectEnd2);
+assert.ok(
+  startProjectBlock2.includes("browser.tabs.update(current, {active: true})") &&
+    startProjectBlock2.includes('browser.tabs.create({url: target.url, active: true})'),
+  "explicit dashboard Start should remain foreground-visible"
+);

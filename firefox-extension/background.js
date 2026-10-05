@@ -156,7 +156,7 @@ async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
     at: new Date().toISOString()
   });
   try {
-    const opened = await browser.tabs.create({url: target.url || "https://chatgpt.com/", active: true});
+    const opened = await browser.tabs.create({url: target.url || "https://chatgpt.com/", active: false});
     tabTargets[opened.id] = target;
     projectTabs[target.project_id] = opened.id;
     await setRecoveryTag(opened.id, target.project_id);
@@ -1279,7 +1279,7 @@ async function refreshTargets() {
         await inject(tab.id, target);
       } else {
         postStatus({projectId:target.project_id,projectName:target.name,target:target.url,event:"target-tab-opening",at:new Date().toISOString()});
-        const opened = await browser.tabs.create({url: target.url, active: true});
+        const opened = await browser.tabs.create({url: target.url, active: false});
         tabTargets[opened.id] = target;
         projectTabs[target.project_id] = opened.id;
         claimedTabIds.add(opened.id);
