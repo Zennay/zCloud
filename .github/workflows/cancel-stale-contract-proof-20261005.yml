@@ -1,0 +1,47 @@
+name: Cancel stale contract proof carrier
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/cancel-stale-contract-proof-20261005.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Cancel only the superseded read-only proof run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: "37326777807"
+          EXPECTED_SHA: "b1be9d99b34ca576e02ef52e922c26a1b55f5d4b"
+          EXPECTED_NAME: "Prove project-contract cutover production"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          payload="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")"
+          sha="$(jq -r '.head_sha' <<<"$payload")"
+          name="$(jq -r '.name' <<<"$payload")"
+          status="$(jq -r '.status' <<<"$payload")"
+          event="$(jq -r '.event' <<<"$payload")"
+          test "$sha" = "$EXPECTED_SHA"
+          test "$name" = "$EXPECTED_NAME"
+          test "$event" = "pull_request"
+          case "$status" in
+            queued|in_progress|waiting|pending)
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/cancel"
+              echo "STALE_CONTRACT_PROOF_CANCEL_REQUESTED run_id=$RUN_ID status=$status"
+              ;;
+            completed)
+              echo "STALE_CONTRACT_PROOF_ALREADY_TERMINAL run_id=$RUN_ID"
+              ;;
+            *)
+              echo "unexpected run status: $status" >&2
+              exit 2
+              ;;
+          esac
