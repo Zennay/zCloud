@@ -157,12 +157,29 @@ jobs:
                       f"{(worker.get('last_event') or {}).get('reason') or 'unknown'}"
                   )
               if command_status == "failed":
+                  result = str(command.get("result") or "")
+                  if "Actieve VPS queue-assignment ontbreekt of is niet gerenderd" in result:
+                      raise AllocationChurn(f"worker assignment churn for {key}: {command}")
                   raise SystemExit(f"worker command failed for {key}: {command}")
               if command_status != "completed":
                   return None
               if not worker.get("generating") and event not in DISPATCH_EVENTS:
                   return None
               return worker
+
+          def dispatched_workers(status, current_keys):
+              live = {}
+              for key in current_keys:
+                  try:
+                      live[key] = dispatched_worker(status, key, command_ids[key])
+                  except AllocationChurn as exc:
+                      print(
+                          f"WORKER_ALLOCATION_CHURN action=observe key={key} detail={exc}",
+                          flush=True,
+                      )
+                      command_ids.pop(key, None)
+                      live[key] = None
+              return live
 
           def allocation_state(targets):
               limit = int(targets.get("max_workers") or 0)
@@ -251,10 +268,7 @@ jobs:
                   live = {key: None for key in current_keys}
                   continue
               status = call("GET", "/api/runner-live")
-              live = {
-                  key: dispatched_worker(status, key, command_ids[key])
-                  for key in current_keys
-              }
+              live = dispatched_workers(status, current_keys)
               if all(live.values()):
                   break
 
@@ -307,10 +321,7 @@ jobs:
                       live = {key: None for key in current_keys}
                       continue
                   status = call("GET", "/api/runner-live")
-                  live = {
-                      key: dispatched_worker(status, key, command_ids[key])
-                      for key in current_keys
-                  }
+                  live = dispatched_workers(status, current_keys)
                   if all(live.values()):
                       break
 
