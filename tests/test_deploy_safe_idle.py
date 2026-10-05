@@ -292,6 +292,93 @@ class DeploySafeIdleTests(unittest.TestCase):
         self.assertTrue(restored["ok"])
         self.assertEqual("running", self.state_of())
 
+    def test_failed_drain_is_reissued_and_replacement_can_complete(self):
+        first_command_id = {"value": None}
+
+        def fail_then_ack_replacement():
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                command = self.pending_drain()
+                if self.state_of() != "draining" or command is None:
+                    time.sleep(0.01)
+                    continue
+                command_id = int(command[0])
+                if first_command_id["value"] is None:
+                    first_command_id["value"] = command_id
+                    stale_update = (
+                        datetime.now(timezone.utc)
+                        - timedelta(seconds=safe_idle.DRAIN_RETRY_MIN_SECONDS + 1)
+                    ).isoformat()
+                    with sqlite3.connect(self.db) as conn:
+                        conn.execute(
+                            "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                            "WHERE id=?",
+                            (stale_update, "watchdog expired pending drain", command_id),
+                        )
+                    continue
+                if command_id != first_command_id["value"]:
+                    with sqlite3.connect(self.db) as conn:
+                        conn.execute(
+                            "UPDATE runner_workers SET desired_state='paused' "
+                            "WHERE project_id='cloud' AND worker_slot=1"
+                        )
+                        conn.execute(
+                            "UPDATE runner_commands SET status='completed',updated_at=?,result=? "
+                            "WHERE id=?",
+                            (
+                                datetime.now(timezone.utc).isoformat(),
+                                "replacement drain consumed",
+                                command_id,
+                            ),
+                        )
+                    return
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=fail_then_ack_replacement)
+        thread.start()
+        result = safe_idle.enter_safe_idle(
+            self.db,
+            self.state,
+            timeout_seconds=1,
+            poll_seconds=0.01,
+            stable_seconds=0.02,
+        )
+        thread.join(timeout=1)
+
+        self.assertTrue(result["safe_idle"])
+        payload = json.loads(self.state.read_text())
+        self.assertEqual(2, len(payload["drain_command_ids"]))
+        self.assertEqual(
+            [payload["drain_command_ids"][1]],
+            payload["replacement_drain_command_ids"],
+        )
+        self.assertEqual(2, payload["workers"][0]["drain_attempts"])
+        self.assertEqual("paused", self.state_of())
+
+    def test_failed_drain_retry_is_bounded(self):
+        now = datetime.now(timezone.utc)
+        command = {
+            "status": "failed",
+            "updated_at": (
+                now - timedelta(seconds=safe_idle.DRAIN_RETRY_MIN_SECONDS + 1)
+            ).isoformat(),
+        }
+        self.assertTrue(
+            safe_idle.failed_drain_retry_due(command, 1, now=now)
+        )
+        self.assertFalse(
+            safe_idle.failed_drain_retry_due(
+                command, safe_idle.MAX_DRAIN_ATTEMPTS, now=now
+            )
+        )
+        self.assertFalse(
+            safe_idle.failed_drain_retry_due(
+                {"status": "pending", "updated_at": command["updated_at"]},
+                1,
+                now=now,
+            )
+        )
+
     def test_failed_drain_with_post_command_runner_stop_is_terminal_idle(self):
         def stop_after_drain():
             deadline = time.time() + 1
