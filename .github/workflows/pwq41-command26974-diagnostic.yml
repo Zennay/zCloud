@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - ops/pwq41-command26974-diagnostic-20261005
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
