@@ -1,0 +1,139 @@
+name: Prove PWQ-30 post-deploy latency
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/pwq30-final-latency-proof-20261005.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Prove exact receipt, latency and read-only stability
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import sqlite3
+          import statistics
+          import subprocess
+          import time
+          import urllib.request
+
+          BASE="http://127.0.0.1:8765"
+          EXPECTED="9fdd0d94249d13902f093a916a09ccb6fedf2862"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+
+          def service_state():
+              raw=subprocess.check_output(
+                  ["systemctl","show","zennay-cloud.service",
+                   "-p","MainPID","-p","NRestarts","-p","ActiveState","-p","SubState"],
+                  text=True,
+              )
+              return dict(
+                  line.split("=",1)
+                  for line in raw.splitlines()
+                  if "=" in line
+              )
+
+          def db_state():
+              with sqlite3.connect(f"file:{DB}?mode=ro",uri=True,timeout=5) as conn:
+                  conn.row_factory=sqlite3.Row
+                  workers=[
+                      tuple(row)
+                      for row in conn.execute(
+                          "SELECT project_id,worker_slot,conversation_id,desired_state,provider "
+                          "FROM runner_workers ORDER BY project_id,worker_slot"
+                      ).fetchall()
+                  ]
+                  slots=[
+                      tuple(row)
+                      for row in conn.execute(
+                          "SELECT slot,project_id,worker_slot,assigned_at "
+                          "FROM ai_global_slots ORDER BY slot"
+                      ).fetchall()
+                  ]
+                  commands=conn.execute("SELECT COUNT(*) FROM runner_commands").fetchone()[0]
+              digest=hashlib.sha256(
+                  json.dumps({"workers":workers,"slots":slots},sort_keys=True,default=str).encode()
+              ).hexdigest()
+              return {"runner_commands":commands,"runtime_map_sha256":digest}
+
+          def get(path,timeout=20):
+              started=time.monotonic()
+              with urllib.request.urlopen(BASE+path,timeout=timeout) as response:
+                  payload=json.load(response)
+              return round(time.monotonic()-started,3),payload
+
+          before_service=service_state()
+          before_db=db_state()
+
+          receipt_seconds,status=get("/api/status")
+          cloud=next((p for p in status.get("projects",[]) if p.get("id")=="cloud"),{})
+          execution=cloud.get("execution_state") or {}
+          receipt={
+              "state_source":cloud.get("state_source"),
+              "commit_sha":execution.get("commit_sha"),
+              "ci_status":execution.get("ci_status"),
+          }
+          if receipt["state_source"]!="evidence_receipt" or receipt["commit_sha"]!=EXPECTED or receipt["ci_status"]!="success":
+              raise SystemExit("PWQ30_RECEIPT_MISMATCH="+json.dumps(receipt,sort_keys=True))
+
+          samples={"/api/runner-live":[],"/api/status":[]}
+          for _ in range(3):
+              for path in ("/api/runner-live","/api/status"):
+                  elapsed,payload=get(path)
+                  if not isinstance(payload,dict):
+                      raise SystemExit(f"invalid JSON for {path}")
+                  samples[path].append(elapsed)
+              time.sleep(0.5)
+
+          after_db=db_state()
+          after_service=service_state()
+          summary={
+              path:{
+                  "samples":values,
+                  "median":round(statistics.median(values),3),
+                  "min":min(values),
+                  "max":max(values),
+              }
+              for path,values in samples.items()
+          }
+          result={
+              "expected_main":EXPECTED,
+              "receipt_probe_seconds":receipt_seconds,
+              "receipt":receipt,
+              "latency":summary,
+              "baseline":{"/api/runner-live":16.413,"/api/status":10.419},
+              "runner_command_delta":after_db["runner_commands"]-before_db["runner_commands"],
+              "runtime_map_changed":after_db["runtime_map_sha256"]!=before_db["runtime_map_sha256"],
+              "service_before":before_service,
+              "service_after":after_service,
+              "service_restart_changed":(
+                  before_service.get("MainPID")!=after_service.get("MainPID")
+                  or before_service.get("NRestarts")!=after_service.get("NRestarts")
+              ),
+          }
+          print("PWQ30_FINAL_LATENCY="+json.dumps(result,sort_keys=True))
+
+          if result["runner_command_delta"] != 0:
+              raise SystemExit("read-only proof caused runner-command churn")
+          if result["runtime_map_changed"]:
+              raise SystemExit("read-only proof changed worker/allocation mapping")
+          if result["service_restart_changed"]:
+              raise SystemExit("zCloud service restarted during latency proof")
+          if summary["/api/runner-live"]["median"] >= 16.413:
+              raise SystemExit("runner-live median did not improve")
+          if summary["/api/status"]["median"] >= 10.419:
+              raise SystemExit("status median did not improve")
+          print("PWQ30_FINAL_LATENCY_GREEN")
+          PY
