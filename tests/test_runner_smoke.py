@@ -162,7 +162,7 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual(429, second_status)
         self.assertIn("net al een actie", body["error"])
 
-    def test_pending_retry_after_cooldown_reuses_command(self):
+    def test_stale_pending_retry_supersedes_old_command_before_dedupe(self):
         self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
         )
@@ -180,14 +180,20 @@ class RunnerSmokeTests(unittest.TestCase):
             "/api/runner-control", {"project_id": "cloud", "action": "push"}
         )
         self.assertEqual(200, second_status, second)
-        self.assertEqual(first["command_id"], second["command_id"])
-        self.assertTrue(second.get("deduplicated"))
+        self.assertNotEqual(first["command_id"], second["command_id"])
+        self.assertFalse(second.get("deduplicated"))
         with server.connect() as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) n FROM runner_commands "
+            old = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?",
+                (first["command_id"],),
+            ).fetchone()
+            pending = conn.execute(
+                "SELECT id FROM runner_commands "
                 "WHERE project_id='cloud' AND action='push' AND status='pending'"
-            ).fetchone()["n"]
-        self.assertEqual(1, count)
+            ).fetchall()
+        self.assertEqual("failed", old["status"])
+        self.assertIn("superseded stale pending command", old["result"])
+        self.assertEqual([second["command_id"]], [row["id"] for row in pending])
 
     def test_concurrent_duplicate_push_creates_one_pending_command(self):
         self.request(
