@@ -103,23 +103,37 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           python3 scripts/zcloud_vps_runner_guard.py --json
           python3 - <<'PY'
+          import http.client
           import json
           import os
           import time
+          import urllib.error
           import urllib.request
 
           expected = os.environ['EXPECTED_MAIN']
           last = None
-          for _ in range(6):
-              with urllib.request.urlopen('http://127.0.0.1:8765/api/status', timeout=40) as response:
-                  payload = json.load(response)
+          for attempt in range(1, 7):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8765/api/status', timeout=40) as response:
+                      payload = json.load(response)
+              except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError) as exc:
+                  last = {
+                      'transport_error': type(exc).__name__,
+                      'attempt': attempt,
+                  }
+                  print('PWQ24_LIVE_RECEIPT_RETRY=' + json.dumps(last, sort_keys=True), flush=True)
+                  if attempt < 6:
+                      time.sleep(5)
+                      continue
+                  break
               project = next((p for p in payload.get('projects', []) if p.get('id') == 'cloud'), None)
               state = (project or {}).get('execution_state') or {}
               last = {'state_source': (project or {}).get('state_source'), 'execution_state': state}
               if (project or {}).get('state_source') == 'evidence_receipt' and state.get('commit_sha') == expected and state.get('ci_status') == 'success':
                   print('PWQ24_LIVE_RECEIPT_GREEN=' + json.dumps(last, sort_keys=True))
                   raise SystemExit(0)
-              time.sleep(5)
+              if attempt < 6:
+                  time.sleep(5)
           raise SystemExit('live production receipt mismatch: ' + json.dumps(last, sort_keys=True))
           PY
 
