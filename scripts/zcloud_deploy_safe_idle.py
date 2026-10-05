@@ -286,7 +286,8 @@ def enter_safe_idle(
             conn.execute("BEGIN IMMEDIATE")
             for item in allocated_workers(conn):
                 key = item["worker_id"]
-                if key not in by_key:
+                record = by_key.get(key)
+                if record is None:
                     record = {
                         "global_slot": item["global_slot"],
                         "project_id": item["project_id"],
