@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ftmo-task125-unit-lockstep-recovery
+  group: ftmo-task125-unit-lockstep-recovery-v2
   cancel-in-progress: false
 
 jobs:
