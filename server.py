@@ -3173,8 +3173,11 @@ def runner_targets():
                               'autonomy':autonomy,'improvement':improvement}
     return out
 
-def runner_worker_targets(allocation=None):
-    base=runner_targets()
+def runner_worker_targets(allocation=None, base=None):
+    # Callers that need a coherent live read-model may pass one target snapshot.
+    # This avoids rebuilding the full project/autonomy/queue state for every
+    # project while still preserving the existing default for control paths.
+    base=base if base is not None else runner_targets()
     # /api/runner-targets passes one allocation snapshot so a scheduler
     # preemption cannot cross-wire a project's worker to whichever queue item
     # happens to own the same numeric slot a few milliseconds later. Internal
@@ -3345,8 +3348,8 @@ def runner_record(payload):
         elif event=='improvement-audit-failed':
             improvement_loop_record(project_id,'audit',audit_green=False)
 
-def runner_status(project_id=None):
-    target_cfg=runner_targets()
+def runner_status(project_id=None, target_cfg=None):
+    target_cfg=target_cfg if target_cfg is not None else runner_targets()
     with connect() as c:
         if project_id in target_cfg:
             cfg=target_cfg[project_id]
@@ -3390,11 +3393,12 @@ def runner_status(project_id=None):
             'last_generation_started':info(started),'last_generation_finished':info(finished),
             'worker_count':max(1,int(cfg.get('worker_count') or 1)),'command':dict(command) if command else None,'auto_continue':bool(cfg.get('auto_continue',True)),'improvement':cfg.get('improvement')}
 
-def runner_worker_statuses(project_id):
-    base=runner_targets().get(project_id)
+def runner_worker_statuses(project_id, *, base=None, targets=None):
+    if base is None:
+        base=runner_targets().get(project_id)
     if not base:
         return []
-    targets=runner_worker_targets()
+    targets=targets if targets is not None else runner_worker_targets()
     claims=task_claims(project_id)
     by_worker={}
     for claim in claims:
@@ -3484,10 +3488,19 @@ def runner_worker_statuses(project_id):
     return out
 
 def runner_statuses():
+    # /api/runner-live and /api/status used to rebuild the complete target map
+    # once per project (and runner_worker_targets may reconcile rows while doing
+    # so). Share one coherent snapshot across the entire read-model instead.
+    target_cfg=runner_targets()
+    worker_targets=runner_worker_targets(base=target_cfg)
     result={}
-    for pid in runner_targets():
-        status=runner_status(pid)
-        workers=runner_worker_statuses(pid)
+    for pid in target_cfg:
+        status=runner_status(pid,target_cfg=target_cfg)
+        workers=runner_worker_statuses(
+            pid,
+            base=target_cfg.get(pid),
+            targets=worker_targets,
+        )
         status['workers']=workers
         status['desired_worker_count']=len(workers)
         status['active_worker_count']=sum(1 for w in workers if w['state'] not in ('paused','offline'))
