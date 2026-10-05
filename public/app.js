@@ -7,7 +7,7 @@ const date=(x,full=false)=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Ams
 const clock=x=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(x));
 const rel=x=>{const m=Math.floor((Date.now()-Date.parse(x))/60000);return m<1?'zojuist':m<60?m+' min geleden':m<1440?Math.floor(m/60)+' u geleden':date(x)};
 const STATUS_TIMEOUT_MS=30000,STATUS_CACHE_KEY='zcloud:last-status:v1',STATUS_CACHE_MAX_AGE_MS=24*60*60*1000;
-let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null;
+let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null;
 function loadCachedStatus(){try{const cached=JSON.parse(localStorage.getItem(STATUS_CACHE_KEY)||'null');if(!cached||!cached.data||!cached.saved_at)return null;if(Date.now()-Number(cached.saved_at)>STATUS_CACHE_MAX_AGE_MS)return null;return cached.data}catch{return null}}
 function saveCachedStatus(data){try{localStorage.setItem(STATUS_CACHE_KEY,JSON.stringify({saved_at:Date.now(),data}))}catch{}}
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
@@ -52,6 +52,28 @@ function runnerLastAction(r){
   candidates.sort((a,b)=>Date.parse(b.time)-Date.parse(a.time));
   return candidates[0]||null;
 }
+function scalingForProject(projectId){
+  const found=(WORKER_SCALING?.projects||[]).find(x=>x.project_id===projectId);
+  if(found)return found;
+  const r=(DATA?.chatgpt_runners||{})[projectId]||{};
+  const desired=Math.max(1,Number(r.desired_worker_count||r.worker_count||1));
+  return desired>1?{project_id:projectId,desired_workers:desired,assessment:{state:'insufficient_data',reason:'Multi-worker allocation is active, but there is not enough reliable telemetry yet.'}}:null;
+}
+function scalingStateCopy(state){
+  return {
+    useful_scaling:['Extra workers help','good'],
+    diminishing_returns:['Extra workers add little','warn'],
+    inconclusive:['Scaling signal mixed','neutral'],
+    insufficient_data:['Still measuring scaling','neutral'],
+    single_worker:['Single worker','neutral']
+  }[state]||['Scaling unknown','neutral'];
+}
+function scalingChip(projectId){
+  const item=scalingForProject(projectId);
+  if(!item||Number(item.desired_workers||1)<=1)return '';
+  const state=String(item.assessment?.state||'insufficient_data'),copy=scalingStateCopy(state);
+  return '<div class="project-scaling-chip '+copy[1]+'" title="'+esc(item.assessment?.reason||'Observational worker telemetry')+'"><small>Scaling</small><strong>'+esc(copy[0])+'</strong></div>';
+}
 function projectCardOps(p){
   const r=(DATA?.chatgpt_runners||{})[p.id];
   if(!r)return '';
@@ -67,7 +89,7 @@ function projectCardOps(p){
   const actionText=action?action.label+' · '+rel(action.time):'No action recorded yet';
   const workerError=workers.map(w=>w.error).find(Boolean),error=String(r.error||workerError||'').trim();
   const problem=error?'<div class="project-card-op project-card-problem"><small>Problem</small><span>'+esc(error.length>140?error.slice(0,137)+'…':error)+'</span></div>':'';
-  return '<div class="project-card-ops"><div class="project-card-op"><small>Now</small><strong>'+esc(nowText)+'</strong></div><div class="project-card-op"><small>Last action</small><span>'+esc(actionText)+'</span></div>'+problem+'</div>';
+  return scalingChip(p.id)+'<div class="project-card-ops"><div class="project-card-op"><small>Now</small><strong>'+esc(nowText)+'</strong></div><div class="project-card-op"><small>Last action</small><span>'+esc(actionText)+'</span></div>'+problem+'</div>';
 }
 function runnerControls(p){
   const r=(DATA?.chatgpt_runners||{})[p.id]||{active:false,state:'paused'};
@@ -284,6 +306,33 @@ function workerRow(w){
   const push=workerId?`<button type="button" class="runner-action wd-worker-push" data-worker-action="push" data-worker-id="${esc(workerId)}" ${unavailable?'disabled title="Worker is not running"':''}>Push now</button>`:'';
   return `<div class="wd-row wd-${verdictClass(w.verdict)}"><div class="wd-main"><strong>${esc(w.project)} · w${esc(w.slot)}</strong><span>${esc(w.provider)} · ${esc(w.queue_id||'no assignment')}</span></div><div class="wd-state"><b>${esc(VERDICT_LABEL[w.verdict]||w.verdict)}</b><small>${esc(w.reason||'')}</small></div><div class="wd-meta">last signal ${esc(ageText(w.last_event_age_s))}${w.last_event?' · '+esc(w.last_event):''}${w.last_prompt_age_s!=null?' · prompt '+esc(ageText(w.last_prompt_age_s)):''}</div>${push}</div>`;
 }
+function workerScalingPanel(){
+  let body;
+  if(WORKER_SCALING_ERROR)body='<div class="wd-empty">'+esc(WORKER_SCALING_ERROR)+'</div>';
+  else if(!WORKER_SCALING)body='<div class="wd-empty">Measuring multi-worker scaling…</div>';
+  else{
+    const items=(DATA?.projects||[]).map(p=>({project:p,scaling:scalingForProject(p.id)})).filter(x=>x.scaling&&Number(x.scaling.desired_workers||1)>1);
+    body=items.length?'<div class="worker-scaling-rows">'+items.map(({project,scaling})=>{
+      const a=scaling.assessment||{},copy=scalingStateCopy(a.state);
+      const ratio=Number.isFinite(Number(a.extra_vs_primary_throughput_ratio))?' · extra/primary '+num(Number(a.extra_vs_primary_throughput_ratio))+'×':'';
+      const nonwork=Number.isFinite(Number(a.extra_idle_blocked_pct))?' · idle/blocked '+num(Number(a.extra_idle_blocked_pct))+'%':'';
+      return '<div class="worker-scaling-row '+copy[1]+'"><div><strong>'+esc(project.name)+'</strong><span>'+esc(copy[0])+'</span></div><p>'+esc(a.reason||'No assessment yet')+'</p><small>'+Number(scaling.desired_workers||1)+' desired workers'+esc(ratio+nonwork)+'</small></div>';
+    }).join('')+'</div>':'<div class="wd-empty">No multi-worker projects are currently configured.</div>';
+  }
+  const method=WORKER_SCALING?.method?' · '+esc(WORKER_SCALING.method):'';
+  return '<section class="panel worker-scaling" id="workerScaling"><div class="panel-header"><div><h2>Worker scaling</h2><div class="panel-subtitle">Do extra chats create extra throughput?</div></div></div>'+body+'<div class="wd-foot">12-hour observational window'+method+'</div></section>';
+}
+async function loadWorkerScaling(){
+  try{
+    const r=await fetch('/api/worker-scaling?hours=12',{cache:'no-store',signal:AbortSignal.timeout(10000)});
+    if(r.status===403){WORKER_SCALING=null;WORKER_SCALING_ERROR='Scaling telemetry is only visible from a trusted admin device.'}
+    else if(!r.ok)throw new Error('HTTP '+r.status);
+    else{WORKER_SCALING=await r.json();WORKER_SCALING_ERROR=''}
+  }catch(e){WORKER_SCALING_ERROR='Scaling telemetry unavailable: '+(e.message||e)}
+  const el=$('workerScaling');if(el)el.outerHTML=workerScalingPanel();
+  if(route==='overview'&&DATA)render();
+}
+
 function workerDebugPanel(){
   let body;
   if(WORKER_DEBUG_ERROR)body=`<div class="wd-empty">${esc(WORKER_DEBUG_ERROR)}</div>`;
@@ -301,7 +350,7 @@ async function loadWorkerDebug(){
   const el=$('workerDebug');if(el)el.outerHTML=workerDebugPanel();
 }
 /*wd:end*/
-function overview(){const p=DATA.projects,done=p.reduce((n,p)=>n+p.completed,0),total=p.reduce((n,p)=>n+p.milestones.length,0),active=p.filter(p=>p.health==='healthy').length,recent=ACTIVITY.filter(a=>a.kind==='commit'&&Date.parse(a.ts)>Date.now()-86400000).length;return heading('PERSONAL WORKSPACE','Keep the work moving.','See what needs attention, continue a project and only open system details when you need them.',`<span class="date-label">${icon('calendar')}${new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',weekday:'short',day:'numeric',month:'long',year:'numeric'}).format(new Date())}</span>`)+attentionPanel()+`<div class="section-title project-section-title"><div><h2>Projects <span class="count">${p.length}</span></h2><span class="reduced">Open a project for context · drag to reorder</span></div></div><div class="project-grid" id="projectGrid">${p.map(projectCard).join('')}</div>${archivedPanel()}<details class="overview-advanced" data-disclosure="automation-settings"><summary><span>Automation settings</span><small>Worker pool and diagnostics</small></summary><div class="overview-advanced-body">${dynamicWorkerControl()}${workerDebugPanel()}</div></details><div class="section-title snapshot-title"><div><h2>Portfolio snapshot</h2><span class="reduced">Useful context after the actions above</span></div></div><div class="stat-grid">${stat('Active projects',active+'<span>/ '+p.length+'</span>',active===p.length?'Everything is operating normally':'Check service status','layers',active===p.length)}${stat('Project steps completed',done+'<span>/ '+total+'</span>','According to the project plans','target')}${stat('Recent commits',recent,'Recorded in the last 24 hours','commit')}${stat('VPS uptime',Math.floor(DATA.host.uptime/86400)+'<span>d '+Math.floor(DATA.host.uptime%86400/3600)+'u</span>',DATA.host.cores+' vCPU · load '+num(DATA.host.load),'server')}</div><div class="dashboard-grid">${graphPanel(p)}${activityPanel()}</div>${infraStrip()}<details class="overview-advanced system-advanced" data-disclosure="system-controls"><summary><span>System controls</span><small>Firefox initiator and per-project recovery</small></summary><div class="overview-advanced-body">${runnerPanel()}</div></details>`}
+function overview(){const p=DATA.projects,done=p.reduce((n,p)=>n+p.completed,0),total=p.reduce((n,p)=>n+p.milestones.length,0),active=p.filter(p=>p.health==='healthy').length,recent=ACTIVITY.filter(a=>a.kind==='commit'&&Date.parse(a.ts)>Date.now()-86400000).length;return heading('PERSONAL WORKSPACE','Keep the work moving.','See what needs attention, continue a project and only open system details when you need them.',`<span class="date-label">${icon('calendar')}${new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',weekday:'short',day:'numeric',month:'long',year:'numeric'}).format(new Date())}</span>`)+attentionPanel()+`<div class="section-title project-section-title"><div><h2>Projects <span class="count">${p.length}</span></h2><span class="reduced">Open a project for context · drag to reorder</span></div></div><div class="project-grid" id="projectGrid">${p.map(projectCard).join('')}</div>${archivedPanel()}<details class="overview-advanced" data-disclosure="automation-settings"><summary><span>Automation settings</span><small>Worker pool and diagnostics</small></summary><div class="overview-advanced-body">${dynamicWorkerControl()}${workerScalingPanel()}${workerDebugPanel()}</div></details><div class="section-title snapshot-title"><div><h2>Portfolio snapshot</h2><span class="reduced">Useful context after the actions above</span></div></div><div class="stat-grid">${stat('Active projects',active+'<span>/ '+p.length+'</span>',active===p.length?'Everything is operating normally':'Check service status','layers',active===p.length)}${stat('Project steps completed',done+'<span>/ '+total+'</span>','According to the project plans','target')}${stat('Recent commits',recent,'Recorded in the last 24 hours','commit')}${stat('VPS uptime',Math.floor(DATA.host.uptime/86400)+'<span>d '+Math.floor(DATA.host.uptime%86400/3600)+'u</span>',DATA.host.cores+' vCPU · load '+num(DATA.host.load),'server')}</div><div class="dashboard-grid">${graphPanel(p)}${activityPanel()}</div>${infraStrip()}<details class="overview-advanced system-advanced" data-disclosure="system-controls"><summary><span>System controls</span><small>Firefox initiator and per-project recovery</small></summary><div class="overview-advanced-body">${runnerPanel()}</div></details>`}
 function aiRunPanel(p){const r=p.last_chatgpt_run;return `<div class="panel"><div class="panel-header"><div><h2>Latest ChatGPT action</h2><div class="panel-subtitle">${r?(r.estimated?'Estimate based on project activity':'Automation measurement'):'No ChatGPT action measured yet'}</div></div>${icon('clock')}</div><div class="detail-note">${r?`${esc(r.label)}<br><br>${date(r.time,true)} · ${rel(r.time)}`:'No ChatGPT action is linked to this project yet.'}</div></div>`}
 function codePanel(p){if(p.updated)return `<div class="panel"><div class="panel-header"><h2>Latest code update</h2>${icon('commit')}</div><div class="detail-note">${esc(p.message)}<br><br>${esc(p.commit)} · ${date(p.updated,true)}${p.shallow?'<br>The runner uses a shallow Git checkout; the commit count is not the project total.':''}</div></div>`;if(p.source_status==='empty')return `<div class="panel"><div class="panel-header"><h2>Latest code update</h2>${icon('commit')}</div><div class="detail-note">Repository linked · no commits yet. New commits are picked up automatically by zCloud.</div></div>`;return ''}
 function services(p){const labels={active:'Active',activating:'Starting',waiting:'Waiting for next run',inactive:'Inactive',failed:'Failed',unknown:'Unknown'};return `<div class="panel"><div class="panel-header"><div><h2>Services</h2><div class="panel-subtitle">Live status · read-only</div></div>${badge(p)}</div><div class="service-list">${p.services.length?p.services.map(s=>`<div class="service-row"><div>${esc(s.name)}${s.name==='Research'&&s.last_run?`<div class="service-sub">Last run: ${Number.isFinite(Date.parse(s.last_run))?date(s.last_run,true):esc(s.last_run)}</div>`:''}</div><span class="service-state ${['active','activating','waiting'].includes(s.state)?'':'warn'}">${labels[s.state]||esc(s.state)}</span></div>`).join(''):'<div class="service-row"><span>Dashboard API</span><span class="service-state">Active</span></div>'}</div>${p.id==='ftmo'?'<div class="detail-note">The research task runs every five minutes. Waiting between runs is normal.</div>':''}</div>`}
@@ -350,7 +399,7 @@ function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects
 function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
 async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled')ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render()}
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
-async function refresh(initial=false){if(busy)return;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug()}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>'}finally{busy=false;$('refresh').disabled=false}}
+async function refresh(initial=false){if(busy)return;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview'){loadWorkerScaling();loadWorkerDebug()}}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>'}finally{busy=false;$('refresh').disabled=false}}
 function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}
 let draggedProject=null;
 document.addEventListener('dragstart',e=>{const card=e.target.closest('[data-project-id]');if(!card)return;draggedProject=card.dataset.projectId;card.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',draggedProject)});
