@@ -1574,14 +1574,25 @@ def _claim_metadata_json(metadata):
         raise ValueError(f'claimmetadata is te groot; maximum is {TASK_CLAIM_METADATA_MAX_BYTES} bytes')
     return raw
 
-def task_claims(project_id=None):
+def task_claims(project_id=None, *, prune_expired=True):
     ts=now()
     with connect() as c:
-        c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
-        if project_id:
-            rows=c.execute('SELECT * FROM task_claims WHERE project_id=? ORDER BY claim_key',(project_id,)).fetchall()
+        if prune_expired:
+            c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+            if project_id:
+                rows=c.execute('SELECT * FROM task_claims WHERE project_id=? ORDER BY claim_key',(project_id,)).fetchall()
+            else:
+                rows=c.execute('SELECT * FROM task_claims ORDER BY project_id,claim_key').fetchall()
+        elif project_id:
+            rows=c.execute(
+                'SELECT * FROM task_claims WHERE project_id=? AND lease_until>? ORDER BY claim_key',
+                (project_id,ts),
+            ).fetchall()
         else:
-            rows=c.execute('SELECT * FROM task_claims ORDER BY project_id,claim_key').fetchall()
+            rows=c.execute(
+                'SELECT * FROM task_claims WHERE lease_until>? ORDER BY project_id,claim_key',
+                (ts,),
+            ).fetchall()
     return [_claim_payload(row) for row in rows]
 
 def _claim_candidate(project_id,claim_key,metadata):
@@ -3447,7 +3458,7 @@ def runner_targets():
                               'autonomy':autonomy,'improvement':improvement}
     return out
 
-def runner_worker_targets(allocation=None, base=None):
+def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
     # Callers that need a coherent live read-model may pass one target snapshot.
     # This avoids rebuilding the full project/autonomy/queue state for every
     # project while still preserving the existing default for control paths.
@@ -3479,8 +3490,9 @@ def runner_worker_targets(allocation=None, base=None):
             allocated_count=sum(1 for key in global_slots if key.startswith(project_id+'::'))
             count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,max(int(cfg.get('worker_count') or 1),allocated_count)))
             for slot in range(1,count+1):
-                c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
-                          (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
+                if reconcile:
+                    c.execute('INSERT OR IGNORE INTO runner_workers(project_id,worker_slot,conversation_id) VALUES(?,?,?)',
+                              (project_id,slot,cfg['conversation_id'] if slot==1 else ''))
                 row=c.execute('SELECT conversation_id,desired_state,provider FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
                 desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
@@ -3488,13 +3500,15 @@ def runner_worker_targets(allocation=None, base=None):
                 global_slot=global_slots.get(worker_key)
                 allocated=global_slot is not None
                 reviewer_mode=project_id=='portfolio-review'
-                provider_name='chatgpt' if reviewer_mode else (dynamic_provider_for_global_slot(global_slot) if allocated else str((row['provider'] if row else 'chatgpt') or 'chatgpt'))
+                persisted_provider=str((row['provider'] if row else 'chatgpt') or 'chatgpt')
+                provider_name='chatgpt' if reviewer_mode else (dynamic_provider_for_global_slot(global_slot) if allocated else persisted_provider)
                 provider_name='claude' if provider_name=='claude' else 'chatgpt'
-                conversation_id=(row['conversation_id'] if row else '') or ''
-                if row and str(row['provider'] or 'chatgpt') != provider_name:
+                conversation_id=(row['conversation_id'] if row else (cfg['conversation_id'] if slot==1 else '')) or ''
+                if row and persisted_provider != provider_name:
                     conversation_id=''
-                    c.execute('UPDATE runner_workers SET provider=?,conversation_id=? WHERE project_id=? AND worker_slot=?',
-                              (provider_name,'',project_id,slot))
+                    if reconcile:
+                        c.execute('UPDATE runner_workers SET provider=?,conversation_id=? WHERE project_id=? AND worker_slot=?',
+                                  (provider_name,'',project_id,slot))
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
                 queue_item=None
@@ -3673,7 +3687,9 @@ def runner_worker_statuses(project_id, *, base=None, targets=None):
     if not base:
         return []
     targets=targets if targets is not None else runner_worker_targets()
-    claims=task_claims(project_id)
+    # Aggregate status reads must not prune leases with DELETEs. Expired rows
+    # are filtered in SQL and the scheduler/control paths retain cleanup ownership.
+    claims=task_claims(project_id,prune_expired=False)
     by_worker={}
     for claim in claims:
         worker_id=str(claim.get('worker_id') or '')
@@ -3761,12 +3777,12 @@ def runner_worker_statuses(project_id, *, base=None, targets=None):
             })
     return out
 
-def runner_statuses():
-    # /api/runner-live and /api/status used to rebuild the complete target map
-    # once per project (and runner_worker_targets may reconcile rows while doing
-    # so). Share one coherent snapshot across the entire read-model instead.
-    target_cfg=runner_targets()
-    worker_targets=runner_worker_targets(base=target_cfg)
+def runner_statuses(target_cfg=None):
+    # /api/runner-live and /api/status must stay read-only. Rebuilding worker
+    # targets used to INSERT/UPDATE runner_workers while serving a GET, which can
+    # block behind scheduler writes for the full SQLite busy timeout.
+    target_cfg=target_cfg if target_cfg is not None else runner_targets()
+    worker_targets=runner_worker_targets(base=target_cfg,reconcile=False)
     result={}
     for pid in target_cfg:
         status=runner_status(pid,target_cfg=target_cfg)
@@ -4412,7 +4428,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'projects':runner_worker_targets(allocation=allocation),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
         if u.path=='/api/runner-live':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
-            return self.reply({'chatgpt_runners':runner_statuses(),'chatgpt_firefox':firefox_runner_status(),'time':now()})
+            target_cfg=runner_targets()
+            return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),'chatgpt_firefox':firefox_runner_status(),'time':now()})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
@@ -4473,9 +4490,10 @@ class Handler(BaseHTTPRequestHandler):
                 auth=self.headers.get('Authorization','')
                 if WATCH_TOKEN and auth != 'Bearer '+WATCH_TOKEN:return self.reply({'error':'Unauthorized'},401)
             if u.path in ('/api/status','/api/v1/status'):
-                runners=runner_statuses()
+                target_cfg=runner_targets()
+                runners=runner_statuses(target_cfg=target_cfg)
                 incidents=enhancements.incident_center(DB,runners,data=data)
-                return self.reply({**public_status(data),'chatgpt_runner':runner_status(),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'dynamic_workers':dynamic_worker_settings(),'incidents':incidents})
+                return self.reply({**public_status(data),'chatgpt_runner':runner_status(target_cfg=target_cfg),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'dynamic_workers':dynamic_worker_settings(),'incidents':incidents})
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
             if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
