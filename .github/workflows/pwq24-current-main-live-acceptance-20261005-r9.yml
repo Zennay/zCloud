@@ -1,0 +1,590 @@
+name: PWQ-24 exact-current-main live acceptance r9
+# Exact production receipt is discovered dynamically for the expected main SHA.
+
+on:
+  push:
+    branches:
+      - ops/pwq24-current-main-live-acceptance-20261005-r9
+    paths:
+      - .github/workflows/pwq24-current-main-live-acceptance-20261005-r9.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: pwq24-post469-live-acceptance
+  cancel-in-progress: true
+
+jobs:
+  wait-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      deploy_run_id: ${{ steps.wait.outputs.deploy_run_id }}
+      deployed_at: ${{ steps.wait.outputs.deployed_at }}
+    steps:
+      - name: Wait for exact-main guarded production deploy
+        id: wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN: 8990732a6c06f1b3af73d32ee5c18ea1f9d03a69
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          import time
+          import urllib.request
+
+          token = os.environ['GH_TOKEN']
+          expected = os.environ['EXPECTED_MAIN']
+          repo = os.environ['GITHUB_REPOSITORY']
+          output = os.environ['GITHUB_OUTPUT']
+
+          def get(url):
+              req = urllib.request.Request(url, headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'pwq24-production-waiter',
+              })
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          deadline = time.time() + 720
+          last = None
+          while time.time() < deadline:
+              main = get(f'https://api.github.com/repos/{repo}/branches/main')
+              actual = ((main.get('commit') or {}).get('sha') or '')
+              if actual != expected:
+                  raise SystemExit(f'main moved during PWQ-24 gate: expected={expected} actual={actual}')
+
+              payload = get(f'https://api.github.com/repos/{repo}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=30')
+              matches = [r for r in payload.get('workflow_runs', []) if r.get('head_sha') == expected]
+              matches.sort(key=lambda r: r.get('created_at') or '', reverse=True)
+              if matches:
+                  last = matches[0]
+                  print('DEPLOY_POLL ' + json.dumps({
+                      'id': last.get('id'), 'status': last.get('status'),
+                      'conclusion': last.get('conclusion'), 'created_at': last.get('created_at'),
+                      'updated_at': last.get('updated_at'),
+                  }, sort_keys=True), flush=True)
+                  if last.get('status') == 'completed' and last.get('conclusion') == 'success':
+                      with open(output, 'a', encoding='utf-8') as fh:
+                          fh.write(f"deploy_run_id={last.get('id')}\n")
+                          fh.write(f"deployed_at={last.get('updated_at')}\n")
+                      print('PWQ24_EXACT_PRODUCTION_DEPLOY_GREEN=1')
+                      raise SystemExit(0)
+              time.sleep(10)
+
+          raise SystemExit('exact-main production deploy did not become green in bounded wait: ' + json.dumps(last, sort_keys=True))
+          PY
+
+      - name: Wait for exact-main post-deploy worker activation to stop mutating allocation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN: 8990732a6c06f1b3af73d32ee5c18ea1f9d03a69
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          token=os.environ['GH_TOKEN']
+          expected=os.environ['EXPECTED_MAIN']
+          repo=os.environ['GITHUB_REPOSITORY']
+
+          def get(url):
+              req=urllib.request.Request(url,headers={
+                  'Authorization':f'Bearer {token}',
+                  'Accept':'application/vnd.github+json',
+                  'User-Agent':'pwq24-worker-activation-waiter',
+              })
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  return json.load(response)
+
+          deadline=time.time()+720
+          last=None
+          while time.time()<deadline:
+              payload=get(f'https://api.github.com/repos/{repo}/actions/workflows/zcloud-one-worker-testing-activation.yml/runs?per_page=30')
+              matches=[r for r in payload.get('workflow_runs',[]) if r.get('head_sha')==expected]
+              matches.sort(key=lambda r:r.get('created_at') or '',reverse=True)
+              if matches:
+                  last=matches[0]
+                  print('ACTIVATION_POLL '+json.dumps({
+                      'id':last.get('id'),'status':last.get('status'),
+                      'conclusion':last.get('conclusion'),'run_started_at':last.get('run_started_at'),
+                      'updated_at':last.get('updated_at'),
+                  },sort_keys=True),flush=True)
+                  if last.get('status')=='completed':
+                      print('PWQ24_POSTDEPLOY_ACTIVATION_TERMINAL='+json.dumps({
+                          'id':last.get('id'),'conclusion':last.get('conclusion')
+                      },sort_keys=True))
+                      raise SystemExit(0)
+              time.sleep(10)
+          raise SystemExit('exact-main worker activation did not become terminal in bounded wait: '+json.dumps(last,sort_keys=True))
+          PY
+
+  accept:
+    needs: wait-production
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      EXPECTED_MAIN: 8990732a6c06f1b3af73d32ee5c18ea1f9d03a69
+      DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
+      DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8990732a6c06f1b3af73d32ee5c18ea1f9d03a69
+          clean: true
+          fetch-depth: 1
+
+      - name: Guard live exact-main receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          expected = os.environ['EXPECTED_MAIN']
+          last = None
+          for attempt in range(1, 7):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8765/api/status', timeout=40) as response:
+                      payload = json.load(response)
+              except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError) as exc:
+                  last = {'transport_error': type(exc).__name__, 'attempt': attempt}
+                  print('PWQ24_R9_LIVE_RECEIPT_RETRY=' + json.dumps(last, sort_keys=True), flush=True)
+                  if attempt < 6:
+                      time.sleep(5)
+                      continue
+                  break
+              project = next((p for p in payload.get('projects', []) if p.get('id') == 'cloud'), None)
+              state = (project or {}).get('execution_state') or {}
+              last = {'state_source': (project or {}).get('state_source'), 'execution_state': state}
+              if (project or {}).get('state_source') == 'evidence_receipt' and state.get('commit_sha') == expected and state.get('ci_status') == 'success':
+                  print('PWQ24_R9_LIVE_RECEIPT_GREEN=' + json.dumps(last, sort_keys=True))
+                  raise SystemExit(0)
+              if attempt < 6:
+                  time.sleep(5)
+          raise SystemExit('live production receipt mismatch: ' + json.dumps(last, sort_keys=True))
+          PY
+
+      - name: Prove FTMO normal Start then Supa safe Force start
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p artifacts/ops
+          set +e
+          python3 - <<'PY'
+          import http.client
+          import json
+          import os
+          import pathlib
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE = 'http://127.0.0.1:8765'
+          DB = '/home/ubuntu/zennay-cloud/history.db'
+          SEQUENCE = ('ftmo', 'supa')
+          acceptance_started_at = datetime.now(timezone.utc).isoformat()
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode('utf-8')
+              headers = {'User-Agent': 'pwq24-r9-force-sequential/1'}
+              if data is not None:
+                  headers['Content-Type'] = 'application/json'
+              attempts = 4 if method == 'GET' else 1
+              for attempt in range(1, attempts + 1):
+                  req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+                  try:
+                      with urllib.request.urlopen(req, timeout=25) as response:
+                          return json.load(response)
+                  except urllib.error.HTTPError:
+                      raise
+                  except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError):
+                      if attempt >= attempts:
+                          raise
+                      time.sleep(2)
+
+          def post_control(project_id, action='start', attempts=4, force=False):
+              last = None
+              for attempt in range(1, attempts + 1):
+                  payload = {'project_id': project_id, 'action': action}
+                  if force:
+                      payload['force'] = True
+                  try:
+                      return call('POST', '/api/runner-control', payload)
+                  except urllib.error.HTTPError as exc:
+                      raw = exc.read().decode('utf-8', 'replace')
+                      try:
+                          body = json.loads(raw)
+                      except Exception:
+                          body = {'error': raw}
+                      last = {'http_status': exc.code, 'body': body, 'attempt': attempt}
+                      if exc.code == 429 and attempt < attempts:
+                          time.sleep(3)
+                          continue
+                      raise RuntimeError('runner-control failed: ' + json.dumps(last, sort_keys=True))
+              raise RuntimeError('runner-control unavailable: ' + json.dumps(last, sort_keys=True))
+
+          def allocation():
+              targets = call('GET', '/api/runner-targets')
+              workers = (targets.get('global_allocation') or {}).get('workers') or []
+              by_project = {}
+              for item in workers:
+                  project = str(item.get('project_id') or '').strip().lower()
+                  key = str(item.get('worker_key') or '').strip()
+                  if project and key:
+                      by_project[project] = key
+              return targets, by_project
+
+          def memory_guard(targets):
+              return (
+                  (targets.get('global_allocation') or {}).get('memory_guard')
+                  or (targets.get('dynamic_workers') or {}).get('memory_guard')
+                  or {}
+              )
+
+          def memory_guard_safe(guard):
+              if not isinstance(guard, dict):
+                  return False
+              pressure = str(guard.get('pressure') or 'unknown').lower()
+              available = guard.get('available_mb')
+              reserve = guard.get('effective_headroom_mb', guard.get('headroom_mb'))
+              try:
+                  reserve_ok = available is not None and reserve is not None and int(available) >= int(reserve)
+              except Exception:
+                  reserve_ok = False
+              return pressure not in {'critical', 'unknown'} and reserve_ok
+
+          def parse_ts(value):
+              try:
+                  return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+              except Exception:
+                  return None
+
+          def project_evidence(project, worker, since):
+              slot = int(worker.rsplit('::w', 1)[1])
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  rows = conn.execute(
+                      "SELECT ts,event,reason,error FROM runner_events WHERE project_id=? AND worker_slot=? AND ts>=? AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
+                      (project, slot, since),
+                  ).fetchall()
+              items = [dict(row) for row in rows]
+              prompts = [row for row in items if row['event'] == 'prompt-sent']
+              heartbeats = [row for row in items if row['event'] == 'heartbeat']
+              blocked = [row for row in items if row['event'] == 'send-blocked']
+              prompt_times = [ts for ts in (parse_ts(row['ts']) for row in prompts) if ts is not None]
+              heartbeat_times = [ts for ts in (parse_ts(row['ts']) for row in heartbeats) if ts is not None]
+              first_prompt = min(prompt_times) if prompt_times else None
+              heartbeat_after_prompt = bool(
+                  first_prompt and any(ts >= first_prompt for ts in heartbeat_times)
+              )
+              duplicate = any(
+                  (b - a).total_seconds() <= 8
+                  for a, b in zip(prompt_times, prompt_times[1:])
+              )
+              return {
+                  'project': project,
+                  'worker': worker,
+                  'since': since,
+                  'prompt_sent': bool(prompts),
+                  'heartbeat': bool(heartbeats),
+                  'heartbeat_after_prompt': heartbeat_after_prompt,
+                  'send_blocked': blocked,
+                  'duplicate_prompt_window': duplicate,
+                  'events': items[-16:],
+              }
+
+          def proof_green(proof):
+              return bool(
+                  proof.get('prompt_sent')
+                  and proof.get('heartbeat_after_prompt')
+                  and not proof.get('send_blocked')
+                  and not proof.get('duplicate_prompt_window')
+              )
+
+          def wait_project_idle(project, worker, timeout_seconds=300):
+              slot = int(worker.rsplit('::w', 1)[1])
+              deadline = time.time() + timeout_seconds
+              snapshots = []
+              while time.time() < deadline:
+                  targets, selected = allocation()
+                  current = selected.get(project)
+                  if not current:
+                      return {
+                          'green': True,
+                          'project': project,
+                          'worker': worker,
+                          'state': 'released',
+                          'snapshots': snapshots[-8:],
+                      }
+                  with sqlite3.connect(DB, timeout=5) as conn:
+                      conn.row_factory = sqlite3.Row
+                      latest = conn.execute(
+                          "SELECT ts,event,generating,sending,reason,error FROM runner_events WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1",
+                          (project, slot),
+                      ).fetchone()
+                      pending = conn.execute(
+                          "SELECT COUNT(*) AS n FROM runner_commands WHERE project_id=? AND status='pending' AND action IN ('start','new_chat','push')",
+                          (current,),
+                      ).fetchone()['n']
+                  snapshot = {
+                      'at': datetime.now(timezone.utc).isoformat(),
+                      'worker': current,
+                      'latest': dict(latest) if latest else None,
+                      'pending_commands': int(pending or 0),
+                      'memory_guard': memory_guard(targets),
+                  }
+                  snapshots.append(snapshot)
+                  if latest and not bool(latest['generating']) and not bool(latest['sending']) and int(pending or 0) == 0:
+                      return {
+                          'green': True,
+                          'project': project,
+                          'worker': current,
+                          'state': 'idle',
+                          'snapshots': snapshots[-8:],
+                      }
+                  time.sleep(5)
+              return {
+                  'green': False,
+                  'project': project,
+                  'worker': worker,
+                  'state': 'idle-timeout',
+                  'snapshots': snapshots[-8:],
+              }
+
+          def prove_project(project, force=False):
+              started_at = datetime.now(timezone.utc).isoformat()
+              actions = []
+              targets, selected = allocation()
+              key = selected.get(project)
+              if not key:
+                  result = post_control(project, 'start', force=force)
+                  actions.append({
+                      'project': project,
+                      'action': 'force-start-project' if force else 'start-project',
+                      'result': result,
+                  })
+                  deadline = time.time() + 120
+                  while time.time() < deadline:
+                      targets, selected = allocation()
+                      key = selected.get(project)
+                      if key:
+                          break
+                      time.sleep(3)
+              if not key:
+                  return {
+                      'green': False,
+                      'project': project,
+                      'started_at': started_at,
+                      'actions': actions,
+                      'error': 'allocation-timeout',
+                      'allocation': selected,
+                      'memory_guard': memory_guard(targets),
+                  }
+
+              last_worker = None
+              deadline = time.time() + 150
+              last_proof = None
+              while time.time() < deadline:
+                  targets, selected = allocation()
+                  current = selected.get(project)
+                  if not current:
+                      time.sleep(3)
+                      continue
+                  if current != last_worker:
+                      try:
+                          result = post_control(current, 'start', force=force)
+                      except RuntimeError as exc:
+                          actions.append({
+                              'project': project,
+                              'worker': current,
+                              'action': 'force-start-worker' if force else 'start-worker',
+                              'error': str(exc),
+                          })
+                      else:
+                          actions.append({
+                              'project': project,
+                              'worker': current,
+                              'action': 'force-start-worker' if force else 'start-worker',
+                              'result': result,
+                          })
+                          last_worker = current
+                  last_proof = project_evidence(project, current, started_at)
+                  if proof_green(last_proof):
+                      return {
+                          'green': True,
+                          'project': project,
+                          'started_at': started_at,
+                          'actions': actions,
+                          'evidence': last_proof,
+                          'allocation': selected,
+                          'memory_guard': memory_guard(targets),
+                      }
+                  if last_proof.get('send_blocked') or last_proof.get('duplicate_prompt_window'):
+                      break
+                  time.sleep(5)
+
+              return {
+                  'green': False,
+                  'project': project,
+                  'started_at': started_at,
+                  'actions': actions,
+                  'evidence': last_proof,
+                  'allocation': selected,
+                  'memory_guard': memory_guard(targets),
+                  'error': 'fresh-prompt-heartbeat-timeout',
+              }
+
+          timings = []
+          for path, timeout in (('/api/runner-live', 30), ('/api/status', 45)):
+              started = time.monotonic()
+              try:
+                  payload = call('GET', path)
+                  timings.append({
+                      'path': path,
+                      'ok': True,
+                      'elapsed_seconds': round(time.monotonic() - started, 3),
+                      'keys': sorted(payload.keys())[:20] if isinstance(payload, dict) else [],
+                  })
+              except Exception as exc:
+                  timings.append({
+                      'path': path,
+                      'ok': False,
+                      'elapsed_seconds': round(time.monotonic() - started, 3),
+                      'error': type(exc).__name__ + ': ' + str(exc),
+                  })
+
+          initial_targets, initial_selected = allocation()
+          initial_guard = memory_guard(initial_targets)
+          print('PWQ24_R9_INITIAL=' + json.dumps({
+              'selected': initial_selected,
+              'memory_guard': initial_guard,
+              'endpoint_timings': timings,
+          }, sort_keys=True), flush=True)
+
+          proofs = {}
+          idle_before_force = None
+
+          ftmo_result = prove_project('ftmo', force=False)
+          proofs['ftmo'] = ftmo_result
+          print('PWQ24_R9_PROJECT_PROOF=' + json.dumps(ftmo_result, sort_keys=True), flush=True)
+
+          if ftmo_result.get('green'):
+              ftmo_worker = str((ftmo_result.get('evidence') or {}).get('worker') or '')
+              if ftmo_worker:
+                  idle_before_force = wait_project_idle('ftmo', ftmo_worker)
+              else:
+                  idle_before_force = {
+                      'green': False,
+                      'project': 'ftmo',
+                      'state': 'missing-worker-for-idle-guard',
+                  }
+              print('PWQ24_R9_IDLE_BEFORE_FORCE=' + json.dumps(idle_before_force, sort_keys=True), flush=True)
+
+          if ftmo_result.get('green') and idle_before_force and idle_before_force.get('green'):
+              supa_result = prove_project('supa', force=True)
+              proofs['supa'] = supa_result
+              print('PWQ24_R9_PROJECT_PROOF=' + json.dumps(supa_result, sort_keys=True), flush=True)
+
+          final_targets, final_selected = allocation()
+          final_guard = memory_guard(final_targets)
+
+          health_attempts = []
+          health = None
+          for attempt in range(1, 5):
+              health = subprocess.run(
+                  ['python3', 'scripts/zcloud_healthcheck.py', '--json'],
+                  text=True,
+                  capture_output=True,
+                  timeout=90,
+                  check=False,
+              )
+              health_attempts.append({
+                  'attempt': attempt,
+                  'rc': health.returncode,
+                  'stdout_tail': health.stdout[-1500:],
+                  'stderr_tail': health.stderr[-750:],
+              })
+              if health.returncode == 0:
+                  break
+              if attempt < 4:
+                  time.sleep(5)
+
+          green = (
+              all(project in proofs and proofs[project].get('green') for project in SEQUENCE)
+              and bool(idle_before_force and idle_before_force.get('green'))
+              and memory_guard_safe(initial_guard)
+              and memory_guard_safe(final_guard)
+              and health is not None
+              and health.returncode == 0
+          )
+
+          result = {
+              'captured_at': datetime.now(timezone.utc).isoformat(),
+              'expected_main': os.environ['EXPECTED_MAIN'],
+              'deploy_run_id': os.environ.get('DEPLOY_RUN_ID'),
+              'deployed_at': os.environ.get('DEPLOYED_AT'),
+              'acceptance_started_at': acceptance_started_at,
+              'sequence': list(SEQUENCE),
+              'initial_selected': initial_selected,
+              'final_selected': final_selected,
+              'initial_memory_guard': initial_guard,
+              'final_memory_guard': final_guard,
+              'endpoint_timings': timings,
+              'project_proofs': proofs,
+              'idle_before_force': idle_before_force,
+              'health_attempts': health_attempts,
+              'health_rc': None if health is None else health.returncode,
+              'acceptance_green': green,
+          }
+          pathlib.Path('artifacts/ops/pwq24-current-main-live-acceptance-result.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print('PWQ24_R9_ACCEPTANCE_RESULT=' + json.dumps(result, sort_keys=True))
+          raise SystemExit(0 if green else 1)
+          PY
+          rc=$?
+          set -e
+          exit "$rc"
+
+      - name: Ensure acceptance artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ops
+          if [ ! -f artifacts/ops/pwq24-current-main-live-acceptance-result.json ]; then
+            echo '{"acceptance_green":false,"error":"acceptance artifact missing"}' > artifacts/ops/pwq24-current-main-live-acceptance-result.json
+          fi
+
+      - name: Upload acceptance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwq24-current-main-live-acceptance-${{ github.run_id }}
+          path: artifacts/ops/pwq24-current-main-live-acceptance-result.json
+          if-no-files-found: error
+          retention-days: 90
