@@ -1,0 +1,40 @@
+name: PR448 exact-head queue binding proof
+
+on:
+  push:
+    branches:
+      - ops/pr448-queue-binding-proof-20261005-0205
+    paths:
+      - .github/workflows/pr448-exact-head-queue-binding-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 3eb27ec2ebd6651b1e70816441077f10cb544de9
+          clean: true
+          fetch-depth: 1
+      - name: Guard exact PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "3eb27ec2ebd6651b1e70816441077f10cb544de9"
+          test "$(hostname)" = "vps-bb300bba"
+      - name: Prove cross-project queue binding fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_worker_prompt_contract.WorkerPromptContractTests.test_stale_global_slot_mapping_never_binds_another_projects_queue_item \
+            tests.test_worker_prompt_contract.WorkerPromptContractTests.test_live_runner_worker_targets_pass_both_validators
+      - name: Prove portfolio queue allocator regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_portfolio_queue_backend
