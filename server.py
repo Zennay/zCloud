@@ -3173,9 +3173,24 @@ def runner_targets():
                               'autonomy':autonomy,'improvement':improvement}
     return out
 
-def runner_worker_targets():
+def runner_worker_targets(allocation=None):
     base=runner_targets()
-    global_slots=_current_global_slot_map()
+    # Bind every rendered target to one allocation snapshot. Reading the
+    # persisted slot map and then looking up "whatever owns this slot now"
+    # can cross-wire projects when the scheduler preempts/reclaims a slot
+    # between those reads (for example a Supa worker receiving a Raise AI
+    # queue item). Queue identity is authoritative; slot number is not.
+    allocation=allocation if allocation is not None else global_worker_allocation()
+    allocation_workers={
+        str(item.get('worker_key') or ''):item
+        for item in (allocation.get('workers') or [])
+        if str(item.get('worker_key') or '')
+    }
+    global_slots={
+        key:int(item.get('global_worker_slot'))
+        for key,item in allocation_workers.items()
+        if item.get('global_worker_slot') is not None
+    }
     out={}
     with connect() as c:
         for project_id,cfg in base.items():
@@ -3187,8 +3202,9 @@ def runner_worker_targets():
                 row=c.execute('SELECT conversation_id,desired_state,provider FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,slot)).fetchone()
                 desired_state=(row['desired_state'] if row else 'running') or 'running'
                 worker_key=f'{project_id}::w{slot}'
+                allocation_item=allocation_workers.get(worker_key)
                 global_slot=global_slots.get(worker_key)
-                allocated=global_slot is not None
+                allocated=allocation_item is not None and global_slot is not None
                 reviewer_mode=project_id=='portfolio-review'
                 provider_name='chatgpt' if reviewer_mode else (dynamic_provider_for_global_slot(global_slot) if allocated else str((row['provider'] if row else 'chatgpt') or 'chatgpt'))
                 provider_name='claude' if provider_name=='claude' else 'chatgpt'
@@ -3199,11 +3215,24 @@ def runner_worker_targets():
                               (provider_name,'',project_id,slot))
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
-                queue_item=None if reviewer_mode else (portfolio_queue_current_for_slot(global_slot) if allocated else None)
+                queue_item=None
+                if allocated and not reviewer_mode:
+                    queue_id=str(allocation_item.get('queue_id') or '').strip()
+                    if queue_id:
+                        queue_row=c.execute(
+                            'SELECT * FROM portfolio_queue WHERE queue_id=?',
+                            (queue_id,),
+                        ).fetchone()
+                        queue_item=_portfolio_queue_row(queue_row)
                 assignment_ready=bool(
                     (reviewer_mode and cfg.get('active')) or
-                    (allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
-                     and int(queue_item.get('worker_slot') or 0)==int(global_slot))
+                    (
+                        allocated and queue_item
+                        and str(queue_item.get('queue_id') or '').strip()==str(allocation_item.get('queue_id') or '').strip()
+                        and str(queue_item.get('project_id') or '').strip()==project_id
+                        and str(queue_item.get('status') or '').strip() in ('claimed','running','verifying')
+                        and int(queue_item.get('worker_slot') or 0)==int(global_slot)
+                    )
                 )
                 active=(bool(cfg.get('active')) if reviewer_mode else allocated) and desired_state!='paused'
                 worker_name=(cfg['name'] if reviewer_mode else
@@ -4050,7 +4079,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
-            return self.reply({'projects':runner_worker_targets(),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
+            return self.reply({'projects':runner_worker_targets(allocation=allocation),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
         if u.path=='/api/runner-live':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             return self.reply({'chatgpt_runners':runner_statuses(),'chatgpt_firefox':firefox_runner_status(),'time':now()})
