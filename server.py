@@ -2142,13 +2142,13 @@ def _portfolio_priority_rank(priority):
 def _manual_start_priority_key(project_id):
     return 'manual_start_priority:' + str(project_id or '').strip().lower()
 
-def _manual_start_priority_active_locked(connection, project_id, at=None):
-    project_id=str(project_id or '').strip().lower()
-    if not project_id:
-        return False
+def _manual_force_start_priority_key(project_id):
+    return 'manual_force_start_priority:' + str(project_id or '').strip().lower()
+
+def _manual_priority_active_locked(connection, key, at=None):
     row=connection.execute(
         'SELECT value FROM runtime_settings WHERE key=?',
-        (_manual_start_priority_key(project_id),),
+        (str(key or ''),),
     ).fetchone()
     if not row or not row['value']:
         return False
@@ -2158,6 +2158,28 @@ def _manual_start_priority_active_locked(connection, project_id, at=None):
         return 0 <= age <= MANUAL_START_PRIORITY_SECONDS
     except Exception:
         return False
+
+def _manual_start_priority_active_locked(connection, project_id, at=None):
+    project_id=str(project_id or '').strip().lower()
+    return bool(project_id) and _manual_priority_active_locked(
+        connection,
+        _manual_start_priority_key(project_id),
+        at,
+    )
+
+def _manual_force_start_priority_active_locked(connection, project_id, at=None):
+    project_id=str(project_id or '').strip().lower()
+    return bool(project_id) and _manual_priority_active_locked(
+        connection,
+        _manual_force_start_priority_key(project_id),
+        at,
+    )
+
+def _consume_manual_force_start_priority_locked(connection, project_id):
+    connection.execute(
+        'DELETE FROM runtime_settings WHERE key=?',
+        (_manual_force_start_priority_key(project_id),),
+    )
 
 def _pending_worker_handoff_floor_locked(connection, project_id):
     """Highest local worker ordinal that must remain stable for an in-flight browser handoff.
@@ -2689,6 +2711,9 @@ def portfolio_queue_allocate():
     recovery_hold_until=_worker_recovery_hold_until()
     new_worker_capacity=0 if recovery_hold_until else max(0,int(memory_guard.get('new_worker_capacity') or 0))
     new_workers_claimed=0
+    # Force-start takeover is explicit user intent, but it must still avoid
+    # interrupting a worker that is actively generating/sending.
+    busy_workers=_busy_ai_worker_keys()
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2795,7 +2820,48 @@ def portfolio_queue_allocate():
                         preempted.add(str(row['queue_id']))
                         row=None
                         lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+            if row and str(row['status']) == 'running':
+                row_project=str(row['project_id'] or '')
+                local_slot=used_counts.get(row_project,0)+1
+                force_candidates=[
+                    pair for pair in lane_candidates
+                    if used_counts.get(str(pair[0]['project_id'] or ''),0)==0
+                    and _manual_force_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+                ]
+                forced=min(
+                    force_candidates,
+                    key=lambda pair: (
+                        _portfolio_priority_rank(pair[0]['priority']),
+                        str(pair[0]['created_at'] or ''),
+                        str(pair[0]['queue_id'] or ''),
+                    ),
+                )[0] if force_candidates else None
+                row_manual=_manual_start_priority_active_locked(c,row_project,ts_dt)
+                row_busy=f'{row_project}::w{local_slot}' in busy_workers
+                handoff_floor=_pending_worker_handoff_floor_locked(c,row_project)
+                force_rank=_portfolio_priority_rank(forced['priority']) if forced else 99
+                row_rank=_portfolio_priority_rank(row['priority'])
+                force_can_takeover=bool(
+                    forced
+                    and str(forced['project_id'] or '') != row_project
+                    and not row_busy
+                    and not (0 < local_slot <= handoff_floor)
+                    and (
+                        force_rank < row_rank
+                        or (force_rank == row_rank and row_manual)
+                    )
+                )
+                if force_can_takeover:
+                    c.execute("""UPDATE portfolio_queue
+                                 SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                                 WHERE queue_id=? AND status='running'""",(ts,row['queue_id']))
+                    preempted.add(str(row['queue_id']))
+                    row=None
+                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
             if row:
+                row_project=str(row['project_id'] or '')
+                if _manual_force_start_priority_active_locked(c,row_project,ts_dt):
+                    _consume_manual_force_start_priority_locked(c,row_project)
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
@@ -2855,6 +2921,8 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
+            if _manual_force_start_priority_active_locked(c,row['project_id'],ts_dt):
+                _consume_manual_force_start_priority_locked(c,row['project_id'])
             if not slot_was_occupied:
                 new_workers_claimed += 1
     return selected
@@ -3889,13 +3957,23 @@ class Handler(BaseHTTPRequestHandler):
                         # the same bounded project intent used by project-level Start so
                         # scheduler churn cannot evict a just-started worker mid-send.
                         intent_ts=now()
+                        actor=request_actor(self)
                         c.execute(
                             "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
-                            (_manual_start_priority_key(base_project_id),intent_ts,intent_ts,request_actor(self)),
+                            (_manual_start_priority_key(base_project_id),intent_ts,intent_ts,actor),
                         )
+                        if force_start:
+                            c.execute(
+                                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                                (_manual_force_start_priority_key(base_project_id),intent_ts,intent_ts,actor),
+                            )
                     elif not is_worker and action=='pause':
-                        c.execute('DELETE FROM runtime_settings WHERE key=?',(_manual_start_priority_key(base_project_id),))
+                        c.execute('DELETE FROM runtime_settings WHERE key IN (?,?)',(
+                            _manual_start_priority_key(base_project_id),
+                            _manual_force_start_priority_key(base_project_id),
+                        ))
                     # Health treats pending browser commands older than the
                     # canonical threshold as invalid. Keep admission fail-safe too,
                     # even though the scheduler now reconciles the same global set
