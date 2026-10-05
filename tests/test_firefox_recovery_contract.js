@@ -172,6 +172,27 @@ assert.ok(
   "legacy replacement drain must bounded-retry listener delivery after runtime rebind"
 );
 assert.ok(
+  replacementDrainBlock.includes('type: "runner-config-update"') &&
+    replacementDrainBlock.includes("legacyLive?.ok"),
+  "replacement drain must prove an existing legacy listener before trusting the page marker"
+);
+assert.ok(
+  replacementDrainBlock.indexOf('type: "runner-config-update"') <
+    replacementDrainBlock.indexOf('delete window[') &&
+    replacementDrainBlock.indexOf('delete window[') <
+    replacementDrainBlock.indexOf("await inject(tabId, target)"),
+  "stale legacy marker may be cleared only after liveness fails and before safe reinjection"
+);
+assert.ok(
+  replacementDrainBlock.includes('event: "replacement-drain-marker-reset"') &&
+    replacementDrainBlock.includes('reason: "legacy-listener-unreachable"'),
+  "stale legacy marker recovery must leave explicit telemetry"
+);
+assert.ok(
+  replacementDrainBlock.includes('reboundMode = "legacy-live"'),
+  "a responsive legacy listener must be reused instead of reinjected"
+);
+assert.ok(
   replacementDrainBlock.indexOf("for (let attempt = 0; attempt < 4; attempt += 1)") <
     replacementDrainBlock.indexOf("oude worker kan niet veilig drainen na runtime-rebind"),
   "legacy replacement drain may fail closed only after bounded listener-settle retries"
