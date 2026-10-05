@@ -1,0 +1,31 @@
+name: PWQ-24 direct Start VPS validation
+
+on:
+  push:
+    branches:
+      - fix/pwq24-vm-direct-start-20261005-0427
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwq24-direct-start-vps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard permanent zCloud runner
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Regress Violentmonkey dispatch ownership
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_violentmonkey_runner
+          node --check public/zcloud-worker.user.js
+          node --check firefox-extension/background.js
