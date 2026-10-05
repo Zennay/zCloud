@@ -431,23 +431,35 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "supa", "Fix Supa provider API sync integration", "P1",
             "Fix provider API sync integration with deterministic coverage.",
         )
-        selected = server.portfolio_queue_allocate()
-        self.assertEqual(
-            [first["queue_id"], second["queue_id"]],
-            [item["queue_id"] for item in selected],
-        )
-        self.assertEqual(
-            ["supa::w1", "supa::w2"],
-            [item["worker_key"] for item in server.portfolio_queue_allocation()["workers"]],
-        )
-
+        # Reproduce the live failure state directly: Supa w1/w2 already own the
+        # two browser slots before a higher-priority project becomes runnable.
+        # The allocator's normal diversity policy intentionally would not create
+        # this two-Supa state from a cold queue fixture.
         with server.connect() as conn:
             ts = server.now()
+            lease_until = "2099-01-01T00:00:00+00:00"
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=1,claimed_at=?,claim_expires=?,updated_at=?
+                   WHERE queue_id=?""",
+                (ts, lease_until, ts, first["queue_id"]),
+            )
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=2,claimed_at=?,claim_expires=?,updated_at=?
+                   WHERE queue_id=?""",
+                (ts, lease_until, ts, second["queue_id"]),
+            )
             command_id = conn.execute(
                 """INSERT INTO runner_commands(project_id,action,status,created_at,updated_at)
                    VALUES(?,?,?,?,?)""",
                 ("supa::w2", "start", "pending", ts, ts),
             ).lastrowid
+
+        self.assertEqual(
+            ["supa::w1", "supa::w2"],
+            [item["worker_key"] for item in server.portfolio_queue_allocation()["workers"]],
+        )
 
         urgent = server.portfolio_queue_enqueue(
             "cloud", "urgent zCloud recovery", "P0",
