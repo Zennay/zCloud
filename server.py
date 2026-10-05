@@ -161,14 +161,34 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
-        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'
+        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
+        'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet '
+        'na één actie, commit, retrigger of statuscheck. Als iets wacht op CI, VPS, review of een andere dependency, '
+        'pak direct ander veilig uitvoerbaar werk binnen hetzelfde project. Kies steeds een vrij onderdeel en ga door '
+        'tot de runlimiet, echte projectafronding of totdat er werkelijk geen veilige uitvoerbare vervolgstap meer is.'
     )
 
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
-    # Queue items, execution lanes and claims are internal coordination only.
-    # The worker itself gets one simple project-first instruction.
-    return project_runner_prompt(project_id, name)
+    prompt = project_runner_prompt(project_id, name)
+    if int(total or 0) <= 1:
+        return prompt
+
+    lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
+    lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
+    lane_id = re.sub(r'[^a-zA-Z0-9._:/-]+', '-', lane_id).strip('-')[:80]
+    if lane_id:
+        return (
+            prompt
+            + f' Parallel focus {int(slot or 1)}/{int(total)}: {lane_id}. '
+            'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
+            'dat al actief door een andere worker wordt uitgevoerd.'
+        )
+    return (
+        prompt
+        + f' Er werken {int(total)} workers parallel aan dit project. Kies zelfstandig een ander vrij, '
+        'niet-conflicterend werkgebied, controleer open branches/PRs en vermijd dubbel werk.'
+    )
 
 
 RUNNER_DEFAULTS = {
