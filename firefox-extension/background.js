@@ -558,7 +558,7 @@ function runProject(cfg) {
       : (box.innerText || box.textContent || "").trim();
   }
   function conversationLoadFailureReason() {
-    if (!/^\\/c\\//i.test(location.pathname) || composer()) return "";
+    if (!/^\/c\//i.test(location.pathname) || composer()) return "";
     const text = String(document.body?.innerText || document.body?.textContent || "").slice(0, 20000).toLowerCase();
     if (text.includes("could not load this chatgpt conversation")) return "chatgpt-conversation-load-failed";
     if (text.includes("could not load this conversation") || text.includes("unable to load conversation")) return "conversation-load-failed";
