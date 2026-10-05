@@ -1,4 +1,5 @@
 name: PWQ-24 post-443 live acceptance
+# Exact production receipt for this acceptance: run 37258239188 / main 707eb3d69f45f747c85b5e50f42c44d5b111d2e7
 
 on:
   push:
