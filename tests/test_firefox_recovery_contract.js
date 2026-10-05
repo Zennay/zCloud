@@ -144,6 +144,38 @@ assert.ok(
   "replacement handoff must reclaim and continue instead of falling back to read-only work"
 );
 
+const replacementDrainStart = background.indexOf("async function drainRunnerBeforeReplacement");
+const replacementDrainEnd = background.indexOf("async function verifyReplacementHandoffStillCurrent");
+assert.ok(
+  replacementDrainStart >= 0 && replacementDrainEnd > replacementDrainStart,
+  "replacement drain block missing"
+);
+const replacementDrainBlock = background.slice(replacementDrainStart, replacementDrainEnd);
+assert.ok(
+  replacementDrainBlock.includes("await inject(tabId, target)"),
+  "replacement drain must rebind the existing worker runtime before declaring it undrainable"
+);
+assert.ok(
+  replacementDrainBlock.indexOf("await inject(tabId, target)") <
+    replacementDrainBlock.indexOf("oude worker kan niet veilig drainen na runtime-rebind"),
+  "replacement drain may fail closed only after the runtime rebind path was attempted"
+);
+assert.ok(
+  replacementDrainBlock.includes('reboundMode === "violentmonkey"') &&
+    replacementDrainBlock.includes("await signalReplacementDrain(tabId, reason)"),
+  "replacement drain must redispatch the drain event after proving a Violentmonkey rebind"
+);
+assert.ok(
+  !replacementDrainBlock.includes("/runner-control") &&
+    !replacementDrainBlock.includes('desired_state = "draining"') &&
+    !replacementDrainBlock.includes("desired_state='draining'"),
+  "replacement drain rebind must not mutate backend ownership or desired state"
+);
+assert.ok(
+  background.includes('event: "replacement-drain-rebind"'),
+  "runtime rebind must leave explicit replacement-drain telemetry"
+);
+
 const runStart = background.indexOf("function runProject");
 const refreshStart = background.indexOf("function postStatus");
 assert.ok(runStart >= 0 && refreshStart > runStart, "runProject block missing");
