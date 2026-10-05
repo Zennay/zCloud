@@ -368,6 +368,7 @@ function workerKeysFor(projectId, activeOnly = false) {
 }
 
 function runProject(cfg) {
+  const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
   const marker = "__ZC_RUNNER_V2_" + cfg.projectId.replace(/[^a-z0-9]/gi, "");
   if (window[marker]) return;
   window[marker] = true;
