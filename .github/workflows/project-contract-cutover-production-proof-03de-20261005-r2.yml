@@ -28,6 +28,11 @@ jobs:
           set -Eeuo pipefail
           deadline=$((SECONDS + 840))
           while (( SECONDS < deadline )); do
+            current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            if [[ "$current" != "$EXPECTED" ]]; then
+              echo "main drifted before cutover proof: expected=$EXPECTED current=$current" >&2
+              exit 3
+            fi
             payload="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${EXPECTED}/status")"
             state="$(jq -r '[.statuses[] | select(.context=="zcloud/vps-production")] | sort_by(.created_at,.id) | last | .state // "missing"' <<<"$payload")"
             echo "production_status=$state expected=$EXPECTED"
