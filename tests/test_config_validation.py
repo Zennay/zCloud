@@ -110,6 +110,14 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("ai_worker_cap=0 requires external_gate/manual" in x for x in result["errors"]))
 
+    def test_blocks_unsupported_lane_profile(self):
+        contracts = json.loads(self.project_contracts.read_text())
+        contracts["projects"]["cloud"]["lane_profile"] = "mystery"
+        self.project_contracts.write_text(json.dumps(contracts))
+        result = self.validate()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("lane_profile: expected one of" in x for x in result["errors"]))
+
     def test_blocks_duplicate_project_id_and_bad_progress(self):
         data = json.loads(self.projects.read_text())
         data[0]["milestones"][0]["progress"] = 101
