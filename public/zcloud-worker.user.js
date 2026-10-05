@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.10
+// @version      1.3.11
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.10";
+  const SCRIPT_VERSION = "1.3.11";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -63,7 +63,6 @@
   let lastProgressAt = Date.now();
   let lastPromptSentAt = 0;
   let lastHandledCommandId = 0;
-  let initialDispatchKey = "";
   const bridgedInitialDispatchProjects = new Set();
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
@@ -421,13 +420,12 @@
 
     const forced = !!target.force_initial_dispatch;
     const key = String(target.queue_item?.queue_id || "");
-    if (forced && key && initialDispatchKey !== key && assignmentReady(target)) {
-      // Do not consume the forced-dispatch key until a prompt was actually sent.
-      // Fresh ChatGPT tabs can expose the worker binding before their composer is
-      // ready; a failed first attempt must remain retryable on the next refresh.
+    if (forced && key && assignmentReady(target)) {
+      // Explicit Start is edge-triggered by the bridge, not by queue identity.
+      // The same queue item may legitimately be re-driven after an earlier run;
+      // keep retrying until a prompt is actually sent, then clear the force edge.
       const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");
       if (initialDispatchSent) {
-        initialDispatchKey = key;
         bridgedInitialDispatchProjects.delete(target.project_id);
         target.force_initial_dispatch = false;
         document.documentElement?.setAttribute("data-zcloud-force-initial-dispatch", "false");
