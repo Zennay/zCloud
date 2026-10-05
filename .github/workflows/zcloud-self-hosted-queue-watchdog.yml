@@ -63,7 +63,7 @@ jobs:
                   if job.get("status") != "queued":
                       continue
                   labels={str(x).lower() for x in (job.get("labels") or [])}
-                  if "zcloud" not in labels:
+                  if "self-hosted" not in labels:
                       continue
                   stale.append({
                       "run_id":run["id"],
@@ -97,7 +97,7 @@ jobs:
 
           remaining=[x for x in stale if x["run_id"] not in set(cancelled)]
           evidence={
-              "stale_zcloud_jobs":remaining,
+              "stale_self_hosted_jobs":remaining,
               "cancelled_superseded_runs":cancelled,
               "count":len(remaining),
           }
