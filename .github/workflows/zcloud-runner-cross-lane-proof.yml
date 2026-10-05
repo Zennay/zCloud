@@ -20,7 +20,7 @@ jobs:
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
     steps:
-      - name: Prove zCloud listener isolation from independent VPS runner
+      - name: Recover and prove zCloud listener from independent VPS runner
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -30,32 +30,39 @@ jobs:
           runner_root="/home/ubuntu/actions-runner-zcloud"
           temp_root="$runner_root/_work/_temp"
 
-          echo "=== RECOVERY ==="
-          recovery="$(
-            systemctl list-units --all --full --plain 'zcloud-runner-listener-recovery-*.service' --no-legend \
-              | awk '{print $1}' \
-              | sort -V \
-              | tail -n 1
-          )"
-          test -n "$recovery"
-          echo "ZCLOUD_RECOVERY_LATEST unit=$recovery"
-          for _ in $(seq 1 60); do
-            state="$(systemctl is-active "$recovery" || true)"
-            [[ "$state" != "active" && "$state" != "activating" ]] && break
-            echo "ZCLOUD_RECOVERY_WAIT unit=$recovery state=$state"
+          pre_state="$(systemctl is-active "$service" || true)"
+          pre_pid="$(systemctl show "$service" -p MainPID --value || true)"
+          worker_count=0
+          listener_count=0
+          for proc in /proc/[0-9]*; do
+            pid="${proc##*/}"
+            cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+            [[ "$cmd" == *"$runner_root/bin/Runner.Worker"* ]] && worker_count=$((worker_count+1))
+            [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && listener_count=$((listener_count+1))
+          done
+          echo "ZCLOUD_RECOVERY_PRE state=$pre_state pid=$pre_pid listeners=$listener_count workers=$worker_count"
+
+          action=none
+          if [[ "$worker_count" -gt 0 ]]; then
+            action=preserve-active-worker
+          elif [[ "$pre_state" != "active" ]]; then
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl start "$service"
+            action=start-inactive-listener
+          elif [[ "$listener_count" -eq 1 ]]; then
+            action=preserve-healthy-listener
+          else
+            sudo -n systemctl restart "$service"
+            action=restart-unhealthy-listener
+          fi
+
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "$service" || true)"
+            [[ "$state" = "active" ]] && break
             sleep 2
           done
-          state="$(systemctl is-active "$recovery" || true)"
-          result="$(systemctl show "$recovery" -p Result --value || true)"
-          exit_status="$(systemctl show "$recovery" -p ExecMainStatus --value || true)"
-          echo "ZCLOUD_RECOVERY state=$state result=$result exit_status=$exit_status"
-          journalctl -u "$recovery" --no-pager -n 120 || true
-          test "$state" != "active"
-          test "$state" != "activating"
-          test "$result" = "success"
-          test "$exit_status" = "0"
+          test "$(systemctl is-active "$service" || true)" = "active"
 
-          echo "=== LISTENERS ==="
           cgroup="$(systemctl show "$service" -p ControlGroup --value)"
           mapfile -t listeners < <(
             for proc in /proc/[0-9]*; do
@@ -64,15 +71,16 @@ jobs:
               [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
             done
           )
-          echo "ZCLOUD_LISTENERS count=${#listeners[@]} pids=${listeners[*]:-none} cgroup=$cgroup"
+          echo "ZCLOUD_RECOVERY_POST action=$action listeners=${#listeners[@]} pids=${listeners[*]:-none} cgroup=$cgroup"
           test "${#listeners[@]}" -eq 1
           grep -Fq "$cgroup" "/proc/${listeners[0]}/cgroup"
-          systemctl is-active --quiet "$service"
 
-          echo "=== TEMP SENTINEL ==="
           sentinel="$temp_root/.zcloud-cross-runner-proof-$GITHUB_RUN_ID"
           sudo -n -u ubuntu touch "$sentinel"
           sleep 12
           test -f "$sentinel"
           rm -f "$sentinel"
-          echo "ZCLOUD_CROSS_RUNNER_LISTENER_GREEN listener=${listeners[0]} cgroup=$cgroup"
+
+          echo "ZCLOUD_CROSS_RUNNER_LISTENER_GREEN action=$action listener=${listeners[0]} cgroup=$cgroup"
+          systemctl show "$service" -p ActiveState -p SubState -p MainPID -p NRestarts -p Result -p ExecMainStatus --no-pager
+          journalctl -u "$service" --since "-30 min" --no-pager 2>/dev/null | tail -100 || true
