@@ -292,6 +292,71 @@ class DeploySafeIdleTests(unittest.TestCase):
         self.assertTrue(restored["ok"])
         self.assertEqual("running", self.state_of())
 
+    def test_failed_drain_with_post_command_runner_stop_is_terminal_idle(self):
+        def stop_after_drain():
+            deadline = time.time() + 1
+            while time.time() < deadline:
+                command = self.pending_drain()
+                if self.state_of() == "draining" and command is not None:
+                    with sqlite3.connect(self.db) as conn:
+                        conn.execute(
+                            "UPDATE runner_commands SET status='failed',result=? WHERE id=?",
+                            ("worker-progress-watchdog superseded stale pending command", command[0]),
+                        )
+                        conn.execute(
+                            "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) "
+                            "VALUES(?,?,?,?,?,?)",
+                            (
+                                datetime.now(timezone.utc).isoformat(),
+                                "runner-stopped",
+                                "cloud",
+                                1,
+                                0,
+                                0,
+                            ),
+                        )
+                    return
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=stop_after_drain)
+        thread.start()
+        result = safe_idle.enter_safe_idle(
+            self.db,
+            self.state,
+            timeout_seconds=1,
+            poll_seconds=0.01,
+            stable_seconds=0.02,
+            offline_after_seconds=300,
+        )
+        thread.join(timeout=1)
+
+        self.assertTrue(result["safe_idle"])
+        self.assertEqual("paused", self.state_of())
+        payload = json.loads(self.state.read_text())
+        self.assertEqual("terminal-idle", payload["auto_quiesced_workers"][0]["reason"])
+        command = self.pending_drain()
+        self.assertEqual("failed", command[1])
+
+    def test_pre_drain_runner_stop_does_not_count_as_terminal_idle(self):
+        self.add_event(
+            age_seconds=1,
+            generating=0,
+            sending=0,
+            event="runner-stopped",
+        )
+        with self.assertRaises(safe_idle.SafeIdleError):
+            safe_idle.enter_safe_idle(
+                self.db,
+                self.state,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+                stable_seconds=0.01,
+                offline_after_seconds=300,
+            )
+        payload = json.loads(self.state.read_text())
+        self.assertEqual("pending", payload["blocking_workers"][0]["drain_command_status"])
+        self.assertEqual("running", self.state_of())
+
     def test_pre_drain_config_event_does_not_count_as_ack(self):
         self.add_event(
             age_seconds=1,
