@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
     env:
       PR20_SHA: e2ffed835fa637acd14db0dd16870c9afbec3922
-      PR21_SHA: 113d31308baf397ca51f0d6f7cbcc9ff79001f53
+      PR21_SHA: 5df27d93713df40d31d27b1da13d66998b47136d
     steps:
       - name: Guard VPS identity
         shell: bash
