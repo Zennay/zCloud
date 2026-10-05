@@ -659,6 +659,7 @@ jobs:
           python3 scripts/zcloud_transactional_promote.py \
             --candidate "$GITHUB_WORKSPACE" \
             --path scripts/zcloud_recovery.py \
+            --path scripts/zcloud_healthcheck.py \
             --path autonomy-policy.json \
             --path portfolio_queue.seed.json \
             --preserve-prechange-drift public/zcloud-worker.user.js \
