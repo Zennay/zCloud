@@ -1,0 +1,90 @@
+name: PWQ-24 zCloud listener recovery
+
+on:
+  push:
+    branches:
+      - ops/pwq24-zcloud-listener-recovery-20261005
+    paths:
+      - .github/workflows/pwq24-zcloud-listener-recovery-20261005.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwq24-zcloud-listener-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    steps:
+      - name: Prove or recover idle zCloud Actions listener
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+
+          listener_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          }
+
+          worker_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Worker"* ]] && echo "$pid"
+            done
+          }
+
+          state="$(systemctl is-active "$service" || true)"
+          mapfile -t listeners < <(listener_pids)
+          mapfile -t workers < <(worker_pids)
+          echo "PWQ24_ZCLOUD_RUNNER_PRE state=$state listeners=${#listeners[@]} workers=${#workers[@]} listener_pids=${listeners[*]:-none} worker_pids=${workers[*]:-none}"
+
+          if [[ "${#workers[@]}" -gt 0 ]]; then
+            echo "PWQ24_ZCLOUD_RUNNER_PRESERVE_ACTIVE_WORKER=1"
+            exit 0
+          fi
+
+          sleep 3
+          mapfile -t workers < <(worker_pids)
+          if [[ "${#workers[@]}" -gt 0 ]]; then
+            echo "PWQ24_ZCLOUD_RUNNER_PRESERVE_LATE_WORKER=1 pids=${workers[*]}"
+            exit 0
+          fi
+
+          if [[ "$state" != "active" || "${#listeners[@]}" -ne 1 ]]; then
+            echo "PWQ24_ZCLOUD_RUNNER_RECOVERY=restart_idle_unhealthy_listener"
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl restart "$service"
+            for _ in $(seq 1 20); do
+              state="$(systemctl is-active "$service" || true)"
+              mapfile -t listeners < <(listener_pids)
+              if [[ "$state" == "active" && "${#listeners[@]}" -eq 1 ]]; then
+                break
+              fi
+              sleep 1
+            done
+          else
+            echo "PWQ24_ZCLOUD_RUNNER_RECOVERY=preserve_healthy_idle_listener"
+          fi
+
+          state="$(systemctl is-active "$service" || true)"
+          mapfile -t listeners < <(listener_pids)
+          mapfile -t workers < <(worker_pids)
+          cgroup="$(systemctl show "$service" -p ControlGroup --value || true)"
+          echo "PWQ24_ZCLOUD_RUNNER_POST state=$state listeners=${#listeners[@]} workers=${#workers[@]} listener_pids=${listeners[*]:-none} worker_pids=${workers[*]:-none} cgroup=$cgroup"
+          journalctl -u "$service" --no-pager -n 80 || true
+
+          test "$state" = "active"
+          test "${#listeners[@]}" -eq 1
+          grep -Fq "$cgroup" "/proc/${listeners[0]}/cgroup"
