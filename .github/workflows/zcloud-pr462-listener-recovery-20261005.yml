@@ -1,0 +1,97 @@
+name: Recover zCloud listener for PR 462 validation
+
+on:
+  push:
+    branches:
+      - ops/zcloud-pr462-listener-recovery-20261005
+    paths:
+      - .github/workflows/zcloud-pr462-listener-recovery-20261005.yml
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: zcloud-pr462-listener-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    steps:
+      - name: Recover idle zCloud Actions listener only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: 9c9eec916016f12465d0c2c5a75235406ae3b4f8
+          TARGET_RUNS: "37266274074 37266274062 37266274111"
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+
+          queued=0
+          for run_id in $TARGET_RUNS; do
+            raw="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id")"
+            test "$(jq -r .head_sha <<<"$raw")" = "$TARGET_SHA"
+            status="$(jq -r .status <<<"$raw")"
+            echo "TARGET_RUN id=$run_id status=$status"
+            [[ "$status" == "queued" ]] && queued=$((queued+1))
+          done
+          test "$queued" -ge 1
+
+          state="$(systemctl is-active "$service" || true)"
+          main_pid="$(systemctl show "$service" -p MainPID --value || true)"
+          mapfile -t workers < <(
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Worker"* ]] && echo "$pid"
+            done
+          )
+          echo "ZCLOUD_LISTENER_PRE state=$state main_pid=$main_pid active_workers=${#workers[@]} worker_pids=${workers[*]:-none}"
+
+          if [[ "${#workers[@]}" -gt 0 ]]; then
+            echo "ZCLOUD_LISTENER_PRESERVE_ACTIVE_WORKER"
+          else
+            sudo -n systemctl restart "$service"
+            echo "ZCLOUD_LISTENER_RESTARTED"
+          fi
+
+          for attempt in $(seq 1 20); do
+            state="$(systemctl is-active "$service" || true)"
+            main_pid="$(systemctl show "$service" -p MainPID --value || true)"
+            echo "ZCLOUD_LISTENER_POST attempt=$attempt state=$state main_pid=$main_pid"
+            [[ "$state" == "active" && "$main_pid" != "0" ]] && break
+            sleep 2
+          done
+          test "$state" = "active"
+          test "$main_pid" != "0"
+
+          cgroup="$(systemctl show "$service" -p ControlGroup --value)"
+          mapfile -t listeners < <(
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          )
+          echo "ZCLOUD_LISTENERS count=${#listeners[@]} pids=${listeners[*]:-none} cgroup=$cgroup"
+          test "${#listeners[@]}" -eq 1
+          grep -Fq "$cgroup" "/proc/${listeners[0]}/cgroup"
+
+          progressed=0
+          for attempt in $(seq 1 15); do
+            for run_id in $TARGET_RUNS; do
+              status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id" --jq .status)"
+              echo "TARGET_POLL attempt=$attempt id=$run_id status=$status"
+              [[ "$status" != "queued" ]] && progressed=1
+            done
+            [[ "$progressed" -eq 1 ]] && break
+            sleep 2
+          done
+          test "$progressed" -eq 1
+          echo "ZCLOUD_PR462_LISTENER_RECOVERY_GREEN=1"
