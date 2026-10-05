@@ -21,6 +21,9 @@ DEFAULT_LOCK = Path(os.environ.get(
 ))
 
 
+LEGACY_RUNTIME_CONTRACT_FIELDS = ("queue_mode", "lane_profile")
+
+
 class RepairError(RuntimeError):
     pass
 
@@ -36,9 +39,32 @@ def sha256_bytes(value: bytes) -> str:
 def repair_projects(projects, candidate_projects=None):
     if not isinstance(projects, list):
         raise RepairError("projects.json must be an array")
+
+    candidate_by_id = {}
+    candidate_order = []
+    if candidate_projects is not None:
+        if not isinstance(candidate_projects, list):
+            raise RepairError("candidate projects.json must be an array")
+        for item in candidate_projects:
+            if not isinstance(item, dict):
+                raise RepairError("candidate projects.json entries must be objects")
+            project_id = str(item.get("id") or "").strip()
+            if not project_id:
+                raise RepairError("candidate project without id")
+            if project_id in candidate_by_id:
+                raise RepairError(f"duplicate candidate project id {project_id!r}")
+            candidate_by_id[project_id] = item
+            candidate_order.append(project_id)
+
     repaired = json.loads(json.dumps(projects, ensure_ascii=False))
     changed = []
+    changed_ids = set()
     live_ids = set()
+
+    def mark_changed(project_id: str) -> None:
+        if project_id not in changed_ids:
+            changed.append(project_id)
+            changed_ids.add(project_id)
 
     for item in repaired:
         if not isinstance(item, dict):
@@ -48,37 +74,35 @@ def repair_projects(projects, candidate_projects=None):
             if project_id in live_ids:
                 raise RepairError(f"duplicate runtime project id {project_id!r}")
             live_ids.add(project_id)
+
+        # project-contracts.json now owns these runtime fields. Remove legacy
+        # copies only when the exact candidate project has also dropped them,
+        # preserving compatibility with older candidate revisions.
+        candidate_item = candidate_by_id.get(project_id)
+        if candidate_item is not None:
+            for field in LEGACY_RUNTIME_CONTRACT_FIELDS:
+                if field in item and field not in candidate_item:
+                    item.pop(field, None)
+                    mark_changed(project_id)
+
         revision = item.get("milestone_revision")
         if isinstance(revision, str) and revision.strip():
             continue
         if not project_id:
             raise RepairError("cannot repair milestone_revision for project without id")
         item["milestone_revision"] = "runtime-import-v1"
-        changed.append(project_id)
+        mark_changed(project_id)
 
-    if candidate_projects is not None:
-        if not isinstance(candidate_projects, list):
-            raise RepairError("candidate projects.json must be an array")
-        candidate_ids = set()
-        for item in candidate_projects:
-            if not isinstance(item, dict):
-                raise RepairError("candidate projects.json entries must be objects")
-            project_id = str(item.get("id") or "").strip()
-            if not project_id:
-                raise RepairError("candidate project without id")
-            if project_id in candidate_ids:
-                raise RepairError(f"duplicate candidate project id {project_id!r}")
-            candidate_ids.add(project_id)
-            if project_id in live_ids:
-                continue
-
-            added = json.loads(json.dumps(item, ensure_ascii=False))
-            revision = added.get("milestone_revision")
-            if not isinstance(revision, str) or not revision.strip():
-                added["milestone_revision"] = "runtime-import-v1"
-            repaired.append(added)
-            live_ids.add(project_id)
-            changed.append(project_id)
+    for project_id in candidate_order:
+        if project_id in live_ids:
+            continue
+        added = json.loads(json.dumps(candidate_by_id[project_id], ensure_ascii=False))
+        revision = added.get("milestone_revision")
+        if not isinstance(revision, str) or not revision.strip():
+            added["milestone_revision"] = "runtime-import-v1"
+        repaired.append(added)
+        live_ids.add(project_id)
+        mark_changed(project_id)
 
     return repaired, changed
 
