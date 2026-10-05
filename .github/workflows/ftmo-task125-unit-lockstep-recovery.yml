@@ -1,0 +1,114 @@
+name: FTMO TASK-125 unit lockstep recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-task125-unit-lockstep-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-task125-unit-lockstep-recovery
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Repair exact FTMO main unit drift
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_SHA="0505a6b051dd63d828fd38cca54987fdf885c343"
+          SERVICE="ftmo-autonomous-marathon.service"
+          RUNNER_SERVICE="actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service"
+          REPO_ROOT="/opt/ftmo-autonomous"
+          ZCLOUD_CONTROL_ROOT="${ZCLOUD_CONTROL_ROOT:-/home/ubuntu/zennay-cloud}"
+          ZCLOUD_RESOURCE_DB="${ZCLOUD_RESOURCE_DB:-$ZCLOUD_CONTROL_ROOT/history.db}"
+
+          test -d "$REPO_ROOT"
+          test -f "$ZCLOUD_CONTROL_ROOT/scripts/zcloud_governed_exec.py"
+          test -f "$ZCLOUD_CONTROL_ROOT/project-contracts.json"
+
+          RUN_USER="$(systemctl show "$RUNNER_SERVICE" -p User --value)"
+          test -n "$RUN_USER"
+
+          PYTHON_BIN="${FTMO_SYSTEM_PYTHON:-}"
+          if [[ -z "$PYTHON_BIN" ]]; then
+            if command -v python3.12 >/dev/null 2>&1; then
+              PYTHON_BIN="$(command -v python3.12)"
+            else
+              PYTHON_BIN="$(command -v python3)"
+            fi
+          fi
+          "$PYTHON_BIN" - <<'PY'
+          import sys
+          if sys.version_info < (3, 12):
+              raise SystemExit("FTMO autonomous runtime requires Python 3.12+")
+          PY
+
+          rendered="$(mktemp)"
+          backup="/etc/systemd/system/$SERVICE.task125-pre-repair"
+          trap 'rm -f "$rendered"' EXIT
+
+          cat >"$rendered" <<UNIT
+          [Unit]
+          Description=FTMO continuous autonomous research marathon
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=$RUN_USER
+          WorkingDirectory=$REPO_ROOT
+          Environment=PYTHONUNBUFFERED=1
+          Environment=FTMO_PYTHON=$REPO_ROOT/.venv/bin/python
+          Environment=FTMO_AUTONOMOUS_CLOUD_BUDGET_USD=0.00
+          Environment=FTMO_ALLOW_PAID_AWS=
+          Environment=FTMO_RESEARCH_MAX_WORKERS=5
+          Environment=FTMO_RESEARCH_RESERVE_CPUS=1
+          Environment=ZCLOUD_CONTROL_ROOT=$ZCLOUD_CONTROL_ROOT
+          Environment=ZCLOUD_RESOURCE_DB=$ZCLOUD_RESOURCE_DB
+          ExecStart=$PYTHON_BIN $ZCLOUD_CONTROL_ROOT/scripts/zcloud_governed_exec.py --db $ZCLOUD_RESOURCE_DB --project ftmo --owner ftmo-autonomous-marathon --lease-seconds 300 --renew-seconds 60 -- /bin/bash $REPO_ROOT/scripts/run-autonomous-marathon.sh $REPO_ROOT
+          Restart=always
+          RestartSec=30s
+          Nice=0
+          CPUWeight=10000
+          CPUQuota=500%
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=full
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          ! grep -Eq '__[A-Z0-9_]+__' "$rendered"
+
+          if ! sudo -n cmp -s "$rendered" "/etc/systemd/system/$SERVICE"; then
+            if [[ -f "/etc/systemd/system/$SERVICE" ]]; then
+              sudo -n cp -f "/etc/systemd/system/$SERVICE" "$backup"
+            fi
+            sudo -n install -m 0644 "$rendered" "/etc/systemd/system/$SERVICE"
+            sudo -n systemctl daemon-reload
+            sudo -n systemctl restart "$SERVICE"
+          fi
+
+          sudo -n cmp "$rendered" "/etc/systemd/system/$SERVICE"
+          systemctl is-active --quiet "$SERVICE"
+
+          pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+          kill -0 "$pid"
+          cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+          [[ "$cmdline" == *"zcloud_governed_exec.py"* ]]
+          [[ "$cmdline" == *"run-autonomous-marathon.sh"* ]]
+
+          echo "FTMO_TASK125_UNIT_LOCKSTEP=verified"
+          echo "FTMO_TASK125_TARGET_SHA=$TARGET_SHA"
+          echo "FTMO_TASK125_SERVICE_PID=$pid"
