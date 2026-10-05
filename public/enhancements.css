@@ -255,7 +255,7 @@
 .project-action-copy span{display:flex;align-items:center;gap:7px;color:#dbe3ec;font-size:12px;font-weight:650}
 .project-action-copy i{width:7px;height:7px;border-radius:50%;background:#687381;box-shadow:0 0 0 3px rgba(104,115,129,.12)}
 .project-action-copy i.is-active{background:var(--lime);box-shadow:0 0 0 3px rgba(194,249,112,.12)}
-.project-action-buttons{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.project-action-buttons{display:flex;align-items:center;gap:8px;flex:0 0 auto;flex-wrap:wrap}
 .project-primary-button,.project-secondary-button{min-height:var(--ux-control-height);border-radius:10px;padding:0 15px;font-size:12px;font-weight:750;letter-spacing:.01em;transition:transform .15s ease,background .15s ease,border-color .15s ease}
 .project-primary-button{border:1px solid #c2f970;background:var(--lime);color:#0c0e13}
 .project-primary-button:hover:not(:disabled){transform:translateY(-1px);background:#d0ff8a}

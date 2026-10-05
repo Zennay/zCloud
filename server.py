@@ -3851,6 +3851,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or '')
                 action=str(payload.get('action') or '')
+                force_start=action=='start' and payload.get('force') is True
                 if action=='restart_firefox':
                     try:
                         status=restart_firefox_runtime()
@@ -3898,11 +3899,18 @@ class Handler(BaseHTTPRequestHandler):
                         "SELECT id,action FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
                         (project_id,)
                     ).fetchone()
+                    if force_start and inflight and inflight['action']==action:
+                        forced_at=now()
+                        c.execute(
+                            "UPDATE runner_commands SET status='failed',updated_at=?,result=? WHERE id=? AND status='pending'",
+                            (forced_at,'Superseded by explicit Force start',int(inflight['id'])),
+                        )
+                        inflight=None
                     if inflight and inflight['action']==action:
                         command_id=int(inflight['id']);deduplicated=True
                     else:
                         recent=c.execute("SELECT created_at FROM runner_commands WHERE project_id=? AND action=? AND status='completed' ORDER BY id DESC LIMIT 1",(project_id,action)).fetchone()
-                        if recent:
+                        if recent and not force_start:
                             try:
                                 seconds=(datetime.now(timezone.utc)-datetime.fromisoformat(recent['created_at'])).total_seconds()
                                 cooldown=5 if action in ('push','start','pause','drain') else 30
@@ -3950,7 +3958,7 @@ class Handler(BaseHTTPRequestHandler):
                             command_id=cur.lastrowid
                 if rate_limited:
                     return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
-                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause','desired_state':desired_state,'deduplicated':deduplicated})
+                return self.reply({'ok':True,'command_id':command_id,'status':'pending','active':action!='pause','desired_state':desired_state,'deduplicated':deduplicated,'forced':force_start})
             if u.path=='/api/improvement-loop':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 project_id=str(payload.get('project_id') or IMPROVEMENT_PROJECT_ID).strip()
