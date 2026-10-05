@@ -249,6 +249,27 @@ def append_log(state: Path, event: str, **fields) -> None:
         f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def previously_used_snapshot_ids(state: Path) -> set[str]:
+    """Return snapshot ids already recorded in the durable recovery log."""
+    log = state / "recovery.log"
+    if not log.is_file():
+        return set()
+    used: set[str] = set()
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return used
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        snapshot_id = str(row.get("snapshot_id") or "")
+        if snapshot_id:
+            used.add(snapshot_id)
+    return used
+
+
 def prune_recovery_snapshots(
     state: Path,
     *,
@@ -339,7 +360,12 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
     snapshots = state / "snapshots"
     snap_id = base_snap_id
     collision = 1
-    while (snapshots / snap_id).exists() or (snapshots / ("." + snap_id + ".tmp")).exists():
+    used_snapshot_ids = previously_used_snapshot_ids(state)
+    while (
+        snap_id in used_snapshot_ids
+        or (snapshots / snap_id).exists()
+        or (snapshots / ("." + snap_id + ".tmp")).exists()
+    ):
         collision += 1
         snap_id = base_snap_id + "-" + str(collision)
     final = snapshots / snap_id
