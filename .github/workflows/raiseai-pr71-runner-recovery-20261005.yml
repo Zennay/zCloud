@@ -1,0 +1,101 @@
+name: Recover RaiseAI runner for PR71
+
+on:
+  push:
+    branches:
+      - ops/raiseai-pr71-runner-recovery-20261005
+    paths:
+      - ".github/workflows/raiseai-pr71-runner-recovery-20261005.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RAISE_REPO: Zennay/RaiseAI
+      PR_NUMBER: "71"
+      EXPECTED_HEAD: 3cf92caaea27bdd3134c27990fc19665aac99e59
+      WATCH_RUN_ID: "37339709015"
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+    steps:
+      - name: Verify protected RaiseAI gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .state)" = "open"
+          test "$(gh api repos/$RAISE_REPO/pulls/$PR_NUMBER --jq .head.sha)" = "$EXPECTED_HEAD"
+          test "$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .head_sha)" = "$EXPECTED_HEAD"
+          test "$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .name)" = "Raise Watch app CI"
+          test "$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .status)" = "queued"
+          echo "RAISEAI_PR71_GATE_IDENTITY_GREEN"
+
+      - name: Recover only idle RaiseAI runner listener
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          pre_state="$(systemctl is-active "$RAISE_SERVICE" || true)"
+          pre_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value || true)"
+          control_group="$(systemctl show "$RAISE_SERVICE" -p ControlGroup --value || true)"
+          worker_before=0
+
+          if [[ -n "$control_group" && "$control_group" != "/" ]]; then
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cgroup" || continue
+              grep -Fq "$control_group" "$proc/cgroup" || continue
+              test -r "$proc/cmdline" || continue
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              if [[ "$cmdline" == *"Runner.Worker"* ]]; then
+                worker_before=1
+                break
+              fi
+            done
+          fi
+
+          run_status="$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .status)"
+          echo "RAISEAI_PR71_RUNNER_PRE state=$pre_state pid=$pre_pid worker=$worker_before run=$run_status"
+
+          if [[ "$worker_before" -eq 1 ]]; then
+            echo "active Runner.Worker detected; refusing restart"
+            exit 1
+          fi
+          test "$run_status" = "queued"
+
+          sudo -n systemctl reset-failed "$RAISE_SERVICE" || true
+          sudo -n systemctl restart "$RAISE_SERVICE"
+
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$RAISE_SERVICE" || true)"
+            post_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value || true)"
+            if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              post_cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+              if [[ "$post_cmdline" == *"Runner.Listener"* || "$post_cmdline" == *"runsvc.sh"* ]]; then
+                echo "RAISEAI_PR71_RUNNER_LISTENER_GREEN state=$post_state pid=$post_pid"
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo "RaiseAI listener did not become healthy" >&2
+          exit 1
+
+      - name: Prove PR71 leaves queued state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for _ in $(seq 1 48); do
+            status="$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .status)"
+            conclusion="$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq '.conclusion // ""')"
+            echo "RAISEAI_PR71_WATCH status=$status conclusion=$conclusion"
+            if [[ "$status" == "in_progress" || "$status" == "completed" ]]; then
+              echo "RAISEAI_PR71_SCHEDULE_GREEN status=$status conclusion=$conclusion"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "PR71 remained queued after runner recovery" >&2
+          exit 1
