@@ -33,7 +33,7 @@ jobs:
           base="$(gh api repos/Zennay/Lightup/pulls/29 --jq .base.ref)"
           test "$state" = "open"
           test "$base" = "main"
-          test "$sha" = "6402ae5f1e3d193a1ddf3af6d6e0814875251281"
+          test "$sha" = "fa493eb678f9cea1d7f2ccecc6617ad8ea7b2e42"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "LIGHTUP_PR29_HEAD=$sha BASE=$base"
 
