@@ -296,14 +296,60 @@ jobs:
                       result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
                   actions.append({'worker': key, 'action': 'start', 'result': result})
 
+          # The queue may legitimately rebind a project to another worker slot while
+          # this live proof is running. Re-drive exactly-once start for each newly
+          # selected worker key so the acceptance evaluates the current allocation
+          # instead of a stale slot that happened to be selected earlier.
+          started_workers = {
+              str(item.get('worker') or '')
+              for item in actions
+              if item.get('action') == 'start' and item.get('worker')
+          }
           final = {}
           deadline = time.time() + 150
           while time.time() < deadline:
               targets, selected = allocation()
               if REQUIRED.issubset(selected):
-                  final = evidence(selected)
-                  if REQUIRED.issubset(final) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values()):
-                      break
+                  for project in sorted(REQUIRED):
+                      key = selected.get(project)
+                      if not key or key in started_workers:
+                          continue
+                      try:
+                          result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                      except urllib.error.HTTPError as exc:
+                          raw = exc.read().decode('utf-8', 'replace')
+                          try:
+                              body = json.loads(raw)
+                          except Exception:
+                              body = {'error': raw}
+                          if exc.code == 400 and body.get('error') == 'Ongeldige runneractie':
+                              actions.append({
+                                  'project': project,
+                                  'worker': key,
+                                  'action': 'rebind-start',
+                                  'result': {
+                                      'resync': 'stale-before-start',
+                                      'http_status': 400,
+                                      'body': body,
+                                  },
+                              })
+                              continue
+                          raise
+                      started_workers.add(key)
+                      actions.append({
+                          'project': project,
+                          'worker': key,
+                          'action': 'rebind-start',
+                          'result': result,
+                      })
+
+                  # Re-read allocation after any rebind start so evidence is tied to
+                  # the currently selected worker keys, not the pre-action snapshot.
+                  targets, selected = allocation()
+                  if REQUIRED.issubset(selected):
+                      final = evidence(selected)
+                      if REQUIRED.issubset(final) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values()):
+                          break
               time.sleep(5)
 
           # Worker activation can briefly overlap scheduler/browser reconciliation.
