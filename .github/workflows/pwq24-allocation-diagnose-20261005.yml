@@ -5,6 +5,10 @@ on:
     branches: [ops/pwq24-allocation-diagnose-20261005-0607]
     paths:
       - ".github/workflows/pwq24-allocation-diagnose-20261005.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/pwq24-allocation-diagnose-20261005.yml"
 
 permissions:
   contents: read
