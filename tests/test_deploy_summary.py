@@ -1,4 +1,8 @@
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from scripts import zcloud_deploy_summary
 
@@ -54,6 +58,33 @@ class DeploySummaryTests(unittest.TestCase):
         )
         self.assertIn("Skipped before VPS mutation", summary)
         self.assertNotIn("Production deploy green", summary)
+
+
+    def test_cli_writes_summary_when_evidence_is_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "summary.md"
+            evidence = root / "evidence.json"
+            evidence.write_text("{not-json", encoding="utf-8")
+            argv = [
+                "zcloud_deploy_summary.py",
+                "--output", str(output),
+                "--evidence", str(evidence),
+                "--deploy-sha", "abc123",
+                "--deploy-decision", "false",
+                "--prewrite-decision", "",
+                "--job-status", "success",
+                "--regression-run-id", "",
+                "--regression-mode", "",
+                "--run-url", "run",
+                "--artifact-name", "artifact",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(0, zcloud_deploy_summary.main())
+            rendered = output.read_text(encoding="utf-8")
+            self.assertIn("Skipped before VPS mutation", rendered)
+            self.assertIn("| LKG snapshot | n/a |", rendered)
+
 
 
 if __name__ == "__main__":
