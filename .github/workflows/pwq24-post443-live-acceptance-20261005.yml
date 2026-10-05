@@ -205,80 +205,82 @@ jobs:
               time.sleep(5)
 
           actions = []
+          natural_green = False
           if REQUIRED.issubset(selected):
               auto_deadline = time.time() + 60
               while time.time() < auto_deadline:
                   ev = evidence(selected)
                   if REQUIRED.issubset(ev) and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in ev.values()):
+                      natural_green = True
                       break
                   time.sleep(5)
-              else:
-                  # Allocation can churn during the natural-evidence wait. Refresh.
-                  # If a required project is no longer allocated, re-activate the
-                  # project through the canonical project-level control first, then
-                  # wait boundedly for a concrete worker slot before forcing that
-                  # worker. This exercises the same recovery path as the dashboard
-                  # without treating a transient deallocation as acceptance.
-                  targets, selected = allocation()
-                  for project in sorted(REQUIRED):
-                      key = selected.get(project)
+
+          if not natural_green:
+              # Allocation can be incomplete from the start or churn during the
+              # natural-evidence wait. In both cases recover every required project
+              # through canonical project-level Start, wait boundedly for a concrete
+              # worker slot, then force the worker start. This keeps the proof tied
+              # to the same control path used by the dashboard.
+              targets, selected = allocation()
+              for project in sorted(REQUIRED):
+                  key = selected.get(project)
+                  if not key:
+                      project_result = call('POST', '/api/runner-control', {'project_id': project, 'action': 'start'})
+                      actions.append({
+                          'project': project,
+                          'action': 'start-project',
+                          'result': project_result,
+                      })
+                      allocation_deadline = time.time() + 60
+                      while time.time() < allocation_deadline:
+                          _, refreshed = allocation()
+                          key = refreshed.get(project)
+                          if key:
+                              selected = refreshed
+                              break
+                          time.sleep(3)
                       if not key:
-                          project_result = call('POST', '/api/runner-control', {'project_id': project, 'action': 'start'})
                           actions.append({
                               'project': project,
-                              'action': 'start-project',
-                              'result': project_result,
+                              'action': 'wait-allocation',
+                              'result': {'resync': 'allocation-timeout'},
                           })
-                          allocation_deadline = time.time() + 60
-                          while time.time() < allocation_deadline:
-                              _, refreshed = allocation()
-                              key = refreshed.get(project)
-                              if key:
-                                  selected = refreshed
-                                  break
-                              time.sleep(3)
-                          if not key:
-                              actions.append({
-                                  'project': project,
-                                  'action': 'wait-allocation',
-                                  'result': {'resync': 'allocation-timeout'},
-                              })
-                              continue
+                          continue
+                  try:
+                      result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                  except urllib.error.HTTPError as exc:
+                      raw = exc.read().decode('utf-8', 'replace')
                       try:
-                          result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
-                      except urllib.error.HTTPError as exc:
-                          raw = exc.read().decode('utf-8', 'replace')
-                          try:
-                              body = json.loads(raw)
-                          except Exception:
-                              body = {'error': raw}
-                          if exc.code != 400 or body.get('error') != 'Ongeldige runneractie':
-                              raise
-                          _, refreshed = allocation()
-                          fresh_key = refreshed.get(project)
-                          if not fresh_key:
-                              actions.append({
-                                  'project': project,
-                                  'worker': key,
-                                  'action': 'start',
-                                  'result': {
-                                      'resync': 'deallocated',
-                                      'http_status': 400,
-                                      'body': body,
-                                  },
-                              })
-                              continue
-                          if fresh_key == key:
-                              raise SystemExit(
-                                  'runner-control rejected current allocation: '
-                                  + json.dumps(
-                                      {'project': project, 'worker': key, 'body': body},
-                                      sort_keys=True,
-                                  )
+                          body = json.loads(raw)
+                      except Exception:
+                          body = {'error': raw}
+                      if exc.code != 400 or body.get('error') != 'Ongeldige runneractie':
+                          raise
+                      _, refreshed = allocation()
+                      fresh_key = refreshed.get(project)
+                      if not fresh_key:
+                          actions.append({
+                              'project': project,
+                              'worker': key,
+                              'action': 'start',
+                              'result': {
+                                  'resync': 'deallocated',
+                                  'http_status': 400,
+                                  'body': body,
+                              },
+                          })
+                          continue
+                      if fresh_key == key:
+                          raise SystemExit(
+                              'runner-control rejected current allocation: '
+                              + json.dumps(
+                                  {'project': project, 'worker': key, 'body': body},
+                                  sort_keys=True,
                               )
-                          key = fresh_key
-                          result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
-                      actions.append({'worker': key, 'action': 'start', 'result': result})
+                          )
+                      key = fresh_key
+                      result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                  actions.append({'worker': key, 'action': 'start', 'result': result})
 
           final = {}
           deadline = time.time() + 150
