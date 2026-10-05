@@ -2142,13 +2142,13 @@ def _portfolio_priority_rank(priority):
 def _manual_start_priority_key(project_id):
     return 'manual_start_priority:' + str(project_id or '').strip().lower()
 
-def _manual_start_priority_active_locked(connection, project_id, at=None):
-    project_id=str(project_id or '').strip().lower()
-    if not project_id:
-        return False
+def _manual_force_start_priority_key(project_id):
+    return 'manual_force_start_priority:' + str(project_id or '').strip().lower()
+
+def _bounded_manual_intent_active_locked(connection, key, at=None):
     row=connection.execute(
         'SELECT value FROM runtime_settings WHERE key=?',
-        (_manual_start_priority_key(project_id),),
+        (str(key or ''),),
     ).fetchone()
     if not row or not row['value']:
         return False
@@ -2158,6 +2158,26 @@ def _manual_start_priority_active_locked(connection, project_id, at=None):
         return 0 <= age <= MANUAL_START_PRIORITY_SECONDS
     except Exception:
         return False
+
+def _manual_start_priority_active_locked(connection, project_id, at=None):
+    project_id=str(project_id or '').strip().lower()
+    if not project_id:
+        return False
+    return _bounded_manual_intent_active_locked(
+        connection,
+        _manual_start_priority_key(project_id),
+        at,
+    )
+
+def _manual_force_start_priority_active_locked(connection, project_id, at=None):
+    project_id=str(project_id or '').strip().lower()
+    if not project_id:
+        return False
+    return _bounded_manual_intent_active_locked(
+        connection,
+        _manual_force_start_priority_key(project_id),
+        at,
+    )
 
 def _pending_worker_handoff_floor_locked(connection, project_id):
     """Highest local worker ordinal that must remain stable for an in-flight browser handoff.
@@ -2689,6 +2709,10 @@ def portfolio_queue_allocate():
     recovery_hold_until=_worker_recovery_hold_until()
     new_worker_capacity=0 if recovery_hold_until else max(0,int(memory_guard.get('new_worker_capacity') or 0))
     new_workers_claimed=0
+    # Force Start is allowed to override scheduler priority, but never active
+    # browser work. Read this outside the allocator transaction to avoid opening
+    # a nested SQLite connection while the write lock is held.
+    busy_worker_keys=_busy_ai_worker_keys()
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2700,6 +2724,73 @@ def portfolio_queue_allocate():
                      WHERE eligible=1 AND status IN ('claimed','running','verifying')
                        AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
         _portfolio_requeue_conflicting_claimed_lanes_locked(c,ts)
+
+        occupied_rows=c.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE worker_slot IS NOT NULL
+                 AND status IN ('claimed','running','verifying')
+                 AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+               ORDER BY worker_slot""",
+            (ts,),
+        ).fetchall()
+        occupied_projects={str(row['project_id'] or '') for row in occupied_rows}
+
+        # A Force Start only needs an allocation override when its project is not
+        # already resident. Pick one queued force-intent candidate deterministically.
+        force_pairs=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+        force_pairs=[
+            pair for pair in force_pairs
+            if str(pair[0]['project_id'] or '') not in occupied_projects
+            and _manual_force_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+        ]
+        force_pair=min(
+            force_pairs,
+            key=lambda pair: (
+                _portfolio_priority_rank(pair[0]['priority']),
+                str(pair[0]['created_at'] or ''),
+                str(pair[0]['queue_id'] or ''),
+            ),
+        ) if force_pairs else None
+        force_project=str(force_pair[0]['project_id'] or '') if force_pair else ''
+        force_queue_id=str(force_pair[0]['queue_id'] or '') if force_pair else ''
+
+        # If Force Start targets an already-resident project, the normal command
+        # path is enough; consume the transient allocation override immediately.
+        for project_id in occupied_projects:
+            if _manual_force_start_priority_active_locked(c,project_id,ts_dt):
+                c.execute(
+                    'DELETE FROM runtime_settings WHERE key=?',
+                    (_manual_force_start_priority_key(project_id),),
+                )
+
+        force_victim_slot=None
+        if force_pair:
+            local_ordinals={}
+            victims=[]
+            project_protection={'system':0,'high':1,'normal':2,'low':3,'background':4}
+            for occupied in occupied_rows:
+                row_project=str(occupied['project_id'] or '')
+                local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
+                local_slot=local_ordinals[row_project]
+                worker_key=f'{row_project}::w{local_slot}'
+                project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
+                if row_project==force_project or project_priority=='system':
+                    continue
+                if worker_key in busy_worker_keys:
+                    continue
+                handoff_floor=_pending_worker_handoff_floor_locked(c,row_project)
+                if 0 < local_slot <= handoff_floor:
+                    continue
+                victims.append((
+                    0 if _manual_start_priority_active_locked(c,row_project,ts_dt) else 1,
+                    -project_protection.get(project_priority,2),
+                    -_portfolio_priority_rank(occupied['priority']),
+                    str(occupied['updated_at'] or ''),
+                    int(occupied['worker_slot'] or 0),
+                ))
+            if victims:
+                force_victim_slot=min(victims)[-1]
+
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
@@ -2714,6 +2805,28 @@ def portfolio_queue_allocate():
             for item in selected:
                 pid=str(item.get('project_id') or '')
                 used_counts[pid]=used_counts.get(pid,0)+1
+
+            # Explicit Force Start may recycle exactly one safe idle occupied slot.
+            # This is intentionally separate from normal scheduler preemption:
+            # running/verifying work is only displaced when it is not generating
+            # or sending, has no in-flight browser handoff, and is not a system
+            # control-plane project.
+            force_replacement=False
+            if row and force_victim_slot==slot and force_pair:
+                previous_queue_id=str(row['queue_id'] or '')
+                c.execute(
+                    """UPDATE portfolio_queue
+                       SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                       WHERE queue_id=? AND status IN ('claimed','running','verifying')""",
+                    (ts,previous_queue_id),
+                )
+                preempted.add(previous_queue_id)
+                row=None
+                force_replacement=True
+                lane_candidates=[
+                    pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                    if str(pair[0]['queue_id'] or '')==force_queue_id
+                ]
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
                 # Once a browser command is pending, the queue claim is part of an
@@ -2810,6 +2923,14 @@ def portfolio_queue_allocate():
             if not lane_candidates:
                 continue
 
+            if force_replacement:
+                lane_candidates=[
+                    pair for pair in lane_candidates
+                    if str(pair[0]['queue_id'] or '')==force_queue_id
+                ]
+                if not lane_candidates:
+                    continue
+
             # Hard caps are project-specific and apply even when no alternative
             # project is runnable. This prevents FTMO PR/CI churn from consuming
             # more browser/code-worker slots than the runner can productively serve.
@@ -2855,6 +2976,15 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
+            if force_replacement and str(row['project_id'] or '')==force_project:
+                c.execute(
+                    'DELETE FROM runtime_settings WHERE key=?',
+                    (_manual_force_start_priority_key(force_project),),
+                )
+                force_pair=None
+                force_project=''
+                force_queue_id=''
+                force_victim_slot=None
             if not slot_was_occupied:
                 new_workers_claimed += 1
     return selected
@@ -3889,13 +4019,26 @@ class Handler(BaseHTTPRequestHandler):
                         # the same bounded project intent used by project-level Start so
                         # scheduler churn cannot evict a just-started worker mid-send.
                         intent_ts=now()
+                        actor=request_actor(self)
                         c.execute(
                             "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
-                            (_manual_start_priority_key(base_project_id),intent_ts,intent_ts,request_actor(self)),
+                            (_manual_start_priority_key(base_project_id),intent_ts,intent_ts,actor),
                         )
+                        if force_start:
+                            c.execute(
+                                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                                (_manual_force_start_priority_key(base_project_id),intent_ts,intent_ts,actor),
+                            )
                     elif not is_worker and action=='pause':
-                        c.execute('DELETE FROM runtime_settings WHERE key=?',(_manual_start_priority_key(base_project_id),))
+                        c.execute(
+                            'DELETE FROM runtime_settings WHERE key IN (?,?)',
+                            (
+                                _manual_start_priority_key(base_project_id),
+                                _manual_force_start_priority_key(base_project_id),
+                            ),
+                        )
                     # Health treats pending browser commands older than the
                     # canonical threshold as invalid. Keep admission fail-safe too,
                     # even though the scheduler now reconciles the same global set
