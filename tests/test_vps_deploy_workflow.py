@@ -388,6 +388,22 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.freshness.outputs.deploy_sha", text)
         self.assertNotIn("DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}", text)
 
+    def test_deploy_writes_best_effort_operator_summary_before_cleanup(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        summary = "Write deploy operator summary"
+        cleanup = "Cleanup stable deploy state"
+        self.assertIn(summary, text)
+        self.assertIn("continue-on-error: true", text[text.index(summary):text.index(cleanup)])
+        self.assertIn("scripts/zcloud_deploy_summary.py", text)
+        self.assertIn('--output "$GITHUB_STEP_SUMMARY"', text)
+        self.assertIn("steps.freshness.outputs.deploy_sha", text)
+        self.assertIn("steps.freshness.outputs.regression_run_id", text)
+        self.assertIn("steps.freshness.outputs.regression_mode", text)
+        self.assertIn("steps.prewrite.outputs.deploy", text)
+        self.assertIn("zcloud-production-deploy-evidence-${{ github.run_id }}", text)
+        self.assertLess(text.index("Publish production deploy result"), text.index(summary))
+        self.assertLess(text.index(summary), text.index(cleanup))
+
     def test_code_deploy_preserves_runtime_owned_project_catalog(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
