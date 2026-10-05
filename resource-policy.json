@@ -6,16 +6,16 @@
     "priority": "high"
   },
   "supa": {
-    "priority": "normal"
+    "priority": "background"
   },
   "raiseai": {
-    "priority": "normal"
+    "priority": "background"
   },
   "cloud": {
     "priority": "normal"
   },
   "ulab": {
-    "priority": "normal"
+    "priority": "background"
   },
   "zssh": {
     "priority": "high"
