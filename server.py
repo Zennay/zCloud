@@ -2569,14 +2569,17 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     name=str(project.get('name') or project_id or 'project').strip()
     next_step=str(project.get('next_step') or '').strip()
     priority_by_project={
-        'ftmo':'P0',
+        'lightup':'P0',
         'zssh':'P1',
-        'raiseai':'P1',
-        'supa':'P1',
+        'ftmo':'P1',
+        'zguard':'P2',
         'cloud':'P2',
+        'raiseai':'P3',
+        'supa':'P3',
+        'ulab':'P3',
         'haxlab':'P3',
     }
-    priority=priority_by_project.get(project_id,'P2')
+    priority=priority_by_project.get(project_id,'P3')
     if parent_queue_id is None:
         with connect() as c:
             sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
