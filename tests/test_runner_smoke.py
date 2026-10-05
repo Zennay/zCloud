@@ -686,5 +686,25 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual("Implement automatic queue lane scheduling", worker["current_task"]["title"])
 
 
+    def test_firefox_status_skips_user_systemd_for_live_violentmonkey_runtime(self):
+        with (
+            mock.patch.object(server, "_standalone_firefox_pids", return_value=[4242]),
+            mock.patch.object(server, "_violentmonkey_only_mode", return_value=True),
+            mock.patch.object(
+                server,
+                "user_systemctl",
+                side_effect=AssertionError("user systemd must not be queried"),
+            ) as systemctl,
+        ):
+            status = server.firefox_runner_status()
+
+        self.assertTrue(status["active"])
+        self.assertEqual("standalone", status["runtime_mode"])
+        self.assertEqual(4242, status["main_pid"])
+        self.assertEqual([4242], status["standalone_pids"])
+        self.assertEqual("inactive", status["service_state"])
+        systemctl.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
