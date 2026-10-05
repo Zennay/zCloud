@@ -1,0 +1,137 @@
+name: Recover FTMO listener for LightUp ST3 proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/lightup-ftmo-listener-recovery.yml"
+      - "tests/test_lightup_ftmo_listener_recovery.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: lightup-ftmo-listener-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    name: Recover idle FTMO listener from zCloud VPS lane
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      LIGHTUP_RUN_ID: "37314597756"
+      FTMO_SERVICE: actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+      FTMO_RUN_USER: ftmo-runner
+      PR23_SHA: 1b5e3f7f1537d399d1d9b1041980610926a21267
+      PR24_SHA: 3109ef771fec3e5b96a1b43ff836dfa50080e4c6
+      PR25_SHA: 8996cfb81801ac008ddb68b413c653f4ae1b6266
+
+    steps:
+      - name: Guard VPS identity and exact LightUp proof
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+          for pair in "23:$PR23_SHA" "24:$PR24_SHA" "25:$PR25_SHA"; do
+            pr="${pair%%:*}"
+            expected="${pair#*:}"
+            state="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .state)"
+            live="$(gh api "repos/Zennay/Lightup/pulls/$pr" --jq .head.sha)"
+            test "$state" = "open"
+            test "$live" = "$expected"
+          done
+
+          run_status="$(gh api "repos/Zennay/zCloud/actions/runs/$LIGHTUP_RUN_ID" --jq .status)"
+          run_conclusion="$(gh api "repos/Zennay/zCloud/actions/runs/$LIGHTUP_RUN_ID" --jq '.conclusion // ""')"
+          if [[ "$run_status" == "completed" && "$run_conclusion" == "success" ]]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "LIGHTUP_FTMO_RECOVERY_ALREADY_GREEN run=$LIGHTUP_RUN_ID"
+            exit 0
+          fi
+          [[ "$run_status" == "queued" || "$run_status" == "in_progress" ]]
+
+          prove_status="$(gh api "repos/Zennay/zCloud/actions/runs/$LIGHTUP_RUN_ID/jobs"             --jq '[.jobs[] | select(.name == "prove")][0].status // ""')"
+          [[ "$prove_status" == "queued" || "$prove_status" == "in_progress" ]]
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+          echo "LIGHTUP_FTMO_RECOVERY_GATE_GREEN run=$LIGHTUP_RUN_ID prove_status=$prove_status"
+
+      - name: Recover only an idle FTMO listener
+        if: steps.gate.outputs.needed == 'true'
+        id: recover
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          pre_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+          pre_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+          worker_before=0
+          if pgrep -u "$FTMO_RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+            worker_before=1
+          fi
+          echo "LIGHTUP_FTMO_LISTENER_PRE state=$pre_state pid=$pre_pid worker=$worker_before"
+
+          action=none
+          if [[ "$worker_before" -eq 1 ]]; then
+            action=preserve-active-worker
+          else
+            sudo -n systemctl reset-failed "$FTMO_SERVICE" || true
+            sudo -n systemctl restart "$FTMO_SERVICE"
+            action=restart-idle-listener
+          fi
+
+          if [[ "$action" == "restart-idle-listener" ]]; then
+            post_state=""
+            post_pid=""
+            for _ in $(seq 1 30); do
+              post_state="$(systemctl is-active "$FTMO_SERVICE" || true)"
+              post_pid="$(systemctl show "$FTMO_SERVICE" -p MainPID --value || true)"
+              if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+                post_cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+                if [[ "$post_cmd" == *"Runner.Listener"* || "$post_cmd" == *"runsvc.sh"* ]]; then
+                  break
+                fi
+              fi
+              sleep 2
+            done
+            test "$post_state" = "active"
+            [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+            test -r "/proc/$post_pid/cmdline"
+            post_cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+            [[ "$post_cmd" == *"Runner.Listener"* || "$post_cmd" == *"runsvc.sh"* ]]
+          fi
+
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "LIGHTUP_FTMO_LISTENER_RECOVERY action=$action service=$FTMO_SERVICE"
+
+      - name: Prove LightUp VPS job leaves queued state
+        if: steps.gate.outputs.needed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          prove_status=""
+          prove_conclusion=""
+          for _ in $(seq 1 36); do
+            prove_status="$(gh api "repos/Zennay/zCloud/actions/runs/$LIGHTUP_RUN_ID/jobs"               --jq '[.jobs[] | select(.name == "prove")][0].status // ""')"
+            prove_conclusion="$(gh api "repos/Zennay/zCloud/actions/runs/$LIGHTUP_RUN_ID/jobs"               --jq '[.jobs[] | select(.name == "prove")][0].conclusion // ""')"
+            echo "LIGHTUP_FTMO_PROOF_SCHEDULING status=$prove_status conclusion=$prove_conclusion"
+            if [[ "$prove_status" == "in_progress" ]]; then
+              exit 0
+            fi
+            if [[ "$prove_status" == "completed" ]]; then
+              test "$prove_conclusion" = "success"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "LightUp proof remained queued after bounded FTMO listener recovery" >&2
+          exit 1
