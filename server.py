@@ -171,22 +171,27 @@ def project_runner_prompt(project_id, name):
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
     prompt = project_runner_prompt(project_id, name)
-    if int(total or 0) <= 1:
-        return prompt
-
+    worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
     lane_id = re.sub(r'[^a-zA-Z0-9._:/-]+', '-', lane_id).strip('-')[:80]
     if lane_id:
+        if worker_total > 1:
+            return (
+                prompt
+                + f' Parallel focus {int(slot or 1)}/{worker_total}: {lane_id}. '
+                'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
+                'dat al actief door een andere worker wordt uitgevoerd.'
+            )
         return (
             prompt
-            + f' Parallel focus {int(slot or 1)}/{int(total)}: {lane_id}. '
-            'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
-            'dat al actief door een andere worker wordt uitgevoerd.'
+            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.'
         )
+    if worker_total <= 1:
+        return prompt
     return (
         prompt
-        + f' Er werken {int(total)} workers parallel aan dit project. Kies zelfstandig een ander vrij, '
+        + f' Er werken {worker_total} workers parallel aan dit project. Kies zelfstandig een ander vrij, '
         'niet-conflicterend werkgebied, controleer open branches/PRs en vermijd dubbel werk.'
     )
 
