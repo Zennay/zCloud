@@ -96,7 +96,7 @@ jobs:
       LEGACY_DRAIN_RETRY_FIX_SHA: b7f1d0c878715245db38c97ed13e64d24b6398f6
       ZCLOUD_BASE: http://127.0.0.1:8765
       ZCLOUD_DB: /home/ubuntu/zennay-cloud/history.db
-      EVIDENCE: /tmp/zcloud-pwq41-intentional-replacement-evidence.json
+      EVIDENCE: /tmp/zcloud-pwq41-intentional-replacement-evidence-${{ github.run_id }}.json
     steps:
       - name: Check out exact production revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -165,6 +165,32 @@ jobs:
                   )
               print(f"PWQ41_CURRENT_MAIN_OK stage={stage} sha={current}", flush=True)
 
+          def call_with_warmup_retry(method, path, payload=None, timeout=45, window_seconds=45):
+              deadline = time.time() + window_seconds
+              attempt = 0
+              last_error = None
+              while True:
+                  attempt += 1
+                  try:
+                      return call(method, path, payload=payload, timeout=timeout)
+                  except Exception as exc:
+                      last_error = exc
+                      if method != "GET" or time.time() >= deadline:
+                          raise
+                      print(
+                          "PWQ41_WARMUP_RETRY "
+                          + json.dumps(
+                              {
+                                  "attempt": attempt,
+                                  "path": path,
+                                  "error": str(exc)[:300],
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      time.sleep(min(5, attempt))
+
           def claims(base_project):
               data = call("GET", "/api/task-claims?project=" + urllib.parse.quote(base_project))
               return list(data.get("claims") or [])
@@ -219,7 +245,7 @@ jobs:
                   )
 
           assert_current_main("pre-baseline")
-          status = call("GET", "/api/status")
+          status = call_with_warmup_retry("GET", "/api/status", window_seconds=45)
           cloud = next((p for p in status.get("projects", []) if p.get("id") == "cloud"), None)
           if not cloud:
               raise SystemExit("cloud project missing from live /api/status")
