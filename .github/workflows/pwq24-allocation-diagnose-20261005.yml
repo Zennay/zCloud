@@ -1,0 +1,81 @@
+name: PWQ-24 allocation diagnose 20261005
+
+on:
+  push:
+    branches: [ops/pwq24-allocation-diagnose-20261005-0607]
+    paths:
+      - ".github/workflows/pwq24-allocation-diagnose-20261005.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwq24-allocation-diagnose-20261005
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 98a7e81462d13362ad11584e4129e2169f0cf7cc
+          clean: true
+          fetch-depth: 1
+      - name: Inspect live PWQ-24 allocation inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, sqlite3, urllib.request
+          from pathlib import Path
+          from datetime import datetime, timezone
+
+          base="http://127.0.0.1:8765"
+          def get(path, timeout=30):
+              with urllib.request.urlopen(base+path, timeout=timeout) as r:
+                  return json.load(r)
+
+          db=Path("/home/ubuntu/zennay-cloud/history.db")
+          conn=sqlite3.connect(db, timeout=5)
+          conn.row_factory=sqlite3.Row
+
+          def rows(sql, params=()):
+              return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+          report={
+              "captured_at": datetime.now(timezone.utc).isoformat(),
+              "runner_targets": rows(
+                  "SELECT project_id,active,worker_count,conversation_id FROM runner_targets "
+                  "WHERE project_id IN ('ftmo','supa','cloud') ORDER BY project_id"
+              ),
+              "runner_workers": rows(
+                  "SELECT project_id,worker_slot,desired_state,conversation_id FROM runner_workers "
+                  "WHERE project_id IN ('ftmo','supa','cloud') ORDER BY project_id,worker_slot"
+              ),
+              "manual_start_priority": rows(
+                  "SELECT key,value,updated_at,actor FROM runtime_settings "
+                  "WHERE key IN ('manual_start_priority:ftmo','manual_start_priority:supa') ORDER BY key"
+              ),
+              "portfolio_queue": rows(
+                  "SELECT queue_id,project_id,title,priority,status,eligible,worker_slot,claimed_at,claim_expires,updated_at "
+                  "FROM portfolio_queue WHERE project_id IN ('ftmo','supa') "
+                  "ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at"
+              ),
+              "global_slots": rows(
+                  "SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot"
+              ),
+              "pending_commands": rows(
+                  "SELECT id,project_id,action,status,created_at,updated_at,result FROM runner_commands "
+                  "WHERE status='pending' OR id IN (22781,22782) ORDER BY id DESC LIMIT 30"
+              ),
+          }
+          conn.close()
+
+          targets=get("/api/runner-targets", 30)
+          report["api_global_allocation"]=targets.get("global_allocation")
+          report["api_dynamic_workers"]=targets.get("dynamic_workers")
+          print("PWQ24_ALLOCATION_DIAG="+json.dumps(report, ensure_ascii=False, sort_keys=True))
+          PY
