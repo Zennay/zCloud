@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.12";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.13";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -14,6 +14,7 @@ const intentionalTabClosures = new Set();
 const pendingTabHandoffs = new Set();
 const pendingInitialDispatches = new Set();
 const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1";
+const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
@@ -101,6 +102,23 @@ function compactClaimForHandoff(claim) {
   };
 }
 
+function compactQueueItemForHandoff(queueItem) {
+  if (!queueItem || typeof queueItem !== "object") return null;
+  const lane = queueItem.execution_lane && typeof queueItem.execution_lane === "object"
+    ? queueItem.execution_lane : null;
+  return {
+    queue_id: String(queueItem.queue_id || "").slice(0, 160),
+    title: String(queueItem.title || "").slice(0, 500),
+    status: String(queueItem.status || "").slice(0, 80),
+    priority: String(queueItem.priority || "").slice(0, 80),
+    execution_lane: lane ? {
+      lane_id: String(lane.lane_id || "").slice(0, 160),
+      label: String(lane.label || "").slice(0, 240),
+      objective: String(lane.objective || "").slice(0, 500)
+    } : null
+  };
+}
+
 async function prepareReplacementHandoff(target, reason) {
   if (!target?.project_id) throw new Error("Workerconfig ontbreekt voor replacement handoff");
   const baseProjectId = target.base_project_id || target.project_id.split("::w", 1)[0];
@@ -113,15 +131,103 @@ async function prepareReplacementHandoff(target, reason) {
   if (claim && (!claim.claim_key || !claim.owner_id || !claim.worker_id)) {
     throw new Error("Replacement geblokkeerd: actieve claimcontext is onvolledig");
   }
+  const queueItem = compactQueueItemForHandoff(target.queue_item);
+  if (target.assignment_ready === true && (!queueItem || !queueItem.queue_id)) {
+    throw new Error("Replacement geblokkeerd: queue-assignmentcontext is onvolledig");
+  }
   return {
-    version: 1,
+    version: 2,
     reason: String(reason || "project-chat-replaced").slice(0, 120),
     prepared_at: new Date().toISOString(),
     project_id: target.project_id,
     base_project_id: baseProjectId,
     previous_conversation_id: target.conversation_id || "",
+    queue_item: queueItem,
     claim: claim
   };
+}
+
+async function replacementDrainState(tabId) {
+  const result = await browser.tabs.executeScript(tabId, {
+    code: "(() => { const root=document.documentElement; return root ? {ready:String(root.getAttribute('data-zcloud-violentmonkey-ready')||''),state:String(root.getAttribute('" +
+      REPLACEMENT_DRAIN_STATE_ATTR + "')||'')} : {ready:'',state:''}; })()",
+    runAt: "document_idle"
+  }).catch(() => []);
+  return (Array.isArray(result) && result[0] && typeof result[0] === "object")
+    ? result[0] : {ready:"",state:""};
+}
+
+async function drainRunnerBeforeReplacement(tabId, target, reason) {
+  if (tabId == null) return;
+  const bridge = await browser.tabs.executeScript(tabId, {
+    code: "(() => { const root=document.documentElement; if(!root)return {ready:''}; root.removeAttribute('" +
+      REPLACEMENT_DRAIN_STATE_ATTR +
+      "'); window.dispatchEvent(new CustomEvent('zcloud-replacement-drain',{detail:{reason:" +
+      JSON.stringify(String(reason || "project-chat-replaced").slice(0, 120)) +
+      "}})); return {ready:String(root.getAttribute('data-zcloud-violentmonkey-ready')||'')}; })()",
+    runAt: "document_idle"
+  }).catch(() => []);
+  const vmVersions = Array.isArray(bridge)
+    ? bridge.map(value => String(value?.ready || "").trim()).filter(Boolean)
+    : [];
+  const vmReady = vmVersions.includes(VIOLENTMONKEY_REQUIRED_VERSION);
+  if (vmVersions.length && !vmReady) {
+    throw new Error(
+      "Replacement geblokkeerd: Violentmonkey-versie " +
+      vmVersions.join(",") +
+      " ondersteunt veilige replacement drain niet; vereist " +
+      VIOLENTMONKEY_REQUIRED_VERSION
+    );
+  }
+  if (!vmReady) {
+    const legacy = await browser.tabs.sendMessage(tabId, {
+      type: "runner-drain",
+      projectId: target.project_id,
+      reason: reason || "project-chat-replaced"
+    }).catch(() => null);
+    if (!legacy?.ok) {
+      throw new Error("Replacement geblokkeerd: oude worker kan niet veilig drainen");
+    }
+  }
+  const deadline = Date.now() + (10 * 60 * 1000);
+  while (Date.now() < deadline) {
+    const state = await replacementDrainState(tabId);
+    if (state.state === "drained") return;
+    await new Promise(resolve => setTimeout(resolve, 750));
+  }
+  throw new Error("Replacement geblokkeerd: oude worker werd niet binnen de veilige drain-window idle");
+}
+
+async function verifyReplacementHandoffStillCurrent(target, handoff) {
+  const targetResponse = await fetch(API + "/runner-targets", {cache: "no-store"});
+  if (!targetResponse.ok) throw new Error("Replacement geblokkeerd: actuele worker-assignment niet beschikbaar");
+  const targetData = await targetResponse.json();
+  const current = targetData.projects?.[target.project_id];
+  if (!current || !portfolioAssignmentReady(current)) {
+    throw new Error("Replacement geblokkeerd: worker-assignment veranderde tijdens drain");
+  }
+  const expectedQueueId = String(handoff?.queue_item?.queue_id || "");
+  const currentQueueId = String(current.queue_item?.queue_id || "");
+  if (expectedQueueId && currentQueueId !== expectedQueueId) {
+    throw new Error("Replacement geblokkeerd: queue-item veranderde tijdens drain");
+  }
+
+  if (handoff?.claim) {
+    const response = await fetch(API + "/task-claims?project=" + encodeURIComponent(handoff.base_project_id), {cache: "no-store"});
+    if (!response.ok) throw new Error("Replacement geblokkeerd: claimcontext kon niet opnieuw worden geverifieerd");
+    const data = await response.json();
+    const currentClaim = (data.claims || []).find(claim =>
+      claim?.claim_key === handoff.claim.claim_key && claim?.worker_id === target.project_id
+    );
+    if (!currentClaim ||
+        currentClaim.owner_id !== handoff.claim.owner_id ||
+        currentClaim.worker_id !== handoff.claim.worker_id) {
+      throw new Error("Replacement geblokkeerd: taakclaim veranderde tijdens drain");
+    }
+    handoff.claim = compactClaimForHandoff(currentClaim);
+  }
+  Object.assign(target, current);
+  handoff.queue_item = compactQueueItemForHandoff(current.queue_item);
 }
 
 async function closeRunnerTab(tabId) {
@@ -273,11 +379,18 @@ function workerKeysFor(projectId, activeOnly = false) {
 }
 
 function runProject(cfg) {
+  const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
   const marker = "__ZC_RUNNER_V2_" + cfg.projectId.replace(/[^a-z0-9]/gi, "");
   if (window[marker]) return;
   window[marker] = true;
   const REPLACEMENT_HANDOFF = cfg.replacement_handoff || null;
   let replacementHandoffPending = !!REPLACEMENT_HANDOFF;
+  function setReplacementDrainState(state) {
+    const root = document.documentElement;
+    if (!root) return;
+    if (state) root.setAttribute(REPLACEMENT_DRAIN_STATE_ATTR, state);
+    else root.removeAttribute(REPLACEMENT_DRAIN_STATE_ATTR);
+  }
   let BASE_PROMPT = cfg.prompt;
   let qualityRetryPending = false;
   let qualityRetryCount = 0;
@@ -998,6 +1111,7 @@ function runProject(cfg) {
           paused = true;
           clearInterval(tickTimer);
           clearInterval(heartbeatTimer);
+          setReplacementDrainState("drained");
           status("runner-drained", {reason: "current-task-finished"});
           return;
         }
@@ -1013,6 +1127,7 @@ function runProject(cfg) {
           paused = true;
           clearInterval(tickTimer);
           clearInterval(heartbeatTimer);
+          setReplacementDrainState("drained");
           status("runner-drained", {reason: "current-task-finished"});
           return;
         }
@@ -1026,6 +1141,7 @@ function runProject(cfg) {
       paused = true;
       clearInterval(tickTimer);
       clearInterval(heartbeatTimer);
+      setReplacementDrainState("drained");
       status("runner-drained", {reason: "already-idle"});
       return;
     }
@@ -1124,6 +1240,7 @@ function runProject(cfg) {
     }
     if (message.type === "runner-drain") {
       draining = true;
+      setReplacementDrainState("draining");
       status("runner-draining", {reason: message.reason || "dashboard-drain"});
       return {ok: true, reason: "draining"};
     }
@@ -1590,15 +1707,17 @@ async function newProjectChat(projectId, reason, commandId) {
     }
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
     const handoff = await prepareReplacementHandoff(target, reason);
-    pendingInitialDispatches.add(projectId);
     const oldTab = projectTabs[projectId];
     if (oldTab != null) {
+      await drainRunnerBeforeReplacement(oldTab, target, reason);
+      await verifyReplacementHandoffStillCurrent(target, handoff);
       try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
       await clearRecoveryTag(oldTab);
       await closeRunnerTab(oldTab);
       delete tabTargets[oldTab];
       delete pendingAdoptions[oldTab];
     }
+    pendingInitialDispatches.add(projectId);
     target.active = true;
     target.replacement_handoff = handoff;
     const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: true});

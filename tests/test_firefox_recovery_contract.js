@@ -44,6 +44,12 @@ for (const marker of [
   'target.desired_state === "paused"',
   'const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1"',
   "async function prepareReplacementHandoff",
+  "compactQueueItemForHandoff",
+  "drainRunnerBeforeReplacement",
+  "verifyReplacementHandoffStillCurrent",
+  "zcloud-replacement-drain",
+  "data-zcloud-replacement-drain-state",
+  "queue_item: queueItem",
   'fetch(API + "/task-claims?project="',
   "claims.length > 1",
   "compactClaimForHandoff",
@@ -112,6 +118,22 @@ assert.ok(
   replacementBlock.indexOf("await prepareReplacementHandoff(target, reason)") <
     replacementBlock.indexOf("await closeRunnerTab(oldTab)"),
   "claim/task handoff must be captured before closing the old tab"
+);
+const drainIndex = replacementBlock.indexOf("await drainRunnerBeforeReplacement(oldTab, target, reason)");
+const verifyIndex = replacementBlock.indexOf("await verifyReplacementHandoffStillCurrent(target, handoff)");
+const closeIndex = replacementBlock.indexOf("await closeRunnerTab(oldTab)");
+const openIndex = replacementBlock.indexOf("browser.tabs.create({url: \"https://chatgpt.com/\"");
+assert.ok(drainIndex >= 0 && verifyIndex > drainIndex, "replacement must drain before revalidating ownership");
+assert.ok(closeIndex > verifyIndex, "old tab may close only after drain + handoff revalidation");
+const pendingDispatchIndex = replacementBlock.indexOf("pendingInitialDispatches.add(projectId)");
+assert.ok(
+  pendingDispatchIndex > verifyIndex && pendingDispatchIndex < openIndex,
+  "replacement initial dispatch may arm only after safe handoff and before replacement open"
+);
+assert.ok(openIndex > closeIndex, "replacement chat may open only after old worker is safely released");
+assert.ok(
+  background.includes("queue_item: queueItem"),
+  "replacement handoff preparation must persist the current queue item alongside claim metadata"
 );
 assert.ok(
   !replacementBlock.includes('"action":"release"') && !replacementBlock.includes("'action':'release'"),
