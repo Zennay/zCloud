@@ -101,13 +101,33 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.13", required.group(1))
+        self.assertEqual("1.3.15", required.group(1))
+
+    def test_workers_rotate_to_fresh_chat_on_broken_or_new_assignment(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
+
+        self.assertIn("could not load this chatgpt conversation", userscript)
+        self.assertIn('requestFreshConversation("queue-assignment-changed")', userscript)
+        self.assertIn('url.searchParams.set("zcloud_recover", "1")', userscript)
+        self.assertIn("markAdoptNext", userscript)
+        self.assertIn("adoptNextPending", userscript)
+        self.assertIn('"fresh-chat-route-adoption"', userscript)
+        self.assertIn('"conversation-reset-requested"', userscript)
+        self.assertIn("conversation-reset-requested", server)
+        self.assertIn("DO UPDATE SET conversation_id=''", server)
+        self.assertIn("conversationLoadFailureReason", background)
+        self.assertIn('type: "runner-new-chat"', background)
+        self.assertIn('event: "conversation-reset-requested"', background)
+        self.assertIn('target.conversation_id = "";', background)
+        self.assertIn('target.url = "https://chatgpt.com/";', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.13";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.15";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -259,8 +279,8 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
     def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
-        self.assertIn("// @version      1.3.13", userscript)
-        self.assertIn('const SCRIPT_VERSION = "1.3.13";', userscript)
+        self.assertIn("// @version      1.3.15", userscript)
+        self.assertIn('const SCRIPT_VERSION = "1.3.15";', userscript)
         self.assertIn(
             'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
             userscript,

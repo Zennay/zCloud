@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.13";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.15";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -557,6 +557,14 @@ function runProject(cfg) {
       ? (box.value || "").trim()
       : (box.innerText || box.textContent || "").trim();
   }
+  function conversationLoadFailureReason() {
+    if (!/^\/c\//i.test(location.pathname) || composer()) return "";
+    const text = String(document.body?.innerText || document.body?.textContent || "").slice(0, 20000).toLowerCase();
+    if (text.includes("could not load this chatgpt conversation")) return "chatgpt-conversation-load-failed";
+    if (text.includes("could not load this conversation") || text.includes("unable to load conversation")) return "conversation-load-failed";
+    if (text.includes("conversation not found") || text.includes("gesprek kon niet worden geladen")) return "conversation-not-found";
+    return "";
+  }
   function sendButton() {
     return document.querySelector('button[data-testid="send-button"]') ||
       [...document.querySelectorAll("button")].find(b => {
@@ -1105,6 +1113,13 @@ function runProject(cfg) {
   }
   async function tick() {
     if (paused) return;
+    const loadFailure = conversationLoadFailureReason();
+    if (loadFailure && !recoveryRequested) {
+      recoveryRequested = true;
+      status("conversation-load-failed", {reason: loadFailure});
+      browser.runtime.sendMessage({type: "runner-new-chat", projectId: cfg.projectId, reason: loadFailure}).catch(() => {});
+      return;
+    }
     const generating = !!stopButton();
     const text = assistantText();
     const now = Date.now();
