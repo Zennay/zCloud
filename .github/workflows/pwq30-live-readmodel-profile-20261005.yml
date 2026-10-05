@@ -1,4 +1,5 @@
 name: Profile zCloud PWQ-30 live read-model
+# Reprofile after indexed read-model deploy 9fdd0d94249d13902f093a916a09ccb6fedf2862.
 
 on:
   pull_request:
