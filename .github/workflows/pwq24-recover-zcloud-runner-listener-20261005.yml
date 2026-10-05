@@ -1,0 +1,76 @@
+name: PWQ-24 recover zCloud runner listener
+
+on:
+  push:
+    branches:
+      - ops/pwq24-prioritize-acceptance-20261005-0258
+    paths:
+      - .github/workflows/pwq24-recover-zcloud-runner-listener-20261005.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    steps:
+      - name: Recover zCloud runner listener from independent VPS lane
+        env:
+          TARGET_RUN_ID: "37257374243"
+          SERVICE: actions.runner.Zennay-zCloud.zcloud-vps-1.service
+          RUNNER_ROOT: /home/ubuntu/actions-runner-zcloud
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          listener_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"${RUNNER_ROOT}/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          }
+
+          pre_state="$(systemctl is-active "${SERVICE}" || true)"
+          mapfile -t pre_listeners < <(listener_pids)
+          echo "PWQ24_RUNNER_PRE state=${pre_state} listeners=${#pre_listeners[@]} pids=${pre_listeners[*]:-none}"
+
+          action=preserve
+          if [[ "${pre_state}" != "active" || "${#pre_listeners[@]}" -ne 1 ]]; then
+            sudo -n systemctl reset-failed "${SERVICE}" || true
+            sudo -n systemctl restart "${SERVICE}"
+            action=restart
+          fi
+
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "${SERVICE}" || true)"
+            mapfile -t listeners < <(listener_pids)
+            if [[ "${state}" == "active" && "${#listeners[@]}" -eq 1 ]]; then
+              break
+            fi
+            sleep 2
+          done
+
+          state="$(systemctl is-active "${SERVICE}" || true)"
+          mapfile -t listeners < <(listener_pids)
+          echo "PWQ24_RUNNER_POST action=${action} state=${state} listeners=${#listeners[@]} pids=${listeners[*]:-none}"
+          test "${state}" = "active"
+          test "${#listeners[@]}" -eq 1
+
+          cgroup="$(systemctl show "${SERVICE}" -p ControlGroup --value)"
+          grep -Fq "${cgroup}" "/proc/${listeners[0]}/cgroup"
+          echo "PWQ24_RUNNER_LISTENER_GREEN pid=${listeners[0]} cgroup=${cgroup}"
+
+          for _ in $(seq 1 30); do
+            payload="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${TARGET_RUN_ID}/jobs?per_page=100")"
+            status="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((j["status"] for j in d["jobs"] if j["name"]=="accept"),"missing"))' <<<"${payload}")"
+            echo "PWQ24_ACCEPT_BIND status=${status}"
+            [[ "${status}" != "queued" && "${status}" != "waiting" && "${status}" != "pending" ]] && exit 0
+            sleep 2
+          done
+
+          echo "PWQ24_ACCEPT_STILL_QUEUED_AFTER_LISTENER_RECOVERY"
+          exit 1
