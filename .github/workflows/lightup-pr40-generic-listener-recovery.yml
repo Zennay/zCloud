@@ -1,0 +1,95 @@
+name: LightUp PR40 generic zCloud listener recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/lightup-pr40-generic-listener-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: lightup-pr40-generic-zcloud-listener-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 4
+    env:
+      LIGHTUP_RUN_ID: "37343030852"
+      ZCLOUD_SERVICE: "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+      ZCLOUD_RUNNER_ROOT: "/home/ubuntu/actions-runner-zcloud"
+
+    steps:
+      - name: Guard exact queued proof and host
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          jobs="$(gh api "repos/Zennay/zCloud/actions/runs/$LIGHTUP_RUN_ID/jobs")"
+          py311="$(jq -r '[.jobs[] | select(.name | contains("Python 3.11"))][0] | [.status,.conclusion] | @tsv' <<<"$jobs")"
+          py314="$(jq -r '[.jobs[] | select(.name | contains("Python 3.14"))][0] | [.status,(.conclusion // "")] | @tsv' <<<"$jobs")"
+          test "$py311" = $'completed\tsuccess'
+          case "$py314" in
+            $'queued\t'|$'in_progress\t'|$'completed\tsuccess') ;;
+            *) echo "Unexpected Python 3.14 state: $py314" >&2; exit 1 ;;
+          esac
+          echo "LIGHTUP_PR40_GENERIC_RECOVERY_GUARD runner=$RUNNER_NAME py311=$py311 py314=$py314"
+
+      - name: Restore only an idle zCloud listener
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          worker_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$ZCLOUD_RUNNER_ROOT/bin/Runner.Worker"* ]] && echo "$pid"
+            done
+          }
+
+          listener_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$ZCLOUD_RUNNER_ROOT/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          }
+
+          state="$(systemctl is-active "$ZCLOUD_SERVICE" || true)"
+          mapfile -t workers < <(worker_pids)
+          mapfile -t listeners < <(listener_pids)
+          echo "ZCLOUD_LISTENER_PRE runner=$RUNNER_NAME state=$state workers=${workers[*]:-none} listeners=${listeners[*]:-none}"
+
+          action=preserve
+          if [[ "$RUNNER_NAME" == "zcloud-vps-1" ]]; then
+            action=preserve-current-zcloud-job
+          elif [[ "${#workers[@]}" -gt 0 ]]; then
+            action=preserve-active-zcloud-worker
+          elif [[ "$state" != "active" || "${#listeners[@]}" -ne 1 ]]; then
+            sudo -n systemctl reset-failed "$ZCLOUD_SERVICE" || true
+            sudo -n systemctl restart "$ZCLOUD_SERVICE"
+            action=restart-idle-zcloud-listener
+          fi
+
+          if [[ "$action" == "restart-idle-zcloud-listener" ]]; then
+            for _ in $(seq 1 30); do
+              state="$(systemctl is-active "$ZCLOUD_SERVICE" || true)"
+              mapfile -t listeners < <(listener_pids)
+              mapfile -t workers < <(worker_pids)
+              [[ "$state" == "active" && "${#listeners[@]}" -eq 1 && "${#workers[@]}" -eq 0 ]] && break
+              sleep 1
+            done
+            test "$state" = "active"
+            test "${#listeners[@]}" -eq 1
+            test "${#workers[@]}" -eq 0
+          fi
+
+          echo "LIGHTUP_PR40_GENERIC_RECOVERY action=$action runner=$RUNNER_NAME"
