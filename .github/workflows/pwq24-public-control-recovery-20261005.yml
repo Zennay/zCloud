@@ -1,0 +1,160 @@
+name: PWQ-24 hosted control-plane recovery handoff
+
+on:
+  push:
+    branches:
+      - ops/pwq24-public-control-recovery-20261005
+    paths:
+      - .github/workflows/pwq24-public-control-recovery-20261005.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pwq24-public-control-recovery-20261005
+  cancel-in-progress: true
+
+jobs:
+  handoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      ZCLOUD_ORIGIN: http://198.244.191.182:8765
+      RECOVERY_QUEUE_ID: zssh-zcloud-pwq24-listener-recovery-20261005
+    steps:
+      - name: Verify current zCloud status is reachable
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --max-time 20 "$ZCLOUD_ORIGIN/api/status"             | python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d.get("projects"),list); print("ZCLOUD_PUBLIC_STATUS_GREEN time="+str(d.get("time")))'
+
+      - name: Enqueue zSSH runner recovery and push worker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          origin = os.environ["ZCLOUD_ORIGIN"].rstrip("/")
+          queue_id = os.environ["RECOVERY_QUEUE_ID"]
+          common = {
+              "Content-Type": "application/json",
+              "Origin": origin,
+              "Referer": origin + "/",
+              "Sec-Fetch-Site": "same-origin",
+              "X-ZCloud-Actor": "github-hosted-pwq24-recovery",
+              "User-Agent": "zcloud-pwq24-hosted-recovery/1",
+          }
+
+          def request(method, path, payload=None, timeout=20):
+              data = None if payload is None else json.dumps(payload).encode()
+              headers = dict(common)
+              if data is None:
+                  headers.pop("Content-Type", None)
+              req = urllib.request.Request(origin + path, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  body = json.load(response)
+                  if response.status >= 300:
+                      raise RuntimeError(f"{path}: HTTP {response.status}")
+                  return body
+
+          main = json.load(urllib.request.urlopen(
+              "https://api.github.com/repos/Zennay/zCloud/branches/main",
+              timeout=20,
+          ))["commit"]["sha"]
+          print("PWQ24_CURRENT_MAIN=" + main, flush=True)
+
+          criteria = (
+              "Recover zCloud GitHub Actions execution on vps-bb300bba without interrupting valid work. "
+              "This is an authorized zCloud P0 runner-recovery task. Use the zSSH/Claude Dynamic Worker shell route. "
+              "Inspect the GitHub Actions runner services and Runner.Listener/Runner.Worker processes on the VPS. "
+              "For actions.runner.Zennay-zCloud.zcloud-vps-1.service: if any valid Runner.Worker is active, preserve it. "
+              "If no worker is active and the listener/service is inactive, failed, missing, duplicated, or otherwise unhealthy, "
+              "perform the minimum bounded systemd recovery needed to restore exactly one healthy listener. "
+              "Also inspect why repository self-hosted lanes are simultaneously queued and repair only the concrete listener/service cause; "
+              "do not kill active FTMO, HaxLab, RaiseAI or other project jobs, do not alter application/research state, and do not expose secrets. "
+              "After recovery, prove at least one exact-current-main Zennay/zCloud zcloud-vps-deploy run starts scheduling, and report service names, "
+              "pre/post states, PIDs/listeners/workers, concrete action, and deploy run evidence. "
+              "Current zCloud main at enqueue time: " + main + "."
+          )
+          queue = request("POST", "/api/portfolio-queue", {
+              "action": "enqueue",
+              "queue_id": queue_id,
+              "project_id": "zssh",
+              "title": "Recover zCloud self-hosted runner for PWQ-24",
+              "priority": "P0",
+              "completion_criteria": criteria,
+              "source_url": "https://github.com/Zennay/zCloud",
+          })
+          print("PWQ24_RECOVERY_QUEUE=" + json.dumps(queue, sort_keys=True), flush=True)
+
+          start = request("POST", "/api/runner-control", {"project_id": "zssh", "action": "start"})
+          push = request("POST", "/api/runner-control", {"project_id": "zssh", "action": "push"})
+          print("PWQ24_ZSSH_START=" + json.dumps(start, sort_keys=True), flush=True)
+          print("PWQ24_ZSSH_PUSH=" + json.dumps(push, sort_keys=True), flush=True)
+
+          command_ids = sorted({
+              int(v) for v in (start.get("command_id"), push.get("command_id")) if v
+          })
+          if not command_ids:
+              raise RuntimeError("zSSH start/push returned no command id")
+
+          deadline = time.monotonic() + 150
+          last_commands = {}
+          last_item = None
+          while time.monotonic() < deadline:
+              try:
+                  commands = request("GET", "/api/runner-commands?limit=200")
+                  rows = commands.get("commands") or []
+                  last_commands = {
+                      int(row["id"]): row
+                      for row in rows
+                      if row.get("id") is not None and int(row["id"]) in command_ids
+                  }
+              except Exception as exc:
+                  print("PWQ24_COMMAND_POLL_ERROR=" + type(exc).__name__, flush=True)
+
+              live = request("GET", "/api/portfolio-queue?all=1")
+              def find(value):
+                  if isinstance(value, dict):
+                      if value.get("queue_id") == queue_id:
+                          return value
+                      for child in value.values():
+                          found = find(child)
+                          if found:
+                              return found
+                  elif isinstance(value, list):
+                      for child in value:
+                          found = find(child)
+                          if found:
+                              return found
+                  return None
+              last_item = find(live)
+              print("PWQ24_RECOVERY_POLL=" + json.dumps({
+                  "commands": {str(k): {"status": v.get("status"), "result": v.get("result")} for k,v in last_commands.items()},
+                  "queue": None if not last_item else {
+                      "status": last_item.get("status"),
+                      "worker_slot": last_item.get("worker_slot"),
+                      "updated_at": last_item.get("updated_at"),
+                  },
+              }, sort_keys=True), flush=True)
+
+              pending = [
+                  cid for cid in command_ids
+                  if str((last_commands.get(cid) or {}).get("status") or "").lower()
+                  in {"", "pending", "queued"}
+              ]
+              qstatus = str((last_item or {}).get("status") or "").lower()
+              if not pending and qstatus in {"claimed", "running", "verifying", "done"}:
+                  print("PWQ24_ZSSH_HANDOFF_CONSUMED=1", flush=True)
+                  raise SystemExit(0)
+              time.sleep(5)
+
+          raise SystemExit("zSSH recovery handoff was not consumed in bounded wait")
+          PY
