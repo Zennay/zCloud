@@ -1,4 +1,4 @@
-name: PWQ-24 free VPS runner for corrective validation
+name: PWQ-24 prioritize corrective VPS validation
 
 on:
   push:
@@ -12,36 +12,40 @@ permissions:
   contents: read
 
 jobs:
-  free-runner:
+  prioritize:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Cancel only redundant fallback acceptance
+      - name: Remove only redundant bounded proof ahead of PR 462 validation
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
-          CANONICAL_ACCEPTANCE_RUN_ID: "37265454441"
-          FALLBACK_RUN_ID: "37265851740"
+          CORRECTIVE_SHA: 9c9eec916016f12465d0c2c5a75235406ae3b4f8
+          REGRESSION_RUN_ID: "37266274063"
+          REDUNDANT_PROOF_RUN_ID: "37266315707"
         run: |
           set -euo pipefail
-          current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          test "$current_main" = "$EXPECTED_MAIN"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)" = "$EXPECTED_MAIN"
 
-          canonical="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$CANONICAL_ACCEPTANCE_RUN_ID")"
-          test "$(jq -r .name <<<"$canonical")" = "PWQ-24 post-461 live acceptance"
-          test "$(jq -r .status <<<"$canonical")" = "completed"
-          test "$(jq -r .conclusion <<<"$canonical")" = "failure"
+          regression="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$REGRESSION_RUN_ID")"
+          test "$(jq -r .head_sha <<<"$regression")" = "$CORRECTIVE_SHA"
+          test "$(jq -r .name <<<"$regression")" = "zCloud regression smoke"
+          test "$(jq -r .status <<<"$regression")" = "completed"
+          test "$(jq -r .conclusion <<<"$regression")" = "success"
 
-          fallback="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$FALLBACK_RUN_ID")"
-          test "$(jq -r .name <<<"$fallback")" = "PWQ-24 final live acceptance b68562c"
-          status="$(jq -r .status <<<"$fallback")"
+          queued_corrective="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=$CORRECTIVE_SHA&per_page=100" --jq '[.workflow_runs[] | select(.status=="queued") | select(.name=="zCloud VPS execution lane probe" or .name=="zCloud OOM guard VPS validation" or .name=="zCloud live dynamic worker debug")] | length')"
+          test "$queued_corrective" -ge 1
+
+          redundant="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$REDUNDANT_PROOF_RUN_ID")"
+          test "$(jq -r .name <<<"$redundant")" = "PWQ-24 bounded Supa FTMO recovery proof"
+          status="$(jq -r .status <<<"$redundant")"
           case "$status" in
-            queued|in_progress|pending|waiting|requested)
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$FALLBACK_RUN_ID/cancel" >/dev/null
-              echo "PWQ24_FALLBACK_CANCEL_REQUESTED run=$FALLBACK_RUN_ID status=$status"
+            queued|pending|waiting|requested)
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$REDUNDANT_PROOF_RUN_ID/cancel" >/dev/null
+              echo "PWQ24_REDUNDANT_PROOF_CANCEL_REQUESTED=$REDUNDANT_PROOF_RUN_ID"
               ;;
             *)
-              echo "PWQ24_FALLBACK_ALREADY_TERMINAL run=$FALLBACK_RUN_ID status=$status"
+              echo "PWQ24_REDUNDANT_PROOF_NOT_CANCELLED status=$status"
               ;;
           esac
