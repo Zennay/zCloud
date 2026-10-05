@@ -3590,7 +3590,7 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
                              (f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
                               if allocated else f"{cfg['name']} · worker {slot}/{count}"))
                 rendered_prompt=cfg['prompt'] if reviewer_mode else project_worker_prompt(
-                    project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item
+                    project_id,cfg['name'],cfg['prompt'],slot,count,queue_item
                 )
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
