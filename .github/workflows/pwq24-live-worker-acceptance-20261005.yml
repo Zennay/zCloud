@@ -1,0 +1,177 @@
+name: PWQ-24 live worker acceptance
+
+on:
+  push:
+    branches:
+      - ops/pwq24-live-worker-acceptance-20261005-0040
+    paths:
+      - .github/workflows/pwq24-live-worker-acceptance-20261005.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwq24-live-worker-acceptance
+  cancel-in-progress: false
+
+jobs:
+  accept:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/pwq24-live-worker-acceptance-20261005-0040
+          clean: true
+          fetch-depth: 1
+
+      - name: Guard exact deployed main and VPS runner
+        shell: bash
+        env:
+          EXPECTED_MAIN: 4a0f017fc871ab940d82986d8b76d3fff5488e0c
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          actual="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_MAIN"
+          /home/ubuntu/.local/bin/zcloud-healthcheck
+
+      - name: Prove fresh Supa and FTMO initial dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+          REQUIRED = {"supa", "ftmo"}
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              headers = {"User-Agent": "pwq24-live-acceptance/1"}
+              if data is not None:
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
+
+          def allocation():
+              targets = call("GET", "/api/runner-targets")
+              workers = (targets.get("global_allocation") or {}).get("workers") or []
+              by_project = {}
+              for item in workers:
+                  project = str(item.get("project_id") or "").strip().lower()
+                  key = str(item.get("worker_key") or "").strip()
+                  if project in REQUIRED and key:
+                      by_project[project] = key
+              return targets, by_project
+
+          # Resume the two parent projects without touching worker-count/resource config.
+          for project in sorted(REQUIRED):
+              result = call("POST", "/api/runner-control", {"project_id": project, "action": "start"})
+              if not result.get("ok"):
+                  raise SystemExit(f"project start rejected for {project}: {result}")
+
+          targets = None
+          selected = {}
+          for _ in range(12):
+              targets, selected = allocation()
+              if REQUIRED.issubset(selected):
+                  break
+              time.sleep(5)
+
+          if not REQUIRED.issubset(selected):
+              raise SystemExit(
+                  "PWQ24_ALLOCATION_MISSING "
+                  + json.dumps({
+                      "selected": selected,
+                      "global_allocation": (targets or {}).get("global_allocation"),
+                  }, sort_keys=True)
+              )
+
+          started = datetime.now(timezone.utc).isoformat()
+          command_ids = {}
+          for project in sorted(REQUIRED):
+              key = selected[project]
+              result = call("POST", "/api/runner-control", {"project_id": key, "action": "start"})
+              if not result.get("ok"):
+                  raise SystemExit(f"worker start rejected for {key}: {result}")
+              command_ids[key] = int(result.get("command_id") or 0)
+
+          def evidence():
+              out = {}
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  for project, key in selected.items():
+                      slot = int(key.rsplit("::w", 1)[1])
+                      rows = conn.execute(
+                          """
+                          SELECT ts,event,reason,error
+                          FROM runner_events
+                          WHERE project_id=? AND worker_slot=? AND ts>=?
+                            AND event IN ('prompt-sent','heartbeat','send-blocked')
+                          ORDER BY id ASC
+                          """,
+                          (project, slot, started),
+                      ).fetchall()
+                      events = [dict(row) for row in rows]
+                      prompts = [e for e in events if e["event"] == "prompt-sent"]
+                      heartbeats = [e for e in events if e["event"] == "heartbeat"]
+                      blocked = [e for e in events if e["event"] == "send-blocked"]
+
+                      duplicate = False
+                      if len(prompts) > 1:
+                          parsed = []
+                          for p in prompts:
+                              try:
+                                  parsed.append(datetime.fromisoformat(str(p["ts"]).replace("Z", "+00:00")))
+                              except Exception:
+                                  pass
+                          for a, b in zip(parsed, parsed[1:]):
+                              if (b - a).total_seconds() <= 8:
+                                  duplicate = True
+                                  break
+
+                      out[project] = {
+                          "worker": key,
+                          "command_id": command_ids.get(key),
+                          "prompt_sent": bool(prompts),
+                          "heartbeat": bool(heartbeats),
+                          "send_blocked": blocked,
+                          "duplicate_prompt_window": duplicate,
+                          "events": events[-8:],
+                      }
+              return out
+
+          final = {}
+          deadline = time.time() + 180
+          while time.time() < deadline:
+              final = evidence()
+              if all(
+                  item.get("prompt_sent")
+                  and item.get("heartbeat")
+                  and not item.get("send_blocked")
+                  and not item.get("duplicate_prompt_window")
+                  for item in final.values()
+              ) and REQUIRED.issubset(final):
+                  print("PWQ24_LIVE_ACCEPTANCE_GREEN=" + json.dumps(final, sort_keys=True))
+                  break
+              time.sleep(5)
+          else:
+              raise SystemExit("PWQ24_LIVE_ACCEPTANCE_FAILED=" + json.dumps(final, sort_keys=True))
+          PY
+
+      - name: Confirm zCloud health stayed green
+        shell: bash
+        run: |
+          set -euo pipefail
+          /home/ubuntu/.local/bin/zcloud-healthcheck
+          echo PWQ24_ZCLOUD_HEALTH_GREEN=1
