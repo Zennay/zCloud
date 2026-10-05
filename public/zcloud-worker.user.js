@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.13
+// @version      1.3.14
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.13";
+  const SCRIPT_VERSION = "1.3.14";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -71,6 +71,7 @@
   let refreshTimer = null;
   let tickTimer = null;
   let heartbeatTimer = null;
+  let freshConversationPending = false;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -226,11 +227,63 @@
     try {
       const url = new URL(location.href);
       let changed = false;
-      for (const key of ["zcloud_worker", "zcloud_tab"]) {
+      for (const key of ["zcloud_worker", "zcloud_tab", "zcloud_recover"]) {
         if (url.searchParams.has(key)) { url.searchParams.delete(key); changed = true; }
       }
       if (changed) history.replaceState(history.state, "", url.pathname + url.search + url.hash);
     } catch (_) {}
+  }
+
+  function queueMemoryKey(projectId) {
+    return "zcloud-queue-chat:" + String(projectId || "");
+  }
+
+  function rememberedQueueId(projectId) {
+    try { return sessionStorage.getItem(queueMemoryKey(projectId)) || ""; }
+    catch (_) { return ""; }
+  }
+
+  function rememberQueueId(projectId, queueId) {
+    if (!projectId || !queueId) return;
+    try { sessionStorage.setItem(queueMemoryKey(projectId), String(queueId)); } catch (_) {}
+  }
+
+  function conversationLoadFailureReason() {
+    if (provider() !== "chatgpt" || !conversationId() || composer()) return "";
+    const text = String(document.body?.innerText || document.body?.textContent || "").slice(0, 20000).toLowerCase();
+    if (text.includes("could not load this chatgpt conversation")) return "chatgpt-conversation-load-failed";
+    if (text.includes("could not load this conversation") || text.includes("unable to load conversation")) return "conversation-load-failed";
+    if (text.includes("conversation not found") || text.includes("gesprek kon niet worden geladen")) return "conversation-not-found";
+    return "";
+  }
+
+  function freshConversationNavigationUrl(candidate = target) {
+    const expected = candidateProvider(candidate);
+    try {
+      const url = new URL(newChatUrl(expected));
+      const projectId = String(candidate?.project_id || "").trim();
+      if (projectId) url.searchParams.set("zcloud_worker", projectId);
+      if (tabToken) url.searchParams.set("zcloud_tab", tabToken);
+      url.searchParams.set("zcloud_recover", "1");
+      return url.toString();
+    } catch (_) {
+      return newChatUrl(expected);
+    }
+  }
+
+  async function requestFreshConversation(reason) {
+    if (freshConversationPending || !target?.project_id || generationActive() || sending) return false;
+    freshConversationPending = true;
+    const queueId = String(target?.queue_item?.queue_id || "").trim();
+    if (queueId) rememberQueueId(target.project_id, queueId);
+    setPendingProject(target.project_id);
+    await status("conversation-reset-requested", {
+      reason: String(reason || "fresh-chat-policy").slice(0, 120),
+      previousConversation: conversationId(),
+      queueItem: queueId
+    });
+    location.assign(freshConversationNavigationUrl(target));
+    return true;
   }
 
   function claimKey(projectId) {
@@ -406,14 +459,24 @@
       return;
     }
 
+    const recoveryForceInitialDispatch = readUrlValue("zcloud_recover") === "1";
     clearNavigationMarkers();
     const previousConversation = target?.conversation_id || "";
     const bridgedForceInitialDispatch = bridgedInitialDispatchProjects.has(next.project_id);
     target = {
       ...target,
       ...next,
-      force_initial_dispatch: bridgedForceInitialDispatch || target?.force_initial_dispatch === true
+      force_initial_dispatch: bridgedForceInitialDispatch || recoveryForceInitialDispatch || target?.force_initial_dispatch === true
     };
+
+    const queueId = String(target?.queue_item?.queue_id || "").trim();
+    const rememberedQueue = rememberedQueueId(target.project_id);
+    if (currentProvider === "chatgpt" && currentConversation && queueId && rememberedQueue && rememberedQueue !== queueId && !generationActive() && !sending) {
+      rememberQueueId(target.project_id, queueId);
+      await requestFreshConversation("queue-assignment-changed");
+      return;
+    }
+    if (queueId && !rememberedQueue) rememberQueueId(target.project_id, queueId);
     draining = target.desired_state === "draining";
     renewClaim(target);
 
@@ -1000,6 +1063,8 @@
       }
 
       button.click();
+      const queueId = String(target?.queue_item?.queue_id || "").trim();
+      if (queueId) rememberQueueId(target.project_id, queueId);
       markHandoffConsumed();
       qualityRetryPending = false;
       lastPromptSentAt = Date.now();
@@ -1151,6 +1216,12 @@
 
   async function tick() {
     if (!target) return;
+
+    const loadFailure = conversationLoadFailureReason();
+    if (loadFailure) {
+      await requestFreshConversation(loadFailure);
+      return;
+    }
 
     await handleCommands();
 
