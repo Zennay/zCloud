@@ -30,21 +30,20 @@ jobs:
           test "$current_main" = "$EXPECTED_MAIN"
 
           generic="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID")"
-          acceptance="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$ACCEPTANCE_RUN_ID")"
-
           generic_name="$(jq -r .name <<<"$generic")"
           generic_status="$(jq -r .status <<<"$generic")"
           generic_sha="$(jq -r .head_sha <<<"$generic")"
-          acceptance_name="$(jq -r .name <<<"$acceptance")"
-          acceptance_status="$(jq -r .status <<<"$acceptance")"
-
           test "$generic_name" = "zCloud dynamic worker pool activation"
           test "$generic_sha" = "$EXPECTED_MAIN"
-          test "$acceptance_name" = "PWQ-24 post-443 live acceptance"
 
-          case "$acceptance_status" in
-            queued|in_progress) ;;
-            *) echo "PWQ24_ACCEPTANCE_NOT_ACTIVE status=$acceptance_status"; exit 0 ;;
+          jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$ACCEPTANCE_RUN_ID/jobs?per_page=100")"
+          wait_conclusion="$(jq -r '.jobs[] | select(.name=="wait-production") | .conclusion' <<<"$jobs")"
+          accept_status="$(jq -r '.jobs[] | select(.name=="accept") | .status' <<<"$jobs")"
+          accept_conclusion="$(jq -r '.jobs[] | select(.name=="accept") | .conclusion' <<<"$jobs")"
+          test "$wait_conclusion" = "success"
+          case "$accept_status:$accept_conclusion" in
+            queued:null|in_progress:null|completed:cancelled) ;;
+            *) echo "PWQ24_ACCEPT_JOB_NOT_RESTARTABLE status=$accept_status conclusion=$accept_conclusion"; exit 1 ;;
           esac
 
           case "$generic_status" in
@@ -56,3 +55,13 @@ jobs:
               echo "PWQ24_GENERIC_ACTIVATION_ALREADY_TERMINAL run=$GENERIC_RUN_ID status=$generic_status"
               ;;
           esac
+
+          for attempt in $(seq 1 20); do
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID" --jq .status)"
+            echo "PWQ24_GENERIC_ACTIVATION_STATUS attempt=$attempt status=$status"
+            [[ "$status" == "completed" ]] && exit 0
+            sleep 3
+          done
+
+          echo "generic activation did not terminate after bounded cancel wait" >&2
+          exit 1
