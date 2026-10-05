@@ -23,9 +23,9 @@ jobs:
       - name: Cancel only the superseded read-only proof run
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: "37326777807"
-          EXPECTED_SHA: "b1be9d99b34ca576e02ef52e922c26a1b55f5d4b"
-          EXPECTED_NAME: "Prove project-contract cutover production"
+          RUN_ID: "37329152085"
+          EXPECTED_SHA: "bf9503bfe0fd10d5f87978e045ab09007d785580"
+          EXPECTED_NAME: "Prove project-contract cutover production a755"
         shell: bash
         run: |
           set -Eeuo pipefail
