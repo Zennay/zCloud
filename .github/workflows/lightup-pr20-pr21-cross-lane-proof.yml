@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 15
     env:
-      PR20_SHA: e2ffed835fa637acd14db0dd16870c9afbec3922
+      PR20_SHA: 977e63bf322c33eac96841d068df61c70208870e
       PR21_SHA: 5df27d93713df40d31d27b1da13d66998b47136d
     steps:
       - name: Guard VPS identity
