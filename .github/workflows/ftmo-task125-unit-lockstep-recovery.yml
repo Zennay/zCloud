@@ -16,9 +16,14 @@ concurrency:
 
 jobs:
   repair:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
+      - name: Check out exact zCloud recovery source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 1
+
       - name: Repair exact FTMO main unit drift
         shell: bash
         run: |
@@ -32,11 +37,30 @@ jobs:
           ZCLOUD_RESOURCE_DB="${ZCLOUD_RESOURCE_DB:-$ZCLOUD_CONTROL_ROOT/history.db}"
 
           test -d "$REPO_ROOT"
-          test -f "$ZCLOUD_CONTROL_ROOT/scripts/zcloud_governed_exec.py"
-          test -f "$ZCLOUD_CONTROL_ROOT/project-contracts.json"
+          test -d "$ZCLOUD_CONTROL_ROOT"
 
-          RUN_USER="$(systemctl show "$RUNNER_SERVICE" -p User --value)"
+          # The governor is the only new runtime dependency introduced by the
+          # proven FTMO main. Repair missing deployment files from this exact
+          # zCloud checkout, but do not overwrite an existing live copy here.
+          for relative in scripts/zcloud_governed_exec.py project-contracts.json project_runtime.py; do
+            test -f "$GITHUB_WORKSPACE/$relative"
+            if [[ ! -f "$ZCLOUD_CONTROL_ROOT/$relative" ]]; then
+              install -D -m 0644 "$GITHUB_WORKSPACE/$relative" "$ZCLOUD_CONTROL_ROOT/$relative"
+              echo "FTMO_TASK125_DEPENDENCY_INSTALLED=$relative"
+            fi
+            test -f "$ZCLOUD_CONTROL_ROOT/$relative"
+          done
+          test -f "$ZCLOUD_RESOURCE_DB"
+
+          # Match the actual FTMO Actions runner user. systemd's User property
+          # may be empty for a service that inherits root/default identity.
+          runner_pid="$(systemctl show "$RUNNER_SERVICE" -p MainPID --value)"
+          [[ "$runner_pid" =~ ^[1-9][0-9]*$ ]]
+          kill -0 "$runner_pid"
+          RUN_USER="$(ps -o user= -p "$runner_pid" | tr -d '[:space:]')"
           test -n "$RUN_USER"
+          id "$RUN_USER" >/dev/null
+          echo "FTMO_TASK125_EXPECTED_RUN_USER=$RUN_USER"
 
           PYTHON_BIN="${FTMO_SYSTEM_PYTHON:-}"
           if [[ -z "$PYTHON_BIN" ]]; then
@@ -46,11 +70,13 @@ jobs:
               PYTHON_BIN="$(command -v python3)"
             fi
           fi
+          test -x "$PYTHON_BIN"
           "$PYTHON_BIN" - <<'PY'
           import sys
           if sys.version_info < (3, 12):
               raise SystemExit("FTMO autonomous runtime requires Python 3.12+")
           PY
+          echo "FTMO_TASK125_EXPECTED_PYTHON=$PYTHON_BIN"
 
           rendered="$(mktemp)"
           backup="/etc/systemd/system/$SERVICE.task125-pre-repair"
@@ -89,6 +115,7 @@ jobs:
           UNIT
 
           ! grep -Eq '__[A-Z0-9_]+__' "$rendered"
+          echo "FTMO_TASK125_RENDER_SHA256=$(sha256sum "$rendered" | awk '{print $1}')"
 
           if ! sudo -n cmp -s "$rendered" "/etc/systemd/system/$SERVICE"; then
             if [[ -f "/etc/systemd/system/$SERVICE" ]]; then
@@ -100,11 +127,21 @@ jobs:
           fi
 
           sudo -n cmp "$rendered" "/etc/systemd/system/$SERVICE"
-          systemctl is-active --quiet "$SERVICE"
 
-          pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+          state=""
+          pid=""
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "$SERVICE" || true)"
+            pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+            if [[ "$state" == "active" && "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          test "$state" = "active"
           [[ "$pid" =~ ^[1-9][0-9]*$ ]]
           kill -0 "$pid"
+
           cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
           [[ "$cmdline" == *"zcloud_governed_exec.py"* ]]
           [[ "$cmdline" == *"run-autonomous-marathon.sh"* ]]
