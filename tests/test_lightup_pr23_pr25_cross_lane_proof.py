@@ -10,10 +10,7 @@ class LightUpPR23PR25CrossLaneProofTests(unittest.TestCase):
     def test_cross_lane_proof_is_exact_head_and_bounded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn(
-            'branches:\n      - "chatgpt/lightup-pr23-pr25-cross-lane-proof-20261005"',
-            text,
-        )
+        self.assertIn("branches: [main]", text)
         self.assertIn("runs-on: [self-hosted, ftmo-research]", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         for pr in (23, 24, 25):
@@ -27,6 +24,10 @@ class LightUpPR23PR25CrossLaneProofTests(unittest.TestCase):
         self.assertIn('"23": os.environ["PR23_SHA"]', text)
         self.assertIn('"24": os.environ["PR24_SHA"]', text)
         self.assertIn('"25": os.environ["PR25_SHA"]', text)
+        self.assertIn("needs: prove", text)
+        self.assertIn("issues: write", text)
+        self.assertIn("actions/download-artifact@v4", text)
+        self.assertIn("repos/Zennay/zCloud/issues/491/comments", text)
         self.assertNotIn("git merge", text)
         self.assertNotIn("git push", text)
 
