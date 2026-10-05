@@ -168,6 +168,36 @@ class RecoveryTests(unittest.TestCase):
         pointer = json.loads((self.state / "last-known-good.json").read_text())
         self.assertEqual(manifests[-1]["snapshot_id"], pointer["snapshot_id"])
 
+    def test_capture_remains_valid_when_retention_housekeeping_fails(self):
+        with patch.object(
+            recovery,
+            "prune_recovery_snapshots",
+            side_effect=OSError("simulated retention failure"),
+        ):
+            manifest = self.capture()
+
+        pointer = json.loads((self.state / "last-known-good.json").read_text())
+        self.assertEqual(manifest["snapshot_id"], pointer["snapshot_id"])
+        self.assertTrue(
+            (
+                self.state
+                / "snapshots"
+                / manifest["snapshot_id"]
+                / "manifest.json"
+            ).exists()
+        )
+        events = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        failures = [
+            event
+            for event in events
+            if event.get("event") == "recovery_snapshot_prune_failed"
+        ]
+        self.assertEqual(1, len(failures))
+        self.assertIn("simulated retention failure", failures[0]["error"])
+
     def test_rollback_restores_source_and_preserves_chat_mapping(self):
         manifest = self.capture()
         before = recovery.mapping_fingerprint(self.root / "history.db")
