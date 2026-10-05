@@ -98,13 +98,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.8", required.group(1))
+        self.assertEqual("1.3.9", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.8";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.9";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
