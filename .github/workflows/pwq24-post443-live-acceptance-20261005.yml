@@ -136,6 +136,7 @@ jobs:
           import sqlite3
           import subprocess
           import time
+          import urllib.error
           import urllib.request
           from datetime import datetime, timezone
 
@@ -214,8 +215,21 @@ jobs:
               else:
                   for project in sorted(REQUIRED):
                       key = selected[project]
-                      result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
-                      actions.append({'worker': key, 'action': 'start', 'result': result})
+                      try:
+                          result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                          actions.append({'worker': key, 'action': 'start', 'result': result})
+                      except urllib.error.HTTPError as exc:
+                          raw = exc.read().decode('utf-8', 'replace')
+                          if exc.code == 400:
+                              actions.append({
+                                  'worker': key,
+                                  'action': 'start',
+                                  'recoverable_allocation_churn': True,
+                                  'http_status': exc.code,
+                                  'detail': raw[:1000],
+                              })
+                              continue
+                          raise
 
           final = {}
           deadline = time.time() + 150
