@@ -3644,7 +3644,14 @@ def runner_record(payload):
                       (project_id,worker_slot,match.group(1),event_provider))
             if worker_slot==1:
                 c.execute('UPDATE runner_targets SET conversation_id=? WHERE project_id=?',(match.group(1),project_id))
-        if event in ('runner-drained','runner-paused') and project_id in runner_targets():
+        if event == 'runner-drained' and project_id in runner_targets():
+            state_row=c.execute('SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?',(project_id,worker_slot)).fetchone()
+            # Only a backend-requested drain may transition the durable worker state
+            # to paused. Replacement/new-chat drains are local tab lifecycle events
+            # and must keep the worker runnable for the fresh conversation.
+            if state_row and str(state_row['desired_state'] or '') == 'draining':
+                c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
+        elif event == 'runner-paused' and project_id in runner_targets():
             c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=? AND worker_slot=?",(project_id,worker_slot))
         cutoff=datetime.fromtimestamp(time.time()-14*86400,timezone.utc).isoformat()
         c.execute('DELETE FROM runner_events WHERE ts < ?', (cutoff,))
