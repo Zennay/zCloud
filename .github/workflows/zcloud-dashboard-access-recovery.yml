@@ -97,7 +97,19 @@ jobs:
           set -euo pipefail
           url='http://198.244.191.182:8765/api/status'
           for attempt in $(seq 1 6); do
-            if curl -fsS --max-time 30 "$url" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("time") and isinstance(d.get("projects"), list)' >/dev/null; then
+            if curl -fsS --max-time 30 "$url" -o /tmp/zcloud-status.json; then
+              python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('/tmp/zcloud-status.json').read_text())
+          assert d.get('time') and isinstance(d.get('projects'), list)
+          print('ZCLOUD_TIME', d.get('time'))
+          print('RESOURCE_SUMMARY', json.dumps(d.get('resource_summary',{}), sort_keys=True))
+          print('RESOURCE_GOVERNOR', json.dumps(d.get('resource_governor',{}), sort_keys=True))
+          for p in d.get('projects',[]):
+              if p.get('id') in {'ftmo','haxlab','raiseai','cloud'}:
+                  print('PROJECT', p.get('id'), json.dumps(p, sort_keys=True))
+          PY
               echo 'ZCLOUD_DASHBOARD_EXTERNAL_STATUS_GREEN'
               exit 0
             fi
