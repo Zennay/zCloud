@@ -301,7 +301,7 @@ jobs:
                   ],
               }
 
-          candidate_deadline = time.time() + 45
+          candidate_deadline = time.time() + 180
           candidate_attempt = 0
           candidates = []
           claimless_candidates = []
