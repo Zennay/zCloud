@@ -177,6 +177,51 @@ class PrechangeGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertFalse(checks["firefox_service"]["ok"])
 
+    def test_generated_python_bytecode_is_ignored_but_unknown_source_still_blocks(self):
+        cache = self.root / "scripts" / "__pycache__"
+        cache.mkdir(parents=True)
+        (cache / "worker_scaling_report.cpython-314.pyc").write_bytes(b"generated-bytecode")
+        result = self.evaluate()
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn(
+            "scripts/__pycache__/worker_scaling_report.cpython-314.pyc",
+            result["unexpected_changes"],
+        )
+
+        (cache / "manual_source.py").write_text("manual source\n")
+        result = self.evaluate()
+        self.assertFalse(result["ok"])
+        self.assertIn("scripts/__pycache__/manual_source.py", result["unexpected_changes"])
+
+    def test_historical_lkg_bytecode_does_not_look_like_deleted_source(self):
+        snapshot_files = (
+            self.state / "snapshots" / "test-snapshot" / "files" / "scripts" / "__pycache__"
+        )
+        snapshot_files.mkdir(parents=True)
+        rel = "scripts/__pycache__/worker_scaling_report.cpython-314.pyc"
+        payload = b"old-generated-bytecode"
+        (snapshot_files / "worker_scaling_report.cpython-314.pyc").write_bytes(payload)
+        manifest_path = self.state / "snapshots" / "test-snapshot" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["hashes"][rel] = digest(payload)
+        manifest_path.write_text(json.dumps(manifest))
+
+        result = self.evaluate()
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn(rel, result["unexpected_changes"])
+
+    def test_unknown_managed_source_reports_only_hash_diagnostics(self):
+        path = self.root / "scripts" / "zcloud_governed_exec.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("unknown-live-source\n")
+        result = self.evaluate()
+        checks = {item["name"]: item for item in result["checks"]}
+        detail = checks["managed_source_state"]["detail"]
+        hashes = detail["unexpected_hashes"]["scripts/zcloud_governed_exec.py"]
+        self.assertEqual(digest(b"unknown-live-source\n"), hashes["current_sha256"])
+        self.assertIsNone(hashes["lkg_sha256"])
+        self.assertNotIn("unknown-live-source", json.dumps(detail))
+
     def test_new_managed_file_is_unexpected(self):
         (self.root / "scripts").mkdir()
         (self.root / "scripts/new_deploy.py").write_text("new\n")
