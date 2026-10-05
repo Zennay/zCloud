@@ -38,6 +38,8 @@ class DashboardStartForceRegressionTests(unittest.TestCase):
     def test_backend_force_start_bypasses_start_dedupe_and_cooldown(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("force_start=action=='start' and payload.get('force') is True", server)
+        self.assertIn("_manual_force_start_priority_key(base_project_id)", server)
+        self.assertIn("_manual_force_start_priority_active_locked", server)
         self.assertIn("if force_start and inflight and inflight['action']==action:", server)
         self.assertIn("Superseded by explicit Force start", server)
         self.assertIn("if recent and not force_start:", server)
