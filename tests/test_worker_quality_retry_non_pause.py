@@ -27,7 +27,9 @@ class WorkerQualityRetryNonPauseTests(unittest.TestCase):
         self.assertIn("backend-rejected-automatic-worker-pause", server)
         self.assertIn("if event=='runner-paused' and reason!='dashboard-pause':", server)
         self.assertIn("backend-rejected-non-dashboard-worker-pause", server)
-        self.assertIn("if event in ('runner-drained','runner-paused')", server)
+        self.assertIn("if event == 'runner-drained' and project_id in runner_targets():", server)
+        self.assertIn("str(state_row['desired_state'] or '') == 'draining'", server)
+        self.assertIn("elif event == 'runner-paused' and project_id in runner_targets():", server)
 
 
 if __name__ == "__main__":
