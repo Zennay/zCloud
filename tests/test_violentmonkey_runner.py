@@ -54,6 +54,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('"violentmonkey-primary-runner"', userscript)
         self.assertIn('"portfolio-queue-result"', userscript)
         self.assertIn('"awaiting-vps-dispatch"', userscript)
+        self.assertIn('"zcloud-replacement-drain"', userscript)
+        self.assertIn('"data-zcloud-replacement-drain-state"', userscript)
+        self.assertIn('setReplacementDrainState("drained")', userscript)
         self.assertNotIn("Ga verder met hetzelfde vrije werkgebied", userscript)
         self.assertIn("data-zcloud-violentmonkey-ready", userscript)
         self.assertNotIn("Werk verder aan het project en voer nu een concrete volgende stap uit", userscript)
@@ -98,13 +101,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.12", required.group(1))
+        self.assertEqual("1.3.13", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.12";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.13";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -256,8 +259,8 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
     def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
-        self.assertIn("// @version      1.3.12", userscript)
-        self.assertIn('const SCRIPT_VERSION = "1.3.12";', userscript)
+        self.assertIn("// @version      1.3.13", userscript)
+        self.assertIn('const SCRIPT_VERSION = "1.3.13";', userscript)
         self.assertIn(
             'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
             userscript,
