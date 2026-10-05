@@ -1,0 +1,178 @@
+name: zCloud self-hosted queue watchdog
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-self-hosted-queue-watchdog.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: zcloud-self-hosted-queue-watchdog
+  cancel-in-progress: true
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    outputs:
+      recover: ${{ steps.inspect.outputs.recover }}
+      evidence: ${{ steps.inspect.outputs.evidence }}
+    steps:
+      - id: inspect
+        name: Detect stale queued zCloud jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, urllib.request
+          from datetime import datetime, timezone
+
+          repo=os.environ["REPO"]
+          token=os.environ["GH_TOKEN"]
+          headers={
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-self-hosted-queue-watchdog/1",
+          }
+
+          def get(path):
+              req=urllib.request.Request("https://api.github.com"+path,headers=headers)
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  return json.load(r)
+
+          now=datetime.now(timezone.utc)
+          queued=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
+          stale=[]
+          for run in queued:
+              created=datetime.fromisoformat(str(run["created_at"]).replace("Z","+00:00"))
+              age=(now-created).total_seconds()
+              if age < 180:
+                  continue
+              jobs=get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100").get("jobs") or []
+              for job in jobs:
+                  if job.get("status") != "queued":
+                      continue
+                  labels={str(x).lower() for x in (job.get("labels") or [])}
+                  if "zcloud" not in labels:
+                      continue
+                  stale.append({
+                      "run_id":run["id"],
+                      "job_id":job.get("id"),
+                      "name":run.get("name"),
+                      "job":job.get("name"),
+                      "age_s":int(age),
+                      "labels":sorted(labels),
+                  })
+
+          evidence={"stale_zcloud_jobs":stale,"count":len(stale)}
+          print("recover=" + ("true" if stale else "false"))
+          print("evidence=" + json.dumps(evidence,separators=(",",":")))
+          PY
+
+  recover:
+    needs: observe
+    if: needs.observe.outputs.recover == 'true'
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    env:
+      QUEUE_EVIDENCE: ${{ needs.observe.outputs.evidence }}
+    steps:
+      - name: Recover idle zCloud listener and push work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+          runner_root="/home/ubuntu/actions-runner-zcloud"
+
+          listener_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          }
+
+          worker_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/Runner.Worker"* ]] && echo "$pid"
+            done
+          }
+
+          state="$(systemctl is-active "$service" || true)"
+          mapfile -t listeners < <(listener_pids)
+          mapfile -t workers < <(worker_pids)
+          echo "QUEUE_EVIDENCE=$QUEUE_EVIDENCE"
+          echo "ZCLOUD_RUNNER_PRE state=$state listeners=${#listeners[@]} workers=${#workers[@]} listener_pids=${listeners[*]:-none} worker_pids=${workers[*]:-none}"
+
+          if [[ "${#workers[@]}" -eq 0 ]]; then
+            echo "ZCLOUD_QUEUE_RECOVERY=restart_idle_listener"
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl restart "$service"
+            for _ in $(seq 1 25); do
+              state="$(systemctl is-active "$service" || true)"
+              mapfile -t listeners < <(listener_pids)
+              [[ "$state" == "active" && "${#listeners[@]}" -eq 1 ]] && break
+              sleep 1
+            done
+          else
+            echo "ZCLOUD_QUEUE_RECOVERY=preserve_active_worker"
+          fi
+
+          state="$(systemctl is-active "$service" || true)"
+          mapfile -t listeners < <(listener_pids)
+          mapfile -t workers < <(worker_pids)
+          echo "ZCLOUD_RUNNER_POST state=$state listeners=${#listeners[@]} workers=${#workers[@]} listener_pids=${listeners[*]:-none} worker_pids=${workers[*]:-none}"
+
+          test "$state" = "active"
+          test "${#listeners[@]}" -eq 1
+
+          python3 - <<'PY'
+          import json, urllib.error, urllib.request
+
+          base="http://127.0.0.1:8765"
+
+          def call(method,path,payload=None):
+              data=None
+              headers={"User-Agent":"zcloud-self-hosted-queue-watchdog/1"}
+              if payload is not None:
+                  data=json.dumps(payload).encode()
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(base+path,data=data,headers=headers,method=method)
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  return json.load(r)
+
+          current=call("GET","/api/dynamic-workers").get("dynamic_workers") or {}
+          desired={
+              key:current.get(key)
+              for key in (
+                  "chatgpt_count","claude_count",
+                  "chatgpt_cooldown_seconds","claude_cooldown_seconds",
+                  "check_interval_ms","tick_interval_ms","heartbeat_interval_ms",
+                  "generation_start_timeout_ms","scheduler_interval_seconds",
+              )
+              if current.get(key) is not None
+          }
+          desired["chatgpt_count"]=7
+          reconciled=call("POST","/api/dynamic-workers",desired)
+          print("WORKER_CAPACITY_RECONCILED",json.dumps(reconciled,sort_keys=True))
+          pushed=call("POST","/api/dynamic-workers/force-push",{})
+          print("WORKERS_FORCE_PUSHED",json.dumps(pushed,sort_keys=True))
+          if not reconciled.get("ok"):
+              raise SystemExit("dynamic worker reconcile returned ok=false")
+          if not pushed.get("ok"):
+              raise SystemExit("force-push returned ok=false")
+          PY
