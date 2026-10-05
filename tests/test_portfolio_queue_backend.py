@@ -1265,7 +1265,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "zCloud",
             "",
             1,
-            1,
+            2,
             item,
         )
 
