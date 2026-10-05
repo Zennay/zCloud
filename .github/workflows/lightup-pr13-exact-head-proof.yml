@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     env:
-      LIGHTUP_TARGET_SHA: ede3a23f582557665b214766c2a9d25cc374a19a
+      LIGHTUP_TARGET_SHA: 8434f6c99460a34c8f0b23a9e465246809848485
       LIGHTUP_PR: "13"
     steps:
       - name: Checkout zCloud guard source
