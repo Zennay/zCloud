@@ -105,6 +105,8 @@ jobs:
 
       - name: Prove intentional worker replacement handoff live
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -123,6 +125,8 @@ jobs:
           EXPECTED = os.environ["EXPECTED_MAIN_SHA"]
           IMPLEMENTATION = os.environ["IMPLEMENTATION_SHA"]
           EVIDENCE = Path(os.environ["EVIDENCE"])
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 
           def now():
               return datetime.now(timezone.utc).isoformat()
@@ -136,6 +140,28 @@ jobs:
               req = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
               with urllib.request.urlopen(req, timeout=timeout) as response:
                   return json.load(response)
+
+          def github_get(path):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{REPO}{path}",
+                  headers={
+                      "Authorization": f"Bearer {GITHUB_TOKEN}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "zcloud-pwq41-live-acceptance",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
+
+          def assert_current_main(stage):
+              current = str(github_get("/commits/main").get("sha") or "")
+              if current != EXPECTED:
+                  raise SystemExit(
+                      f"repository main moved during PWQ-41 acceptance stage={stage} "
+                      f"expected={EXPECTED} actual={current}"
+                  )
+              print(f"PWQ41_CURRENT_MAIN_OK stage={stage} sha={current}", flush=True)
 
           def claims(base_project):
               data = call("GET", "/api/task-claims?project=" + urllib.parse.quote(base_project))
@@ -184,6 +210,7 @@ jobs:
           if ancestor.returncode != 0:
               raise SystemExit(f"production revision {EXPECTED} does not contain PWQ-41 implementation {IMPLEMENTATION}")
 
+          assert_current_main("pre-baseline")
           status = call("GET", "/api/status")
           cloud = next((p for p in status.get("projects", []) if p.get("id") == "cloud"), None)
           if not cloud:
@@ -386,6 +413,7 @@ jobs:
           slot = int(target.get("worker_slot") or (worker_key.rsplit("::w", 1)[1] if "::w" in worker_key else 1))
           started = now()
 
+          assert_current_main("pre-mutation")
           command = call("POST", "/api/runner-control", {
               "project_id": worker_key,
               "action": "new_chat",
@@ -475,6 +503,7 @@ jobs:
               raise SystemExit("intentional replacement did not bind a new conversation")
 
           final_health = health()
+          assert_current_main("post-proof")
           evidence = {
               "ok": True,
               "tested_at": now(),
