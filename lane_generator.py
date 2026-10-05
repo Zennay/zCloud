@@ -129,7 +129,41 @@ PROFILE_LANES = {
             ),
         },
     ),
+
+    "security-lab": (
+        {
+            "id": "scope-authorization",
+            "keywords": (
+                "authorization", "authorisation", "scope", "approval", "consent",
+                "target", "tenant", "request", "permission", "guardrail",
+            ),
+        },
+        {
+            "id": "assessment-runtime",
+            "keywords": (
+                "assessment", "orchestration", "orchestrator", "discovery", "passive",
+                "scan", "probe", "lab", "runtime", "plan", "workflow",
+            ),
+        },
+        {
+            "id": "evidence-remediation",
+            "keywords": (
+                "evidence", "finding", "findings", "remediation", "retest", "report",
+                "audit", "triage", "severity", "fix", "verification",
+            ),
+        },
+    ),
+    "human-gated": (
+        {
+            "id": "external-gate",
+            "keywords": (
+                "human", "participant", "approval", "physical", "external", "gate",
+            ),
+        },
+    ),
 }
+
+SUPPORTED_PROFILES = frozenset(PROFILE_LANES)
 
 PROJECT_SCOPE_ALIASES = {
     ("cloud", "control-plane"): (
@@ -214,8 +248,10 @@ def scopes_overlap(left, right):
 
 def _profile(project):
     explicit = str(project.get("lane_profile") or "").strip().lower()
-    if explicit in PROFILE_LANES:
-        return explicit
+    if explicit:
+        if explicit in PROFILE_LANES:
+            return explicit
+        raise ValueError(f"unsupported lane_profile {explicit!r}")
     project_id = str(project.get("id") or "").strip().lower()
     return {
         "ftmo": "research-validation",

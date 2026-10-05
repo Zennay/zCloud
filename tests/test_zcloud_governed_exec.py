@@ -49,7 +49,7 @@ class GovernedExecTests(unittest.TestCase):
                         },
                         "ftmo": {
                             "queue_mode": "execution",
-                            "lane_profile": "research",
+                            "lane_profile": "research-validation",
                             "ai_worker_cap": 1,
                             "autonomy": {"mode": "ai_worker", "auto_start": True},
                             "compute": {
@@ -61,7 +61,7 @@ class GovernedExecTests(unittest.TestCase):
                         },
                         "haxlab": {
                             "queue_mode": "execution",
-                            "lane_profile": "ml",
+                            "lane_profile": "ml-training",
                             "ai_worker_cap": 1,
                             "autonomy": {"mode": "ai_worker", "auto_start": True},
                             "compute": {

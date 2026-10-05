@@ -30,14 +30,14 @@ class ProjectRuntimeTests(unittest.TestCase):
                 },
                 "ftmo": {
                     "queue_mode": "execution",
-                    "lane_profile": "research",
+                    "lane_profile": "research-validation",
                     "ai_worker_cap": 2,
                     "autonomy": {"mode": "ai_worker", "auto_start": True},
                     "compute": {"class": "research-heavy", "pool": "heavy", "cpu_soft_cores": 4, "memory_soft_mb": 4096},
                 },
                 "haxlab": {
                     "queue_mode": "execution",
-                    "lane_profile": "ml",
+                    "lane_profile": "ml-training",
                     "ai_worker_cap": 1,
                     "autonomy": {"mode": "ai_worker", "auto_start": True},
                     "compute": {"class": "ml-heavy", "pool": "heavy", "cpu_soft_cores": 1, "memory_soft_mb": 2048},
@@ -71,6 +71,13 @@ class ProjectRuntimeTests(unittest.TestCase):
         data["projects"]["cloud"]["ai_worker_cap"] = 0
         self.contracts.write_text(json.dumps(data))
         with self.assertRaisesRegex(ValueError, "ai_worker_cap=0 requires fail-closed"):
+            runtime.load_contracts()
+
+    def test_unknown_lane_profile_fails_closed(self):
+        data = json.loads(self.contracts.read_text())
+        data["projects"]["cloud"]["lane_profile"] = "mystery"
+        self.contracts.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "unsupported lane_profile"):
             runtime.load_contracts()
 
     def test_receipt_overrides_stale_phase_and_next_gate(self):

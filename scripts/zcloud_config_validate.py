@@ -10,6 +10,12 @@ import sqlite3
 import sys
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from lane_generator import SUPPORTED_PROFILES
+
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 ALLOWED_AUTONOMY_MODES = {"ai_worker", "zcloud_stopgate", "haxlab_status", "ftmo_status", "external_gate", "manual"}
 
@@ -184,7 +190,12 @@ def validate_project_contracts(
             errors.append(f"{prefix}: object required")
             continue
         add(errors, isinstance(contract.get("queue_mode"), str) and bool(contract.get("queue_mode", "").strip()), f"{prefix}.queue_mode: non-empty string required")
-        add(errors, isinstance(contract.get("lane_profile"), str) and bool(contract.get("lane_profile", "").strip()), f"{prefix}.lane_profile: non-empty string required")
+        lane_profile = str(contract.get("lane_profile") or "").strip().lower()
+        add(
+            errors,
+            lane_profile in SUPPORTED_PROFILES,
+            f"{prefix}.lane_profile: expected one of {sorted(SUPPORTED_PROFILES)}",
+        )
         cap = contract.get("ai_worker_cap")
         add(errors, isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0, f"{prefix}.ai_worker_cap: integer >= 0 required")
 
