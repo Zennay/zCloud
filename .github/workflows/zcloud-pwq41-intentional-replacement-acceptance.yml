@@ -271,7 +271,7 @@ jobs:
           for project in registry:
               project_id = str(project.get("id") or "").strip()
               repo_url = str(project.get("repo_url") or "").strip()
-              match = re.search(r"github\\.com[/:]([^/]+/[^/#]+)", repo_url, re.I)
+              match = re.search(r"github\.com[/:]([^/]+/[^/#]+)", repo_url, re.I)
               if project_id and match:
                   preflight_repos[project_id] = match.group(1).removesuffix(".git")
 
@@ -605,11 +605,23 @@ jobs:
           import os
           import urllib.error
           import urllib.request
+          from pathlib import Path
 
           base = os.environ["ZCLOUD_BASE"]
           owner = "pwq41-acceptance-" + os.environ["GITHUB_RUN_ID"]
           claim_key = "acceptance:pwq41:" + os.environ["GITHUB_RUN_ID"]
-          for project_id in ("cloud", "lightup"):
+          project_ids = ["cloud", "lightup"]
+          try:
+              registry = json.loads(Path("projects.json").read_text(encoding="utf-8"))
+              project_ids = sorted({
+                  str(item.get("id") or "").strip()
+                  for item in registry
+                  if str(item.get("id") or "").strip()
+              } | set(project_ids))
+          except Exception as exc:
+              print(f"PWQ41_FIXTURE_CLEANUP_REGISTRY_WARNING error={exc}")
+
+          for project_id in project_ids:
               body = json.dumps({
                   "action": "release",
                   "project_id": project_id,
