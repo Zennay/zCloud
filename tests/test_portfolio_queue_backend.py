@@ -902,7 +902,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("autonomy-continue", row["event"])
         self.assertEqual("backend-non-stopping-dynamic-worker-policy", row["reason"])
 
-    def test_drop_retires_obsolete_runtime_task_without_continuation(self):
+    def test_drop_retires_obsolete_runtime_task_and_refills_project(self):
         item = server.portfolio_queue_enqueue(
             "ftmo",
             "legacy runtime throughput task",
@@ -921,6 +921,19 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("dropped", row["status"])
         self.assertFalse(row["eligible"])
         self.assertIsNone(row["worker_slot"])
+        self.assertTrue(result["queue_audit"]["created"])
+
+        ftmo_ready = [
+            x for x in server.portfolio_queue_items()
+            if x["project_id"] == "ftmo"
+        ]
+        self.assertEqual(1, len(ftmo_ready))
+        self.assertNotEqual(item["queue_id"], ftmo_ready[0]["queue_id"])
+        self.assertEqual(
+            "Execute substantial FTMO roadmap work package",
+            ftmo_ready[0]["title"],
+        )
+        self.assertEqual("P1", ftmo_ready[0]["priority"])
 
     def test_continue_requeues_without_notion_dependency(self):
         item = server.portfolio_queue_enqueue("raiseai", "iterate", "P1", "prove next state")
