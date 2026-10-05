@@ -58,9 +58,7 @@
     "priority": "low",
     "repo_url": "https://github.com/Zennay/Haxlab",
     "notion_url": "https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
-    "handoff_url": "https://app.notion.com/p/3e59e19ac95581528ae2c563f789d8eb",
-    "queue_mode": "execution",
-    "lane_profile": "ml-training"
+    "handoff_url": "https://app.notion.com/p/3e59e19ac95581528ae2c563f789d8eb"
   },
   {
     "id": "ftmo",
@@ -120,9 +118,7 @@
     "priority": "normal",
     "repo_url": "https://github.com/Zennay/Ftmo",
     "notion_url": "https://app.notion.com/p/3db9e19ac9558135940bec5110a2157e",
-    "handoff_url": "https://app.notion.com/p/3db9e19ac9558151bb4debd3d9057322",
-    "queue_mode": "execution",
-    "lane_profile": "research-validation"
+    "handoff_url": "https://app.notion.com/p/3db9e19ac9558151bb4debd3d9057322"
   },
   {
     "id": "cloud",
@@ -213,9 +209,7 @@
     ],
     "repo_url": "https://github.com/Zennay/zCloud",
     "notion_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8",
-    "handoff_url": "https://app.notion.com/p/3e79e19ac955819e9ccee5bec98bbb9c",
-    "queue_mode": "execution",
-    "lane_profile": "platform"
+    "handoff_url": "https://app.notion.com/p/3e79e19ac955819e9ccee5bec98bbb9c"
   },
   {
     "id": "supa",
@@ -276,9 +270,7 @@
     ],
     "priority": "low",
     "notion_url": "https://app.notion.com/p/3e79e19ac955810f903be62439eef2b3",
-    "handoff_url": "https://app.notion.com/p/3e79e19ac955816cb232d2b2bcfb8604",
-    "queue_mode": "execution",
-    "lane_profile": "product"
+    "handoff_url": "https://app.notion.com/p/3e79e19ac955816cb232d2b2bcfb8604"
   },
   {
     "id": "raiseai",
@@ -327,9 +319,7 @@
     "priority": "low",
     "repo_url": "https://github.com/Zennay/RaiseAI",
     "notion_url": "https://app.notion.com/p/3e09e19ac95581709502f992608b8abd",
-    "handoff_url": "https://app.notion.com/p/3e09e19ac95581d1a6aaed3c09443f5c",
-    "queue_mode": "execution",
-    "lane_profile": "device-product"
+    "handoff_url": "https://app.notion.com/p/3e09e19ac95581d1a6aaed3c09443f5c"
   },
   {
     "id": "ulab",
@@ -373,7 +363,6 @@
       }
     ],
     "priority": "low",
-    "queue_mode": "human-gated",
     "human_gates": [
       {
         "id": "ulab-ha006-usability",
@@ -382,8 +371,7 @@
         "severity": "urgent",
         "source_url": "https://app.notion.com/p/3df9e19ac9558198bdd0d9ff4be46221"
       }
-    ],
-    "lane_profile": "human-gated"
+    ]
   },
   {
     "id": "zssh",
@@ -437,9 +425,7 @@
     "priority": "system",
     "repo_url": "https://github.com/Zennay/zSSH",
     "notion_url": "https://app.notion.com/p/3e89e19ac955811a9008d420e3e2a634",
-    "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8",
-    "queue_mode": "execution",
-    "lane_profile": "platform"
+    "handoff_url": "https://app.notion.com/p/3e89e19ac95581639bdcdc9daeb37ae8"
   },
   {
     "id": "lightup",
@@ -495,9 +481,7 @@
         "done": false,
         "progress": 0
       }
-    ],
-    "queue_mode": "execution",
-    "lane_profile": "security-lab"
+    ]
   },
   {
     "id": "zguard",
@@ -540,8 +524,6 @@
         "done": false,
         "progress": 15
       }
-    ],
-    "queue_mode": "execution",
-    "lane_profile": "product"
+    ]
   }
 ]

@@ -93,7 +93,25 @@ WORKER_LANES = (
     'telemetrie, documentatie en reproduceerbaarheid',
     'onafhankelijke QA van open werk zonder bestaand werk te dupliceren',
 )
-PROJECT_INDEX = {p['id']: p for p in json.loads((ROOT/'projects.json').read_text())}
+def _load_project_registry():
+    """Load presentation metadata and hydrate runtime fields from the canonical contract."""
+    projects=json.loads((ROOT/'projects.json').read_text())
+    for project in projects:
+        project_id=str(project.get('id') or '').strip().lower()
+        try:
+            contract=project_runtime.project_contract(project_id)
+        except Exception:
+            logging.exception('Missing/invalid runtime contract for registry project %s',project_id)
+            # Keep the dashboard available, but fail closed for autonomous scheduling.
+            project['queue_mode']='human-gated'
+            project['lane_profile']='product'
+            project['runtime_contract_error']='missing_or_invalid'
+            continue
+        project['queue_mode']=str(contract.get('queue_mode') or '')
+        project['lane_profile']=str(contract.get('lane_profile') or '')
+    return projects
+
+PROJECT_INDEX = {p['id']: p for p in _load_project_registry()}
 
 VPS_EXECUTION_POLICY_FILE = ROOT / 'vps-execution-policy.json'
 
@@ -1028,7 +1046,7 @@ def replay_metrics():
     return {'analyzed':counts.get('ok',0),'failed':counts.get('failed',0),'pending':counts.get('pending',0),'hours':round((r[0] or 0)/3600,1),'available':True}
 
 def collect():
-    projects = json.loads((ROOT/'projects.json').read_text())
+    projects = _load_project_registry()
     errors=[]
     try:
         with connect() as c:
