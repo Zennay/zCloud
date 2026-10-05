@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.11";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.12";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -1799,9 +1799,14 @@ async function pollCommands() {
       const vmOwnsCommand = VIOLENTMONKEY_PRIMARY_RUNNER &&
         commandWorkerKeys.length > 0 &&
         commandWorkerKeys.every(key => violentmonkeyReadyProjects.has(key));
-      if (vmOwnsCommand && (command.action === "push" || command.action === "drain")) {
-        // Leave database push/drain commands pending only when the bound
-        // Violentmonkey worker has positively announced readiness.
+      const vmOwnsDirectStart = vmOwnsCommand &&
+        !!targets[command.project_id] &&
+        command.action === "start";
+      if ((vmOwnsCommand && (command.action === "push" || command.action === "drain")) || vmOwnsDirectStart) {
+        // Leave database push/drain and direct worker start commands pending
+        // when the bound Violentmonkey worker has positively announced readiness.
+        // Base-project start still stays with the extension so multi-worker fan-out
+        // remains atomic.
         continue;
       }
       if (command.action === "push") await pushProject(command.project_id, command.id);
