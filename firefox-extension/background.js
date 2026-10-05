@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.8";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.9";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
