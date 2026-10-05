@@ -93,8 +93,8 @@ jobs:
               name = names.get(base)
               if not name:
                   raise SystemExit(f"unknown project name for {key}: {base}")
-              slot = int(cfg.get("global_worker_slot") or 1)
-              total = int(cfg.get("global_worker_count") or 1)
+              slot = int(cfg.get("worker_slot") or 1)
+              total = int(cfg.get("worker_count") or 1)
               expected = candidate_server.project_worker_prompt(
                   base, name, "", slot, total, cfg.get("queue_item")
               )
