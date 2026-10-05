@@ -166,6 +166,36 @@ jobs:
           # activations poison or falsely satisfy the current proof.
           acceptance_started_at = datetime.now(timezone.utc).isoformat()
 
+          def measure_endpoint(path, timeout):
+              started = time.monotonic()
+              request = urllib.request.Request(
+                  BASE + path,
+                  headers={'User-Agent': 'pwq24-post458-latency/1'},
+                  method='GET',
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=timeout) as response:
+                      json.load(response)
+                      return {
+                          'path': path,
+                          'ok': True,
+                          'http_status': int(response.status),
+                          'elapsed_seconds': round(time.monotonic() - started, 3),
+                      }
+              except Exception as exc:
+                  return {
+                      'path': path,
+                      'ok': False,
+                      'error': type(exc).__name__ + ': ' + str(exc),
+                      'elapsed_seconds': round(time.monotonic() - started, 3),
+                  }
+
+          endpoint_timings = [
+              measure_endpoint('/api/runner-live', 30),
+              measure_endpoint('/api/status', 45),
+          ]
+          print('PWQ24_POST458_ENDPOINT_TIMINGS=' + json.dumps(endpoint_timings, sort_keys=True), flush=True)
+
           def call(method, path, payload=None):
               data = None if payload is None else json.dumps(payload).encode('utf-8')
               headers = {'User-Agent': 'pwq24-post443-acceptance/1'}
@@ -417,6 +447,7 @@ jobs:
               'deploy_run_id': os.environ.get('DEPLOY_RUN_ID'),
               'deployed_at': deployed_at,
               'acceptance_started_at': acceptance_started_at,
+              'endpoint_timings': endpoint_timings,
               'selected': selected,
               'actions': actions,
               'evidence': final,
