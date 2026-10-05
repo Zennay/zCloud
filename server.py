@@ -7,6 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
+from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
 
 ROOT = Path(__file__).resolve().parent
@@ -4452,6 +4453,13 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/worker-debug':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply(worker_debug_report())
+        if u.path=='/api/worker-scaling':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            try: hours=max(1.0,min(72.0,float(q.get('hours',['12'])[0])))
+            except Exception: hours=12.0
+            project_id=str(q.get('project',[''])[0] or '').strip().lower() or None
+            if project_id and project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+            return self.reply(worker_scaling_report.report(DB,hours,project_id))
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()

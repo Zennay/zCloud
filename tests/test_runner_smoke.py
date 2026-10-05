@@ -90,6 +90,23 @@ class RunnerSmokeTests(unittest.TestCase):
             ).fetchone()
         return bool(row["active"])
 
+    def test_worker_scaling_endpoint_is_bounded_and_kept_off_status(self):
+        payload={
+            "generated_at":"2026-10-05T15:00:00+00:00",
+            "window_hours":72.0,
+            "method":"observational runner telemetry; no causal claim",
+            "projects":[],
+        }
+        with mock.patch.object(server.worker_scaling_report, "report", return_value=payload) as report:
+            status, body = self.request("/api/worker-scaling?hours=999&project=cloud")
+        self.assertEqual(200, status, body)
+        self.assertEqual(72.0, body["window_hours"])
+        report.assert_called_once_with(server.DB, 72.0, "cloud")
+
+        status, body = self.request("/api/worker-scaling?project=not-a-project")
+        self.assertEqual(400, status, body)
+        self.assertIn("Onbekend project", body["error"])
+
     def test_cold_start_creates_runner_state(self):
         with server.connect() as conn:
             tables = {
