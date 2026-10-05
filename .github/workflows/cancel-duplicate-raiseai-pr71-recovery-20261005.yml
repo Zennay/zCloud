@@ -1,0 +1,46 @@
+name: Cancel duplicate RaiseAI PR71 recovery
+
+on:
+  push:
+    branches:
+      - ops/raiseai-pr71-runner-recovery-20261005
+    paths:
+      - ".github/workflows/cancel-duplicate-raiseai-pr71-recovery-20261005.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      DUPLICATE_RUN: "37344618850"
+      DUPLICATE_SHA: "9528f5c5cd92ff745e5d9a790d1574572bcfc190"
+      CANONICAL_RUN: "37344558938"
+      CANONICAL_SHA: "1146710d4486b9824ebd48b7dca71671f4442ee4"
+    steps:
+      - name: Protect canonical recovery and cancel only duplicate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api repos/$REPO/actions/runs/$CANONICAL_RUN --jq .head_sha)" = "$CANONICAL_SHA"
+          test "$(gh api repos/$REPO/actions/runs/$CANONICAL_RUN --jq .name)" = "Recover RaiseAI PR71 runner"
+
+          test "$(gh api repos/$REPO/actions/runs/$DUPLICATE_RUN --jq .head_sha)" = "$DUPLICATE_SHA"
+          status="$(gh api repos/$REPO/actions/runs/$DUPLICATE_RUN --jq .status)"
+          case "$status" in
+            queued|in_progress|pending|waiting|requested)
+              gh api --method POST repos/$REPO/actions/runs/$DUPLICATE_RUN/cancel
+              ;;
+            completed)
+              ;;
+            *)
+              echo "Unexpected duplicate status: $status" >&2
+              exit 1
+              ;;
+          esac
+          echo "RAISEAI_PR71_DUPLICATE_RECOVERY_CANCEL_GREEN"
