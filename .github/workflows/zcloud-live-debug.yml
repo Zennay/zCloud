@@ -49,6 +49,27 @@ jobs:
           sudo -n journalctl -u zennay-cloud.service --since "10 minutes ago" --no-pager -n 240 || \
             journalctl -u zennay-cloud.service -n 100 --no-pager || true
           systemctl --user is-active chatgpt-firefox.service
+          echo "=== FTMO TRAINER LIVE STATE ==="
+          ftmo_service="ftmo-autonomous-marathon.service"
+          ftmo_state="$(systemctl is-active "$ftmo_service" 2>/dev/null || true)"
+          if [[ "$ftmo_state" != "active" ]]; then
+            echo "FTMO_TRAINER_RECOVERY=starting previous_state=$ftmo_state"
+            sudo -n systemctl reset-failed "$ftmo_service" || true
+            sudo -n systemctl enable --now "$ftmo_service"
+          fi
+          ftmo_state="$(systemctl is-active "$ftmo_service" 2>/dev/null || true)"
+          ftmo_pid="$(systemctl show "$ftmo_service" -p MainPID --value 2>/dev/null || true)"
+          ftmo_cpu_before="$(systemctl show "$ftmo_service" -p CPUUsageNSec --value 2>/dev/null || echo 0)"
+          sleep 5
+          ftmo_cpu_after="$(systemctl show "$ftmo_service" -p CPUUsageNSec --value 2>/dev/null || echo 0)"
+          echo "FTMO_TRAINER_STATE=$ftmo_state"
+          echo "FTMO_TRAINER_PID=$ftmo_pid"
+          echo "FTMO_TRAINER_CPU_NS_BEFORE=$ftmo_cpu_before"
+          echo "FTMO_TRAINER_CPU_NS_AFTER=$ftmo_cpu_after"
+          if [[ "$ftmo_cpu_before" =~ ^[0-9]+$ && "$ftmo_cpu_after" =~ ^[0-9]+$ ]]; then
+            echo "FTMO_TRAINER_CPU_NS_DELTA=$((ftmo_cpu_after-ftmo_cpu_before))"
+          fi
+          sudo -n journalctl -u "$ftmo_service" --since "5 minutes ago" --no-pager -n 80 || true
           echo "=== LIVE PRECHANGE GUARD ==="
           "$HOME/.local/bin/zcloud-prechange-guard" \
             --root /home/ubuntu/zennay-cloud \
