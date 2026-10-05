@@ -376,6 +376,137 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("queued", rows[existing["queue_id"]]["status"])
         self.assertIsNone(rows[existing["queue_id"]]["worker_slot"])
 
+    def test_force_start_reuses_idle_running_p0_slot_for_lower_priority_project(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        running = server.portfolio_queue_enqueue(
+            "ftmo", "running FTMO P0", "P0",
+            "Implement the running FTMO task with deterministic tests.",
+        )
+        server.portfolio_queue_allocate()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',claim_expires=NULL WHERE queue_id=?",
+                (running["queue_id"],),
+            )
+            ts = server.now()
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                (server._manual_start_priority_key("ftmo"), ts, ts, "test"),
+            )
+
+        replacement = server.portfolio_queue_enqueue(
+            "supa", "forced Supa P1", "P1",
+            "Implement the forced Supa task with deterministic tests.",
+        )
+        with server.connect() as conn:
+            ts = server.now()
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                (server._manual_force_start_priority_key("supa"), ts, ts, "test"),
+            )
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 2564,
+            "total_mb": 11159,
+            "swap_total_mb": 4095,
+            "swap_free_mb": 18,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2560,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "guarded",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([replacement["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[running["queue_id"]]["status"])
+        self.assertIsNone(rows[running["queue_id"]]["worker_slot"])
+        with server.connect() as conn:
+            intent = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key=?",
+                (server._manual_force_start_priority_key("supa"),),
+            ).fetchone()
+        self.assertIsNone(intent)
+
+    def test_force_start_does_not_preempt_generating_worker(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        running = server.portfolio_queue_enqueue(
+            "ftmo", "busy FTMO P0", "P0",
+            "Implement the busy FTMO task with deterministic tests.",
+        )
+        server.portfolio_queue_allocate()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',claim_expires=NULL WHERE queue_id=?",
+                (running["queue_id"],),
+            )
+            now = server.now()
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) VALUES(?,?,?,?,?,?)",
+                (now, "heartbeat", "ftmo", 1, 1, 0),
+            )
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
+                (server._manual_force_start_priority_key("supa"), now, now, "test"),
+            )
+        replacement = server.portfolio_queue_enqueue(
+            "supa", "forced Supa P1", "P1",
+            "Implement the forced Supa task with deterministic tests.",
+        )
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 2564,
+            "total_mb": 11159,
+            "swap_total_mb": 4095,
+            "swap_free_mb": 18,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2560,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "guarded",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([running["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[replacement["queue_id"]]["status"])
+
+    def test_normal_start_intent_does_not_preempt_running_higher_priority_lane(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        running = server.portfolio_queue_enqueue(
+            "ftmo", "running FTMO P0", "P0",
+            "Implement the running FTMO task with deterministic tests.",
+        )
+        server.portfolio_queue_allocate()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',claim_expires=NULL WHERE queue_id=?",
+                (running["queue_id"],),
+            )
+        replacement = server.portfolio_queue_enqueue(
+            "supa", "normal Supa P1", "P1",
+            "Implement the normal Supa task with deterministic tests.",
+        )
+        with server.connect() as conn:
+            ts = server.now()
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
+                (server._manual_start_priority_key("supa"), ts, ts, "test"),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([running["queue_id"]], [item["queue_id"] for item in selected])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[replacement["queue_id"]]["status"])
+
     def test_oom_recovery_trim_holds_excess_slots_queued(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
