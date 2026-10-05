@@ -30,7 +30,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: 3886a932d2c90bc2f916e0053823281217062be0
+          EXPECTED_MAIN: 882c2b884fdfe618a2f24cf4d58bb0772ee4bc3d
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -87,7 +87,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: 3886a932d2c90bc2f916e0053823281217062be0
+          EXPECTED_MAIN: 882c2b884fdfe618a2f24cf4d58bb0772ee4bc3d
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -136,13 +136,13 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     env:
-      EXPECTED_MAIN: 3886a932d2c90bc2f916e0053823281217062be0
+      EXPECTED_MAIN: 882c2b884fdfe618a2f24cf4d58bb0772ee4bc3d
       DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
       DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 3886a932d2c90bc2f916e0053823281217062be0
+          ref: 882c2b884fdfe618a2f24cf4d58bb0772ee4bc3d
           clean: true
           fetch-depth: 1
 
@@ -209,9 +209,6 @@ jobs:
           DB = '/home/ubuntu/zennay-cloud/history.db'
           REQUIRED = {'supa', 'ftmo'}
           deployed_at = os.environ['DEPLOYED_AT']
-          # Acceptance must prove a fresh dispatch in this run. Using deploy time
-          # as the event floor lets stale prompt/send-blocked evidence from earlier
-          # activations poison or falsely satisfy the current proof.
           acceptance_started_at = datetime.now(timezone.utc).isoformat()
 
           def measure_endpoint(path, timeout):
@@ -342,11 +339,6 @@ jobs:
                   time.sleep(5)
 
           if not natural_green:
-              # Allocation can be incomplete from the start or churn during the
-              # natural-evidence wait. In both cases recover every required project
-              # through canonical project-level Start, wait boundedly for a concrete
-              # worker slot, then force the worker start. This keeps the proof tied
-              # to the same control path used by the dashboard.
               targets, selected = allocation()
               for project in sorted(REQUIRED):
                   key = selected.get(project)
@@ -408,12 +400,6 @@ jobs:
                       result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
                   actions.append({'worker': key, 'action': 'start', 'result': result})
 
-          # The queue may legitimately rebind a project to another worker slot while
-          # this live proof is running. Track the last worker that actually accepted
-          # a start edge per project, not every worker ever seen. An allocation can
-          # validly oscillate w1 -> w2 -> w1; the returning w1 needs a fresh start
-          # edge because its earlier command may have been superseded while it was
-          # deallocated.
           last_started_worker = {}
           for item in actions:
               worker = str(item.get('worker') or '')
@@ -433,9 +419,6 @@ jobs:
           def needs_redrive(started, project, worker):
               return bool(worker) and started.get(project) != worker
 
-          # Regression guard for the exact churn shape that previously suppressed
-          # Supa's returning worker: w1 -> w2 -> w1 must produce a new Start edge,
-          # while a stable w1 allocation must not spam duplicate Starts.
           probe_started = {}
           probe_checks = [
               needs_redrive(probe_started, 'supa', 'supa::w1'),
@@ -486,8 +469,6 @@ jobs:
                           'result': result,
                       })
 
-                  # Re-read allocation after any rebind start so evidence is tied to
-                  # the currently selected worker keys, not the pre-action snapshot.
                   targets, selected = allocation()
                   if REQUIRED.issubset(selected):
                       final = evidence(selected)
@@ -495,9 +476,6 @@ jobs:
                           break
               time.sleep(5)
 
-          # Worker activation can briefly overlap scheduler/browser reconciliation.
-          # Keep the health gate strict, but require bounded convergence instead of
-          # treating one transient connection-reset sample as definitive failure.
           health_attempts = []
           health = None
           for attempt in range(1, 5):
