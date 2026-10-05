@@ -125,9 +125,17 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         evidence = "Capture green production deploy evidence"
         self.assertIn(final_reconcile, text)
         self.assertIn("zcloud-stale-command-final-reconcile.json", text)
-        self.assertEqual(2, text.count("--clear-stale-pending-only"))
+        self.assertEqual(3, text.count("--clear-stale-pending-only"))
         self.assertLess(text.index(restore), text.index(final_reconcile))
         self.assertLess(text.index(final_reconcile), text.index(evidence))
+
+        evidence_block = text[text.index(evidence):text.index("Upload production deploy evidence")]
+        self.assertIn('zcloud-stale-command-health-attempt-${attempt}.json', evidence_block)
+        self.assertIn("--clear-stale-pending-only", evidence_block)
+        self.assertLess(
+            evidence_block.index("--clear-stale-pending-only"),
+            evidence_block.index("scripts/zcloud_healthcheck.py --json"),
+        )
 
     def test_deploy_recovers_unhealthy_zcloud_before_freezing_self_heal(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")

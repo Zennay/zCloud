@@ -754,6 +754,11 @@ jobs:
           health_rc=2
           while true; do
             attempt=$((attempt + 1))
+            python3 scripts/zcloud_worker_watchdog.py \
+              --db /home/ubuntu/zennay-cloud/history.db \
+              --clear-stale-pending-only \
+              --json \
+              | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-stale-command-health-attempt-${attempt}.json"
             set +e
             python3 scripts/zcloud_healthcheck.py --json | tee "$health"
             health_rc=${PIPESTATUS[0]}
