@@ -327,6 +327,49 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(first["queue_id"], selected[0]["queue_id"])
         self.assertIsNone(server.portfolio_queue_current_for_slot(2))
 
+    def test_memory_guard_allows_reusing_persisted_browser_slot_without_new_capacity(self):
+        server.MAX_CHATGPT_WORKERS = 2
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 2
+        first = server.portfolio_queue_enqueue(
+            "ftmo", "first guarded lane", "P0", "Prove first live dispatch."
+        )
+        server.portfolio_queue_allocate()
+        server._persist_global_worker_allocation(server.portfolio_queue_allocation())
+        self.assertEqual(first["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+        with server.connect() as conn:
+            persisted = conn.execute(
+                "SELECT project_id,worker_slot FROM ai_global_slots WHERE slot=1"
+            ).fetchone()
+        self.assertIsNotNone(persisted)
+
+        result = server.portfolio_queue_finish(
+            1, first["queue_id"], "DONE", "first live dispatch completed"
+        )
+        self.assertTrue(result["updated"])
+        second = server.portfolio_queue_enqueue(
+            "supa", "second guarded lane", "P0", "Prove slot reuse under memory guard."
+        )
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 3400,
+            "total_mb": 11000,
+            "swap_total_mb": 0,
+            "swap_free_mb": 0,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2560,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "guarded",
+            "healthy_for_new_worker": False,
+            "swap_healthy": False,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(1, len(selected))
+        self.assertEqual(second["queue_id"], selected[0]["queue_id"])
+        self.assertEqual(second["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+        self.assertIsNone(server.portfolio_queue_current_for_slot(2))
+
     def test_oom_recovery_trim_holds_excess_slots_queued(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3
