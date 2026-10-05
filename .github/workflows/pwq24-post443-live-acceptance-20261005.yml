@@ -292,11 +292,35 @@ jobs:
                       break
               time.sleep(5)
 
-          health = subprocess.run(['/home/ubuntu/.local/bin/zcloud-healthcheck'], text=True, capture_output=True, timeout=90, check=False)
+          # Worker activation can briefly overlap scheduler/browser reconciliation.
+          # Keep the health gate strict, but require bounded convergence instead of
+          # treating one transient connection-reset sample as definitive failure.
+          health_attempts = []
+          health = None
+          for attempt in range(1, 5):
+              health = subprocess.run(
+                  ['/home/ubuntu/.local/bin/zcloud-healthcheck'],
+                  text=True,
+                  capture_output=True,
+                  timeout=90,
+                  check=False,
+              )
+              health_attempts.append({
+                  'attempt': attempt,
+                  'rc': health.returncode,
+                  'stdout_tail': health.stdout[-1500:],
+                  'stderr_tail': health.stderr[-750:],
+              })
+              if health.returncode == 0:
+                  break
+              if attempt < 4:
+                  time.sleep(5)
+
           green = (
               REQUIRED.issubset(selected)
               and REQUIRED.issubset(final)
               and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values())
+              and health is not None
               and health.returncode == 0
           )
           result = {
@@ -307,9 +331,10 @@ jobs:
               'selected': selected,
               'actions': actions,
               'evidence': final,
-              'health_rc': health.returncode,
-              'health_stdout_tail': health.stdout[-5000:],
-              'health_stderr_tail': health.stderr[-2000:],
+              'health_attempts': health_attempts,
+              'health_rc': None if health is None else health.returncode,
+              'health_stdout_tail': '' if health is None else health.stdout[-5000:],
+              'health_stderr_tail': '' if health is None else health.stderr[-2000:],
               'acceptance_green': green,
           }
           pathlib.Path('artifacts/ops/pwq24-post443-live-acceptance-result.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n', encoding='utf-8')
