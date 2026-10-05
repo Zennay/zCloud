@@ -213,19 +213,37 @@ jobs:
                       break
                   time.sleep(5)
               else:
-                  # Allocation can churn during the natural-evidence wait. Refresh
-                  # immediately before each forced start and only recover from
-                  # zCloud's exact stale-worker 400 contract.
+                  # Allocation can churn during the natural-evidence wait. Refresh.
+                  # If a required project is no longer allocated, re-activate the
+                  # project through the canonical project-level control first, then
+                  # wait boundedly for a concrete worker slot before forcing that
+                  # worker. This exercises the same recovery path as the dashboard
+                  # without treating a transient deallocation as acceptance.
                   targets, selected = allocation()
                   for project in sorted(REQUIRED):
                       key = selected.get(project)
                       if not key:
+                          project_result = call('POST', '/api/runner-control', {'project_id': project, 'action': 'start'})
                           actions.append({
                               'project': project,
-                              'action': 'start',
-                              'result': {'resync': 'not-allocated'},
+                              'action': 'start-project',
+                              'result': project_result,
                           })
-                          continue
+                          allocation_deadline = time.time() + 60
+                          while time.time() < allocation_deadline:
+                              _, refreshed = allocation()
+                              key = refreshed.get(project)
+                              if key:
+                                  selected = refreshed
+                                  break
+                              time.sleep(3)
+                          if not key:
+                              actions.append({
+                                  'project': project,
+                                  'action': 'wait-allocation',
+                                  'result': {'resync': 'allocation-timeout'},
+                              })
+                              continue
                       try:
                           result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
                       except urllib.error.HTTPError as exc:
