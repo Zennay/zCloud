@@ -1,0 +1,64 @@
+name: Profile zCloud PWQ-30 live read-model
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/pwq30-live-readmodel-profile-20261005.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Profile live deployed read-model components
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import importlib.util
+          import json
+          import sys
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          root=Path("/home/ubuntu/zennay-cloud")
+          sys.path.insert(0,str(root))
+          spec=importlib.util.spec_from_file_location("zcloud_live_server", root/"server.py")
+          mod=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+
+          def timed(name,fn):
+              started=time.monotonic()
+              try:
+                  value=fn()
+              except Exception as exc:
+                  elapsed=round(time.monotonic()-started,3)
+                  print("PWQ30_PROFILE_"+name+"="+json.dumps({"seconds":elapsed,"error":repr(exc)},sort_keys=True))
+                  return None
+              elapsed=round(time.monotonic()-started,3)
+              summary={"seconds":elapsed}
+              if isinstance(value,dict):
+                  summary["keys"]=len(value)
+              elif isinstance(value,list):
+                  summary["items"]=len(value)
+              print("PWQ30_PROFILE_"+name+"="+json.dumps(summary,sort_keys=True))
+              return value
+
+          targets=timed("RUNNER_TARGETS",mod.runner_targets)
+          timed("WORKER_TARGETS",lambda: mod.runner_worker_targets(base=targets,reconcile=False))
+          timed("RUNNER_STATUSES",lambda: mod.runner_statuses(target_cfg=targets))
+          timed("FIREFOX_STATUS",mod.firefox_runner_status)
+
+          def http(path):
+              with urllib.request.urlopen("http://127.0.0.1:8765"+path,timeout=35) as response:
+                  return json.load(response)
+          timed("HTTP_RUNNER_LIVE",lambda: http("/api/runner-live"))
+          timed("HTTP_STATUS",lambda: http("/api/status"))
+          print("PWQ30_LIVE_READMODEL_PROFILE_GREEN")
+          PY
