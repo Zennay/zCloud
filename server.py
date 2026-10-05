@@ -2455,15 +2455,23 @@ def portfolio_queue_items(include_done=False):
                                        created_at, queue_id""").fetchall()
     return [_portfolio_queue_row(row) for row in rows]
 
-def portfolio_queue_current_for_slot(global_slot):
+def portfolio_queue_current_for_slot(global_slot, project_id=None):
     try: slot=int(global_slot)
     except Exception: return None
+    project_id=str(project_id or '').strip().lower()
     ts=now()
     with connect() as c:
-        row=c.execute("""SELECT * FROM portfolio_queue
-                         WHERE worker_slot=? AND status IN ('claimed','running','verifying')
-                           AND (claim_expires IS NULL OR claim_expires>?)
-                         ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+        if project_id:
+            row=c.execute("""SELECT * FROM portfolio_queue
+                             WHERE worker_slot=? AND project_id=?
+                               AND status IN ('claimed','running','verifying')
+                               AND (claim_expires IS NULL OR claim_expires>?)
+                             ORDER BY updated_at DESC LIMIT 1""",(slot,project_id,ts)).fetchone()
+        else:
+            row=c.execute("""SELECT * FROM portfolio_queue
+                             WHERE worker_slot=? AND status IN ('claimed','running','verifying')
+                               AND (claim_expires IS NULL OR claim_expires>?)
+                             ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
     return _portfolio_queue_row(row)
 
 def portfolio_queue_has_project_assignment(project_id):
@@ -3199,10 +3207,17 @@ def runner_worker_targets():
                               (provider_name,'',project_id,slot))
                 prompt_slot=int(global_slot or slot)
                 prompt_total=GLOBAL_CHATGPT_WORKER_LIMIT if allocated else count
-                queue_item=None if reviewer_mode else (portfolio_queue_current_for_slot(global_slot) if allocated else None)
+                # Bind queue metadata to both the persisted browser slot and its owning
+                # project. During allocator churn ai_global_slots can lag the live queue by
+                # one scheduler tick; a slot-only lookup could otherwise hand Supa work to a
+                # RaiseAI worker (or vice versa). A stale mapping must fail closed.
+                queue_item=None if reviewer_mode else (
+                    portfolio_queue_current_for_slot(global_slot, project_id) if allocated else None
+                )
                 assignment_ready=bool(
                     (reviewer_mode and cfg.get('active')) or
                     (allocated and queue_item and str(queue_item.get('queue_id') or '').strip()
+                     and str(queue_item.get('project_id') or '').strip().lower()==project_id
                      and int(queue_item.get('worker_slot') or 0)==int(global_slot))
                 )
                 active=(bool(cfg.get('active')) if reviewer_mode else allocated) and desired_state!='paused'
