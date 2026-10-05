@@ -1,0 +1,41 @@
+name: PWQ-24 browser-slot reuse exact-head proof r1
+
+on:
+  push:
+    branches:
+      - ops/pwq24-slot-reuse-proof-20261005-r1
+    paths:
+      - ".github/workflows/pwq24-slot-reuse-proof-20261005-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Guard exact fix parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "51c47c57b80e2a0ea7cbe71f3d9cf353d0096c92"
+          echo "PWQ24_SLOT_REUSE_FIX_HEAD=51c47c57b80e2a0ea7cbe71f3d9cf353d0096c92"
+
+      - name: Compile changed Python
+        run: python3 -m py_compile server.py tests/test_portfolio_queue_backend.py
+
+      - name: Prove guarded slot reuse
+        run: |
+          python3 -m unittest -v \
+            tests.test_portfolio_queue_backend.VpsPortfolioQueueTests.test_memory_guard_blocks_new_claims_but_preserves_existing_assignment \
+            tests.test_portfolio_queue_backend.VpsPortfolioQueueTests.test_memory_guard_allows_reusing_persisted_browser_slot_without_new_capacity \
+            tests.test_portfolio_queue_backend.VpsPortfolioQueueTests.test_done_releases_slot_and_next_item_is_claimed
+
+      - name: Run complete queue backend regression
+        run: python3 -m unittest -v tests.test_portfolio_queue_backend
