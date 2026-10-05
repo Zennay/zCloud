@@ -20,6 +20,10 @@ jobs:
       CURRENT_DEPLOY_RUN: "37301154936"
       STALE_ACTIVATION_RUN: "37301333802"
       STALE_PROBE_RUN: "37301333874"
+      STALE_DASHBOARD_RUN_1: "37301003364"
+      STALE_DASHBOARD_RUN_2: "37301016266"
+      STALE_DASHBOARD_RUN_3: "37300904745"
+      STALE_DASHBOARD_BRANCH: "chatgpt/lightup-pr23-pr25-cross-lane-proof-20261005"
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Guard exact current-main release state
@@ -58,23 +62,26 @@ jobs:
           cancel_if_stale() {
             local run_id="$1"
             local expected_name="$2"
-            local run_name run_status run_sha
+            local expected_branch="${3:-}"
+            local run_name run_status run_sha run_branch
 
             run_name="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.name')"
             run_status="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.status')"
             run_sha="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.head_sha')"
+            run_branch="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.head_branch')"
 
             test "${run_name}" = "${expected_name}" || {
               echo "REFUSE_NAME_MISMATCH run=${run_id} got=${run_name} expected=${expected_name}"
               exit 1
             }
+            if [[ -n "${expected_branch}" && "${run_branch}" != "${expected_branch}" ]]; then
+              echo "REFUSE_BRANCH_MISMATCH run=${run_id} got=${run_branch} expected=${expected_branch}"
+              exit 1
+            fi
 
-            # These workflow_run children were emitted by the previous deploy lane
-            # before the exact-current-main deploy could acquire the sole VPS runner.
-            # Refuse to cancel anything already terminal.
             case "${run_status}" in
               queued|in_progress|pending|waiting)
-                echo "CANCEL_STALE run=${run_id} name=${run_name} status=${run_status} displayed_head=${run_sha}"
+                echo "CANCEL_STALE run=${run_id} name=${run_name} branch=${run_branch} status=${run_status} displayed_head=${run_sha}"
                 gh api --method POST "repos/${repo}/actions/runs/${run_id}/cancel" >/dev/null
                 ;;
               completed)
@@ -89,6 +96,9 @@ jobs:
 
           cancel_if_stale "${STALE_ACTIVATION_RUN}" "zCloud dynamic worker pool activation"
           cancel_if_stale "${STALE_PROBE_RUN}" "zCloud VPS execution lane probe"
+          cancel_if_stale "${STALE_DASHBOARD_RUN_1}" "zCloud dashboard access recovery" "${STALE_DASHBOARD_BRANCH}"
+          cancel_if_stale "${STALE_DASHBOARD_RUN_2}" "zCloud dashboard access recovery" "${STALE_DASHBOARD_BRANCH}"
+          cancel_if_stale "${STALE_DASHBOARD_RUN_3}" "zCloud dashboard access recovery" "${STALE_DASHBOARD_BRANCH}"
 
       - name: Verify current-main deploy is still the release owner
         shell: bash
@@ -98,9 +108,16 @@ jobs:
           for i in {1..12}; do
             activation_status="$(gh api "repos/${repo}/actions/runs/${STALE_ACTIVATION_RUN}" --jq '.status')"
             probe_status="$(gh api "repos/${repo}/actions/runs/${STALE_PROBE_RUN}" --jq '.status')"
+            dashboard_1="$(gh api "repos/${repo}/actions/runs/${STALE_DASHBOARD_RUN_1}" --jq '.status')"
+            dashboard_2="$(gh api "repos/${repo}/actions/runs/${STALE_DASHBOARD_RUN_2}" --jq '.status')"
+            dashboard_3="$(gh api "repos/${repo}/actions/runs/${STALE_DASHBOARD_RUN_3}" --jq '.status')"
             deploy_status="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
-            echo "VERIFY attempt=${i} activation=${activation_status} probe=${probe_status} deploy=${deploy_status}"
-            if [[ "${activation_status}" = "completed" && "${probe_status}" = "completed" ]]; then
+            echo "VERIFY attempt=${i} activation=${activation_status} probe=${probe_status} dashboard1=${dashboard_1} dashboard2=${dashboard_2} dashboard3=${dashboard_3} deploy=${deploy_status}"
+            if [[ "${activation_status}" = "completed" &&
+                  "${probe_status}" = "completed" &&
+                  "${dashboard_1}" = "completed" &&
+                  "${dashboard_2}" = "completed" &&
+                  "${dashboard_3}" = "completed" ]]; then
               echo "PWQ24_RELEASE_LANE_UNBLOCK_GREEN deploy_run=${CURRENT_DEPLOY_RUN} deploy_status=${deploy_status}"
               exit 0
             fi
