@@ -1,0 +1,118 @@
+name: PWQ-24 post-459 live diagnostic
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post459-live-diagnostic-20261005
+    paths:
+      - .github/workflows/pwq24-post459-live-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 85afb3b63a8f83c03995b1451687b04e626c36ae
+          clean: true
+          fetch-depth: 1
+
+      - name: Capture read-only Supa and FTMO control-plane evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          mkdir -p artifacts/ops
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sqlite3
+          from datetime import datetime, timezone
+
+          db_uri = "file:/home/ubuntu/zennay-cloud/history.db?mode=ro"
+          conn = sqlite3.connect(db_uri, uri=True, timeout=10)
+          conn.row_factory = sqlite3.Row
+
+          def rows(sql, params=()):
+              return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+          result = {
+              "captured_at": datetime.now(timezone.utc).isoformat(),
+              "expected_main": "85afb3b63a8f83c03995b1451687b04e626c36ae",
+              "portfolio_queue": rows(
+                  """SELECT queue_id,project_id,status,eligible,priority,worker_slot,
+                            claimed_at,claim_expires,updated_at,attempts,blocker
+                     FROM portfolio_queue
+                     WHERE project_id IN ('ftmo','supa')
+                     ORDER BY project_id,
+                              CASE status WHEN 'running' THEN 0 WHEN 'verifying' THEN 1
+                                          WHEN 'claimed' THEN 2 WHEN 'queued' THEN 3 ELSE 4 END,
+                              updated_at DESC,queue_id"""
+              ),
+              "active_global_queue": rows(
+                  """SELECT queue_id,project_id,status,eligible,priority,worker_slot,
+                            claimed_at,claim_expires,updated_at,attempts
+                     FROM portfolio_queue
+                     WHERE eligible=1
+                       AND status IN ('claimed','running','verifying')
+                     ORDER BY worker_slot,project_id,updated_at DESC"""
+              ),
+              "global_slots": rows(
+                  """SELECT slot,project_id,worker_slot,assigned_at
+                     FROM ai_global_slots ORDER BY slot"""
+              ),
+              "manual_start_settings": rows(
+                  """SELECT key,value,updated_at,actor
+                     FROM runtime_settings
+                     WHERE key LIKE 'manual_start_priority:%'
+                     ORDER BY key"""
+              ),
+              "runner_targets": rows(
+                  """SELECT project_id,active,worker_count,conversation_id
+                     FROM runner_targets
+                     WHERE project_id IN ('ftmo','supa')
+                     ORDER BY project_id"""
+              ),
+              "runner_workers": rows(
+                  """SELECT project_id,worker_slot,desired_state,conversation_id,updated_at
+                     FROM runner_workers
+                     WHERE project_id IN ('ftmo','supa')
+                     ORDER BY project_id,worker_slot"""
+              ),
+              "recent_commands": rows(
+                  """SELECT id,project_id,action,status,created_at,updated_at,result
+                     FROM runner_commands
+                     WHERE id >= 22170
+                     ORDER BY id"""
+              ),
+              "recent_events": rows(
+                  """SELECT id,ts,project_id,worker_slot,event,reason,error,
+                            generating,sending,progress_at,assistant_chars
+                     FROM runner_events
+                     WHERE project_id IN ('ftmo','supa')
+                       AND ts >= '2026-10-05T04:20:00+00:00'
+                     ORDER BY id"""
+              ),
+              "task_claims": rows(
+                  """SELECT project_id,claim_key,owner_id,worker_id,lease_until,acquired_at
+                     FROM task_claims
+                     WHERE project_id IN ('ftmo','supa')
+                     ORDER BY project_id,acquired_at DESC"""
+              ),
+          }
+          conn.close()
+          out = pathlib.Path("artifacts/ops/pwq24-post459-live-diagnostic.json")
+          out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print("PWQ24_POST459_DIAGNOSTIC=" + json.dumps(result, sort_keys=True))
+          PY
+
+      - name: Upload diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwq24-post459-live-diagnostic-${{ github.run_id }}
+          path: artifacts/ops/pwq24-post459-live-diagnostic.json
+          if-no-files-found: error
