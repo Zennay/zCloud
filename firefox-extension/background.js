@@ -2132,6 +2132,7 @@ async function watchRunnerHealth() {
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
       if (!status.active || status.auto_continue === false) continue;
       if (generationRotationDue(projectId, status) &&
+          !status.generating && !status.sending &&
           !runningActions.has(projectId) &&
           Date.now() - Number(lastProactiveRotation.get(projectId) || 0) >= 120000) {
         lastProactiveRotation.set(projectId, Date.now());
