@@ -161,14 +161,39 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
-        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'
+        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
+        'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet '
+        'na één actie, commit, retrigger of statuscheck. Als iets wacht op CI, VPS, review of een andere dependency, '
+        'pak direct ander veilig uitvoerbaar werk binnen hetzelfde project. Kies steeds een vrij onderdeel en ga door '
+        'tot de runlimiet, echte projectafronding of totdat er werkelijk geen veilige uitvoerbare vervolgstap meer is.'
     )
 
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
-    # Queue items, execution lanes and claims are internal coordination only.
-    # The worker itself gets one simple project-first instruction.
-    return project_runner_prompt(project_id, name)
+    prompt = project_runner_prompt(project_id, name)
+    worker_total = max(1, int(total or 1))
+    lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
+    lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
+    lane_id = re.sub(r'[^a-zA-Z0-9._:/-]+', '-', lane_id).strip('-')[:80]
+    if lane_id:
+        if worker_total > 1:
+            return (
+                prompt
+                + f' Parallel focus {int(slot or 1)}/{worker_total}: {lane_id}. '
+                'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
+                'dat al actief door een andere worker wordt uitgevoerd.'
+            )
+        return (
+            prompt
+            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.'
+        )
+    if worker_total <= 1:
+        return prompt
+    return (
+        prompt
+        + f' Er werken {worker_total} workers parallel aan dit project. Kies zelfstandig een ander vrij, '
+        'niet-conflicterend werkgebied, controleer open branches/PRs en vermijd dubbel werk.'
+    )
 
 
 RUNNER_DEFAULTS = {
@@ -3570,7 +3595,7 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
                              (f"Portfolio Worker {global_slot}/{GLOBAL_CHATGPT_WORKER_LIMIT} · {cfg['name']}"
                               if allocated else f"{cfg['name']} · worker {slot}/{count}"))
                 rendered_prompt=cfg['prompt'] if reviewer_mode else project_worker_prompt(
-                    project_id,cfg['name'],cfg['prompt'],prompt_slot,prompt_total,queue_item
+                    project_id,cfg['name'],cfg['prompt'],slot,count,queue_item
                 )
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,

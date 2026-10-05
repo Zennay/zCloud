@@ -64,29 +64,33 @@ jobs:
               return lines, node.lineno-1, node.end_lineno
 
           def normalize(source):
-              lines,start,end=function_span(source,"project_worker_prompt")
-              lines[start:end]=["def project_worker_prompt(*args, **kwargs):\n    pass\n"]
+              tree=ast.parse(source)
+              lines=source.splitlines(keepends=True)
+              spans=[]
+              for name in ("project_runner_prompt","project_worker_prompt"):
+                  node=next((n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name),None)
+                  if node is None:
+                      raise SystemExit(f"{name} missing")
+                  spans.append((node.lineno-1,node.end_lineno,name))
+              for start,end,name in sorted(spans,reverse=True):
+                  lines[start:end]=[f"def {name}(*args, **kwargs):\n    pass\n"]
               return "".join(lines)
 
-          def body(source):
-              lines,start,end=function_span(source,"project_worker_prompt")
+          def body(source,name):
+              lines,start,end=function_span(source,name)
               return "".join(lines[start:end])
 
-          expected=(
-              "def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):\n"
-              "    return (\n"
-              "        f'Werk verder aan {name}. '\n"
-              "        'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit.'\n"
-              "    )\n"
-          )
           live_hash=hashlib.sha256(live.encode()).hexdigest()
           candidate_hash=hashlib.sha256(candidate.encode()).hexdigest()
-          live_prompt_exact=(body(live)==expected)
+          prompt_functions_equal=all(
+              body(live,name)==body(candidate,name)
+              for name in ("project_runner_prompt","project_worker_prompt")
+          )
           remainder_equal=(normalize(live)==normalize(candidate))
           print(f"LIVE_SERVER_SHA256={live_hash}")
           print(f"CANDIDATE_SERVER_SHA256={candidate_hash}")
-          print(f"LIVE_PROMPT_EXACT={int(live_prompt_exact)}")
+          print(f"PROMPT_FUNCTIONS_EQUAL={int(prompt_functions_equal)}")
           print(f"SERVER_REMAINDER_EQUAL={int(remainder_equal)}")
-          if not live_prompt_exact or not remainder_equal:
-              raise SystemExit("live server drift is broader than the known surgical prompt patch")
+          if not remainder_equal:
+              raise SystemExit("live server drift is broader than the two worker prompt functions")
           PY

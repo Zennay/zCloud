@@ -33,7 +33,7 @@ class VpsExecutionPolicyTests(unittest.TestCase):
             self.assertIn("Kijk in Notion in welke fase het project zit", prompt)
             self.assertNotIn("self-hosted vps-bb300bba", prompt)
             self.assertNotIn("workflow_run_id", prompt)
-            self.assertLess(len(prompt), 250)
+            self.assertLess(len(prompt), 700)
 
     def test_worker_prompt_keeps_the_route_when_assignment_is_added(self):
         prompt = server.project_worker_prompt(

@@ -104,6 +104,7 @@ jobs:
           python3 - <<'PY'
           import json
           import urllib.request
+          import server as candidate_server
 
           def get(path):
               with urllib.request.urlopen("http://127.0.0.1:8765" + path, timeout=8) as r:
@@ -125,9 +126,10 @@ jobs:
               project_name = project_names.get(base_id)
               if not project_name:
                   raise SystemExit(f"unknown base project for {key}: {base_id!r}")
-              expected = (
-                  f"Werk verder aan {project_name}. "
-                  "Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit."
+              slot = int(cfg.get("worker_slot") or 1)
+              total = int(cfg.get("worker_count") or 1)
+              expected = candidate_server.project_worker_prompt(
+                  base_id, project_name, "", slot, total, cfg.get("queue_item")
               )
               if prompt != expected:
                   raise SystemExit(f"worker prompt is not exact for {key}: {prompt!r} != {expected!r}")

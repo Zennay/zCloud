@@ -33,13 +33,13 @@ def test_worker_prompt_is_short_project_first_and_not_queue_owned():
     prompt = worker_prompt("cloud", item)
     assert prompt.startswith("Werk verder aan zCloud.")
     assert "Kijk in Notion in welke fase het project zit" in prompt
-    assert "Werkgebied:" not in prompt
+    assert "Parallel focus 1/2: control-plane." in prompt
     assert "claims" not in prompt
     assert "VPS_QUEUE_ASSIGNMENT" not in prompt
     assert "ZCLOUD_QUEUE_" not in prompt
-    assert "Jij bent Worker" not in prompt
     assert "Ga door met de queue" not in prompt
-    assert len(prompt) < 500
+    assert "meerdere materiële stappen achter elkaar" in prompt
+    assert len(prompt) < 1000
 
 
 def test_stale_persisted_base_prompt_is_ignored():
@@ -54,14 +54,15 @@ def test_stale_persisted_base_prompt_is_ignored():
 def test_no_assignment_stays_local_and_simple():
     prompt = worker_prompt()
     assert prompt.startswith("Werk verder aan zCloud.")
-    assert "kies een vrij onderdeel" in prompt
+    assert "Kies steeds een vrij onderdeel" in prompt
+    assert "Er werken 2 workers parallel" in prompt
     assert "VPS_QUEUE_ASSIGNMENT" not in prompt
-    assert len(prompt) < 400
+    assert len(prompt) < 1000
 
 
-def test_collision_coordination_is_not_exposed_as_prompt_bloat():
+def test_collision_coordination_is_compact_without_raw_claim_bloat():
     prompt = worker_prompt("ftmo")
-    assert prompt == server.project_runner_prompt("ftmo", "FTMO")
-    assert "Werkgebied:" not in prompt
+    assert prompt.startswith(server.project_runner_prompt("ftmo", "FTMO"))
+    assert "Er werken 2 workers parallel" in prompt
     assert "claims" not in prompt
     assert "preregistration, walk-forward en final holdout" not in prompt
