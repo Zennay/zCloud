@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - ".github/workflows/project-contract-cutover-production-proof-03de-r2-20261005.yml"
+      - ".github/workflows/project-contract-cutover-production-proof-03de-20261005-r2.yml"
 
 permissions:
   contents: read
