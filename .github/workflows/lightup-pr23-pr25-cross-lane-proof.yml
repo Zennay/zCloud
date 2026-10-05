@@ -96,7 +96,7 @@ jobs:
 
   prove:
     needs: preflight
-    runs-on: [self-hosted, ftmo-research]
+    runs-on: [self-hosted, zcloud, vps]
     env:
       PR23_SHA: ${{ needs.preflight.outputs.pr23_sha }}
       PR24_SHA: ${{ needs.preflight.outputs.pr24_sha }}
@@ -217,7 +217,7 @@ jobs:
   publish:
     needs: prove
     if: success()
-    runs-on: [self-hosted, ftmo-research]
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     permissions:
       contents: read
