@@ -106,9 +106,12 @@ jobs:
           print('ZCLOUD_TIME', d.get('time'))
           print('RESOURCE_SUMMARY', json.dumps(d.get('resource_summary',{}), sort_keys=True))
           print('RESOURCE_GOVERNOR', json.dumps(d.get('resource_governor',{}), sort_keys=True))
+          print('PROJECT_IDS', [p.get('id') for p in d.get('projects',[])])
           for p in d.get('projects',[]):
-              if p.get('id') in {'ftmo','haxlab','raiseai','cloud'}:
-                  print('PROJECT', p.get('id'), json.dumps(p, sort_keys=True))
+              pid=str(p.get('id') or '')
+              name=str(p.get('name') or '')
+              if pid in {'ftmo','haxlab','raiseai','cloud'} or 'ftmo' in pid.lower() or 'ftmo' in name.lower() or 'prop' in name.lower():
+                  print('PROJECT', pid, json.dumps(p, sort_keys=True))
           PY
               echo 'ZCLOUD_DASHBOARD_EXTERNAL_STATUS_GREEN'
               exit 0
