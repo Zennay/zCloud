@@ -229,8 +229,8 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
     def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
-        self.assertIn("// @version      1.3.8", userscript)
-        self.assertIn('const SCRIPT_VERSION = "1.3.8";', userscript)
+        self.assertIn("// @version      1.3.9", userscript)
+        self.assertIn('const SCRIPT_VERSION = "1.3.9";', userscript)
         self.assertIn(
             'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
             userscript,
@@ -238,6 +238,18 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("if (initialDispatchSent) initialDispatchKey = key;", userscript)
         self.assertNotIn(
             'initialDispatchKey = key;\n      await sendPrompt("violentmonkey-initial-dispatch");',
+            userscript,
+        )
+
+    def test_prompt_send_waits_for_send_button_readiness(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        self.assertIn("async function waitForSendButton(timeoutMs = 3000)", userscript)
+        self.assertIn("button && visible(button) && !buttonUnavailable(button)", userscript)
+        self.assertIn("await sleep(100);", userscript)
+        self.assertIn("const button = await waitForSendButton();", userscript)
+        self.assertNotIn(
+            'const button = sendButton();\n      if (buttonUnavailable(button))',
             userscript,
         )
 
