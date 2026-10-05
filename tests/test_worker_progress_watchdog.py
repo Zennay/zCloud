@@ -150,6 +150,96 @@ class WorkerWatchdogStaleCommandTests(unittest.TestCase):
             self.assertEqual("pending", rows[1][1])
 
 
+class WorkerWatchdogApiDegradedMemoryRecoveryTests(unittest.TestCase):
+    def test_host_memory_guard_marks_warning_with_exhausted_swap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            meminfo = Path(tmp) / "meminfo"
+            meminfo.write_text(
+                "MemTotal:       11426816 kB\n"
+                "MemAvailable:    1751040 kB\n"
+                "SwapTotal:       4193280 kB\n"
+                "SwapFree:              0 kB\n",
+                encoding="utf-8",
+            )
+            guard = watchdog.host_memory_guard(meminfo)
+        self.assertEqual("warning", guard["pressure"])
+        self.assertFalse(guard["swap_healthy"])
+        self.assertTrue(watchdog.degraded_memory_recovery_needed(guard))
+
+    def test_observable_live_worker_suppresses_degraded_recovery(self):
+        runtime = {
+            "chatgpt_runners": {
+                "cloud": {
+                    "workers": [{
+                        "worker_id": "cloud::w1",
+                        "state": "live",
+                        "generating": True,
+                        "sending": False,
+                    }]
+                }
+            }
+        }
+        self.assertFalse(watchdog.selected_worker_runtime_lost({"cloud::w1"}, runtime))
+
+    def test_status_timeout_with_warning_ram_and_exhausted_swap_restarts_firefox(self):
+        original_api_call = watchdog.api_call
+        original_memory_guard = watchdog.host_memory_guard
+        calls = []
+
+        def fake_api_call(base_url, method, path, payload=None):
+            calls.append((method, path, payload))
+            if method == "GET" and path == "/api/runner-targets":
+                return 200, {
+                    "global_allocation": {
+                        "workers": [{
+                            "worker_key": "cloud::w1",
+                            "project_id": "cloud",
+                            "worker_slot": 1,
+                            "queue_id": "q1",
+                        }]
+                    }
+                }
+            if method == "GET" and path == "/api/status":
+                return 599, {"error": "timed out"}
+            if method == "GET" and path == "/api/runner-live":
+                return 599, {"error": "timed out"}
+            if method == "POST" and path == "/api/runner-control":
+                return 200, {"ok": True, "status": {"active": True}}
+            raise AssertionError((method, path, payload))
+
+        watchdog.api_call = fake_api_call
+        watchdog.host_memory_guard = lambda: {
+            "available_mb": 1700,
+            "swap_total_mb": 4095,
+            "swap_free_mb": 0,
+            "swap_healthy": False,
+            "pressure": "warning",
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                result = watchdog.run_once(
+                    db_path=Path(tmp) / "history.db",
+                    state_path=Path(tmp) / "state.json",
+                    base_url="http://127.0.0.1:8765",
+                )
+        finally:
+            watchdog.api_call = original_api_call
+            watchdog.host_memory_guard = original_memory_guard
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            "status-unavailable-memory-pressure-worker-runtime-lost",
+            result["reason"],
+        )
+        self.assertEqual("restart_firefox", result["global_action"]["action"])
+        self.assertTrue(any(
+            method == "POST"
+            and path == "/api/runner-control"
+            and payload == {"project_id": "", "action": "restart_firefox"}
+            for method, path, payload in calls
+        ))
+
+
 class WorkerWatchdogCriticalMemoryRecoveryTests(unittest.TestCase):
     def test_critical_memory_with_all_workers_offline_requires_firefox_recovery(self):
         runtime = {
