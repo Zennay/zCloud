@@ -30,7 +30,7 @@ jobs:
       - name: Guard exact deployed main and VPS runner
         shell: bash
         env:
-          EXPECTED_MAIN: 4a0f017fc871ab940d82986d8b76d3fff5488e0c
+          EXPECTED_MAIN: 18a15723386316368be1bc8a03d23f24b26ef8d2
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
@@ -225,7 +225,7 @@ jobs:
               'run_id': os.environ.get('GITHUB_RUN_ID'),
               'branch': os.environ.get('GITHUB_REF_NAME'),
               'sha': os.environ.get('GITHUB_SHA'),
-              'expected_main': '4a0f017fc871ab940d82986d8b76d3fff5488e0c',
+              'expected_main': '18a15723386316368be1bc8a03d23f24b26ef8d2',
               'live_green': live_green,
               'health_rc': health.returncode,
               'evidence': evidence,
@@ -299,7 +299,7 @@ jobs:
               'captured_at': datetime.now(timezone.utc).isoformat(),
               'run_id': os.environ.get('GITHUB_RUN_ID'),
               'sha': os.environ.get('GITHUB_SHA'),
-              'expected_main': '4a0f017fc871ab940d82986d8b76d3fff5488e0c',
+              'expected_main': '18a15723386316368be1bc8a03d23f24b26ef8d2',
               'health_rc': health.returncode,
               'health_stdout_tail': health.stdout[-5000:],
               'health_stderr_tail': health.stderr[-2000:],
