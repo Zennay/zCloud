@@ -114,6 +114,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
           import sqlite3
           import subprocess
           import time
@@ -145,9 +146,9 @@ jobs:
               with urllib.request.urlopen(req, timeout=timeout) as response:
                   return json.load(response)
 
-          def github_get(path):
+          def github_repo_get(repo, path):
               req = urllib.request.Request(
-                  f"https://api.github.com/repos/{REPO}{path}",
+                  f"https://api.github.com/repos/{repo}{path}",
                   headers={
                       "Authorization": f"Bearer {GITHUB_TOKEN}",
                       "Accept": "application/vnd.github+json",
@@ -157,6 +158,9 @@ jobs:
               )
               with urllib.request.urlopen(req, timeout=20) as response:
                   return json.load(response)
+
+          def github_get(path):
+              return github_repo_get(REPO, path)
 
           def assert_current_main(stage):
               current = str(github_get("/commits/main").get("sha") or "")
@@ -262,16 +266,37 @@ jobs:
           fixture_claim_key = "acceptance:pwq41:" + os.environ["GITHUB_RUN_ID"]
           fixture_claim_created = False
           fixture_project = ""
-          preflight_sources = {
-              "cloud": {
-                  "repo": "Zennay/zCloud",
-                  "main_sha": EXPECTED,
-              },
-              "lightup": {
-                  "repo": "Zennay/LightUp",
-                  "main_sha": "c46760a9860cb8771623eccaec77133d44b14338",
-              },
-          }
+          registry = json.loads(Path("projects.json").read_text(encoding="utf-8"))
+          preflight_repos = {}
+          for project in registry:
+              project_id = str(project.get("id") or "").strip()
+              repo_url = str(project.get("repo_url") or "").strip()
+              match = re.search(r"github\\.com[/:]([^/]+/[^/#]+)", repo_url, re.I)
+              if project_id and match:
+                  preflight_repos[project_id] = match.group(1).removesuffix(".git")
+
+          def live_github_evidence(base_project):
+              repo = preflight_repos.get(base_project)
+              if not repo:
+                  raise SystemExit(f"no canonical GitHub repo configured for acceptance project {base_project}")
+              main = github_repo_get(repo, "/commits/main")
+              pulls = github_repo_get(repo, "/pulls?state=open&per_page=100")
+              branches = github_repo_get(repo, "/branches?per_page=100")
+              return {
+                  "checked": True,
+                  "repo": repo,
+                  "main_sha": str(main.get("sha") or ""),
+                  "open_prs": [
+                      str(item.get("number") or "")
+                      for item in pulls
+                      if item.get("number") is not None
+                  ],
+                  "branches": [
+                      str(item.get("name") or "")
+                      for item in branches
+                      if str(item.get("name") or "").strip()
+                  ],
+              }
 
           candidate_deadline = time.time() + 45
           candidate_attempt = 0
@@ -315,7 +340,7 @@ jobs:
                   priority = 0 if base == "cloud" else 1
                   if len(owned) == 1:
                       candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
-                  elif len(owned) == 0 and base in preflight_sources:
+                  elif len(owned) == 0 and base in preflight_repos:
                       claimless_candidates.append((priority, worker_key, target, base, queue))
 
               last_diagnostics = diagnostics
@@ -338,7 +363,7 @@ jobs:
               if claimless_candidates and candidate_attempt >= 3:
                   claimless_candidates.sort(key=lambda item: (item[0], item[1]))
                   _, worker_key, target, base_project, before_queue = claimless_candidates[0]
-                  source = preflight_sources[base_project]
+                  source = live_github_evidence(base_project)
                   preflight = call(
                       "POST",
                       "/api/worker-preflight",
@@ -347,13 +372,7 @@ jobs:
                           "worker_id": worker_key,
                           "owner_id": fixture_owner,
                           "notion": {"checked": False},
-                          "github": {
-                              "checked": True,
-                              "repo": source["repo"],
-                              "main_sha": source["main_sha"],
-                              "open_prs": [],
-                              "branches": ["main"],
-                          },
+                          "github": source,
                       },
                   )
                   if not preflight.get("ok"):
