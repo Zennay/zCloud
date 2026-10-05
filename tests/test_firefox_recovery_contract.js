@@ -127,8 +127,8 @@ assert.ok(drainIndex >= 0 && verifyIndex > drainIndex, "replacement must drain b
 assert.ok(closeIndex > verifyIndex, "old tab may close only after drain + handoff revalidation");
 assert.ok(openIndex > closeIndex, "replacement chat may open only after old worker is safely released");
 assert.ok(
-  replacementBlock.includes("queue_item: queueItem"),
-  "replacement handoff must persist the current queue item alongside claim metadata"
+  background.includes("queue_item: queueItem"),
+  "replacement handoff preparation must persist the current queue item alongside claim metadata"
 );
 assert.ok(
   !replacementBlock.includes('"action":"release"') && !replacementBlock.includes("'action':'release'"),
