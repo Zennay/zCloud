@@ -424,12 +424,12 @@ class VpsPortfolioQueueTests(unittest.TestCase):
 
     def test_pending_second_worker_handoff_pins_project_claim_prefix(self):
         first = server.portfolio_queue_enqueue(
-            "supa", "first Supa handoff lane", "P1",
-            "Implement the first Supa change with deterministic tests.",
+            "supa", "Implement Supa planner UI component", "P1",
+            "Implement planner UI state with deterministic coverage.",
         )
         second = server.portfolio_queue_enqueue(
-            "supa", "second Supa handoff lane", "P1",
-            "Implement the second Supa change with deterministic tests.",
+            "supa", "Fix Supa provider API sync integration", "P1",
+            "Fix provider API sync integration with deterministic coverage.",
         )
         selected = server.portfolio_queue_allocate()
         self.assertEqual(
