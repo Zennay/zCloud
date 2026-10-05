@@ -98,13 +98,13 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.11", required.group(1))
+        self.assertEqual("1.3.12", required.group(1))
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.11";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.12";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -226,11 +226,38 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("initial dispatch geforceerd", block)
         self.assertNotIn('"Project draait al"', block)
 
+    def test_direct_start_stays_pending_for_violentmonkey_until_real_send(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        poll_start = background.index("async function pollCommands()")
+        poll_block = background[poll_start:]
+        self.assertIn("const vmOwnsDirectStart = vmOwnsCommand", poll_block)
+        self.assertIn("!!targets[command.project_id]", poll_block)
+        self.assertIn('command.action === "start"', poll_block)
+        self.assertIn("Base-project start still stays with the extension", poll_block)
+
+        command_start = userscript.index("async function handleCommands()")
+        command_end = userscript.index("async function tick()", command_start)
+        command_block = userscript[command_start:command_end]
+        start_branch = command_block.index('command.action === "start"')
+        drain_branch = command_block.index('command.action === "drain"', start_branch)
+        start_block = command_block[start_branch:drain_branch]
+        self.assertIn('await sendPrompt("database-start")', start_block)
+        self.assertIn('reportSendBlocked("start-deferred-busy")', start_block)
+        self.assertIn("if (!ok) continue;", start_block)
+        self.assertIn("const acknowledged = await commandResult(", start_block)
+        self.assertIn(
+            "if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);",
+            start_block,
+        )
+        self.assertNotIn('commandResult(id, "failed"', start_block)
+
     def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
-        self.assertIn("// @version      1.3.11", userscript)
-        self.assertIn('const SCRIPT_VERSION = "1.3.11";', userscript)
+        self.assertIn("// @version      1.3.12", userscript)
+        self.assertIn('const SCRIPT_VERSION = "1.3.12";', userscript)
         self.assertIn(
             'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
             userscript,
