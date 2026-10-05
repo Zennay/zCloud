@@ -144,6 +144,7 @@ jobs:
           mkdir -p artifacts/ops
           set +e
           python3 - <<'PY'
+          import http.client
           import json
           import os
           import pathlib
@@ -173,15 +174,27 @@ jobs:
                   return json.load(response)
 
           def allocation():
-              targets = call('GET', '/api/runner-targets')
-              workers = (targets.get('global_allocation') or {}).get('workers') or []
-              by_project = {}
-              for item in workers:
-                  project = str(item.get('project_id') or '').strip().lower()
-                  key = str(item.get('worker_key') or '').strip()
-                  if project in REQUIRED and key:
-                      by_project[project] = key
-              return targets, by_project
+              last_error = None
+              for attempt in range(1, 5):
+                  try:
+                      targets = call('GET', '/api/runner-targets')
+                      workers = (targets.get('global_allocation') or {}).get('workers') or []
+                      by_project = {}
+                      for item in workers:
+                          project = str(item.get('project_id') or '').strip().lower()
+                          key = str(item.get('worker_key') or '').strip()
+                          if project in REQUIRED and key:
+                              by_project[project] = key
+                      return targets, by_project
+                  except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError) as exc:
+                      last_error = {
+                          'attempt': attempt,
+                          'transport_error': type(exc).__name__,
+                      }
+                      print('PWQ24_ALLOCATION_RETRY=' + json.dumps(last_error, sort_keys=True), flush=True)
+                      if attempt < 4:
+                          time.sleep(3)
+              raise RuntimeError('runner-target allocation unavailable after bounded retries: ' + json.dumps(last_error, sort_keys=True))
 
           def evidence(selected):
               out = {}
