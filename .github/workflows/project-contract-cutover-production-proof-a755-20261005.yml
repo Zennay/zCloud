@@ -10,6 +10,10 @@ permissions:
   contents: read
   statuses: read
 
+concurrency:
+  group: project-contract-cutover-production-proof-a755
+  cancel-in-progress: true
+
 jobs:
   wait-production:
     runs-on: ubuntu-latest
