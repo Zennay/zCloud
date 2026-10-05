@@ -1,1 +1,125 @@
-{"acceptance_green":false,"error":"acceptance artifact missing"}
+{
+  "acceptance_green": false,
+  "actions": [
+    {
+      "action": "start",
+      "project": "ftmo",
+      "result": {
+        "resync": "not-allocated"
+      }
+    },
+    {
+      "action": "start",
+      "result": {
+        "active": true,
+        "command_id": 20640,
+        "deduplicated": false,
+        "desired_state": "running",
+        "ok": true,
+        "status": "pending"
+      },
+      "worker": "supa::w1"
+    }
+  ],
+  "captured_at": "2026-10-05T01:12:54.528234+00:00",
+  "deploy_run_id": "37248736822",
+  "deployed_at": "2026-10-05T00:53:38Z",
+  "evidence": {
+    "ftmo": {
+      "duplicate_prompt_window": false,
+      "events": [],
+      "heartbeat": false,
+      "prompt_sent": false,
+      "send_blocked": [],
+      "worker": "ftmo::w1"
+    },
+    "supa": {
+      "duplicate_prompt_window": false,
+      "events": [
+        {
+          "error": "",
+          "event": "prompt-sent",
+          "reason": "startup-retry",
+          "ts": "2026-10-05T00:55:39.966000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:55:57.616000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:56:58.615000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:57:59.574000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T00:59:01.107000+00:00"
+        },
+        {
+          "error": "",
+          "event": "prompt-sent",
+          "reason": "startup-retry",
+          "ts": "2026-10-05T01:03:27.972000+00:00"
+        },
+        {
+          "error": "",
+          "event": "prompt-sent",
+          "reason": "startup-idle",
+          "ts": "2026-10-05T01:06:20.742000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T01:07:10.751000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T01:08:11.748000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T01:09:13.443000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T01:10:13.837000+00:00"
+        },
+        {
+          "error": "",
+          "event": "prompt-sent",
+          "reason": "startup-idle",
+          "ts": "2026-10-05T01:12:06.973000+00:00"
+        }
+      ],
+      "heartbeat": true,
+      "prompt_sent": true,
+      "send_blocked": [],
+      "worker": "supa::w1"
+    }
+  },
+  "expected_main": "18a15723386316368be1bc8a03d23f24b26ef8d2",
+  "health_rc": 2,
+  "health_stderr_tail": "",
+  "health_stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: Remote end closed connection without response']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nFAIL  project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': ['1 pending runner command(s) older than 300s']}\nFAIL  worker_scheduler ['runner-targets projects missing', 'invalid max_workers', 'cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model', 'stale pending runner command(s) present']\nHEALTH_BLOCKED\n",
+  "selected": {
+    "supa": "supa::w1"
+  }
+}
