@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 concurrency:
@@ -255,3 +255,70 @@ jobs:
               result = json.load(response)
           print('PWQ24_RESULT_ISSUE=' + str(result.get('html_url')))
           PY
+
+      - name: Persist PWQ-24 result on ops branch
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ops
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sqlite3
+          import subprocess
+          from datetime import datetime, timedelta, timezone
+
+          since = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
+          db = pathlib.Path('/home/ubuntu/zennay-cloud/history.db')
+          evidence = {}
+          with sqlite3.connect(db, timeout=5) as conn:
+              conn.row_factory = sqlite3.Row
+              for project in ('supa', 'ftmo'):
+                  rows = conn.execute(
+                      "SELECT ts,event,reason,error,worker_slot FROM runner_events WHERE project_id=? AND ts>=? AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
+                      (project, since),
+                  ).fetchall()
+                  items = [dict(row) for row in rows]
+                  prompts = [x for x in items if x['event'] == 'prompt-sent']
+                  heartbeats = [x for x in items if x['event'] == 'heartbeat']
+                  blocked = [x for x in items if x['event'] == 'send-blocked']
+                  evidence[project] = {
+                      'prompt_sent': bool(prompts),
+                      'heartbeat': bool(heartbeats),
+                      'send_blocked': blocked,
+                      'prompt_count': len(prompts),
+                      'events': items[-12:],
+                  }
+          health = subprocess.run(
+              ['/home/ubuntu/.local/bin/zcloud-healthcheck'],
+              text=True, capture_output=True, timeout=90, check=False,
+          )
+          result = {
+              'captured_at': datetime.now(timezone.utc).isoformat(),
+              'run_id': os.environ.get('GITHUB_RUN_ID'),
+              'sha': os.environ.get('GITHUB_SHA'),
+              'expected_main': '4a0f017fc871ab940d82986d8b76d3fff5488e0c',
+              'health_rc': health.returncode,
+              'health_stdout_tail': health.stdout[-5000:],
+              'health_stderr_tail': health.stderr[-2000:],
+              'evidence': evidence,
+              'acceptance_green': health.returncode == 0 and all(
+                  v['prompt_sent'] and v['heartbeat'] and not v['send_blocked']
+                  for v in evidence.values()
+              ),
+          }
+          pathlib.Path('artifacts/ops/pwq24-live-acceptance-result.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          PY
+          git config user.name 'zCloud ops runner'
+          git config user.email 'actions@users.noreply.github.com'
+          git add artifacts/ops/pwq24-live-acceptance-result.json
+          if git diff --cached --quiet; then
+            echo PWQ24_RESULT_UNCHANGED=1
+            exit 0
+          fi
+          git commit -m 'Ops: capture PWQ-24 live acceptance result'
+          git push origin HEAD:ops/pwq24-live-worker-acceptance-20261005-0040
