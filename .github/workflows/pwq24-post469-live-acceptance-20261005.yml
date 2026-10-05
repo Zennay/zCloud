@@ -30,7 +30,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: a7c34716cbeedaa05af825a69e41034083b839ba
+          EXPECTED_MAIN: 3886a932d2c90bc2f916e0053823281217062be0
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -87,7 +87,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: a7c34716cbeedaa05af825a69e41034083b839ba
+          EXPECTED_MAIN: 3886a932d2c90bc2f916e0053823281217062be0
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -136,13 +136,13 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     env:
-      EXPECTED_MAIN: a7c34716cbeedaa05af825a69e41034083b839ba
+      EXPECTED_MAIN: 3886a932d2c90bc2f916e0053823281217062be0
       DEPLOYED_AT: ${{ needs.wait-production.outputs.deployed_at }}
       DEPLOY_RUN_ID: ${{ needs.wait-production.outputs.deploy_run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: a7c34716cbeedaa05af825a69e41034083b839ba
+          ref: 3886a932d2c90bc2f916e0053823281217062be0
           clean: true
           fetch-depth: 1
 
@@ -519,10 +519,25 @@ jobs:
               if attempt < 4:
                   time.sleep(5)
 
+          final_memory_guard = (
+              (targets.get('global_allocation') or {}).get('memory_guard')
+              or (targets.get('dynamic_workers') or {}).get('memory_guard')
+              or {}
+          )
+
+          def memory_guard_green(guard):
+              return (
+                  isinstance(guard, dict)
+                  and guard.get('healthy_for_new_worker') is True
+                  and guard.get('swap_healthy') is True
+              )
+
           green = (
               REQUIRED.issubset(selected)
               and REQUIRED.issubset(final)
               and all(v['prompt_sent'] and v['heartbeat'] and not v['send_blocked'] and not v['duplicate_prompt_window'] for v in final.values())
+              and memory_guard_green(initial_memory_guard)
+              and memory_guard_green(final_memory_guard)
               and health is not None
               and health.returncode == 0
           )
@@ -534,11 +549,7 @@ jobs:
               'acceptance_started_at': acceptance_started_at,
               'endpoint_timings': endpoint_timings,
               'initial_memory_guard': initial_memory_guard,
-              'final_memory_guard': (
-                  (targets.get('global_allocation') or {}).get('memory_guard')
-                  or (targets.get('dynamic_workers') or {}).get('memory_guard')
-                  or {}
-              ),
+              'final_memory_guard': final_memory_guard,
               'selected': selected,
               'actions': actions,
               'evidence': final,
