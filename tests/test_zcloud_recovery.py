@@ -124,7 +124,16 @@ class RecoveryTests(unittest.TestCase):
 
     def test_capture_prunes_old_valid_snapshots_but_keeps_active_lkg(self):
         self.assertEqual(8, recovery.RECOVERY_SNAPSHOT_RETENTION)
-        manifests = [self.capture() for _ in range(10)]
+        with patch.object(
+            recovery,
+            "snapshot_stamp",
+            return_value="20261005T230000Z",
+        ):
+            manifests = [self.capture() for _ in range(10)]
+        self.assertEqual(
+            10,
+            len({manifest["snapshot_id"] for manifest in manifests}),
+        )
         snapshots = self.state / "snapshots"
         valid_dirs = sorted(
             path.name
