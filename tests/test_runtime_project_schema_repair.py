@@ -28,6 +28,34 @@ class RuntimeProjectSchemaRepairTests(unittest.TestCase):
         self.assertEqual("", source[1]["milestone_revision"])
         self.assertNotIn("milestone_revision", source[2])
 
+    def test_repair_projects_adds_missing_candidate_without_overwriting_live(self):
+        source = [{
+            "id": "cloud",
+            "milestone_revision": "live-v1",
+            "phase": "runtime-owned phase",
+        }]
+        candidate = [
+            {
+                "id": "cloud",
+                "milestone_revision": "candidate-v2",
+                "phase": "candidate phase",
+            },
+            {
+                "id": "zguard",
+                "milestone_revision": "zguard-v1",
+                "phase": "portfolio onboarding",
+            },
+        ]
+
+        result, changed = repair.repair_projects(source, candidate)
+
+        self.assertEqual(["zguard"], changed)
+        self.assertEqual("runtime-owned phase", result[0]["phase"])
+        self.assertEqual("live-v1", result[0]["milestone_revision"])
+        self.assertEqual("zguard", result[1]["id"])
+        self.assertEqual("portfolio onboarding", result[1]["phase"])
+        self.assertEqual(1, len(source))
+
     def test_live_repair_is_atomic_audited_and_noops_after_success(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "live"
@@ -43,6 +71,21 @@ class RuntimeProjectSchemaRepairTests(unittest.TestCase):
                 "milestones": [{"title": "M1", "done": False, "progress": 10}],
             }]
             (root / "projects.json").write_text(json.dumps(projects) + "\n", encoding="utf-8")
+            candidate_projects = [
+                dict(projects[0], milestone_revision="candidate-lightup-v2"),
+                {
+                    "id": "zguard",
+                    "name": "zGuard",
+                    "status": "active",
+                    "milestone_revision": "zguard-v1",
+                    "progress_basis": "runtime evidence",
+                    "milestones": [{"title": "M0", "done": False, "progress": 10}],
+                },
+            ]
+            (candidate / "projects.json").write_text(
+                json.dumps(candidate_projects) + "\n",
+                encoding="utf-8",
+            )
             for name, value in (
                 ("project-layout.json", {"order": ["lightup"], "archived": []}),
                 ("resource-policy.json", {}),
@@ -72,8 +115,12 @@ class RuntimeProjectSchemaRepairTests(unittest.TestCase):
                 lock_path=Path(td) / "repair.lock",
             )
             self.assertTrue(first["changed"])
+            self.assertEqual(["lightup", "zguard"], first["projects"])
             live = json.loads((root / "projects.json").read_text(encoding="utf-8"))
             self.assertEqual("runtime-import-v1", live[0]["milestone_revision"])
+            self.assertEqual("active", live[0]["status"])
+            self.assertEqual("zguard", live[1]["id"])
+            self.assertEqual("zguard-v1", live[1]["milestone_revision"])
             with sqlite3.connect(db) as conn:
                 row = conn.execute(
                     "SELECT actor,config_key,target,result,new_value_json FROM config_audit"
