@@ -424,6 +424,24 @@ jobs:
               ):
                   last_started_worker[project] = worker
 
+          def needs_redrive(started, project, worker):
+              return bool(worker) and started.get(project) != worker
+
+          # Regression guard for the exact churn shape that previously suppressed
+          # Supa's returning worker: w1 -> w2 -> w1 must produce a new Start edge,
+          # while a stable w1 allocation must not spam duplicate Starts.
+          probe_started = {}
+          probe_checks = [
+              needs_redrive(probe_started, 'supa', 'supa::w1'),
+          ]
+          probe_started['supa'] = 'supa::w1'
+          probe_checks.append(not needs_redrive(probe_started, 'supa', 'supa::w1'))
+          probe_started['supa'] = 'supa::w2'
+          probe_checks.append(needs_redrive(probe_started, 'supa', 'supa::w1'))
+          if not all(probe_checks):
+              raise SystemExit('PWQ-24 rebind-cycle regression guard failed')
+          print('PWQ24_REBIND_CYCLE_GUARD_GREEN=1', flush=True)
+
           final = {}
           deadline = time.time() + 150
           while time.time() < deadline:
@@ -431,7 +449,7 @@ jobs:
               if REQUIRED.issubset(selected):
                   for project in sorted(REQUIRED):
                       key = selected.get(project)
-                      if not key or last_started_worker.get(project) == key:
+                      if not needs_redrive(last_started_worker, project, key):
                           continue
                       try:
                           result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
