@@ -80,3 +80,25 @@ jobs:
             echo 'ZCLOUD_DASHBOARD_LOCAL_GREEN_PUBLIC_SELFTEST_FAILED'
             exit 22
           fi
+
+
+  external_verify:
+    name: Verify dashboard from external runner
+    needs: recover
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe public zCloud dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='http://198.244.191.182:8765/'
+          for attempt in $(seq 1 6); do
+            if curl -fsS --max-time 8 "$url" >/dev/null; then
+              echo 'ZCLOUD_DASHBOARD_EXTERNAL_GREEN'
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'ZCLOUD_DASHBOARD_EXTERNAL_FAILED'
+          exit 23
