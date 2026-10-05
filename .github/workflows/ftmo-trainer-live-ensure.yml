@@ -20,12 +20,14 @@ concurrency:
 
 jobs:
   ensure:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 5
     steps:
       - name: Ensure FTMO autonomous trainer is active and doing compute
         shell: bash
         run: |
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
+          test "$(hostname)" = "vps-bb300bba"
           set -euo pipefail
           service=ftmo-autonomous-marathon.service
           before_state="$(systemctl is-active "$service" 2>/dev/null || true)"
