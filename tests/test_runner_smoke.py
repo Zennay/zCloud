@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -512,14 +513,49 @@ class RunnerSmokeTests(unittest.TestCase):
     def test_runner_statuses_reuses_one_coherent_target_snapshot(self):
         original_targets = server.runner_targets
         original_worker_targets = server.runner_worker_targets
+        original_claims = server.task_claims
         with mock.patch.object(server, "runner_targets", wraps=original_targets) as target_mock, \
-             mock.patch.object(server, "runner_worker_targets", wraps=original_worker_targets) as worker_target_mock:
+             mock.patch.object(server, "runner_worker_targets", wraps=original_worker_targets) as worker_target_mock, \
+             mock.patch.object(server, "task_claims", wraps=original_claims) as claim_mock:
             statuses = server.runner_statuses()
 
         self.assertIn("cloud", statuses)
         self.assertEqual(1, target_mock.call_count)
         self.assertEqual(1, worker_target_mock.call_count)
         self.assertIsNotNone(worker_target_mock.call_args.kwargs.get("base"))
+        self.assertFalse(worker_target_mock.call_args.kwargs.get("reconcile"))
+        self.assertTrue(claim_mock.call_args_list)
+        self.assertTrue(all(call.kwargs.get("prune_expired") is False for call in claim_mock.call_args_list))
+
+    def test_runner_statuses_do_not_materialize_missing_worker_rows(self):
+        with server.connect() as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='cloud'")
+            conn.execute("DELETE FROM runner_workers WHERE project_id='cloud' AND worker_slot=2")
+            before = conn.execute(
+                "SELECT COUNT(*) AS n FROM runner_workers WHERE project_id='cloud'"
+            ).fetchone()["n"]
+
+        statuses = server.runner_statuses()
+
+        with server.connect() as conn:
+            after = conn.execute(
+                "SELECT COUNT(*) AS n FROM runner_workers WHERE project_id='cloud'"
+            ).fetchone()["n"]
+        self.assertEqual(before, after)
+        self.assertEqual(2, len(statuses["cloud"]["workers"]))
+
+    def test_runner_statuses_does_not_wait_on_another_sqlite_writer(self):
+        writer = sqlite3.connect(server.DB, timeout=0.1)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            with mock.patch.object(server, "DB_BUSY_TIMEOUT_SECONDS", 0.2), \
+                 mock.patch.object(server, "DB_BUSY_TIMEOUT_MS", 200):
+                statuses = server.runner_statuses()
+        finally:
+            writer.rollback()
+            writer.close()
+
+        self.assertIn("cloud", statuses)
 
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
