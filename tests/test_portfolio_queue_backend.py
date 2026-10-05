@@ -80,6 +80,55 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual("sqlite", allocation["queue_backend"])
         self.assertEqual(["cloud", "raiseai"], [worker["project_id"] for worker in allocation["workers"]])
 
+    def test_manual_start_priority_reserves_one_same_priority_slot(self):
+        server.portfolio_queue_enqueue(
+            "cloud", "Implement current zCloud P0", "P0",
+            "Implement the current zCloud reliability work with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement first FTMO P0", "P0",
+            "Implement the first FTMO critical-path change with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement second FTMO P0", "P0",
+            "Implement the second FTMO critical-path change with deterministic tests.",
+        )
+        ts = server.now()
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                (server._manual_start_priority_key("ftmo"), ts, ts, "test"),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual(["ftmo", "cloud"], [item["project_id"] for item in selected])
+
+    def test_expired_manual_start_priority_does_not_change_queue_order(self):
+        server.portfolio_queue_enqueue(
+            "cloud", "Implement older zCloud P0", "P0",
+            "Implement the older zCloud reliability work with deterministic tests.",
+        )
+        server.portfolio_queue_enqueue(
+            "ftmo", "Implement newer FTMO P0", "P0",
+            "Implement the newer FTMO critical-path change with deterministic tests.",
+        )
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
+                (
+                    server._manual_start_priority_key("ftmo"),
+                    "2000-01-01T00:00:00+00:00",
+                    server.now(),
+                    "test",
+                ),
+            )
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual("cloud", selected[0]["project_id"])
+
     def test_external_gate_keeps_queue_queued_and_releases_unstarted_claim(self):
         blocked = server.portfolio_queue_enqueue(
             "zssh",

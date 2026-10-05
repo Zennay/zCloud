@@ -68,6 +68,7 @@ PORTFOLIO_ATTENTION_NOTION_URL = 'https://app.notion.com/p/3ec9e19ac9558140a2d8d
 PORTFOLIO_QUEUE_LEASE_SECONDS = 3600
 PORTFOLIO_QUEUE_MIN_READY_PER_WORKER = 3
 PORTFOLIO_AI_COOLDOWN_SECONDS = 120
+MANUAL_START_PRIORITY_SECONDS = 180
 WORKER_PREFLIGHT_TTL_SECONDS = 600
 TASK_CLAIM_METADATA_MAX_BYTES = 4000
 TASK_CLAIM_ALTERNATIVE_MAX = 12
@@ -2134,6 +2135,26 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
+def _manual_start_priority_key(project_id):
+    return 'manual_start_priority:' + str(project_id or '').strip().lower()
+
+def _manual_start_priority_active_locked(connection, project_id, at=None):
+    project_id=str(project_id or '').strip().lower()
+    if not project_id:
+        return False
+    row=connection.execute(
+        'SELECT value FROM runtime_settings WHERE key=?',
+        (_manual_start_priority_key(project_id),),
+    ).fetchone()
+    if not row or not row['value']:
+        return False
+    try:
+        started=datetime.fromisoformat(str(row['value']).replace('Z','+00:00')).astimezone(timezone.utc)
+        age=((at or datetime.now(timezone.utc))-started).total_seconds()
+        return 0 <= age <= MANUAL_START_PRIORITY_SECONDS
+    except Exception:
+        return False
+
 def _portfolio_project_soft_cap(project_id=None):
     """Return the preferred browser-worker share for one runnable project.
 
@@ -2684,22 +2705,51 @@ def portfolio_queue_allocate():
                     row=None
                     lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
                 else:
-                    higher=lane_candidates[0][0] if lane_candidates else None
+                    manual_candidates=[
+                        pair for pair in lane_candidates
+                        if used_counts.get(str(pair[0]['project_id'] or ''),0)==0
+                        and _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+                    ]
+                    higher=min(
+                        manual_candidates or lane_candidates,
+                        key=lambda pair: (
+                            _portfolio_priority_rank(pair[0]['priority']),
+                            0 if _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt) else 1,
+                            str(pair[0]['created_at'] or ''),
+                            str(pair[0]['queue_id'] or ''),
+                        ),
+                    )[0] if (manual_candidates or lane_candidates) else None
                     hard_cap=_portfolio_project_hard_cap(row_project)
+                    row_manual=(
+                        used_counts.get(row_project,0)==0
+                        and _manual_start_priority_active_locked(c,row_project,ts_dt)
+                    )
                     alternate_project_available=any(
                         str(pair[0]['project_id'] or '') != row_project
-                        and used_counts.get(str(pair[0]['project_id'] or ''),0)
-                            < _portfolio_project_soft_cap(pair[0]['project_id'])
+                        and (
+                            used_counts.get(str(pair[0]['project_id'] or ''),0)
+                                < _portfolio_project_soft_cap(pair[0]['project_id'])
+                            or (
+                                used_counts.get(str(pair[0]['project_id'] or ''),0)==0
+                                and _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+                            )
+                        )
                         for pair in lane_candidates
                     )
                     should_enforce_hard_cap=used_counts.get(row_project,0) >= hard_cap
-                    row_soft_cap=_portfolio_project_soft_cap(row_project)
+                    row_soft_cap=max(_portfolio_project_soft_cap(row_project),1 if row_manual else 0)
                     should_diversify=used_counts.get(row_project,0) >= row_soft_cap and alternate_project_available
                     should_preempt_priority=(
                         higher and
                         _portfolio_priority_rank(higher['priority']) < _portfolio_priority_rank(row['priority'])
                     )
-                    if should_enforce_hard_cap or should_diversify or should_preempt_priority:
+                    should_preempt_manual=(
+                        higher and
+                        _portfolio_priority_rank(higher['priority']) <= _portfolio_priority_rank(row['priority'])
+                        and _manual_start_priority_active_locked(c,higher['project_id'],ts_dt)
+                        and not row_manual
+                    )
+                    if should_enforce_hard_cap or should_diversify or should_preempt_priority or should_preempt_manual:
                         c.execute("""UPDATE portfolio_queue
                                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                                      WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
@@ -2729,8 +2779,14 @@ def portfolio_queue_allocate():
 
             diverse_candidates=[
                 pair for pair in lane_candidates
-                if used_counts.get(str(pair[0]['project_id'] or ''),0)
-                    < _portfolio_project_soft_cap(pair[0]['project_id'])
+                if (
+                    used_counts.get(str(pair[0]['project_id'] or ''),0)
+                        < _portfolio_project_soft_cap(pair[0]['project_id'])
+                    or (
+                        used_counts.get(str(pair[0]['project_id'] or ''),0)==0
+                        and _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+                    )
+                )
             ]
             if diverse_candidates:
                 lane_candidates=diverse_candidates
@@ -2739,6 +2795,10 @@ def portfolio_queue_allocate():
                 lane_candidates,
                 key=lambda pair: (
                     _portfolio_priority_rank(pair[0]['priority']),
+                    0 if (
+                        used_counts.get(str(pair[0]['project_id'] or ''),0)==0
+                        and _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+                    ) else 1,
                     1 if str(pair[0]['project_id']) in used_projects else 0,
                     str(pair[0]['created_at'] or ''),
                     str(pair[0]['queue_id'] or ''),
@@ -3683,6 +3743,15 @@ class Handler(BaseHTTPRequestHandler):
                     # Serialize same-project action admission so concurrent retries cannot
                     # both observe an empty queue and enqueue duplicate browser work.
                     c.execute('BEGIN IMMEDIATE')
+                    if not is_worker and action in ('start','new_chat'):
+                        intent_ts=now()
+                        c.execute(
+                            "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                            "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                            (_manual_start_priority_key(base_project_id),intent_ts,intent_ts,request_actor(self)),
+                        )
+                    elif not is_worker and action=='pause':
+                        c.execute('DELETE FROM runtime_settings WHERE key=?',(_manual_start_priority_key(base_project_id),))
                     inflight=c.execute(
                         "SELECT id,action FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id DESC LIMIT 1",
                         (project_id,)
