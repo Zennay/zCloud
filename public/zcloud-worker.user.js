@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.14
+// @version      1.3.15
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.14";
+  const SCRIPT_VERSION = "1.3.15";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -238,6 +238,24 @@
     return "zcloud-queue-chat:" + String(projectId || "");
   }
 
+  function adoptNextKey(projectId) {
+    return "zcloud-adopt-next:" + String(projectId || "");
+  }
+
+  function markAdoptNext(projectId) {
+    if (!projectId) return;
+    try { sessionStorage.setItem(adoptNextKey(projectId), "1"); } catch (_) {}
+  }
+
+  function adoptNextPending(projectId) {
+    try { return sessionStorage.getItem(adoptNextKey(projectId)) === "1"; }
+    catch (_) { return false; }
+  }
+
+  function clearAdoptNext(projectId) {
+    try { sessionStorage.removeItem(adoptNextKey(projectId)); } catch (_) {}
+  }
+
   function rememberedQueueId(projectId) {
     try { return sessionStorage.getItem(queueMemoryKey(projectId)) || ""; }
     catch (_) { return ""; }
@@ -446,6 +464,16 @@
 
     const expectedProvider = candidateProvider(next);
     const currentConversation = conversationId();
+    if (!next.conversation_id && currentProvider === expectedProvider && currentConversation && adoptNextPending(next.project_id)) {
+      target = {...target, ...next};
+      await status("conversation-adopted", {
+        reason: "fresh-chat-route-adoption",
+        target: location.href,
+        targetConversation: currentConversation
+      });
+      clearAdoptNext(next.project_id);
+      next = {...next, conversation_id: currentConversation};
+    }
     const onRightPage = next.conversation_id
       ? currentProvider === expectedProvider && currentConversation === String(next.conversation_id)
       : currentProvider === expectedProvider && isNewChatPage(expectedProvider);
@@ -1062,6 +1090,7 @@
         return false;
       }
 
+      if (!conversationId()) markAdoptNext(target.project_id);
       button.click();
       const queueId = String(target?.queue_item?.queue_id || "").trim();
       if (queueId) rememberQueueId(target.project_id, queueId);
