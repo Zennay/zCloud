@@ -92,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ops/pwq24-post443-live-acceptance-20261005-0047
+          ref: c5b3fe20d2351a395cc70f8ca0c2b3ca7863b660
           clean: true
           fetch-depth: 1
 
@@ -363,7 +363,7 @@ jobs:
           health = None
           for attempt in range(1, 5):
               health = subprocess.run(
-                  ['/home/ubuntu/.local/bin/zcloud-healthcheck'],
+                  ['python3', 'scripts/zcloud_healthcheck.py', '--json'],
                   text=True,
                   capture_output=True,
                   timeout=90,
@@ -410,20 +410,20 @@ jobs:
           set -e
           exit "$rc"
 
-      - name: Persist acceptance artifact
+      - name: Ensure acceptance artifact
         if: always()
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p artifacts/ops
           if [ ! -f artifacts/ops/pwq24-post443-live-acceptance-result.json ]; then
             echo '{"acceptance_green":false,"error":"acceptance artifact missing"}' > artifacts/ops/pwq24-post443-live-acceptance-result.json
           fi
-          git config user.name 'zCloud ops runner'
-          git config user.email 'actions@users.noreply.github.com'
-          git add artifacts/ops/pwq24-post443-live-acceptance-result.json
-          if git diff --cached --quiet; then
-            echo PWQ24_ARTIFACT_UNCHANGED=1
-            exit 0
-          fi
-          git commit -m 'Ops: capture PWQ-24 post-443 acceptance'
-          git push origin HEAD:ops/pwq24-post443-live-acceptance-20261005-0047
+
+      - name: Upload acceptance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwq24-live-acceptance-${{ github.run_id }}
+          path: artifacts/ops/pwq24-post443-live-acceptance-result.json
+          if-no-files-found: error
