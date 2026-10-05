@@ -1,0 +1,83 @@
+name: LightUp PR27 FTMO fallback VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-pr27-ftmo-fallback-proof-20261005
+    paths:
+      - ".github/workflows/lightup-pr27-ftmo-fallback-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr27-ftmo-fallback-vps-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    name: Exact PR27 proof on dedicated FTMO runner
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 20
+    env:
+      SHA: d1514456c2683bef7af6da63d9684f014fd3e4f5
+    steps:
+      - name: Guard exact PR head and canonical VPS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
+          state="$(gh api repos/Zennay/Lightup/pulls/27 --jq .state)"
+          live="$(gh api repos/Zennay/Lightup/pulls/27 --jq .head.sha)"
+          test "$state" = "open"
+          test "$live" = "$SHA"
+          echo "LIGHTUP_PR27_FTMO_HEAD_EXACT SHA=$SHA HOST=$(hostname) RUNNER=$RUNNER_NAME"
+
+      - name: Verify exact LightUp PR27 head
+        run: |
+          set -Eeuo pipefail
+          work="$RUNNER_TEMP/lightup-pr27-ftmo-$GITHUB_RUN_ID"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin https://github.com/Zennay/Lightup.git
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$SHA"
+          (
+            cd "$work"
+            export PYTHONPATH=src:tests
+            python3 -m compileall -q src tests
+            python3 -m unittest discover -s tests -v
+            python3 -m unittest discover -s tests/integration -v
+            python3 scripts/check_safety_canaries.py
+          )
+          echo "LIGHTUP_PR27_FTMO_VPS_GREEN SHA=$SHA HOST=$(hostname)"
+
+      - name: Build exact-head proof receipt
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-pr27-ftmo-proof.json
+          import json, os, socket
+          print(json.dumps({
+              "schema_version": 1,
+              "result": "success",
+              "repository": "Zennay/Lightup",
+              "pull_request": 27,
+              "head_sha": os.environ["SHA"],
+              "host": socket.gethostname(),
+              "runner": os.environ.get("RUNNER_NAME"),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-pr27-ftmo-proof.json
+
+      - name: Upload exact-head proof receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr27-ftmo-proof-${{ github.run_id }}
+          path: artifacts/lightup-pr27-ftmo-proof.json
+          if-no-files-found: error
+          retention-days: 14
