@@ -1,0 +1,29 @@
+name: PWQ-24 PR463 targeted regression
+
+on:
+  push:
+    branches:
+      - ops/pwq24-pr463-regression-20261005
+    paths:
+      - .github/workflows/pwq24-pr463-regression-20261005.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dea39ccf33189bff4d517ebc01bff7850b45ff96
+          clean: true
+          fetch-depth: 1
+      - name: Run runner-control regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py
+          python3 -m unittest tests.test_runner_smoke
+          echo "PWQ24_PR463_TARGETED_REGRESSION_GREEN=1"
