@@ -25,7 +25,20 @@ heal_zcloud() {
     return 0
   fi
 
-  logger -t zcloud-self-heal "health failed; restarting ${SERVICE}"
+  # A live status/read-model request can briefly monopolise the Python process
+  # long enough for the 8s root probe to time out. Do not turn one slow sample
+  # into a restart loop: allow the in-flight request to finish and confirm that
+  # the lightweight root endpoint is still unavailable before recycling zCloud.
+  if systemctl is-active --quiet "${SERVICE}"; then
+    logger -t zcloud-self-heal "health probe timed out; confirming before restart"
+    sleep 3
+    if healthy; then
+      logger -t zcloud-self-heal "health recovered during confirmation window"
+      return 0
+    fi
+  fi
+
+  logger -t zcloud-self-heal "health failed twice; restarting ${SERVICE}"
   systemctl restart "${SERVICE}"
 
   for _ in {1..20}; do
