@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   prove:
-    runs-on: [self-hosted, ftmo-research]
+    runs-on: self-hosted
     timeout-minutes: 4
     steps:
       - name: Recover and prove zCloud listener from independent VPS runner
@@ -25,6 +25,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" != "zcloud-vps-1"
 
           service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
           runner_root="/home/ubuntu/actions-runner-zcloud"
@@ -40,7 +41,7 @@ jobs:
             [[ "$cmd" == *"$runner_root/bin/Runner.Worker"* ]] && worker_count=$((worker_count+1))
             [[ "$cmd" == *"$runner_root/bin/Runner.Listener"* ]] && listener_count=$((listener_count+1))
           done
-          echo "ZCLOUD_RECOVERY_PRE state=$pre_state pid=$pre_pid listeners=$listener_count workers=$worker_count"
+          echo "ZCLOUD_RECOVERY_PRE state=$pre_state pid=$pre_pid listeners=$listener_count workers=$worker_count source_runner=${RUNNER_NAME:-unknown}"
 
           action=none
           if [[ "$worker_count" -gt 0 ]]; then
