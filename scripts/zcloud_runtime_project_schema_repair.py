@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair legacy runtime project catalog fields without replacing runtime-owned state."""
+"""Repair legacy/runtime project catalog gaps without replacing runtime-owned state."""
 from __future__ import annotations
 
 import argparse
@@ -33,22 +33,53 @@ def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def repair_projects(projects):
+def repair_projects(projects, candidate_projects=None):
     if not isinstance(projects, list):
         raise RepairError("projects.json must be an array")
     repaired = json.loads(json.dumps(projects, ensure_ascii=False))
     changed = []
+    live_ids = set()
+
     for item in repaired:
         if not isinstance(item, dict):
             continue
+        project_id = str(item.get("id") or "").strip()
+        if project_id:
+            if project_id in live_ids:
+                raise RepairError(f"duplicate runtime project id {project_id!r}")
+            live_ids.add(project_id)
         revision = item.get("milestone_revision")
         if isinstance(revision, str) and revision.strip():
             continue
-        project_id = str(item.get("id") or "").strip()
         if not project_id:
             raise RepairError("cannot repair milestone_revision for project without id")
         item["milestone_revision"] = "runtime-import-v1"
         changed.append(project_id)
+
+    if candidate_projects is not None:
+        if not isinstance(candidate_projects, list):
+            raise RepairError("candidate projects.json must be an array")
+        candidate_ids = set()
+        for item in candidate_projects:
+            if not isinstance(item, dict):
+                raise RepairError("candidate projects.json entries must be objects")
+            project_id = str(item.get("id") or "").strip()
+            if not project_id:
+                raise RepairError("candidate project without id")
+            if project_id in candidate_ids:
+                raise RepairError(f"duplicate candidate project id {project_id!r}")
+            candidate_ids.add(project_id)
+            if project_id in live_ids:
+                continue
+
+            added = json.loads(json.dumps(item, ensure_ascii=False))
+            revision = added.get("milestone_revision")
+            if not isinstance(revision, str) or not revision.strip():
+                added["milestone_revision"] = "runtime-import-v1"
+            repaired.append(added)
+            live_ids.add(project_id)
+            changed.append(project_id)
+
     return repaired, changed
 
 
@@ -86,7 +117,7 @@ def atomic_write(path: Path, value: bytes) -> None:
 
 def write_audit(db: Path, old_value, new_value, changed: list[str]) -> None:
     ts = datetime.now(timezone.utc).isoformat()
-    detail = "schema repair: filled milestone_revision for " + ",".join(changed)
+    detail = "runtime project catalog repair: " + ",".join(changed)
     with sqlite3.connect(db, timeout=5) as conn:
         conn.execute(
             "INSERT INTO config_audit("
@@ -113,7 +144,8 @@ def repair_live(*, root: Path, candidate: Path, db: Path, validator: Path, lock_
 
         before_bytes = projects_path.read_bytes()
         before = json.loads(before_bytes.decode("utf-8"))
-        after, changed = repair_projects(before)
+        candidate_projects = json.loads((candidate / "projects.json").read_text(encoding="utf-8"))
+        after, changed = repair_projects(before, candidate_projects)
         if not changed:
             return {
                 "ok": True,
