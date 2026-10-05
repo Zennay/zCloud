@@ -3842,7 +3842,11 @@ class Handler(BaseHTTPRequestHandler):
                     # Serialize same-project action admission so concurrent retries cannot
                     # both observe an empty queue and enqueue duplicate browser work.
                     c.execute('BEGIN IMMEDIATE')
-                    if not is_worker and action in ('start','new_chat'):
+                    if action in ('start','new_chat'):
+                        # An explicit worker Start is also an explicit request to keep
+                        # its parent project allocatable long enough to dispatch. Refresh
+                        # the same bounded project intent used by project-level Start so
+                        # scheduler churn cannot evict a just-started worker mid-send.
                         intent_ts=now()
                         c.execute(
                             "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
