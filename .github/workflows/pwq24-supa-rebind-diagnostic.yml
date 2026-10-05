@@ -1,0 +1,64 @@
+name: PWQ-24 Supa rebind diagnostic
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post461-live-acceptance-20261005-0442
+    paths:
+      - ".github/workflows/pwq24-supa-rebind-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b68562c2041ffd99f3ac15d7fbca220bef9d0549
+          clean: true
+          fetch-depth: 1
+      - name: Capture Supa allocation and dispatch timeline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          import json, sqlite3, urllib.request
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          floor="2026-10-05T04:43:00+00:00"
+          with sqlite3.connect(DB,timeout=5) as c:
+              c.row_factory=sqlite3.Row
+              events=[dict(r) for r in c.execute(
+                  "SELECT id,ts,project_id,worker_slot,event,reason,error FROM runner_events "
+                  "WHERE project_id='supa' AND ts>=? ORDER BY id",(floor,)
+              ).fetchall()]
+              commands=[dict(r) for r in c.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at,result FROM runner_commands "
+                  "WHERE (project_id='supa' OR project_id LIKE 'supa::w%') AND created_at>=? ORDER BY id",(floor,)
+              ).fetchall()]
+              queue=[dict(r) for r in c.execute(
+                  "SELECT queue_id,project_id,status,priority,eligible,worker_slot,claimed_at,claim_expires,updated_at,evidence,blocker "
+                  "FROM portfolio_queue WHERE project_id='supa' ORDER BY updated_at DESC LIMIT 20"
+              ).fetchall()]
+              slots=[dict(r) for r in c.execute(
+                  "SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot"
+              ).fetchall()]
+              settings=[dict(r) for r in c.execute(
+                  "SELECT key,value,updated_at,actor FROM runtime_settings WHERE key='manual_start_priority:supa'"
+              ).fetchall()]
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets",timeout=30) as r:
+                  targets=json.load(r)
+          except Exception as e:
+              targets={"error":type(e).__name__+": "+str(e)}
+          print("PWQ24_SUPA_EVENTS="+json.dumps(events,sort_keys=True))
+          print("PWQ24_SUPA_COMMANDS="+json.dumps(commands,sort_keys=True))
+          print("PWQ24_SUPA_QUEUE="+json.dumps(queue,sort_keys=True))
+          print("PWQ24_GLOBAL_SLOTS="+json.dumps(slots,sort_keys=True))
+          print("PWQ24_SUPA_MANUAL_PRIORITY="+json.dumps(settings,sort_keys=True))
+          print("PWQ24_RUNNER_TARGETS="+json.dumps(targets,sort_keys=True))
+          PY
