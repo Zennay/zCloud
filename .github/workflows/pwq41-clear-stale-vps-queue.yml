@@ -1,0 +1,82 @@
+name: PWQ-41 clear stale VPS queue
+
+on:
+  push:
+    branches:
+      - ops/pwq41-clear-stale-vps-queue-20261005-1635
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  cancel-stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel only explicitly superseded queued runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_PR: "522"
+          EXPECTED_TARGET_HEAD: "7982c9021c4deb29752a1b1c818b8f20e1095fc8"
+          CANDIDATE_RUNS: "37341496081 37341430549 37341222815 37341136626 37329482808 37294139049 37287190130 37266548478 37241226823 37235856018 37234807497"
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_target_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${TARGET_PR}" --jq .head.sha)"
+          if [[ "$current_target_head" != "$EXPECTED_TARGET_HEAD" ]]; then
+            echo "PWQ41_QUEUE_CLEANUP_ABORT target_head_moved expected=$EXPECTED_TARGET_HEAD actual=$current_target_head"
+            exit 1
+          fi
+
+          cancelled=0
+          kept=0
+          for run_id in $CANDIDATE_RUNS; do
+            run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id")"
+            status="$(jq -r .status <<<"$run")"
+            head_sha="$(jq -r .head_sha <<<"$run")"
+            name="$(jq -r .name <<<"$run")"
+
+            case "$status" in
+              queued|pending|waiting|requested)
+                ;;
+              *)
+                echo "PWQ41_QUEUE_CLEANUP_KEEP run_id=$run_id status=$status name=$name"
+                kept=$((kept + 1))
+                continue
+                ;;
+            esac
+
+            if [[ "$head_sha" == "$EXPECTED_TARGET_HEAD" ]]; then
+              echo "PWQ41_QUEUE_CLEANUP_KEEP_TARGET_HEAD run_id=$run_id name=$name"
+              kept=$((kept + 1))
+              continue
+            fi
+
+            # Re-read immediately before mutation; never interrupt a run that
+            # started while this hosted cleanup job was evaluating the queue.
+            fresh="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id")"
+            fresh_status="$(jq -r .status <<<"$fresh")"
+            fresh_sha="$(jq -r .head_sha <<<"$fresh")"
+            case "$fresh_status" in
+              queued|pending|waiting|requested) ;;
+              *)
+                echo "PWQ41_QUEUE_CLEANUP_RACE_KEEP run_id=$run_id status=$fresh_status name=$name"
+                kept=$((kept + 1))
+                continue
+                ;;
+            esac
+            if [[ "$fresh_sha" == "$EXPECTED_TARGET_HEAD" ]]; then
+              echo "PWQ41_QUEUE_CLEANUP_RACE_KEEP_TARGET run_id=$run_id name=$name"
+              kept=$((kept + 1))
+              continue
+            fi
+
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id/cancel" >/dev/null
+            echo "PWQ41_QUEUE_CLEANUP_CANCELLED run_id=$run_id sha=$fresh_sha name=$name"
+            cancelled=$((cancelled + 1))
+          done
+
+          echo "PWQ41_QUEUE_CLEANUP_GREEN cancelled=$cancelled kept=$kept"
