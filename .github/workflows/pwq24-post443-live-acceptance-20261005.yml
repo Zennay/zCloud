@@ -213,23 +213,54 @@ jobs:
                       break
                   time.sleep(5)
               else:
+                  # Allocation can churn during the natural-evidence wait. Refresh
+                  # immediately before each forced start and only recover from
+                  # zCloud's exact stale-worker 400 contract.
+                  targets, selected = allocation()
                   for project in sorted(REQUIRED):
-                      key = selected[project]
+                      key = selected.get(project)
+                      if not key:
+                          actions.append({
+                              'project': project,
+                              'action': 'start',
+                              'result': {'resync': 'not-allocated'},
+                          })
+                          continue
                       try:
                           result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
-                          actions.append({'worker': key, 'action': 'start', 'result': result})
                       except urllib.error.HTTPError as exc:
                           raw = exc.read().decode('utf-8', 'replace')
-                          if exc.code == 400:
+                          try:
+                              body = json.loads(raw)
+                          except Exception:
+                              body = {'error': raw}
+                          if exc.code != 400 or body.get('error') != 'Ongeldige runneractie':
+                              raise
+                          _, refreshed = allocation()
+                          fresh_key = refreshed.get(project)
+                          if not fresh_key:
                               actions.append({
+                                  'project': project,
                                   'worker': key,
                                   'action': 'start',
-                                  'recoverable_allocation_churn': True,
-                                  'http_status': exc.code,
-                                  'detail': raw[:1000],
+                                  'result': {
+                                      'resync': 'deallocated',
+                                      'http_status': 400,
+                                      'body': body,
+                                  },
                               })
                               continue
-                          raise
+                          if fresh_key == key:
+                              raise SystemExit(
+                                  'runner-control rejected current allocation: '
+                                  + json.dumps(
+                                      {'project': project, 'worker': key, 'body': body},
+                                      sort_keys=True,
+                                  )
+                              )
+                          key = fresh_key
+                          result = call('POST', '/api/runner-control', {'project_id': key, 'action': 'start'})
+                      actions.append({'worker': key, 'action': 'start', 'result': result})
 
           final = {}
           deadline = time.time() + 150
