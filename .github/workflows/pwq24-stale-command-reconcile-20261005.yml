@@ -98,6 +98,11 @@ jobs:
                   },sort_keys=True))
           PY
 
+          echo '=== installed healthcheck parity ==='
+          echo "PWQ24_HEALTHCHECK_INSTALLED_SHA=$(sha256sum "$HOME/.local/bin/zcloud-healthcheck" | awk '{print $1}')"
+          echo "PWQ24_HEALTHCHECK_MAIN_SHA=$(sha256sum scripts/zcloud_healthcheck.py | awk '{print $1}')"
+          grep -E 'DEEP_STATUS_TIMEOUT_SECONDS|FAST_API_TIMEOUT_SECONDS|timeout=DEEP_STATUS_TIMEOUT_SECONDS' "$HOME/.local/bin/zcloud-healthcheck" || true
+
           echo '=== health after reconcile ==='
           set +e
           "$HOME/.local/bin/zcloud-healthcheck" --json
