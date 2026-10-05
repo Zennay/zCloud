@@ -1,0 +1,63 @@
+name: PWQ-24 runtime diagnostic
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post443-live-acceptance-20261005-0047
+    paths:
+      - .github/workflows/pwq24-runtime-diagnostic-20261005.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/pwq24-post443-live-acceptance-20261005-0047
+          clean: true
+          fetch-depth: 1
+
+      - name: Capture runner event and live-state evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import urllib.error
+          import urllib.request
+
+          db = "/home/ubuntu/zennay-cloud/history.db"
+          since = "2026-10-05T01:33:37+00:00"
+          out = {"since": since, "events": {}}
+
+          with sqlite3.connect(db, timeout=5) as conn:
+              conn.row_factory = sqlite3.Row
+              for project in ("supa", "ftmo"):
+                  rows = conn.execute(
+                      """
+                      SELECT id, ts, project_id, worker_slot, event, reason, error, metadata_json
+                      FROM runner_events
+                      WHERE project_id=? AND ts>=?
+                      ORDER BY id ASC
+                      LIMIT 300
+                      """,
+                      (project, since),
+                  ).fetchall()
+                  out["events"][project] = [dict(row) for row in rows]
+
+          for path in ("/api/runner-targets", "/api/runner-live", "/api/status"):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8765" + path, timeout=20) as response:
+                      out[path] = json.load(response)
+              except Exception as exc:
+                  out[path] = {"error": type(exc).__name__ + ": " + str(exc)}
+
+          print("PWQ24_RUNTIME_DIAGNOSTIC=" + json.dumps(out, ensure_ascii=False, sort_keys=True))
+          PY
