@@ -1,0 +1,119 @@
+name: One-shot stale self-hosted queue cleanup
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/zcloud-queue-cleanup-once.yml"
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      CURRENT_RUN_ID: ${{ github.run_id }}
+      HEAD_BRANCH: ${{ github.head_ref }}
+    steps:
+      - name: Cancel only safely superseded queued VPS jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          repo=os.environ["REPO"]
+          token=os.environ["GH_TOKEN"]
+          current=int(os.environ["CURRENT_RUN_ID"])
+          cleanup_branch=os.environ.get("HEAD_BRANCH") or ""
+          headers={
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-one-shot-queue-cleanup/1",
+          }
+
+          def get(path):
+              req=urllib.request.Request("https://api.github.com"+path,headers=headers)
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  return json.load(r)
+
+          def cancel(run_id):
+              req=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel",
+                  headers=headers,method="POST",
+              )
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  r.read()
+
+          pulls=get(f"/repos/{repo}/pulls?state=open&per_page=100")
+          open_heads={str(pr.get("head",{}).get("sha") or "") for pr in pulls}
+
+          runs=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
+          enriched=[]
+          for run in runs:
+              rid=int(run["id"])
+              if rid==current:
+                  continue
+              jobs=get(f"/repos/{repo}/actions/runs/{rid}/jobs?filter=latest&per_page=100").get("jobs") or []
+              self_hosted=any(
+                  job.get("status")=="queued"
+                  and "self-hosted" in {str(x).lower() for x in (job.get("labels") or [])}
+                  for job in jobs
+              )
+              if not self_hosted:
+                  continue
+              enriched.append(run)
+
+          keep=set()
+          by_key={}
+          for run in enriched:
+              key=(str(run.get("workflow_id") or ""),str(run.get("head_branch") or ""),str(run.get("event") or ""))
+              by_key.setdefault(key,[]).append(run)
+          for items in by_key.values():
+              newest=max(items,key=lambda r:(str(r.get("created_at") or ""),int(r["id"])))
+              keep.add(int(newest["id"]))
+
+          cancelled=[]
+          preserved=[]
+          for run in enriched:
+              rid=int(run["id"])
+              name=str(run.get("name") or "")
+              branch=str(run.get("head_branch") or "")
+              sha=str(run.get("head_sha") or "")
+              event=str(run.get("event") or "")
+              reason=None
+
+              if branch=="main" or "FTMO" in name.upper():
+                  preserved.append((rid,name,"protected-main-or-ftmo"))
+                  continue
+              if cleanup_branch and branch==cleanup_branch:
+                  reason="one-shot-cleanup-own-branch"
+              elif event=="pull_request" and sha not in open_heads:
+                  reason="pull-request-no-longer-open-at-this-head"
+              elif rid not in keep:
+                  reason="superseded-queued-duplicate"
+
+              if not reason:
+                  preserved.append((rid,name,"latest-live-head"))
+                  continue
+
+              try:
+                  cancel(rid)
+                  cancelled.append((rid,name,branch,reason))
+              except Exception as exc:
+                  preserved.append((rid,name,"cancel-failed:"+str(exc)))
+
+          print("ZCLOUD_QUEUE_CLEANUP_CANCELLED="+json.dumps(cancelled,sort_keys=True))
+          print("ZCLOUD_QUEUE_CLEANUP_PRESERVED="+json.dumps(preserved,sort_keys=True))
+          print("ZCLOUD_QUEUE_CLEANUP_COUNTS="+json.dumps({
+              "self_hosted_queued_examined":len(enriched),
+              "cancelled":len(cancelled),
+              "preserved":len(preserved),
+          },sort_keys=True))
+          PY
