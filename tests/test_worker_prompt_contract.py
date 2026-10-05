@@ -118,21 +118,25 @@ class WorkerPromptContractTests(unittest.TestCase):
 
     def test_stale_global_slot_mapping_never_binds_another_projects_queue_item(self):
         with WorkerEnv():
-            current = server.portfolio_queue_current_for_slot(2)
-            self.assertEqual("haxlab", current["project_id"])
+            allocation = server.global_worker_allocation()["workers"]
+            by_slot = {int(item["global_worker_slot"]): item for item in allocation}
+            slot_two = by_slot[2]
+            slot_three = by_slot[3]
+            self.assertNotEqual(slot_two["project_id"], slot_three["project_id"])
 
             # Simulate the one-tick race observed live: the persisted browser-slot map
-            # still says RaiseAI owns slot 2 while the queue has already moved slot 2
-            # to HaxLab. The worker payload must fail closed instead of inheriting the
-            # other project's queue item.
+            # still points slot 2 at the project that the queue has already moved to
+            # slot 3. The worker payload must fail closed instead of inheriting the
+            # current slot-2 project's queue item.
+            stale_project = slot_three["project_id"]
             with server.connect() as conn:
+                conn.execute("DELETE FROM ai_global_slots WHERE slot=?", (3,))
                 conn.execute(
                     "UPDATE ai_global_slots SET project_id=?,worker_slot=? WHERE slot=?",
-                    ("raiseai", 1, 2),
+                    (stale_project, 1, 2),
                 )
-                conn.execute("DELETE FROM ai_global_slots WHERE slot=?", (3,))
 
-            worker = server.runner_worker_targets()["raiseai::w1"]
+            worker = server.runner_worker_targets()[f"{stale_project}::w1"]
             self.assertTrue(worker["active"])
             self.assertEqual(2, worker["global_worker_slot"])
             self.assertIsNone(worker["queue_item"])
