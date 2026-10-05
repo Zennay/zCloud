@@ -1232,6 +1232,11 @@ async function refreshTargets() {
           tabTargets[assignedTabId] = target;
           if (tab.status === "complete" && (
             runnerConfigChanged(previous, target) ||
+            // A fresh-chat command can miss the tabs.onUpdated "complete" edge
+            // under browser load. A still-pending initial dispatch is itself
+            // sufficient reason to rebind/reinject the assigned tab so the
+            // claimed VPS queue item cannot remain stuck in target-tab-opening.
+            pendingInitialDispatches.has(target.project_id) ||
             shouldProbeViolentmonkey(target.project_id)
           )) {
             const synced = await syncRunnerConfig(assignedTabId, target);
