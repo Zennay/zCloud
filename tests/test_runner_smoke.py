@@ -668,6 +668,64 @@ class RunnerSmokeTests(unittest.TestCase):
             targets["projects"]["cloud::w2"]["url"],
         )
 
+    def test_conversation_reset_clears_stale_binding_without_pausing_worker(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        conversation_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        status, body = self.request(
+            "/api/runner-status",
+            {
+                "event": "conversation-adopted",
+                "projectId": "cloud::w1",
+                "baseProjectId": "cloud",
+                "workerSlot": 1,
+                "target": f"https://chatgpt.com/c/{conversation_id}",
+                "title": "zCloud · worker 1/1",
+            },
+        )
+        self.assertEqual(200, status, body)
+
+        status, body = self.request(
+            "/api/runner-status",
+            {
+                "event": "conversation-reset-requested",
+                "projectId": "cloud::w1",
+                "baseProjectId": "cloud",
+                "workerSlot": 1,
+                "target": f"https://chatgpt.com/c/{conversation_id}",
+                "reason": "chatgpt-conversation-load-failed",
+            },
+        )
+        self.assertEqual(200, status, body)
+        with server.connect() as conn:
+            worker = conn.execute(
+                "SELECT conversation_id,desired_state FROM runner_workers WHERE project_id='cloud' AND worker_slot=1"
+            ).fetchone()
+            parent = conn.execute(
+                "SELECT conversation_id FROM runner_targets WHERE project_id='cloud'"
+            ).fetchone()
+        self.assertEqual("", worker["conversation_id"])
+        self.assertEqual("running", worker["desired_state"])
+        self.assertEqual("", parent["conversation_id"])
+
+    def test_replacement_drain_keeps_running_worker_active(self):
+        self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
+        status, body = self.request(
+            "/api/runner-status",
+            {
+                "event": "runner-drained",
+                "projectId": "cloud::w1",
+                "baseProjectId": "cloud",
+                "workerSlot": 1,
+                "reason": "replacement-already-idle",
+            },
+        )
+        self.assertEqual(200, status, body)
+        with server.connect() as conn:
+            desired = conn.execute(
+                "SELECT desired_state FROM runner_workers WHERE project_id='cloud' AND worker_slot=1"
+            ).fetchone()["desired_state"]
+        self.assertEqual("running", desired)
+
     def test_worker_start_auto_activates_parent_project(self):
         self.assertFalse(self.active("cloud"))
         status, body = self.request(
