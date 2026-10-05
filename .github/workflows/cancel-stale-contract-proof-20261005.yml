@@ -1,6 +1,11 @@
 name: Cancel stale contract proof carrier
 
 on:
+  push:
+    branches:
+      - "ops/cancel-stale-contract-proof-20261005"
+    paths:
+      - ".github/workflows/cancel-stale-contract-proof-20261005.yml"
   pull_request:
     branches: [main]
     paths:
