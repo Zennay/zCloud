@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.13";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.14";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -552,6 +552,14 @@ function runProject(cfg) {
       ? (box.value || "").trim()
       : (box.innerText || box.textContent || "").trim();
   }
+  function conversationLoadFailureReason() {
+    if (!/^\\/c\\//i.test(location.pathname) || composer()) return "";
+    const text = String(document.body?.innerText || document.body?.textContent || "").slice(0, 20000).toLowerCase();
+    if (text.includes("could not load this chatgpt conversation")) return "chatgpt-conversation-load-failed";
+    if (text.includes("could not load this conversation") || text.includes("unable to load conversation")) return "conversation-load-failed";
+    if (text.includes("conversation not found") || text.includes("gesprek kon niet worden geladen")) return "conversation-not-found";
+    return "";
+  }
   function sendButton() {
     return document.querySelector('button[data-testid="send-button"]') ||
       [...document.querySelectorAll("button")].find(b => {
@@ -1100,6 +1108,13 @@ function runProject(cfg) {
   }
   async function tick() {
     if (paused) return;
+    const loadFailure = conversationLoadFailureReason();
+    if (loadFailure && !recoveryRequested) {
+      recoveryRequested = true;
+      status("conversation-load-failed", {reason: loadFailure});
+      browser.runtime.sendMessage({type: "runner-new-chat", projectId: cfg.projectId, reason: loadFailure}).catch(() => {});
+      return;
+    }
     const generating = !!stopButton();
     const text = assistantText();
     const now = Date.now();
@@ -1809,6 +1824,22 @@ async function newProjectChat(projectId, reason, commandId) {
     if (oldTab != null) {
       await drainRunnerBeforeReplacement(oldTab, target, reason);
       await verifyReplacementHandoffStillCurrent(target, handoff);
+    }
+    await postStatus({
+      projectId: target.project_id,
+      baseProjectId: target.base_project_id,
+      workerSlot: target.worker_slot,
+      globalWorkerSlot: target.global_worker_slot,
+      projectName: target.name,
+      target: target.url || "",
+      targetConversation: target.conversation_id || "",
+      event: "conversation-reset-requested",
+      reason: String(reason || "project-chat-replaced").slice(0, 120),
+      at: new Date().toISOString()
+    });
+    target.conversation_id = "";
+    target.url = "https://chatgpt.com/";
+    if (oldTab != null) {
       try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
       await clearRecoveryTag(oldTab);
       await closeRunnerTab(oldTab);
