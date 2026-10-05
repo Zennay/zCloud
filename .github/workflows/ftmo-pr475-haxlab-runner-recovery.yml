@@ -60,4 +60,4 @@ jobs:
 
           echo "HAXLAB_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid"
 
-# retrigger composition proof listener recovery
+# retrigger HaxLab Arena v2 runner recovery 2026-10-05 16:11 UTC
