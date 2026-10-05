@@ -263,11 +263,13 @@ async function adoptConversation(tabId, target, url) {
 }
 
 function workerKeysFor(projectId, activeOnly = false) {
-  if (targets[projectId]) return (!activeOnly || targets[projectId].active) ? [projectId] : [];
-  return Object.values(targets)
-    .filter(t => (t.base_project_id || t.project_id) === projectId && (!activeOnly || (t.active && t.desired_state === "running")))
+  const childKeys = Object.values(targets)
+    .filter(t => t.project_id !== projectId && t.base_project_id === projectId && (!activeOnly || (t.active && t.desired_state === "running")))
     .sort((a,b) => (a.worker_slot || 1) - (b.worker_slot || 1))
     .map(t => t.project_id);
+  if (childKeys.length) return childKeys;
+  if (targets[projectId]) return (!activeOnly || targets[projectId].active) ? [projectId] : [];
+  return [];
 }
 
 function runProject(cfg) {
@@ -1566,8 +1568,8 @@ async function supersedeMissingTarget(projectId, commandId, action = "command") 
   });
 }
 async function newProjectChat(projectId, reason, commandId) {
-  const workerKeys = workerKeysFor(projectId, true);
-  if (!targets[projectId] && workerKeys.length) {
+  const workerKeys = workerKeysFor(projectId);
+  if (workerKeys.some(key => key !== projectId)) {
     if (runningActions.has(projectId)) return;
     runningActions.add(projectId);
     try {
@@ -1613,8 +1615,8 @@ async function newProjectChat(projectId, reason, commandId) {
   } finally { runningActions.delete(projectId); }
 }
 async function startProject(projectId, commandId) {
-  const workerKeys = workerKeysFor(projectId, true);
-  if (!targets[projectId] && workerKeys.length) {
+  const workerKeys = workerKeysFor(projectId);
+  if (workerKeys.some(key => key !== projectId)) {
     if (runningActions.has(projectId)) return;
     runningActions.add(projectId);
     try {
@@ -1672,7 +1674,7 @@ async function startProject(projectId, commandId) {
 }
 async function pauseProject(projectId, commandId) {
   const workerKeys = workerKeysFor(projectId);
-  if (!targets[projectId] && workerKeys.length) {
+  if (workerKeys.some(key => key !== projectId)) {
     for (const key of workerKeys) await pauseProject(key, null);
     await commandResult(commandId, "completed", workerKeys.length + " ChatGPT-workers gepauzeerd");
     return;
@@ -1744,7 +1746,7 @@ async function drainProject(projectId, commandId) {
 
 async function pushProject(projectId, commandId) {
   const workerKeys = workerKeysFor(projectId, true);
-  if (!targets[projectId] && workerKeys.length) {
+  if (workerKeys.some(key => key !== projectId)) {
     for (const key of workerKeys) await pushProject(key, null);
     await commandResult(commandId, "completed", workerKeys.length + " ChatGPT-workers gepusht");
     return;
