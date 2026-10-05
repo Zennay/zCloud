@@ -327,6 +327,55 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(first["queue_id"], selected[0]["queue_id"])
         self.assertIsNone(server.portfolio_queue_current_for_slot(2))
 
+    def test_memory_guard_allows_preemption_to_reuse_existing_slot(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        existing = server.portfolio_queue_enqueue(
+            "cloud",
+            "existing P0 slot",
+            "P0",
+            "Implement the current zCloud task with deterministic tests.",
+        )
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual(existing["queue_id"], selected[0]["queue_id"])
+
+        replacement = server.portfolio_queue_enqueue(
+            "supa",
+            "manual Supa P0",
+            "P0",
+            "Implement the current Supa task with deterministic tests.",
+        )
+        ts = server.now()
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                (server._manual_start_priority_key("supa"), ts, ts, "test"),
+            )
+
+        # Mirror PWQ-24 r6: the one resident browser slot has consumed the
+        # headroom for another tab, so no *additional* worker may be admitted.
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 3276,
+            "total_mb": 11264,
+            "swap_total_mb": 4095,
+            "swap_free_mb": 4095,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2048,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 0,
+            "pressure": "guarded",
+            "healthy_for_new_worker": False,
+            "swap_healthy": True,
+        }
+
+        selected = server.portfolio_queue_allocate()
+
+        self.assertEqual([replacement["queue_id"]], [item["queue_id"] for item in selected])
+        self.assertEqual(1, selected[0]["worker_slot"])
+        rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
+        self.assertEqual("queued", rows[existing["queue_id"]]["status"])
+        self.assertIsNone(rows[existing["queue_id"]]["worker_slot"])
+
     def test_oom_recovery_trim_holds_excess_slots_queued(self):
         server.MAX_CHATGPT_WORKERS = 3
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 3

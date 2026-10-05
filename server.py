@@ -2705,6 +2705,10 @@ def portfolio_queue_allocate():
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                                AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+            # Memory admission counts net-new browser slots, not queue-owner
+            # turnover inside a slot that is already resident. Remember that the
+            # slot was occupied before any priority/manual-start preemption below.
+            slot_was_occupied = row is not None
             lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
             used_counts={}
             for item in selected:
@@ -2797,7 +2801,11 @@ def portfolio_queue_allocate():
                 row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
                 selected.append(_portfolio_queue_row(row))
                 continue
-            if new_workers_claimed >= new_worker_capacity:
+            # Replacing a preempted claim in an already-occupied global
+            # browser slot is not a new memory admission. The browser runner
+            # removes the old inactive assignment before opening the replacement.
+            # Truly empty slots still obey the fail-closed new-worker budget.
+            if not slot_was_occupied and new_workers_claimed >= new_worker_capacity:
                 continue
             if not lane_candidates:
                 continue
@@ -2847,7 +2855,8 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
-            new_workers_claimed += 1
+            if not slot_was_occupied:
+                new_workers_claimed += 1
     return selected
 
 def portfolio_queue_drop(queue_id,evidence=''):
