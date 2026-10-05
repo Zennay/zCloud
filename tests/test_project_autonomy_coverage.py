@@ -25,27 +25,32 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
             "Every active project must declare one canonical project runtime contract.",
         )
 
-    def test_registry_queue_and_lane_metadata_match_runtime_contract(self):
-        contracts = self.contracts["projects"]
+    def test_registry_contains_no_runtime_queue_or_lane_truth(self):
         for project in self.projects:
-            pid = str(project["id"])
             if str(project.get("status") or "active") == "archived":
                 continue
-            contract = contracts[pid]
-            self.assertEqual(project.get("queue_mode"), contract.get("queue_mode"), pid)
-            self.assertEqual(project.get("lane_profile"), contract.get("lane_profile"), pid)
+            self.assertNotIn("queue_mode", project, project["id"])
+            self.assertNotIn("lane_profile", project, project["id"])
+
+    def test_server_hydrates_registry_runtime_fields_from_canonical_contract(self):
+        server_source = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertIn("def _load_project_registry():", server_source)
+        self.assertIn("contract=project_runtime.project_contract(project_id)", server_source)
+        self.assertIn("project['queue_mode']=str(contract.get('queue_mode') or '')", server_source)
+        self.assertIn("project['lane_profile']=str(contract.get('lane_profile') or '')", server_source)
+        self.assertIn("projects = _load_project_registry()", server_source)
 
     def test_human_gated_projects_are_fail_closed(self):
         contracts = self.contracts["projects"]
-        for project in self.projects:
-            if str(project.get("queue_mode") or "").lower() != "human-gated":
+        for pid, contract in contracts.items():
+            if str(contract.get("queue_mode") or "").lower() != "human-gated":
                 continue
-            cfg = contracts[str(project["id"])]["autonomy"]
-            compute = contracts[str(project["id"])]["compute"]
+            cfg = contract["autonomy"]
+            compute = contract["compute"]
             pool = self.contracts["resource_pools"][compute["pool"]]
-            self.assertIn(cfg.get("mode"), {"external_gate", "manual"})
-            self.assertFalse(bool(cfg.get("auto_start")))
-            self.assertEqual(0, pool.get("slots"))
+            self.assertIn(cfg.get("mode"), {"external_gate", "manual"}, pid)
+            self.assertFalse(bool(cfg.get("auto_start")), pid)
+            self.assertEqual(0, pool.get("slots"), pid)
 
     def test_zssh_external_gate_pauses_ai_without_disabling_control_plane(self):
         contract = self.contracts["projects"]["zssh"]
