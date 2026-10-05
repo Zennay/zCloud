@@ -18,7 +18,8 @@ jobs:
   cancel-stale:
     if: >
       github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -62,20 +63,36 @@ jobs:
             esac
           done
 
+          guardless_superseded_cleanup=false
           if [[ "${#current_guard_ids[@]}" -eq 0 ]]; then
-            echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
-            exit 0
+            if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+              trigger_sha="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
+              trigger_branch="$(jq -r '.workflow_run.head_branch // empty' "$GITHUB_EVENT_PATH")"
+              trigger_conclusion="$(jq -r '.workflow_run.conclusion // empty' "$GITHUB_EVENT_PATH")"
+              if [[ "$trigger_sha" == "$current_main" && "$trigger_branch" == "main" && "$trigger_conclusion" == "success" ]]; then
+                guardless_superseded_cleanup=true
+                echo "ZCLOUD_STALE_DEPLOY_GREEN_TRIGGER_GUARDLESS sha=$current_main"
+              else
+                echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
+                exit 0
+              fi
+            else
+              echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
+              exit 0
+            fi
           fi
 
           # Never cancel a production transaction that already started. If one
           # exists, it is the authoritative guard and every waiting same-SHA
           # duplicate is stale. Otherwise keep only the newest waiting run.
-          if [[ "${#current_in_progress_ids[@]}" -gt 0 ]]; then
-            keeper_current_waiting=""
-            echo "ZCLOUD_STALE_DEPLOY_CURRENT_IN_PROGRESS count=${#current_in_progress_ids[@]}"
-          else
-            test -n "$keeper_current_waiting"
-            echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT_NEWEST run_id=$keeper_current_waiting sha=$current_main"
+          if [[ "${#current_guard_ids[@]}" -gt 0 ]]; then
+            if [[ "${#current_in_progress_ids[@]}" -gt 0 ]]; then
+              keeper_current_waiting=""
+              echo "ZCLOUD_STALE_DEPLOY_CURRENT_IN_PROGRESS count=${#current_in_progress_ids[@]}"
+            else
+              test -n "$keeper_current_waiting"
+              echo "ZCLOUD_STALE_DEPLOY_KEEP_CURRENT_NEWEST run_id=$keeper_current_waiting sha=$current_main"
+            fi
           fi
 
           for row in "${deploy_runs[@]}"; do
@@ -112,7 +129,10 @@ jobs:
             fi
 
             authoritative_guard_active=false
-            if [[ -n "$keeper_current_waiting" ]]; then
+            if [[ "$guardless_superseded_cleanup" == "true" ]]; then
+              authoritative_guard_active=true
+              echo "ZCLOUD_STALE_DEPLOY_GREEN_TRIGGER_AUTHORIZES_SUPERSEDED_CANCEL sha=$current_main"
+            elif [[ -n "$keeper_current_waiting" ]]; then
               guard_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$keeper_current_waiting" --jq .status)"
               case "$guard_status" in
                 queued|in_progress|pending|waiting|requested)
