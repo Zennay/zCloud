@@ -1,0 +1,101 @@
+name: PWQ-24 stale runner-command reconcile
+
+on:
+  push:
+    branches:
+      - ops/pwq24-post443-live-acceptance-20261005-0047
+    paths:
+      - .github/workflows/pwq24-stale-command-reconcile-20261005.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Reconcile stale pending commands and measure live health
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          root=/home/ubuntu/zennay-cloud
+          db="$root/history.db"
+
+          echo '=== stale pending before ==='
+          python3 - "$db" <<'PY'
+          import json, sqlite3, sys
+          from datetime import datetime, timezone
+          db=sys.argv[1]
+          now=datetime.now(timezone.utc)
+          con=sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          con.row_factory=sqlite3.Row
+          rows=con.execute("SELECT id,project_id,action,status,created_at FROM runner_commands WHERE status='pending' ORDER BY id").fetchall()
+          out=[]
+          for r in rows:
+              try:
+                  ts=datetime.fromisoformat(str(r["created_at"]).replace("Z","+00:00")).astimezone(timezone.utc)
+                  age=(now-ts).total_seconds()
+              except Exception:
+                  age=999999
+              if age > 300:
+                  out.append({**dict(r),"age_seconds":round(age)})
+          print("PWQ24_STALE_BEFORE="+json.dumps(out,sort_keys=True))
+          PY
+
+          python3 "$root/scripts/zcloud_worker_watchdog.py" --clear-stale-pending-only --json
+
+          echo '=== stale pending after ==='
+          python3 - "$db" <<'PY'
+          import json, sqlite3, sys
+          from datetime import datetime, timezone
+          db=sys.argv[1]
+          now=datetime.now(timezone.utc)
+          con=sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          con.row_factory=sqlite3.Row
+          rows=con.execute("SELECT id,project_id,action,status,created_at,updated_at,result FROM runner_commands WHERE status='pending' ORDER BY id").fetchall()
+          out=[]
+          for r in rows:
+              try:
+                  ts=datetime.fromisoformat(str(r["created_at"]).replace("Z","+00:00")).astimezone(timezone.utc)
+                  age=(now-ts).total_seconds()
+              except Exception:
+                  age=999999
+              if age > 300:
+                  out.append({**dict(r),"age_seconds":round(age)})
+          print("PWQ24_STALE_AFTER="+json.dumps(out,sort_keys=True))
+          if out:
+              raise SystemExit("stale pending commands remain after reconciliation")
+          PY
+
+          echo '=== endpoint timings ==='
+          python3 - <<'PY'
+          import json, time, urllib.request
+          for path, timeout in [("/api/runner-live",15),("/api/status",45)]:
+              started=time.monotonic()
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8765"+path, timeout=timeout) as response:
+                      payload=json.load(response)
+                  print("PWQ24_ENDPOINT="+json.dumps({
+                      "path":path,
+                      "http_status":response.status,
+                      "elapsed_seconds":round(time.monotonic()-started,3),
+                      "keys":sorted(payload.keys()) if isinstance(payload,dict) else [],
+                  },sort_keys=True))
+              except Exception as exc:
+                  print("PWQ24_ENDPOINT="+json.dumps({
+                      "path":path,
+                      "elapsed_seconds":round(time.monotonic()-started,3),
+                      "error":type(exc).__name__+": "+str(exc),
+                  },sort_keys=True))
+          PY
+
+          echo '=== health after reconcile ==='
+          set +e
+          "$HOME/.local/bin/zcloud-healthcheck" --json
+          rc=$?
+          set -e
+          echo "PWQ24_HEALTH_RC=$rc"
+          exit 0
