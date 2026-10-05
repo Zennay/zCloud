@@ -158,6 +158,10 @@ jobs:
           DB = '/home/ubuntu/zennay-cloud/history.db'
           REQUIRED = {'supa', 'ftmo'}
           deployed_at = os.environ['DEPLOYED_AT']
+          # Acceptance must prove a fresh dispatch in this run. Using deploy time
+          # as the event floor lets stale prompt/send-blocked evidence from earlier
+          # activations poison or falsely satisfy the current proof.
+          acceptance_started_at = datetime.now(timezone.utc).isoformat()
 
           def call(method, path, payload=None):
               data = None if payload is None else json.dumps(payload).encode('utf-8')
@@ -187,7 +191,7 @@ jobs:
                       slot = int(key.rsplit('::w', 1)[1])
                       rows = conn.execute(
                           "SELECT ts,event,reason,error FROM runner_events WHERE project_id=? AND worker_slot=? AND ts>=? AND event IN ('prompt-sent','heartbeat','send-blocked') ORDER BY id ASC",
-                          (project, slot, deployed_at),
+                          (project, slot, acceptance_started_at),
                       ).fetchall()
                       items = [dict(r) for r in rows]
                       prompts = [x for x in items if x['event'] == 'prompt-sent']
@@ -388,6 +392,7 @@ jobs:
               'expected_main': os.environ['EXPECTED_MAIN'],
               'deploy_run_id': os.environ.get('DEPLOY_RUN_ID'),
               'deployed_at': deployed_at,
+              'acceptance_started_at': acceptance_started_at,
               'selected': selected,
               'actions': actions,
               'evidence': final,
