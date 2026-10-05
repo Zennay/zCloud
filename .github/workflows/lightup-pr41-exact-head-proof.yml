@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  LIGHTUP_EXPECTED_SHA: 72ecef757d9f52fe6d07b8d43340c51f5fa51f17
+  LIGHTUP_EXPECTED_SHA: 7668943e0f8dd719d95e6da4f30f621cc8adf642
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
 
 jobs:
