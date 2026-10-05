@@ -1,4 +1,4 @@
-name: PWQ-24 free VPS runner for dedicated acceptance
+name: PWQ-24 free VPS runner for corrective validation
 
 on:
   push:
@@ -16,52 +16,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Cancel only the superseded generic activation
+      - name: Cancel only redundant fallback acceptance
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_MAIN: b68562c2041ffd99f3ac15d7fbca220bef9d0549
-          GENERIC_RUN_ID: "37264634988"
-          ACCEPTANCE_RUN_ID: "37265142020"
+          CANONICAL_ACCEPTANCE_RUN_ID: "37265454441"
+          FALLBACK_RUN_ID: "37265851740"
         run: |
           set -euo pipefail
-
           current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
           test "$current_main" = "$EXPECTED_MAIN"
 
-          generic="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID")"
-          generic_name="$(jq -r .name <<<"$generic")"
-          generic_status="$(jq -r .status <<<"$generic")"
-          generic_sha="$(jq -r .head_sha <<<"$generic")"
-          test "$generic_name" = "zCloud dynamic worker pool activation"
-          test "$generic_sha" = "$EXPECTED_MAIN"
+          canonical="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$CANONICAL_ACCEPTANCE_RUN_ID")"
+          test "$(jq -r .name <<<"$canonical")" = "PWQ-24 post-461 live acceptance"
+          test "$(jq -r .status <<<"$canonical")" = "completed"
+          test "$(jq -r .conclusion <<<"$canonical")" = "failure"
 
-          jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$ACCEPTANCE_RUN_ID/jobs?per_page=100")"
-          wait_conclusion="$(jq -r '.jobs[] | select(.name=="wait-production") | .conclusion' <<<"$jobs")"
-          accept_status="$(jq -r '.jobs[] | select(.name=="accept") | .status' <<<"$jobs")"
-          accept_conclusion="$(jq -r '.jobs[] | select(.name=="accept") | .conclusion' <<<"$jobs")"
-          test "$wait_conclusion" = "success"
-          case "$accept_status:$accept_conclusion" in
-            queued:null|in_progress:null|completed:cancelled) ;;
-            *) echo "PWQ24_ACCEPT_JOB_NOT_RESTARTABLE status=$accept_status conclusion=$accept_conclusion"; exit 1 ;;
-          esac
-
-          case "$generic_status" in
+          fallback="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$FALLBACK_RUN_ID")"
+          test "$(jq -r .name <<<"$fallback")" = "PWQ-24 final live acceptance b68562c"
+          status="$(jq -r .status <<<"$fallback")"
+          case "$status" in
             queued|in_progress|pending|waiting|requested)
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID/cancel" >/dev/null
-              echo "PWQ24_GENERIC_ACTIVATION_CANCEL_REQUESTED run=$GENERIC_RUN_ID status=$generic_status"
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$FALLBACK_RUN_ID/cancel" >/dev/null
+              echo "PWQ24_FALLBACK_CANCEL_REQUESTED run=$FALLBACK_RUN_ID status=$status"
               ;;
             *)
-              echo "PWQ24_GENERIC_ACTIVATION_ALREADY_TERMINAL run=$GENERIC_RUN_ID status=$generic_status"
+              echo "PWQ24_FALLBACK_ALREADY_TERMINAL run=$FALLBACK_RUN_ID status=$status"
               ;;
           esac
-
-          for attempt in $(seq 1 20); do
-            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$GENERIC_RUN_ID" --jq .status)"
-            echo "PWQ24_GENERIC_ACTIVATION_STATUS attempt=$attempt status=$status"
-            [[ "$status" == "completed" ]] && exit 0
-            sleep 3
-          done
-
-          echo "generic activation did not terminate after bounded cancel wait" >&2
-          exit 1
