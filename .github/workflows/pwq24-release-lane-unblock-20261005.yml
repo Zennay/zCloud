@@ -12,116 +12,77 @@ permissions:
   contents: read
 
 jobs:
-  cancel-stale-postdeploy-runs:
+  cancel-merged-fix-branch-runs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      EXPECTED_MAIN: 8990732a6c06f1b3af73d32ee5c18ea1f9d03a69
-      CURRENT_DEPLOY_RUN: "37301154936"
-      STALE_ACTIVATION_RUN: "37301333802"
-      STALE_PROBE_RUN: "37301333874"
-      STALE_DASHBOARD_RUN_1: "37301003364"
-      STALE_DASHBOARD_RUN_2: "37301016266"
-      STALE_DASHBOARD_RUN_3: "37300904745"
-      STALE_DASHBOARD_BRANCH: "chatgpt/lightup-pr23-pr25-cross-lane-proof-20261005"
+      EXPECTED_MAIN: 7574568dec8fd26b037170cc64d9fb8acec69b8c
+      CURRENT_DEPLOY_RUN: "37303400701"
+      STALE_BRANCH: fix/pwq24-receipt-warmup-retry-20261005
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Guard exact current-main release state
+      - name: Guard exact release owner
         shell: bash
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
+          main="$(gh api "repos/${repo}/branches/main" --jq '.commit.sha')"
+          test "${main}" = "${EXPECTED_MAIN}"
+          name="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.name')"
+          sha="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.head_sha')"
+          status="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
+          test "${name}" = "zCloud VPS deploy"
+          test "${sha}" = "${EXPECTED_MAIN}"
+          case "${status}" in queued|in_progress|pending|waiting) ;; *) echo "deploy not waiting: ${status}"; exit 1;; esac
+          echo "PWQ24_RELEASE_OWNER_GREEN main=${main} deploy=${CURRENT_DEPLOY_RUN} status=${status}"
 
-          current_main="$(gh api "repos/${repo}/branches/main" --jq '.commit.sha')"
-          test "${current_main}" = "${EXPECTED_MAIN}" || {
-            echo "MAIN_MOVED current=${current_main} expected=${EXPECTED_MAIN}"
-            exit 1
-          }
-
-          deploy_name="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.name')"
-          deploy_sha="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.head_sha')"
-          deploy_status="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
-          test "${deploy_name}" = "zCloud VPS deploy"
-          test "${deploy_sha}" = "${EXPECTED_MAIN}"
-          case "${deploy_status}" in
-            queued|in_progress|pending|waiting) ;;
-            *)
-              echo "CURRENT_DEPLOY_NOT_WAITING status=${deploy_status}"
-              exit 1
-              ;;
-          esac
-
-          echo "CURRENT_RELEASE_GUARD_GREEN main=${current_main} deploy_run=${CURRENT_DEPLOY_RUN} deploy_status=${deploy_status}"
-
-      - name: Cancel only stale previous-deploy postdeploy runs
+      - name: Cancel exact stale merged-fix runs
         shell: bash
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-
-          cancel_if_stale() {
-            local run_id="$1"
-            local expected_name="$2"
-            local expected_branch="${3:-}"
-            local run_name run_status run_sha run_branch
-
-            run_name="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.name')"
-            run_status="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.status')"
-            run_sha="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.head_sha')"
-            run_branch="$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.head_branch')"
-
-            test "${run_name}" = "${expected_name}" || {
-              echo "REFUSE_NAME_MISMATCH run=${run_id} got=${run_name} expected=${expected_name}"
-              exit 1
-            }
-            if [[ -n "${expected_branch}" && "${run_branch}" != "${expected_branch}" ]]; then
-              echo "REFUSE_BRANCH_MISMATCH run=${run_id} got=${run_branch} expected=${expected_branch}"
-              exit 1
-            fi
-
-            case "${run_status}" in
+          cancel_exact() {
+            local id="$1" expected="$2"
+            local name branch status
+            name="$(gh api "repos/${repo}/actions/runs/${id}" --jq '.name')"
+            branch="$(gh api "repos/${repo}/actions/runs/${id}" --jq '.head_branch')"
+            status="$(gh api "repos/${repo}/actions/runs/${id}" --jq '.status')"
+            test "${name}" = "${expected}" || { echo "name mismatch id=${id} got=${name}"; exit 1; }
+            test "${branch}" = "${STALE_BRANCH}" || { echo "branch mismatch id=${id} got=${branch}"; exit 1; }
+            case "${status}" in
               queued|in_progress|pending|waiting)
-                echo "CANCEL_STALE run=${run_id} name=${run_name} branch=${run_branch} status=${run_status} displayed_head=${run_sha}"
-                gh api --method POST "repos/${repo}/actions/runs/${run_id}/cancel" >/dev/null
+                echo "CANCEL_STALE_FIX id=${id} name=${name} status=${status}"
+                gh api --method POST "repos/${repo}/actions/runs/${id}/cancel" >/dev/null
                 ;;
-              completed)
-                echo "ALREADY_TERMINAL run=${run_id} name=${run_name}"
-                ;;
-              *)
-                echo "REFUSE_UNKNOWN_STATUS run=${run_id} status=${run_status}"
-                exit 1
-                ;;
+              completed) echo "ALREADY_TERMINAL id=${id} name=${name}" ;;
+              *) echo "unknown status id=${id} status=${status}"; exit 1 ;;
             esac
           }
+          cancel_exact 37303082340 "zCloud dashboard access recovery"
+          cancel_exact 37303082451 "zCloud live dynamic worker debug"
+          cancel_exact 37303082480 "zCloud VPS execution lane probe"
+          cancel_exact 37303082341 "zCloud cross-runner listener proof"
 
-          cancel_if_stale "${STALE_ACTIVATION_RUN}" "zCloud dynamic worker pool activation"
-          cancel_if_stale "${STALE_PROBE_RUN}" "zCloud VPS execution lane probe"
-          cancel_if_stale "${STALE_DASHBOARD_RUN_1}" "zCloud dashboard access recovery" "${STALE_DASHBOARD_BRANCH}"
-          cancel_if_stale "${STALE_DASHBOARD_RUN_2}" "zCloud dashboard access recovery" "${STALE_DASHBOARD_BRANCH}"
-          cancel_if_stale "${STALE_DASHBOARD_RUN_3}" "zCloud dashboard access recovery" "${STALE_DASHBOARD_BRANCH}"
-
-      - name: Verify current-main deploy is still the release owner
+      - name: Verify stale branch no longer owns release lane
         shell: bash
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          for i in {1..12}; do
-            activation_status="$(gh api "repos/${repo}/actions/runs/${STALE_ACTIVATION_RUN}" --jq '.status')"
-            probe_status="$(gh api "repos/${repo}/actions/runs/${STALE_PROBE_RUN}" --jq '.status')"
-            dashboard_1="$(gh api "repos/${repo}/actions/runs/${STALE_DASHBOARD_RUN_1}" --jq '.status')"
-            dashboard_2="$(gh api "repos/${repo}/actions/runs/${STALE_DASHBOARD_RUN_2}" --jq '.status')"
-            dashboard_3="$(gh api "repos/${repo}/actions/runs/${STALE_DASHBOARD_RUN_3}" --jq '.status')"
-            deploy_status="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
-            echo "VERIFY attempt=${i} activation=${activation_status} probe=${probe_status} dashboard1=${dashboard_1} dashboard2=${dashboard_2} dashboard3=${dashboard_3} deploy=${deploy_status}"
-            if [[ "${activation_status}" = "completed" &&
-                  "${probe_status}" = "completed" &&
-                  "${dashboard_1}" = "completed" &&
-                  "${dashboard_2}" = "completed" &&
-                  "${dashboard_3}" = "completed" ]]; then
-              echo "PWQ24_RELEASE_LANE_UNBLOCK_GREEN deploy_run=${CURRENT_DEPLOY_RUN} deploy_status=${deploy_status}"
+          ids=(37303082340 37303082451 37303082480 37303082341)
+          for attempt in {1..12}; do
+            live=0
+            line=""
+            for id in "${ids[@]}"; do
+              status="$(gh api "repos/${repo}/actions/runs/${id}" --jq '.status')"
+              line+=" ${id}=${status}"
+              [[ "${status}" = completed ]] || live=1
+            done
+            deploy="$(gh api "repos/${repo}/actions/runs/${CURRENT_DEPLOY_RUN}" --jq '.status')"
+            echo "VERIFY attempt=${attempt}${line} deploy=${deploy}"
+            if [[ "${live}" -eq 0 ]]; then
+              echo "PWQ24_MERGED_FIX_LANE_UNBLOCK_GREEN deploy=${CURRENT_DEPLOY_RUN} status=${deploy}"
               exit 0
             fi
             sleep 5
           done
-          echo "STALE_RUNS_DID_NOT_TERMINATE"
           exit 1
