@@ -1,0 +1,77 @@
+name: PWQ-24 post-451 disconnect evidence
+
+on:
+  push:
+    branches:
+      - ops/pwq24-prioritize-acceptance-20261005-0258
+    paths:
+      - .github/workflows/pwq24-post451-disconnect-evidence-20261005.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Correlate acceptance disconnect with zCloud restarts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          echo '=== service ==='
+          systemctl show zennay-cloud.service             -p ActiveState -p SubState -p MainPID -p NRestarts             -p ActiveEnterTimestamp -p ExecMainStartTimestamp -p Result -p Restart
+
+          echo '=== zCloud journal 03:00+ ==='
+          sudo -n journalctl -u zennay-cloud.service --since '2026-10-05 03:00:00 UTC' --no-pager -n 280 || true
+
+          echo '=== self-heal journal 03:00+ ==='
+          sudo -n journalctl -t zcloud-self-heal --since '2026-10-05 03:00:00 UTC' --no-pager -n 160 || true
+
+          echo '=== kernel fault evidence ==='
+          sudo -n journalctl -k --since '2026-10-05 03:00:00 UTC' --no-pager             | grep -Ei 'oom|out of memory|killed process|segfault' || true
+
+          echo '=== installed self-heal contract ==='
+          sha256sum /usr/local/sbin/zcloud-self-heal /home/ubuntu/zennay-cloud/scripts/zcloud-self-heal.sh 2>/dev/null || true
+          grep -nE 'healthy\(\)|max-time|confirming before restart|health failed'             /usr/local/sbin/zcloud-self-heal /home/ubuntu/zennay-cloud/scripts/zcloud-self-heal.sh 2>/dev/null || true
+
+          echo '=== isolated runner-target probes ==='
+          python3 - <<'PY'
+          import json, subprocess, time, urllib.request
+
+          def props():
+              raw=subprocess.check_output([
+                  "systemctl","show","zennay-cloud.service",
+                  "-p","MainPID","-p","NRestarts","-p","ActiveState","-p","SubState",
+              ],text=True)
+              return dict(line.split("=",1) for line in raw.splitlines() if "=" in line)
+
+          for attempt in range(1,5):
+              before=props()
+              started=time.monotonic()
+              row={"attempt":attempt,"before":before}
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets",timeout=20) as r:
+                      body=r.read()
+                  payload=json.loads(body)
+                  row.update({
+                      "status":r.status,
+                      "elapsed_seconds":round(time.monotonic()-started,3),
+                      "bytes":len(body),
+                      "allocation_keys":list((payload.get("global_allocation") or {}).get("keys") or []),
+                  })
+              except Exception as exc:
+                  row.update({
+                      "elapsed_seconds":round(time.monotonic()-started,3),
+                      "error":type(exc).__name__+": "+str(exc),
+                  })
+              time.sleep(0.5)
+              row["after"]=props()
+              print("PWQ24_POST451_TARGET_PROBE="+json.dumps(row,sort_keys=True))
+              time.sleep(2)
+          PY
+
+          echo '=== final service ==='
+          systemctl show zennay-cloud.service             -p ActiveState -p SubState -p MainPID -p NRestarts             -p ActiveEnterTimestamp -p ExecMainStartTimestamp -p Result -p Restart
