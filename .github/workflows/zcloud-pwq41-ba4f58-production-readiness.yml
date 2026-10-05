@@ -1,0 +1,121 @@
+name: PWQ-41 ba4f58 production readiness
+
+on:
+  push:
+    branches:
+      - ops/pwq41-ba4f58-production-readiness-20261005
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_MAIN: ba4f58df77b137948a102284cd740902a7d2aec0
+      ZCLOUD_DB: /home/ubuntu/zennay-cloud/history.db
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ba4f58df77b137948a102284cd740902a7d2aec0
+          fetch-depth: 2
+
+      - name: Prove exact host and main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          actual="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_MAIN"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_MAIN"
+          echo "PWQ41_READINESS_EXACT_MAIN=$actual"
+
+      - name: Capture read-only production readiness
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_healthcheck.py --json | tee /tmp/pwq41-health.json
+          python3 - <<'PY'
+          import json
+          import os
+          import sqlite3
+          import urllib.request
+          from datetime import datetime, timezone
+
+          db = "file:" + os.environ["ZCLOUD_DB"] + "?mode=ro"
+          now = datetime.now(timezone.utc)
+
+          with sqlite3.connect(db, uri=True, timeout=10) as conn:
+              conn.row_factory = sqlite3.Row
+              slots = conn.execute(
+                  "SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot"
+              ).fetchall()
+              rows = []
+              for slot in slots:
+                  project = str(slot["project_id"])
+                  worker_slot = int(slot["worker_slot"] or 1)
+                  worker = conn.execute(
+                      "SELECT desired_state FROM runner_workers WHERE project_id=? AND worker_slot=?",
+                      (project, worker_slot),
+                  ).fetchone()
+                  event = conn.execute(
+                      "SELECT ts,event,generating,sending FROM runner_events "
+                      "WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1",
+                      (project, worker_slot),
+                  ).fetchone()
+                  command = conn.execute(
+                      "SELECT id,status,action,created_at,updated_at FROM runner_commands "
+                      "WHERE project_id=? AND action='drain' ORDER BY id DESC LIMIT 1",
+                      (f"{project}::w{worker_slot}",),
+                  ).fetchone()
+                  age = None
+                  if event and event["ts"]:
+                      try:
+                          ts = datetime.fromisoformat(str(event["ts"]).replace("Z", "+00:00"))
+                          if ts.tzinfo is None:
+                              ts = ts.replace(tzinfo=timezone.utc)
+                          age = round(max(0.0, (now - ts.astimezone(timezone.utc)).total_seconds()), 1)
+                      except Exception:
+                          pass
+                  rows.append({
+                      "global_slot": int(slot["slot"]),
+                      "worker_id": f"{project}::w{worker_slot}",
+                      "desired_state": str(worker["desired_state"] if worker else "missing"),
+                      "last_event": str(event["event"] if event else ""),
+                      "last_event_age_seconds": age,
+                      "generating": bool(event["generating"]) if event else None,
+                      "sending": bool(event["sending"]) if event else None,
+                      "latest_drain": dict(command) if command else None,
+                  })
+
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/commits/{os.environ['EXPECTED_MAIN']}/status",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-pwq41-readiness",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=20) as response:
+              status = json.load(response)
+          prod = [
+              item for item in status.get("statuses", [])
+              if str(item.get("context") or "") == "zcloud/vps-production"
+          ]
+          latest = max(
+              prod,
+              key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)),
+              default=None,
+          )
+          receipt = {
+              "expected_main": os.environ["EXPECTED_MAIN"],
+              "production_status": str((latest or {}).get("state") or "missing"),
+              "workers": rows,
+          }
+          print("PWQ41_PRODUCTION_READINESS " + json.dumps(receipt, sort_keys=True))
+          PY
