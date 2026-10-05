@@ -92,6 +92,7 @@ jobs:
       EXPECTED_MAIN_SHA: ${{ needs.wait-production.outputs.main_sha }}
       IMPLEMENTATION_SHA: a0db382819e777584c6dd8c0c051bbc0689a94bc
       PRODUCT_DRAIN_FIX_SHA: f01722db29fe809d4864495d6d8e167596fb0a4c
+      RECOVERY_COLLISION_FIX_SHA: cbd34079e6fdc6c4e74a555e66ddb6c30ad3c0bb
       ZCLOUD_BASE: http://127.0.0.1:8765
       ZCLOUD_DB: /home/ubuntu/zennay-cloud/history.db
       EVIDENCE: /tmp/zcloud-pwq41-intentional-replacement-evidence.json
