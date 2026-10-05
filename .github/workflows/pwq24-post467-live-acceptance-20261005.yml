@@ -262,19 +262,46 @@ jobs:
                           raise
                       time.sleep(2)
 
+          def ready_allocation(targets):
+              workers = (targets.get('global_allocation') or {}).get('workers') or []
+              worker_targets = targets.get('projects') or {}
+              by_project = {}
+              for item in workers:
+                  project = str(item.get('project_id') or '').strip().lower()
+                  key = str(item.get('worker_key') or '').strip()
+                  target = worker_targets.get(key) or {}
+                  if (
+                      project in REQUIRED
+                      and key
+                      and target.get('active') is True
+                      and target.get('assignment_ready') is True
+                  ):
+                      by_project[project] = key
+              return by_project
+
+          # PR #467 intentionally prunes restored tabs for inactive or unassigned
+          # workers. The acceptance gate must use the exact same readiness boundary:
+          # a queue allocation alone is not proof that a browser worker can dispatch.
+          readiness_probe = ready_allocation({
+              'global_allocation': {'workers': [
+                  {'project_id': 'supa', 'worker_key': 'supa::w2'},
+                  {'project_id': 'ftmo', 'worker_key': 'ftmo::w1'},
+              ]},
+              'projects': {
+                  'supa::w2': {'active': True, 'assignment_ready': False},
+                  'ftmo::w1': {'active': True, 'assignment_ready': True},
+              },
+          })
+          if readiness_probe != {'ftmo': 'ftmo::w1'}:
+              raise SystemExit('PWQ-24 assignment-readiness regression guard failed')
+          print('PWQ24_ASSIGNMENT_READINESS_GUARD_GREEN=1', flush=True)
+
           def allocation():
               last_error = None
               for attempt in range(1, 5):
                   try:
                       targets = call('GET', '/api/runner-targets')
-                      workers = (targets.get('global_allocation') or {}).get('workers') or []
-                      by_project = {}
-                      for item in workers:
-                          project = str(item.get('project_id') or '').strip().lower()
-                          key = str(item.get('worker_key') or '').strip()
-                          if project in REQUIRED and key:
-                              by_project[project] = key
-                      return targets, by_project
+                      return targets, ready_allocation(targets)
                   except (TimeoutError, urllib.error.URLError, http.client.RemoteDisconnected, ConnectionResetError) as exc:
                       last_error = {
                           'attempt': attempt,
