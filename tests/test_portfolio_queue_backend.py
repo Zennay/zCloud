@@ -1265,15 +1265,15 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             "zCloud",
             "",
             1,
-            2,
+            1,
             item,
         )
 
         self.assertEqual("control-plane", item["execution_lane"]["lane_id"])
         self.assertTrue(item["execution_lane"]["scope"]["capabilities"])
         self.assertTrue(prompt.startswith(server.project_runner_prompt("cloud", "zCloud")))
-        self.assertIn("Parallel focus 1/2: control-plane.", prompt)
-        self.assertIn("niet-conflicterende werkgebied", prompt)
+        self.assertIn("Focus: control-plane.", prompt)
+        self.assertIn("Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.", prompt)
         self.assertNotIn("VPS_QUEUE_ASSIGNMENT", prompt)
 
 
