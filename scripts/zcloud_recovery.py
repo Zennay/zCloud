@@ -73,6 +73,10 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def snapshot_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def run(args, *, check=False, env=None):
     p = subprocess.run(args, text=True, capture_output=True, env=env)
     if check and p.returncode:
@@ -272,9 +276,16 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
         raise RecoveryError("zCloud is not healthy; refusing to mark last-known-good")
     git = git_meta(root)
     short = (git.get("head") or "working-tree")[:8]
-    snap_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + short
-    final = state / "snapshots" / snap_id
-    tmp = state / "snapshots" / ("." + snap_id + ".tmp")
+    stamp = snapshot_stamp()
+    base_snap_id = stamp + "-" + short
+    snapshots = state / "snapshots"
+    snap_id = base_snap_id
+    collision = 1
+    while (snapshots / snap_id).exists() or (snapshots / ("." + snap_id + ".tmp")).exists():
+        collision += 1
+        snap_id = base_snap_id + "-" + str(collision)
+    final = snapshots / snap_id
+    tmp = snapshots / ("." + snap_id + ".tmp")
     remove_path(tmp)
     files = tmp / "files"
     present = snapshot_managed(root, files)
