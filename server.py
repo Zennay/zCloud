@@ -425,7 +425,9 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
 
     MemAvailable already accounts for reclaimable cache and current Firefox usage,
     so new_worker_capacity is intentionally a *new claim* budget for this scheduler
-    pass. Existing claimed/running workers are not preempted by this guard.
+    pass. Existing work is normally preserved; genuinely critical pressure is handled
+    separately by the allocator by shedding at most one safe idle browser allocation
+    per tick so zCloud/Firefox keep enough headroom to remain controllable.
     """
     values={}
     try:
@@ -2733,6 +2735,61 @@ def portfolio_queue_allocate():
                ORDER BY worker_slot""",
             (ts,),
         ).fetchall()
+
+        # A live browser pool can become the thing that starves the control-plane:
+        # MemAvailable can fall below the critical floor after workers were already
+        # admitted, while new_worker_capacity=0 only blocks *new* slots. In that
+        # state release at most one safe idle allocation per scheduler tick. This
+        # is deliberately conservative: verifying work, system-priority projects,
+        # generating/sending workers and in-flight browser handoffs are pinned.
+        # Releasing one slot at a time gives Firefox a chance to reclaim memory
+        # before the next decision and avoids turning memory pressure into churn.
+        if str(memory_guard.get('pressure') or '').lower()=='critical':
+            local_ordinals={}
+            project_protection={'system':0,'high':1,'normal':2,'low':3,'background':4}
+            relief_candidates=[]
+            for occupied in occupied_rows:
+                row_project=str(occupied['project_id'] or '')
+                local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
+                local_slot=local_ordinals[row_project]
+                worker_key=f'{row_project}::w{local_slot}'
+                status=str(occupied['status'] or '')
+                project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
+                if status=='verifying' or project_priority=='system':
+                    continue
+                if worker_key in busy_worker_keys:
+                    continue
+                handoff_floor=_pending_worker_handoff_floor_locked(c,row_project)
+                if 0 < local_slot <= handoff_floor:
+                    continue
+                relief_candidates.append((
+                    0 if status=='claimed' else 1,
+                    -_portfolio_priority_rank(occupied['priority']),
+                    -project_protection.get(project_priority,2),
+                    str(occupied['updated_at'] or ''),
+                    int(occupied['worker_slot'] or 0),
+                    str(occupied['queue_id'] or ''),
+                ))
+            if relief_candidates:
+                *_,relief_slot,relief_queue_id=min(relief_candidates)
+                c.execute(
+                    """UPDATE portfolio_queue
+                       SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                       WHERE queue_id=? AND worker_slot=?
+                         AND status IN ('claimed','running')""",
+                    (ts,relief_queue_id,relief_slot),
+                )
+                if c.total_changes:
+                    preempted.add(relief_queue_id)
+                    occupied_rows=[
+                        row for row in occupied_rows
+                        if str(row['queue_id'] or '')!=relief_queue_id
+                    ]
+                    logging.warning(
+                        'Critical memory pressure released idle browser allocation %s from slot %s (available_mb=%s)',
+                        relief_queue_id,relief_slot,memory_guard.get('available_mb'),
+                    )
+
         occupied_projects={str(row['project_id'] or '') for row in occupied_rows}
 
         # A Force Start only needs an allocation override when its project is not
