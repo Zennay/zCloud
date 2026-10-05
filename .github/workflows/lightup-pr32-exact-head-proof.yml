@@ -129,3 +129,5 @@ jobs:
           path: artifacts/lightup-pr32-exact-head-proof.json
           if-no-files-found: error
           retention-days: 14
+
+# Trigger note: dynamic exact-head proof lane for LightUp PR32.
