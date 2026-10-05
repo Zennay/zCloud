@@ -1,0 +1,88 @@
+name: PWQ-41 PR544 exact-head VPS proof
+
+on:
+  push:
+    branches:
+      - ops/pwq41-pr544-exact-head-vps-proof-20261005
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    env:
+      TARGET_PR: "544"
+      TARGET_HEAD: "b318058def04f033a4f6fa24d1de83ad62479f40"
+      TARGET_BASE: "04b07328d693619788feb9d2284dbe0104d9c047"
+    steps:
+      - name: Guard canonical VPS and exact PR head
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          repo = os.environ["GITHUB_REPOSITORY"]
+          pr = os.environ["TARGET_PR"]
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/pulls/{pr}",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "zcloud-pwq41-pr544-proof",
+              },
+          )
+          with urllib.request.urlopen(req, timeout=20) as response:
+              data = json.load(response)
+          actual_head = str((data.get("head") or {}).get("sha") or "")
+          actual_base = str((data.get("base") or {}).get("sha") or "")
+          if str(data.get("state") or "") != "open":
+              raise SystemExit(f"PR {pr} is not open")
+          if actual_head != os.environ["TARGET_HEAD"]:
+              raise SystemExit(f"PR head moved: expected={os.environ['TARGET_HEAD']} actual={actual_head}")
+          if actual_base != os.environ["TARGET_BASE"]:
+              raise SystemExit(f"PR base moved: expected={os.environ['TARGET_BASE']} actual={actual_base}")
+          print(f"PWQ41_PR544_EXACT_HEAD_OK head={actual_head} base={actual_base}")
+          PY
+
+      - name: Check out exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: b318058def04f033a4f6fa24d1de83ad62479f40
+          fetch-depth: 1
+
+      - name: Run standard zCloud regression smoke on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node --check public/zcloud-worker.user.js
+          python3 -m unittest -v tests.test_prechange_guard
+          python3 -m unittest -v tests.test_postdeploy_canary
+          python3 -m unittest -v tests.test_transactional_promote
+          python3 -m unittest -v tests.test_zcloud_healthcheck
+          python3 -m unittest -v tests.test_config_validation
+          python3 scripts/zcloud_config_validate.py \
+            --projects projects.json \
+            --layout project-layout.json \
+            --resource-policy resource-policy.json \
+            --project-contracts project-contracts.json \
+            --server server.py \
+            --enhancements enhancements.py
+          echo "PWQ41_PR544_VPS_FULL_REGRESSION_GREEN head=$TARGET_HEAD"
