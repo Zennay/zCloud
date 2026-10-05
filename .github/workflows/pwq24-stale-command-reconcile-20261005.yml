@@ -16,6 +16,12 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c5b3fe20d2351a395cc70f8ca0c2b3ca7863b660
+          clean: true
+          fetch-depth: 1
+
       - name: Reconcile stale pending commands and measure live health
         shell: bash
         run: |
@@ -45,7 +51,7 @@ jobs:
           print("PWQ24_STALE_BEFORE="+json.dumps(out,sort_keys=True))
           PY
 
-          python3 "$root/scripts/zcloud_worker_watchdog.py" --clear-stale-pending-only --json
+          python3 scripts/zcloud_worker_watchdog.py --db "$db" --clear-stale-pending-only --json
 
           echo '=== stale pending after ==='
           python3 - "$db" <<'PY'
