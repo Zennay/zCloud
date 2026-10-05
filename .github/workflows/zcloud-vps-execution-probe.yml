@@ -2,6 +2,12 @@ name: zCloud VPS execution lane probe
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - scripts/zcloud_runtime_project_schema_repair.py
+      - tests/test_runtime_project_schema_repair.py
+      - tests/test_vps_deploy_workflow.py
+      - .github/workflows/zcloud-vps-execution-probe.yml
   workflow_run:
     workflows: ["zCloud VPS deploy"]
     types: [completed]
@@ -34,8 +40,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  project-schema-repair:
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact pushed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Enforce permanent zCloud VPS runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Verify runtime project-schema migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_runtime_project_schema_repair \
+            tests.test_vps_deploy_workflow
+
   probe:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name != 'push' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
