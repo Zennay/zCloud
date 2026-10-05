@@ -107,6 +107,48 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertFalse(bool(cloud["active"]))
         self.assertGreaterEqual(int(cloud["worker_count"]), 1)
 
+    def test_runner_event_hotpath_indexes_cover_latest_status_queries(self):
+        with server.connect() as conn:
+            indexes = {
+                row["name"]
+                for row in conn.execute("PRAGMA index_list('runner_events')").fetchall()
+            }
+            self.assertTrue({
+                "runner_events_project_id",
+                "runner_events_project_event_id",
+                "runner_events_project_worker_id",
+                "runner_events_project_worker_event_id",
+            }.issubset(indexes))
+
+            plans = [
+                conn.execute(
+                    "EXPLAIN QUERY PLAN SELECT * FROM runner_events "
+                    "WHERE project_id=? ORDER BY id DESC LIMIT 1",
+                    ("cloud",),
+                ).fetchall(),
+                conn.execute(
+                    "EXPLAIN QUERY PLAN SELECT * FROM runner_events "
+                    "WHERE project_id=? AND event=? ORDER BY id DESC LIMIT 1",
+                    ("cloud", "heartbeat"),
+                ).fetchall(),
+                conn.execute(
+                    "EXPLAIN QUERY PLAN SELECT * FROM runner_events "
+                    "WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT 1",
+                    ("cloud", 1),
+                ).fetchall(),
+                conn.execute(
+                    "EXPLAIN QUERY PLAN SELECT * FROM runner_events "
+                    "WHERE project_id=? AND worker_slot=? AND event=? "
+                    "ORDER BY id DESC LIMIT 1",
+                    ("cloud", 1, "heartbeat"),
+                ).fetchall(),
+            ]
+        details = [" ".join(str(row["detail"]) for row in plan) for plan in plans]
+        self.assertIn("runner_events_project_id", details[0])
+        self.assertIn("runner_events_project_event_id", details[1])
+        self.assertIn("runner_events_project_worker_id", details[2])
+        self.assertIn("runner_events_project_worker_event_id", details[3])
+
     def test_start_push_pause_flow(self):
         status, body = self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}

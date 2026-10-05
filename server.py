@@ -811,6 +811,13 @@ def init_db():
         if 'assistant_chars' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN assistant_chars INTEGER')
         if 'worker_slot' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN worker_slot INTEGER NOT NULL DEFAULT 1')
         c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_ts ON runner_events(project_id,ts)')
+        # Hot read-model paths repeatedly ask for the newest event/heartbeat
+        # by project and worker. Keep those ORDER BY id DESC LIMIT 1 lookups
+        # index-backed so /api/runner-live does not scan/sort runner history.
+        c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_id ON runner_events(project_id,id)')
+        c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_event_id ON runner_events(project_id,event,id)')
+        c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_worker_id ON runner_events(project_id,worker_slot,id)')
+        c.execute('CREATE INDEX IF NOT EXISTS runner_events_project_worker_event_id ON runner_events(project_id,worker_slot,event,id)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_targets(project_id TEXT PRIMARY KEY, name TEXT NOT NULL, conversation_id TEXT NOT NULL, prompt TEXT NOT NULL)')
         target_columns={r['name'] for r in c.execute('PRAGMA table_info(runner_targets)').fetchall()}
         migrated_active='active' not in target_columns
