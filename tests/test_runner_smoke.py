@@ -431,6 +431,18 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertIn("chatgpt_firefox", body)
         self.assertIn("cloud", body["chatgpt_runners"])
 
+    def test_runner_statuses_reuses_one_coherent_target_snapshot(self):
+        original_targets = server.runner_targets
+        original_worker_targets = server.runner_worker_targets
+        with mock.patch.object(server, "runner_targets", wraps=original_targets) as target_mock, \
+             mock.patch.object(server, "runner_worker_targets", wraps=original_worker_targets) as worker_target_mock:
+            statuses = server.runner_statuses()
+
+        self.assertIn("cloud", statuses)
+        self.assertEqual(1, target_mock.call_count)
+        self.assertEqual(1, worker_target_mock.call_count)
+        self.assertIsNotNone(worker_target_mock.call_args.kwargs.get("base"))
+
     def test_worker_count_change_updates_worker_targets(self):
         status, body = self.request(
             "/api/runner-workers", {"project_id": "cloud", "worker_count": 2}
