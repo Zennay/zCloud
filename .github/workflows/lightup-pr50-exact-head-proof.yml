@@ -1,0 +1,139 @@
+name: LightUp PR50 exact-head VPS proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-pr50-exact-head-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr50-exact-head-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_EXPECTED_SHA: ebe1b2e0f03da737e2d9314308bb09d22c77a9c2
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    name: Exact head on vps-bb300bba (Python ${{ matrix.python }})
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Snapshot exact LightUp PR #50 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             refs/pull/50/head:refs/remotes/origin/lightup-pr50-proof
+
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse             refs/remotes/origin/lightup-pr50-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+
+          SNAPSHOT="${RUNNER_TEMP}/lightup-pr50-${{ matrix.python }}-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Compile exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+
+      - name: Unit suite
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m unittest discover -s tests -v
+
+      - name: Real producer integration
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m unittest discover -s tests/integration -v
+
+      - name: Repeat safety canaries
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python scripts/check_safety_canaries.py
+          python scripts/check_safety_canaries.py
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/lightup-pr50-receipt-${{ matrix.python }}"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "pull_request": 50,
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": os.uname().nodename,
+              "python": "${{ matrix.python }}",
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "compile+unit+integration+safety-canaries",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-pr50-receipt-${{ matrix.python }}" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr50-vps-proof-py${{ matrix.python }}
+          path: ${{ runner.temp }}/lightup-pr50-receipt-${{ matrix.python }}/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
