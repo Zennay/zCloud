@@ -200,8 +200,45 @@ async function drainRunnerBeforeReplacement(tabId, target, reason) {
   // legacy runner, or returns no usable mode. No replacement tab is opened here.
   let reboundMode = "";
   if (!bridge.vmReady) {
-    const rebound = await inject(tabId, target);
-    reboundMode = String(rebound?.mode || "");
+    // First prove whether the legacy listener that owns the page marker is
+    // actually alive. A stale __ZC_RUNNER_V2_* marker can outlive an invalidated
+    // runtime listener after extension reload/recovery; blindly calling inject()
+    // would then no-op on the marker and falsely report a legacy rebind.
+    let legacyLive = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      legacyLive = await browser.tabs.sendMessage(tabId, {
+        type: "runner-config-update",
+        projectId: target.project_id,
+        target
+      }).catch(() => null);
+      if (legacyLive?.ok) break;
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+
+    if (legacyLive?.ok) {
+      reboundMode = "legacy-live";
+    } else {
+      const marker = "__ZC_RUNNER_V2_" + String(target.project_id || "").replace(/[^a-z0-9]/gi, "");
+      await browser.tabs.executeScript(tabId, {
+        code: "delete window[" + JSON.stringify(marker) + "]; true;",
+        runAt: "document_idle"
+      });
+      postStatus({
+        projectId: target.project_id,
+        baseProjectId: target.base_project_id,
+        workerSlot: target.worker_slot,
+        globalWorkerSlot: target.global_worker_slot,
+        projectName: target.name,
+        target: target.url,
+        event: "replacement-drain-marker-reset",
+        reason: "legacy-listener-unreachable",
+        at: new Date().toISOString(),
+        tabId
+      });
+      const rebound = await inject(tabId, target);
+      reboundMode = String(rebound?.mode || "");
+    }
+
     postStatus({
       projectId: target.project_id,
       baseProjectId: target.base_project_id,
