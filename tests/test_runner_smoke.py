@@ -569,8 +569,15 @@ class RunnerSmokeTests(unittest.TestCase):
             reason = conn.execute(
                 "SELECT last_reason FROM autonomy_runtime WHERE project_id='cloud'"
             ).fetchone()["last_reason"]
+            priority_intent = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key=?",
+                (server._manual_start_priority_key("cloud"),),
+            ).fetchone()
         self.assertEqual("running", desired)
         self.assertEqual("worker_auto_resume", reason)
+        self.assertIsNotNone(priority_intent)
+        with server.connect() as conn:
+            self.assertTrue(server._manual_start_priority_active_locked(conn, "cloud"))
 
     def test_worker_pause_is_individual_and_persistent(self):
         self.request("/api/runner-control", {"project_id": "cloud", "action": "start"})
