@@ -6,8 +6,8 @@
       "project": "ftmo",
       "result": {
         "active": true,
-        "command_id": 20704,
-        "deduplicated": true,
+        "command_id": 20833,
+        "deduplicated": false,
         "desired_state": "running",
         "ok": true,
         "status": "pending"
@@ -17,7 +17,7 @@
       "action": "start",
       "result": {
         "active": true,
-        "command_id": 20706,
+        "command_id": 20836,
         "deduplicated": false,
         "desired_state": "running",
         "ok": true,
@@ -26,82 +26,97 @@
       "worker": "ftmo::w1"
     },
     {
-      "action": "start-project",
-      "project": "supa",
-      "result": {
-        "active": true,
-        "command_id": 20580,
-        "deduplicated": true,
-        "desired_state": "running",
-        "ok": true,
-        "status": "pending"
-      }
-    },
-    {
       "action": "start",
       "result": {
         "active": true,
-        "command_id": 20707,
+        "command_id": 20837,
         "deduplicated": false,
         "desired_state": "running",
         "ok": true,
         "status": "pending"
       },
-      "worker": "supa::w2"
+      "worker": "supa::w1"
     }
   ],
-  "captured_at": "2026-10-05T01:26:20.980327+00:00",
-  "deploy_run_id": "37250137464",
-  "deployed_at": "2026-10-05T01:07:14Z",
+  "captured_at": "2026-10-05T01:43:27.483159+00:00",
+  "deploy_run_id": "37251674042",
+  "deployed_at": "2026-10-05T01:33:37Z",
   "evidence": {
     "ftmo": {
       "duplicate_prompt_window": false,
-      "events": [],
-      "heartbeat": false,
-      "prompt_sent": false,
+      "events": [
+        {
+          "error": "",
+          "event": "prompt-sent",
+          "reason": "dashboard-push",
+          "ts": "2026-10-05T01:41:34.966000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T01:41:37.390000+00:00"
+        },
+        {
+          "error": "",
+          "event": "heartbeat",
+          "reason": "",
+          "ts": "2026-10-05T01:42:39.117000+00:00"
+        }
+      ],
+      "heartbeat": true,
+      "prompt_sent": true,
       "send_blocked": [],
       "worker": "ftmo::w1"
     },
     "supa": {
       "duplicate_prompt_window": false,
-      "events": [],
+      "events": [
+        {
+          "error": "",
+          "event": "prompt-sent",
+          "reason": "dashboard-push",
+          "ts": "2026-10-05T01:36:45.508000+00:00"
+        }
+      ],
       "heartbeat": false,
-      "prompt_sent": false,
+      "prompt_sent": true,
       "send_blocked": [],
-      "worker": "supa::w2"
+      "worker": "supa::w1"
     }
   },
-  "expected_main": "18a15723386316368be1bc8a03d23f24b26ef8d2",
+  "expected_main": "b4c9c9726f91a10184e460d96d669e98faa95f00",
   "health_attempts": [
     {
       "attempt": 1,
       "rc": 2,
       "stderr_tail": "",
-      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nFAIL  project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': ['2 pending runner command(s) older than 300s']}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model', 'stale pending runner command(s) present']\nHEALTH_BLOCKED\n"
+      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n"
     },
     {
       "attempt": 2,
       "rc": 2,
       "stderr_tail": "",
-      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nFAIL  project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': ['2 pending runner command(s) older than 300s']}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model', 'stale pending runner command(s) present']\nHEALTH_BLOCKED\n"
+      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n"
     },
     {
       "attempt": 3,
       "rc": 2,
       "stderr_tail": "",
-      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nFAIL  project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': ['2 pending runner command(s) older than 300s']}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model', 'stale pending runner command(s) present']\nHEALTH_BLOCKED\n"
+      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n"
     },
     {
       "attempt": 4,
       "rc": 2,
       "stderr_tail": "",
-      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nFAIL  project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': ['2 pending runner command(s) older than 300s']}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model', 'stale pending runner command(s) present']\nHEALTH_BLOCKED\n"
+      "stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n"
     }
   ],
   "health_rc": 2,
   "health_stderr_tail": "",
-  "health_stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nFAIL  project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': ['2 pending runner command(s) older than 300s']}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model', 'stale pending runner command(s) present']\nHEALTH_BLOCKED\n",
+  "health_stdout_tail": "OK    webservice_process True\nOK    webservice_api status JSON object\nFAIL  webservice_errors ['status unavailable: timed out']\nOK    firefox_service True\nFAIL  firefox_runtime {}\nOK    firefox_source_runtime_match True\nOK    project_state_store {'quick_check': ['ok'], 'missing_tables': [], 'problems': []}\nFAIL  worker_scheduler ['cloud: missing live runner read-model', 'ftmo: missing live runner read-model', 'haxlab: missing live runner read-model', 'lightup: missing live runner read-model', 'portfolio-review: missing live runner read-model', 'raiseai: missing live runner read-model', 'supa: missing live runner read-model', 'ulab: missing live runner read-model', 'zssh: missing live runner read-model']\nHEALTH_BLOCKED\n",
   "selected": {
+    "ftmo": "ftmo::w1",
     "supa": "supa::w1"
   }
 }
