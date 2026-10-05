@@ -1,4 +1,4 @@
-name: Recover RaiseAI v1.5.3 main runner
+name: Recover RaiseAI PR71 runner
 
 on:
   push:
@@ -20,8 +20,8 @@ jobs:
     timeout-minutes: 7
     env:
       RAISE_REPO: Zennay/RaiseAI
-      WATCH_RUN_ID: '37318466419'
-      EXPECTED_SHA: 1ede441d6d010438ba65219c84c8536d6750a439
+      WATCH_RUN_ID: '37339709015'
+      EXPECTED_SHA: 3cf92caaea27bdd3134c27990fc19665aac99e59
       RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
 
     steps:
@@ -61,13 +61,13 @@ jobs:
           done
           test "$(systemctl is-active "$RAISE_SERVICE" || true)" = "active"
 
-      - name: Prove v1.5.3 build leaves queue
+      - name: Prove PR71 build leaves queue
         shell: bash
         run: |
           set -euo pipefail
           for _ in $(seq 1 48); do
             status="$(gh api repos/$RAISE_REPO/actions/runs/$WATCH_RUN_ID --jq .status)"
-            echo "RAISEAI_V153 status=$status"
+            echo "RAISEAI_PR71 status=$status"
             [[ "$status" == "in_progress" || "$status" == "completed" ]] && exit 0
             sleep 5
           done
