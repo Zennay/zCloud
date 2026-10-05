@@ -56,6 +56,20 @@ IGNORED_NON_RUNTIME_PATHS = frozenset({
 })
 
 
+def ignored_non_runtime_path(relative: str) -> bool:
+    """Ignore only deterministic generated/non-runtime artifacts.
+
+    Python may recreate __pycache__ while the live service is healthy, including
+    between an explicit deploy quarantine and the guarded source comparison.
+    Those bytecode files are derived from managed .py source and must not become
+    source-of-truth drift. Unknown source files remain fail-closed.
+    """
+    if relative in IGNORED_NON_RUNTIME_PATHS:
+        return True
+    path = Path(relative)
+    return "__pycache__" in path.parts and path.suffix in {".pyc", ".pyo"}
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as handle:
@@ -75,7 +89,7 @@ def tree_hashes(root: Path) -> dict[str, str]:
         )
         for path in files:
             relative = path.relative_to(root).as_posix()
-            if relative in IGNORED_NON_RUNTIME_PATHS:
+            if ignored_non_runtime_path(relative):
                 continue
             hashes[relative] = sha256_file(path)
     return hashes
@@ -198,10 +212,17 @@ def evaluate(
     baseline = {
         path: value
         for path, value in (manifest.get("hashes") or {}).items()
-        if path not in IGNORED_NON_RUNTIME_PATHS
+        if not ignored_non_runtime_path(path)
     }
     changed = changed_paths(current, baseline)
     unexpected = [path for path in changed if path not in allowed]
+    unexpected_hashes = {
+        path: {
+            "current_sha256": current.get(path),
+            "lkg_sha256": baseline.get(path),
+        }
+        for path in unexpected
+    }
     checks.append({
         "name": "managed_source_state",
         "ok": not unexpected,
@@ -209,6 +230,7 @@ def evaluate(
             "changed": changed,
             "allowed": sorted(allowed),
             "unexpected": unexpected,
+            "unexpected_hashes": unexpected_hashes,
         },
     })
 
