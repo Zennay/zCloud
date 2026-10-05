@@ -36,6 +36,10 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn('status("awaiting-vps-dispatch", {reason: "cycle-finished"})', background)
         self.assertIn("setInterval(refreshTargets, 5000)", background)
         self.assertIn("pendingInitialDispatches", background)
+        self.assertIn(
+            'pendingInitialDispatches.has(target.project_id) ||\n            shouldProbeViolentmonkey(target.project_id)',
+            background,
+        )
         self.assertIn("forceInitialDispatch", background)
         self.assertIn("vpsDispatchOnly && !forceInitialDispatch", background)
         self.assertIn("(forceInitialDispatch || !vpsDispatchOnly)", background)
