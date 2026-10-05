@@ -195,30 +195,46 @@ jobs:
           candidate_deadline = time.time() + 180
           candidate_attempt = 0
           candidates = []
+          last_diagnostics = []
           while time.time() < candidate_deadline:
               candidate_attempt += 1
               target_data = call("GET", "/api/runner-targets")
               projects = target_data.get("projects") or {}
               candidates = []
+              diagnostics = []
               for worker_key, target in projects.items():
                   if str(target.get("provider") or "chatgpt") != "chatgpt":
                       continue
+                  base = str(target.get("base_project_id") or worker_key.split("::w", 1)[0])
+                  queue = compact_queue(target)
+                  owned = [c for c in claims(base) if str(c.get("worker_id") or "") == worker_key]
+                  diagnostics.append(
+                      {
+                          "worker_key": worker_key,
+                          "base_project": base,
+                          "active": target.get("active") is True,
+                          "assignment_ready": target.get("assignment_ready") is True,
+                          "desired_state": str(target.get("desired_state") or "running"),
+                          "global_worker_slot": target.get("global_worker_slot"),
+                          "queue": queue,
+                          "claim_count": len(owned),
+                          "claim_keys": [str(item.get("claim_key") or "") for item in owned],
+                      }
+                  )
                   if target.get("active") is not True:
                       continue
                   if target.get("assignment_ready") is not True:
                       continue
                   if str(target.get("desired_state") or "running") in {"paused", "draining"}:
                       continue
-                  queue = compact_queue(target)
                   if not queue["queue_id"]:
                       continue
-                  base = str(target.get("base_project_id") or worker_key.split("::w", 1)[0])
-                  owned = [c for c in claims(base) if str(c.get("worker_id") or "") == worker_key]
                   if len(owned) != 1:
                       continue
                   priority = 0 if base == "cloud" else 1
                   candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
 
+              last_diagnostics = diagnostics
               if candidates:
                   print(
                       "PWQ41_CANDIDATE_READY "
@@ -234,28 +250,37 @@ jobs:
                   break
 
               if candidate_attempt == 1 or candidate_attempt % 6 == 0:
-                  active = [
-                      key
-                      for key, target in projects.items()
-                      if str(target.get("provider") or "chatgpt") == "chatgpt"
-                      and target.get("active") is True
-                  ]
                   print(
                       "PWQ41_CANDIDATE_WAIT "
                       + json.dumps(
                           {
                               "attempt": candidate_attempt,
-                              "active_chatgpt_workers": active,
+                              "workers": diagnostics,
                           },
                           sort_keys=True,
-                      )
+                      ),
+                      flush=True,
                   )
               time.sleep(5)
 
           if not candidates:
+              evidence = {
+                  "ok": False,
+                  "tested_at": now(),
+                  "production_sha": EXPECTED,
+                  "implementation_sha": IMPLEMENTATION,
+                  "reason": "no-safe-live-candidate",
+                  "candidate_attempts": candidate_attempt,
+                  "workers": last_diagnostics,
+                  "baseline_health_summary": baseline_health.get("summary"),
+              }
+              EVIDENCE.write_text(
+                  json.dumps(evidence, indent=2, sort_keys=True, default=str) + "\n",
+                  encoding="utf-8",
+              )
               raise SystemExit(
                   "no active assigned ChatGPT worker with exactly one live claim "
-                  "within 180s; refusing mutation"
+                  "within 180s; diagnostic evidence written; refusing mutation"
               )
 
           candidates.sort(key=lambda item: (item[0], item[1]))
