@@ -162,7 +162,7 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertEqual(429, second_status)
         self.assertIn("net al een actie", body["error"])
 
-    def test_pending_retry_after_cooldown_reuses_command(self):
+    def test_stale_pending_retry_supersedes_global_old_commands_before_dedupe(self):
         self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
         )
@@ -175,19 +175,47 @@ class RunnerSmokeTests(unittest.TestCase):
                 "UPDATE runner_commands SET created_at='2000-01-01T00:00:00+00:00' WHERE id=?",
                 (first["command_id"],),
             )
+            stale_other = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("haxlab", "start", "pending", "2000-01-01T00:00:00+00:00", server.now()),
+            ).lastrowid
+            fresh_ts = server.now()
+            fresh_other = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("supa", "start", "pending", fresh_ts, fresh_ts),
+            ).lastrowid
 
         second_status, second = self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "push"}
         )
         self.assertEqual(200, second_status, second)
-        self.assertEqual(first["command_id"], second["command_id"])
-        self.assertTrue(second.get("deduplicated"))
+        self.assertNotEqual(first["command_id"], second["command_id"])
+        self.assertFalse(second.get("deduplicated"))
         with server.connect() as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) n FROM runner_commands "
+            old = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?",
+                (first["command_id"],),
+            ).fetchone()
+            unrelated_old = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?",
+                (stale_other,),
+            ).fetchone()
+            unrelated_fresh = conn.execute(
+                "SELECT status FROM runner_commands WHERE id=?",
+                (fresh_other,),
+            ).fetchone()
+            pending = conn.execute(
+                "SELECT id FROM runner_commands "
                 "WHERE project_id='cloud' AND action='push' AND status='pending'"
-            ).fetchone()["n"]
-        self.assertEqual(1, count)
+            ).fetchall()
+        self.assertEqual("failed", old["status"])
+        self.assertIn("superseded stale pending command", old["result"])
+        self.assertEqual("failed", unrelated_old["status"])
+        self.assertIn("superseded stale pending command", unrelated_old["result"])
+        self.assertEqual("pending", unrelated_fresh["status"])
+        self.assertEqual([second["command_id"]], [row["id"] for row in pending])
 
     def test_concurrent_duplicate_push_creates_one_pending_command(self):
         self.request(
