@@ -6,6 +6,8 @@ from pathlib import Path
 import json
 import sqlite3
 
+from lane_generator import SUPPORTED_PROFILES
+
 ROOT = Path(__file__).resolve().parent
 CONTRACT_FILE = ROOT / "project-contracts.json"
 
@@ -34,6 +36,11 @@ def load_contracts(path: Path | None = None) -> dict:
     for project_id, contract in projects.items():
         if not isinstance(contract, dict):
             raise ValueError(f"project contract {project_id!r} must be an object")
+        lane_profile = str(contract.get("lane_profile") or "").strip().lower()
+        if lane_profile not in SUPPORTED_PROFILES:
+            raise ValueError(
+                f"project {project_id!r} has unsupported lane_profile {lane_profile!r}"
+            )
         autonomy = contract.get("autonomy")
         compute = contract.get("compute")
         if not isinstance(autonomy, dict) or autonomy.get("mode") not in _ALLOWED_AUTONOMY:
