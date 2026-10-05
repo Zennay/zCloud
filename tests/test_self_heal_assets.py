@@ -20,9 +20,9 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn("RestartSec=5s", text)
         self.assertIn("StartLimitIntervalSec=0", text)
 
-    def test_timer_is_persistent_and_minutely(self):
+    def test_timer_is_persistent_and_checks_every_30_seconds(self):
         text = (ROOT / "deploy/zcloud-self-heal.timer").read_text()
-        self.assertIn("OnUnitActiveSec=60s", text)
+        self.assertIn("OnUnitActiveSec=30s", text)
         self.assertIn("Persistent=true", text)
         self.assertIn("zcloud-self-heal.service", text)
 
