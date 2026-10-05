@@ -150,6 +150,65 @@ class WorkerWatchdogStaleCommandTests(unittest.TestCase):
             self.assertEqual("pending", rows[1][1])
 
 
+class WorkerWatchdogCriticalMemoryRecoveryTests(unittest.TestCase):
+    def test_critical_memory_with_all_workers_offline_requires_firefox_recovery(self):
+        runtime = {
+            "chatgpt_runners": {
+                "cloud": {
+                    "workers": [{
+                        "worker_id": "cloud::w1",
+                        "state": "offline",
+                        "generating": False,
+                        "sending": False,
+                    }]
+                }
+            }
+        }
+        self.assertTrue(watchdog.critical_memory_firefox_recovery_needed(
+            selected_keys={"cloud::w1"},
+            runtime=runtime,
+            memory_guard={"pressure": "critical"},
+        ))
+
+    def test_critical_memory_does_not_restart_during_generation(self):
+        runtime = {
+            "chatgpt_runners": {
+                "cloud": {
+                    "workers": [{
+                        "worker_id": "cloud::w1",
+                        "state": "live",
+                        "generating": True,
+                        "sending": False,
+                    }]
+                }
+            }
+        }
+        self.assertFalse(watchdog.critical_memory_firefox_recovery_needed(
+            selected_keys={"cloud::w1"},
+            runtime=runtime,
+            memory_guard={"pressure": "critical"},
+        ))
+
+    def test_guarded_memory_does_not_force_firefox_recovery(self):
+        runtime = {
+            "chatgpt_runners": {
+                "cloud": {
+                    "workers": [{
+                        "worker_id": "cloud::w1",
+                        "state": "offline",
+                        "generating": False,
+                        "sending": False,
+                    }]
+                }
+            }
+        }
+        self.assertFalse(watchdog.critical_memory_firefox_recovery_needed(
+            selected_keys={"cloud::w1"},
+            runtime=runtime,
+            memory_guard={"pressure": "guarded"},
+        ))
+
+
 class WorkerWatchdogRuntimeRecoveryTests(unittest.TestCase):
     def test_inactive_firefox_is_recovered_before_stall_timers(self):
         original_api_call = watchdog.api_call
