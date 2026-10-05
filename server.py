@@ -2772,14 +2772,14 @@ def portfolio_queue_allocate():
                 ))
             if relief_candidates:
                 *_,relief_slot,relief_queue_id=min(relief_candidates)
-                c.execute(
+                relief_update=c.execute(
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                        WHERE queue_id=? AND worker_slot=?
                          AND status IN ('claimed','running')""",
                     (ts,relief_queue_id,relief_slot),
                 )
-                if c.total_changes:
+                if relief_update.rowcount:
                     preempted.add(relief_queue_id)
                     occupied_rows=[
                         row for row in occupied_rows
