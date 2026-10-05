@@ -1,6 +1,6 @@
 name: zCloud dashboard access recovery
 
-# Manual recovery retrigger 2026-10-05T07:13Z: user cannot reach dashboard.
+# Manual recovery retrigger 2026-10-05T08:48Z: recover the real /api/status dependency, not only static HTML.
 
 on:
   push:
@@ -22,12 +22,14 @@ jobs:
           service='zennay-cloud.service'
           public_ip='198.244.191.182'
           port='8765'
+          status_url="http://127.0.0.1:${port}/api/status"
 
           echo '=== before ==='
           sudo -n systemctl is-active "$service" || true
           sudo -n systemctl status "$service" --no-pager -n 60 || true
           ss -lntp | grep -E '(:8765[[:space:]])' || true
           curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null || true
+          curl -fsS --max-time 12 "$status_url" >/dev/null || true
 
           sudo -n systemctl reset-failed "$service" || true
           sudo -n systemctl restart "$service"
@@ -40,6 +42,8 @@ jobs:
           done
           sudo -n systemctl is-active "$service"
           curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null
+          curl -fsS --max-time 30 "$status_url" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("time") and isinstance(d.get("projects"), list)'
+          echo 'ZCLOUD_DASHBOARD_STATUS_GREEN'
 
           listener="$(ss -lntp | awk '$4 ~ /:8765$/ {print $4; exit}')"
           echo "listener_after_restart=${listener:-missing}"
@@ -74,8 +78,8 @@ jobs:
           sudo -n ufw status 2>/dev/null || true
           sudo -n nft list ruleset 2>/dev/null | grep -C 2 -E '8765|reject|drop' || true
 
-          if curl -fsS --max-time 8 "http://${public_ip}:${port}/" >/dev/null 2>&1; then
-            echo 'ZCLOUD_DASHBOARD_PUBLIC_GREEN'
+          if curl -fsS --max-time 30 "http://${public_ip}:${port}/api/status" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("time") and isinstance(d.get("projects"), list)' >/dev/null 2>&1; then
+            echo 'ZCLOUD_DASHBOARD_PUBLIC_STATUS_GREEN'
           else
             echo 'ZCLOUD_DASHBOARD_LOCAL_GREEN_PUBLIC_SELFTEST_FAILED'
             exit 22
@@ -91,10 +95,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url='http://198.244.191.182:8765/'
+          url='http://198.244.191.182:8765/api/status'
           for attempt in $(seq 1 6); do
-            if curl -fsS --max-time 8 "$url" >/dev/null; then
-              echo 'ZCLOUD_DASHBOARD_EXTERNAL_GREEN'
+            if curl -fsS --max-time 30 "$url" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("time") and isinstance(d.get("projects"), list)' >/dev/null; then
+              echo 'ZCLOUD_DASHBOARD_EXTERNAL_STATUS_GREEN'
               exit 0
             fi
             sleep 5
