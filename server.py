@@ -3093,7 +3093,12 @@ def portfolio_queue_drop(queue_id,evidence=''):
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                          WHERE queue_id=? AND status NOT IN ('done','dropped')""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
-    return {'dropped':bool(cur.rowcount),'queue_id':queue_id}
+        dropped=bool(cur.rowcount)
+    # A dropped item is intentionally retired, but an active project must not
+    # lose its runnable inventory until the next scheduler tick. Refill from
+    # the canonical project state immediately without resurrecting this queue_id.
+    audit=portfolio_queue_audit(refill=True)
+    return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit}
 
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
