@@ -3180,12 +3180,14 @@ def runner_worker_targets(allocation=None):
     # happens to own the same numeric slot a few milliseconds later. Internal
     # control paths still use the persisted/bootstrap slot map because manual
     # start/pause/drain flows may exist before a queue claim is allocated.
-    snapshot_bound=allocation is not None
     allocation_workers={
         str(item.get('worker_key') or ''):item
         for item in ((allocation or {}).get('workers') or [])
         if str(item.get('worker_key') or '')
     }
+    # An explicitly empty queue allocation is the pre-claim/manual bootstrap
+    # state, not proof that manually started workers disappeared.
+    snapshot_bound=allocation is not None and bool(allocation_workers)
     global_slots=(
         {
             key:int(item.get('global_worker_slot'))
