@@ -32,6 +32,10 @@ for (const marker of [
   "const pendingTabHandoffs = new Set()",
   "async function closeRunnerTab",
   "async function recoverClosedWorker",
+  "async function pruneInactiveRestoredTabs",
+  'reason: "restored-worker-no-longer-allocated"',
+  'event: "orphan-worker-tab-pruned"',
+  "const recoveryTabs = await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming)",
   "worker-handoff-started",
   "worker-handoff-opened",
   "worker-handoff-failed",
@@ -178,4 +182,14 @@ assert.ok(
   refreshBlock.indexOf("portfolioAssignmentReady(target)") <
     refreshBlock.indexOf('browser.tabs.create({url: target.url'),
   "invalid assignments must fail closed before opening a worker tab"
+);
+
+assert.ok(
+  refreshBlock.indexOf("await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming)") <
+    refreshBlock.indexOf("Recovery.selectRecoveryTab"),
+  "restored inactive/unassigned zCloud tabs must be pruned before recovery selection"
+);
+assert.ok(
+  refreshBlock.includes("target, recoveryTabs, restoredAssignments, claimedTabIds"),
+  "recovery selection must not reuse tabs already pruned for inactive or unassigned workers"
 );

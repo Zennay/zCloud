@@ -202,6 +202,43 @@ async function sessionAssignments(tabs) {
   return out;
 }
 
+async function pruneInactiveRestoredTabs(tabs, restoredAssignments, incomingTargets) {
+  const retained = [];
+  for (const tab of (tabs || [])) {
+    if (tab?.id == null) continue;
+    const workerId = String(restoredAssignments?.[tab.id] || "");
+    if (!workerId) {
+      retained.push(tab);
+      continue;
+    }
+    const target = incomingTargets?.[workerId];
+    if (target?.active && portfolioAssignmentReady(target)) {
+      retained.push(tab);
+      continue;
+    }
+    try {
+      await browser.tabs.sendMessage(tab.id, {
+        type: "runner-stop",
+        projectId: workerId,
+        reason: "restored-worker-no-longer-allocated"
+      });
+    } catch (_) {}
+    await clearRecoveryTag(tab.id);
+    await closeRunnerTab(tab.id);
+    delete tabTargets[tab.id];
+    delete pendingAdoptions[tab.id];
+    if (projectTabs[workerId] === tab.id) delete projectTabs[workerId];
+    postStatus({
+      projectId: workerId,
+      event: "orphan-worker-tab-pruned",
+      reason: target ? "restored-worker-inactive-or-unassigned" : "restored-worker-missing",
+      at: new Date().toISOString(),
+      tabId: tab.id
+    });
+  }
+  return retained;
+}
+
 async function adoptConversation(tabId, target, url) {
   const conversationId = Recovery.conversationFromUrl(url);
   if (!conversationId || !target || projectTabs[target.project_id] !== tabId) return false;
@@ -1189,6 +1226,7 @@ async function refreshTargets() {
     postStatus({event: "targets-loaded", at: new Date().toISOString(), reason: Object.keys(targets).join(",")});
     const tabs = await browser.tabs.query({url: "https://chatgpt.com/*"});
     const restoredAssignments = await sessionAssignments(tabs);
+    const recoveryTabs = await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming);
     const claimedTabIds = new Set(
       Object.values(projectTabs).filter(tabId => tabId != null)
     );
@@ -1261,7 +1299,7 @@ async function refreshTargets() {
         }
       }
       const recovered = Recovery.selectRecoveryTab(
-        target, tabs, restoredAssignments, claimedTabIds
+        target, recoveryTabs, restoredAssignments, claimedTabIds
       );
       const tab = recovered?.tab || null;
       if (tab) {
