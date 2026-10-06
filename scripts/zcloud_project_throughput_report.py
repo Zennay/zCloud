@@ -21,6 +21,12 @@ REQUIRED_COLUMNS = {
     "observed_at",
     "evidence_json",
 }
+REQUIRED_QUEUE_COLUMNS = {
+    "queue_id",
+    "project_id",
+    "status",
+    "created_at",
+}
 
 
 def _parse_utc(value: str) -> datetime:
@@ -66,6 +72,16 @@ def _connect_read_only(db_path: Path) -> sqlite3.Connection:
         raise ValueError(
             "project_state_receipts missing required columns: " + ",".join(missing)
         )
+    queue_columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(portfolio_queue)").fetchall()
+    }
+    queue_missing = sorted(REQUIRED_QUEUE_COLUMNS - queue_columns)
+    if queue_missing:
+        connection.close()
+        raise ValueError(
+            "portfolio_queue missing required columns: " + ",".join(queue_missing)
+        )
     return connection
 
 
@@ -102,13 +118,22 @@ def build_report(
                WHERE source LIKE 'portfolio_queue:%'
                ORDER BY id"""
         ).fetchall()
+        done_queue_rows = connection.execute(
+            """SELECT queue_id,project_id,created_at
+               FROM portfolio_queue
+               WHERE status='done'
+               ORDER BY created_at,queue_id"""
+        ).fetchall()
     finally:
         connection.close()
 
     malformed_receipts = 0
     malformed_receipt_ids: list[int] = []
+    malformed_projects: set[str] = set()
     duplicate_done_receipts = 0
+    tracking_started: dict[str, datetime] = {}
     seen_queue_items: dict[tuple[str, str], tuple[int, datetime]] = {}
+    done_receipt_keys: set[tuple[str, str]] = set()
     completions: list[tuple[str, str, datetime, int]] = []
 
     for row in rows:
@@ -126,12 +151,21 @@ def build_report(
         except (TypeError, ValueError, json.JSONDecodeError):
             malformed_receipts += 1
             malformed_receipt_ids.append(receipt_id)
+            if project_id:
+                malformed_projects.add(project_id)
             continue
 
         if not project_id or not queue_id:
             malformed_receipts += 1
             malformed_receipt_ids.append(receipt_id)
+            if project_id:
+                malformed_projects.add(project_id)
             continue
+
+        previous_tracking = tracking_started.get(project_id)
+        if previous_tracking is None or observed_at < previous_tracking:
+            tracking_started[project_id] = observed_at
+
         if str(row["ci_status"] or "").strip().lower() != "success":
             continue
         if str(evidence.get("result") or "").strip().upper() != "DONE":
@@ -142,6 +176,7 @@ def build_report(
             malformed_receipt_ids.append(receipt_id)
             continue
         queue_key = (project_id, queue_id)
+        done_receipt_keys.add(queue_key)
         previous = seen_queue_items.get(queue_key)
         if previous is not None:
             duplicate_done_receipts += 1
@@ -174,10 +209,43 @@ def build_report(
         hourly_counts[project_id][hour_key] += 1
         daily_counts[project_id][day_key] += 1
 
-    all_projects = sorted(set(counts) | set(selected_projects))
+    done_rows_by_project: dict[str, list[sqlite3.Row]] = defaultdict(list)
+    for row in done_queue_rows:
+        project_id = str(row["project_id"] or "").strip().lower()
+        if project_filter and project_id not in project_filter:
+            continue
+        if project_id:
+            done_rows_by_project[project_id].append(row)
+
+    all_projects = sorted(
+        set(counts)
+        | set(selected_projects)
+        | set(tracking_started)
+        | set(done_rows_by_project)
+    )
     project_rows = {}
+    coverage_complete = True
     for project_id in all_projects:
         completed = int(counts.get(project_id, 0))
+        tracking = tracking_started.get(project_id)
+        window_fully_tracked = bool(tracking and tracking <= start_dt)
+        missing_after_tracking = []
+        if tracking is not None:
+            for row in done_rows_by_project.get(project_id, []):
+                try:
+                    created_at = _parse_utc(row["created_at"])
+                except (TypeError, ValueError):
+                    missing_after_tracking.append(str(row["queue_id"] or ""))
+                    continue
+                queue_key = (project_id, str(row["queue_id"] or "").strip())
+                if created_at >= tracking and queue_key not in done_receipt_keys:
+                    missing_after_tracking.append(queue_key[1])
+        project_coverage_complete = (
+            window_fully_tracked
+            and project_id not in malformed_projects
+            and not missing_after_tracking
+        )
+        coverage_complete = coverage_complete and project_coverage_complete
         project_rows[project_id] = {
             "completed": completed,
             "completed_per_hour": round(completed / hours, 4),
@@ -189,6 +257,14 @@ def build_report(
             ),
             "hourly": dict(sorted(hourly_counts.get(project_id, {}).items())),
             "daily": dict(sorted(daily_counts.get(project_id, {}).items())),
+            "coverage": {
+                "complete": project_coverage_complete,
+                "tracking_started_at": _iso(tracking) if tracking else None,
+                "window_fully_tracked": window_fully_tracked,
+                "malformed_receipts": project_id in malformed_projects,
+                "missing_done_receipts_after_tracking": len(missing_after_tracking),
+                "missing_done_queue_ids": missing_after_tracking[:50],
+            },
         }
 
     total_completed = sum(counts.values())
@@ -200,7 +276,7 @@ def build_report(
             "start": _iso(start_dt),
             "end": _iso(now_dt),
         },
-        "coverage_complete": malformed_receipts == 0,
+        "coverage_complete": bool(all_projects) and coverage_complete and malformed_receipts == 0,
         "malformed_receipts": malformed_receipts,
         "malformed_receipt_ids": malformed_receipt_ids[:50],
         "duplicate_done_receipts": duplicate_done_receipts,
