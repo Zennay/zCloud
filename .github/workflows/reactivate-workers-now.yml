@@ -33,6 +33,25 @@ jobs:
             systemctl --user is-active --quiet "$dependency"
           done
 
+          echo "=== CLEAN ORPHAN FIREFOX MAINS ==="
+          mapfile -t orphan_firefox < <(
+            ps -eo pid=,ppid=,args= |
+              awk '$2 == 1 && $0 ~ /\/snap\/firefox\/.*\/usr\/lib\/firefox\/firefox/ && $0 !~ /-contentproc/ {print $1}'
+          )
+          for pid in "${orphan_firefox[@]}"; do
+            echo "ORPHAN_FIREFOX_TERMINATE pid=$pid"
+            kill -TERM "$pid" 2>/dev/null || true
+          done
+          if [[ "${#orphan_firefox[@]}" -gt 0 ]]; then
+            sleep 3
+            for pid in "${orphan_firefox[@]}"; do
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "ORPHAN_FIREFOX_KILL pid=$pid"
+                kill -KILL "$pid" 2>/dev/null || true
+              fi
+            done
+          fi
+
           systemctl --user reset-failed chatgpt-firefox.service || true
           systemctl --user restart chatgpt-firefox.service || systemctl --user start chatgpt-firefox.service
           for _ in $(seq 1 20); do
