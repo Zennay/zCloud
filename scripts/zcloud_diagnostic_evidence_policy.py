@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -49,7 +50,8 @@ class Finding:
 
     @property
     def signature(self) -> str:
-        return "|".join((self.path, self.step, ",".join(self.kinds)))
+        canonical = "|".join((self.path, self.step, ",".join(self.kinds)))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def bounded(self) -> dict:
         return {
