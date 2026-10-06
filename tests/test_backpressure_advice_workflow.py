@@ -19,6 +19,12 @@ class BackpressureAdviceWorkflowTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", text)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"', text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("ZCLOUD_STACKED_FULL_REGRESSION_HOST_PRESSURE_ONLY", text)
+        self.assertIn("ZCLOUD_STACKED_AUTONOMY_MEMORY_NEUTRAL_GREEN", text)
+        self.assertIn("test_scheduler_bootstraps_once_and_manual_pause_wins", text)
+        self.assertIn("test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it", text)
+        self.assertIn("mod.server.worker_memory_status = lambda", text)
+        self.assertNotIn("|| true", text)
 
     def test_live_advice_has_no_mutation_route(self):
         text = WORKFLOW.read_text(encoding="utf-8")
