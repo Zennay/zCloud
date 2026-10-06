@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,7 +23,10 @@ class PrechangeEvidenceTests(unittest.TestCase):
                 json.dumps({"snapshot_id": "lkg-1"}), encoding="utf-8"
             )
             (snapshot / "manifest.json").write_text(
-                json.dumps({"created_at": "2026-10-02T12:00:00+00:00"}),
+                json.dumps({
+                    "created_at": "2026-10-02T12:00:00+00:00",
+                    "git": {"head": "abc123green"},
+                }),
                 encoding="utf-8",
             )
 
@@ -70,6 +74,8 @@ class PrechangeEvidenceTests(unittest.TestCase):
                 )
 
             report = evidence.build_report(root, state, candidate)
+            self.assertEqual("abc123green", report["lkg_git_head"])
+            self.assertFalse(report["candidate_git"]["available"])
             self.assertTrue(report["files"]["projects.json"]["audits"][0]["matches_current"])
             self.assertTrue(report["files"]["projects.json"]["audits"][0]["after_lkg"])
             self.assertTrue(report["files"]["project-layout.json"]["live_equals_candidate"])
@@ -85,6 +91,65 @@ class PrechangeEvidenceTests(unittest.TestCase):
             self.assertNotIn("sensitive detail", rendered)
             self.assertNotIn('"id": "ftmo"', rendered)
             self.assertIn("live_sha256", rendered)
+
+
+    def test_git_state_reports_ahead_behind_and_dirty_count_without_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo), "config", "user.name", "zCloud test"],
+                check=True,
+            )
+            (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "commit", "-m", "base"],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(["git", "-C", str(repo), "branch", "-M", "main"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
+                check=True,
+            )
+            base_sha = subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+
+            subprocess.run(
+                ["git", "-C", str(repo), "switch", "-c", "feature/test"],
+                check=True,
+                capture_output=True,
+            )
+            (repo / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "commit", "-m", "candidate"],
+                check=True,
+                capture_output=True,
+            )
+            (repo / "sensitive-path-name.txt").write_text("untracked\n", encoding="utf-8")
+
+            state = evidence.git_state(repo)
+
+            self.assertTrue(state["available"])
+            self.assertEqual(base_sha, state["origin_main"])
+            self.assertEqual(base_sha, state["merge_base"])
+            self.assertEqual(1, state["ahead_of_origin_main"])
+            self.assertEqual(0, state["behind_origin_main"])
+            self.assertTrue(state["dirty"])
+            self.assertEqual(1, state["dirty_count"])
+            self.assertEqual("feature/test", state["branch"])
+            self.assertNotIn("sensitive-path-name.txt", json.dumps(state))
+
+
 
 
 if __name__ == "__main__":
