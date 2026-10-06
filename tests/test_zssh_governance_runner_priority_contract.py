@@ -2,6 +2,8 @@ import re
 import unittest
 from pathlib import Path
 
+from scripts.zssh_governance_queue_priority_plan import plan_cancellations
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "zssh-governance-runner-priority.yml"
@@ -101,6 +103,42 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         self.assertLess(guard, test)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
+
+    def test_planner_prefers_queued_governance_over_newer_cloudflare_probe(self):
+        runs = [
+            {"id": 10, "name": "zSSH Cloudflare credential metadata probe", "status": "queued", "created_at": "2026-10-06T18:10:00Z"},
+            {"id": 11, "name": "zSSH main protection VPS apply", "status": "queued", "created_at": "2026-10-06T18:00:00Z"},
+            {"id": 12, "name": "zSSH public gateway VPS preflight (zCloud lane)", "status": "queued", "created_at": "2026-10-06T17:59:00Z"},
+        ]
+        plan = plan_cancellations(runs)
+        self.assertTrue(plan["governance_run_present"])
+        self.assertEqual(plan["priority_run_id"], 11)
+        self.assertEqual(plan["cancelled_run_ids"], [12])
+
+    def test_planner_falls_back_to_cloudflare_and_only_cancels_older_queued_allowlisted(self):
+        runs = [
+            {"id": 20, "name": "zSSH Cloudflare credential metadata probe", "status": "queued", "created_at": "2026-10-06T18:00:00Z"},
+            {"id": 21, "name": "zSSH Caddy topology audit (zCloud lane)", "status": "queued", "created_at": "2026-10-06T17:00:00Z"},
+            {"id": 22, "name": "zSSH public gateway VPS preflight (zCloud lane)", "status": "in_progress", "created_at": "2026-10-06T16:00:00Z"},
+            {"id": 23, "name": "unrelated workflow", "status": "queued", "created_at": "2026-10-06T15:00:00Z"},
+            {"id": 24, "name": "zSSH production origin readiness (zCloud lane)", "status": "queued", "created_at": "2026-10-06T18:01:00Z"},
+        ]
+        plan = plan_cancellations(runs)
+        self.assertFalse(plan["governance_run_present"])
+        self.assertEqual(plan["priority_run_id"], 20)
+        self.assertEqual(plan["cancelled_run_ids"], [21])
+
+    def test_planner_no_priority_run_is_noop(self):
+        plan = plan_cancellations([
+            {"id": 30, "name": "zSSH public gateway VPS preflight (zCloud lane)", "status": "queued", "created_at": "2026-10-06T17:00:00Z"}
+        ])
+        self.assertFalse(plan["priority_run_present"])
+        self.assertEqual(plan["cancelled_run_ids"], [])
+
+    def test_planner_rejects_unbounded_inventory(self):
+        runs = [{} for _ in range(101)]
+        with self.assertRaises(ValueError):
+            plan_cancellations(runs)
 
 
 if __name__ == "__main__":
