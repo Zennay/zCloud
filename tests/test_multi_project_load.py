@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -213,14 +214,6 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
             if count > cap:
                 local_errors.append(f"atomic-project-cap:{project_id}:{count}>{cap}")
 
-        snapshot_ids = {str(item["queue_id"]) for item in workers}
-        atomic_ids = {str(item["queue_id"]) for item in atomic_rows}
-        if snapshot_ids != atomic_ids:
-            local_errors.append(
-                "snapshot-atomic-divergence:"
-                f"snapshot={sorted(snapshot_ids)}:atomic={sorted(atomic_ids)}"
-            )
-
         for item in workers:
             key = item["worker_key"]
             target = targets.get(key)
@@ -315,6 +308,70 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
         for project_id, count in active_counts.items():
             cap = int(server._portfolio_project_hard_cap(project_id))
             self.assertLessEqual(count, cap, f"{project_id} active={count} cap={cap}")
+
+    def test_allocation_snapshot_is_not_torn_across_slot_reads(self):
+        with server.connect() as conn:
+            conn.execute("DELETE FROM portfolio_queue")
+            conn.execute("DELETE FROM ai_global_slots")
+
+        first = server.portfolio_queue_enqueue(
+            "lightup",
+            "Implement scope authorization fixture A",
+            "P1",
+            "Implement authorization scope permission guardrails.",
+            queue_id="torn-lightup-a",
+        )
+        second = server.portfolio_queue_enqueue(
+            "lightup",
+            "Implement assessment runtime fixture B",
+            "P1",
+            "Implement assessment runtime orchestration workflow.",
+            queue_id="torn-lightup-b",
+        )
+        del first, second
+        with server.connect() as conn:
+            ts = server.now()
+            conn.execute(
+                """UPDATE portfolio_queue
+                   SET status='claimed',worker_slot=1,claimed_at=?,claim_expires=?,updated_at=?
+                   WHERE queue_id='torn-lightup-a'""",
+                (ts, "2999-01-01T00:00:00+00:00", ts),
+            )
+
+        original = server.portfolio_queue_current_for_slot
+        transitioned = {"done": False}
+
+        def read_slot(slot):
+            item = original(slot)
+            if slot == 1 and not transitioned["done"]:
+                transitioned["done"] = True
+                with server.connect() as conn:
+                    ts = server.now()
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute(
+                        """UPDATE portfolio_queue
+                           SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                           WHERE queue_id='torn-lightup-a'""",
+                        (ts,),
+                    )
+                    conn.execute(
+                        """UPDATE portfolio_queue
+                           SET status='claimed',worker_slot=2,claimed_at=?,claim_expires=?,updated_at=?
+                           WHERE queue_id='torn-lightup-b'""",
+                        (ts, "2999-01-01T00:00:00+00:00", ts),
+                    )
+            return item
+
+        with mock.patch.object(server, "portfolio_queue_current_for_slot", side_effect=read_slot):
+            snapshot = server.portfolio_queue_allocation()
+
+        atomic_rows = self._atomic_active_rows()
+        self.assertEqual(["torn-lightup-b"], [row["queue_id"] for row in atomic_rows])
+        self.assertEqual(
+            ["torn-lightup-b"],
+            [item["queue_id"] for item in snapshot["workers"]],
+            "allocation read-model must represent one coherent SQLite state, not combine pre/post-transition rows",
+        )
 
     def test_eight_slot_multi_project_churn_keeps_read_model_coherent(self):
         barrier = threading.Barrier(9)
