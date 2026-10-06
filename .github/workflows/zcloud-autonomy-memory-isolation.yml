@@ -1,0 +1,70 @@
+name: zCloud autonomy memory-isolation proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - tests/test_autonomy_policy.py
+      - tests/test_autonomy_memory_isolation_workflow.py
+      - .github/workflows/zcloud-autonomy-memory-isolation.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-autonomy-memory-isolation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Record live memory admission without mutating it
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import server
+          status=server.worker_memory_status()
+          print("ZCLOUD_AUTONOMY_TEST_LIVE_MEMORY="+json.dumps({
+              "available_mb": status.get("available_mb"),
+              "new_worker_capacity": status.get("new_worker_capacity"),
+              "pressure": status.get("pressure"),
+              "healthy_for_new_worker": status.get("healthy_for_new_worker"),
+          },sort_keys=True))
+          PY
+
+      - name: Prove autonomy policy suite is host-memory independent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_autonomy_policy
+          echo ZCLOUD_AUTONOMY_MEMORY_ISOLATION_GREEN
