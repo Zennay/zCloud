@@ -95,7 +95,7 @@ class HandoffCompletenessTests(unittest.TestCase):
         cloud = next(x for x in payload["projects"] if x["project_id"] == "cloud")
         self.assertEqual("incomplete", cloud["state"])
         self.assertEqual(
-            ["commit_or_pr", "change_summary", "live_status", "next_safe_task"],
+            ["change_summary", "commit_or_pr", "live_status", "next_safe_task"],
             cloud["missing"],
         )
         serialized = json.dumps(payload, sort_keys=True)
