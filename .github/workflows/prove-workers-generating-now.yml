@@ -2,6 +2,12 @@ name: Prove zCloud workers are generating now
 # retriggered on user force-all request 2026-10-04T14:25Z
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/prove-workers-generating-now.yml"
+      - "tests/test_generation_proof_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
@@ -12,105 +18,201 @@ permissions:
   contents: read
 
 concurrency:
-  group: prove-zcloud-workers-generating-now
-  cancel-in-progress: true
+  group: prove-zcloud-workers-generating-now-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
 
 jobs:
-  prove:
-    runs-on: self-hosted
-    timeout-minutes: 6
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate generation-proof trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_generation_proof_workflow
+
+  prove:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact proof source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Force real generation and prove browser consumption
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
+          import os
           import sqlite3
           import time
           import urllib.request
           from datetime import datetime, timezone
 
-          BASE="http://127.0.0.1:8765"
-          DB="/home/ubuntu/zennay-cloud/history.db"
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
 
-          def call(method,path,payload=None):
-              body=None
-              headers={"User-Agent":"zcloud-generation-proof/1"}
+          def call(method, path, payload=None):
+              body = None
+              headers = {"User-Agent": "zcloud-generation-proof/2"}
               if payload is not None:
-                  body=json.dumps(payload).encode()
-                  headers["Content-Type"]="application/json"
-              req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
-              with urllib.request.urlopen(req,timeout=20) as r:
-                  return json.load(r)
+                  body = json.dumps(payload).encode()
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(
+                  BASE + path,
+                  data=body,
+                  headers=headers,
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
 
-          def worker_rows():
-              return (call("GET","/api/worker-debug").get("workers") or [])
+          def command_summary(payload):
+              payload = payload or {}
+              return {
+                  "ok": bool(payload.get("ok")),
+                  "command_id": int(payload.get("command_id") or 0),
+              }
 
-          before=call("GET","/api/worker-debug")
-          targets=call("GET","/api/runner-targets")
-          allocated=(targets.get("global_allocation") or {}).get("workers") or []
-          chatgpt=[
-              str(w.get("worker_key") or "")
-              for w in allocated
-              if str(w.get("provider") or "chatgpt")=="chatgpt"
+          def debug_summary(payload):
+              rows = []
+              for worker in payload.get("workers") or []:
+                  command = worker.get("command") or {}
+                  event = worker.get("last_event") or {}
+                  rows.append({
+                      "worker_id": worker.get("worker_id"),
+                      "project_id": worker.get("project_id"),
+                      "worker_slot": worker.get("worker_slot"),
+                      "state": worker.get("state"),
+                      "generating": bool(worker.get("generating")),
+                      "sending": bool(worker.get("sending")),
+                      "command_id": command.get("id"),
+                      "command_status": command.get("status"),
+                      "last_event": event.get("event"),
+                  })
+              return rows
+
+          before = call("GET", "/api/worker-debug")
+          targets = call("GET", "/api/runner-targets")
+          allocated = (targets.get("global_allocation") or {}).get("workers") or []
+          chatgpt = [
+              str(worker.get("worker_key") or "")
+              for worker in allocated
+              if str(worker.get("provider") or "chatgpt") == "chatgpt"
           ]
           if not chatgpt:
               raise SystemExit("no allocated ChatGPT workers")
-          print("BEFORE",json.dumps(before,sort_keys=True))
-          print("TARGET_CHATGPT_WORKERS",json.dumps(chatgpt))
 
-          started=datetime.now(timezone.utc).isoformat()
-          pushed=call("POST","/api/dynamic-workers/force-push",{})
-          print("FORCE_PUSH",json.dumps(pushed,sort_keys=True))
+          print("BEFORE_SUMMARY=" + json.dumps(debug_summary(before), sort_keys=True))
+          print("TARGET_CHATGPT_WORKERS=" + json.dumps(chatgpt, sort_keys=True))
+
+          started = datetime.now(timezone.utc).isoformat()
+          pushed = call("POST", "/api/dynamic-workers/force-push", {})
+          command_ids = pushed.get("command_ids") or []
+          print("FORCE_PUSH_SUMMARY=" + json.dumps({
+              "ok": bool(pushed.get("ok")),
+              "command_count": len(command_ids) if isinstance(command_ids, list) else 0,
+          }, sort_keys=True))
 
           def proof():
-              with sqlite3.connect(DB,timeout=5) as conn:
-                  conn.row_factory=sqlite3.Row
-                  out={}
+              before_stat = os.stat(DB)
+              uri = "file:" + DB + "?mode=ro"
+              with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+                  connection.row_factory = sqlite3.Row
+                  connection.execute("PRAGMA query_only=ON")
+                  out = {}
                   for key in chatgpt:
-                      base,slot_text=key.rsplit("::w",1)
-                      slot=int(slot_text)
-                      sent=conn.execute(
-                          "SELECT ts,event,reason,generating,sending FROM runner_events "
+                      base, slot_text = key.rsplit("::w", 1)
+                      slot = int(slot_text)
+                      sent = connection.execute(
+                          "SELECT ts,event,generating,sending FROM runner_events "
                           "WHERE project_id=? AND worker_slot=? AND ts>=? "
                           "AND event IN ('prompt-sent','generation-started','generation-finished') "
                           "ORDER BY id DESC LIMIT 1",
-                          (base,slot,started),
+                          (base, slot, started),
                       ).fetchone()
-                      cmd=conn.execute(
-                          "SELECT id,action,status,result,updated_at FROM runner_commands "
+                      cmd = connection.execute(
+                          "SELECT id,action,status,updated_at FROM runner_commands "
                           "WHERE project_id=? AND created_at>=? ORDER BY id DESC LIMIT 1",
-                          (key,started),
+                          (key, started),
                       ).fetchone()
-                      out[key]={
+                      out[key] = {
                           "event": dict(sent) if sent else None,
                           "command": dict(cmd) if cmd else None,
                       }
-                  return out
+              after_stat = os.stat(DB)
+              if (before_stat.st_size, before_stat.st_mtime_ns) != (
+                  after_stat.st_size,
+                  after_stat.st_mtime_ns,
+              ):
+                  raise SystemExit("history.db changed during read-only proof query")
+              return out
 
-          for phase in (1,2):
-              deadline=time.time()+75
-              while time.time()<deadline:
-                  p=proof()
-                  print("PROOF_CHECK",json.dumps(p,sort_keys=True))
-                  if all(v.get("event") is not None for v in p.values()):
-                      print("REAL_GENERATION_PROVEN",json.dumps(p,sort_keys=True))
+          for phase in (1, 2):
+              deadline = time.time() + 75
+              while time.time() < deadline:
+                  evidence = proof()
+                  print("PROOF_CHECK=" + json.dumps(evidence, sort_keys=True))
+                  if all(value.get("event") is not None for value in evidence.values()):
+                      print("REAL_GENERATION_PROVEN=" + json.dumps(evidence, sort_keys=True))
+                      print("ZCLOUD_GENERATION_PROOF_GREEN=1")
                       raise SystemExit(0)
                   time.sleep(5)
 
-              if phase==1:
-                  # A force-push that is not consumed means the browser/chat
-                  # session is stale. Start a fresh conversation per allocated
-                  # ChatGPT worker rather than declaring active=true as success.
+              if phase == 1:
                   for key in chatgpt:
                       try:
-                          result=call("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
+                          result = call("POST", "/api/runner-control", {
+                              "project_id": key,
+                              "action": "new_chat",
+                          })
+                          summary = command_summary(result)
                       except Exception as exc:
-                          result={"error":repr(exc)}
-                      print("NEW_CHAT",key,json.dumps(result,sort_keys=True))
-                  started=datetime.now(timezone.utc).isoformat()
+                          summary = {
+                              "ok": False,
+                              "command_id": 0,
+                              "error_type": type(exc).__name__,
+                          }
+                      print(
+                          "NEW_CHAT_SUMMARY="
+                          + json.dumps({"worker": key, **summary}, sort_keys=True)
+                      )
+                  started = datetime.now(timezone.utc).isoformat()
 
-          print("FINAL_DEBUG",json.dumps(call("GET","/api/worker-debug"),sort_keys=True))
-          raise SystemExit("allocated ChatGPT workers did not produce fresh prompt/generation events")
+          final_debug = call("GET", "/api/worker-debug")
+          print("FINAL_DEBUG_SUMMARY=" + json.dumps(
+              debug_summary(final_debug),
+              sort_keys=True,
+          ))
+          raise SystemExit(
+              "allocated ChatGPT workers did not produce fresh prompt/generation events"
+          )
           PY
