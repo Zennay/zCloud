@@ -34,6 +34,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
     def test_total_allocation_state_failure_does_not_claim_idle(self):
         with mock.patch.object(supervisor, "allocation_state", return_value=(None, "unavailable", "db+api down")), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
+             mock.patch.object(supervisor, "restart_owner", return_value="supervisor"), \
              mock.patch.object(supervisor, "restart_firefox") as restart:
             result = supervisor.run_once(now=100)
 
@@ -44,6 +45,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
     def test_live_firefox_normalizes_obsolete_low_priority(self):
         with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[101, 102]), \
+             mock.patch.object(supervisor, "restart_owner", return_value="systemd"), \
              mock.patch.object(supervisor.os, "getpriority", side_effect=[10, 0]), \
              mock.patch.object(supervisor.os, "setpriority") as setpriority:
             result = supervisor.run_once(now=100)
@@ -52,9 +54,27 @@ class FirefoxSupervisorTests(unittest.TestCase):
         setpriority.assert_called_once_with(supervisor.os.PRIO_PROCESS, 101, 0)
         self.assertEqual([101], result["priority"]["changed"])
 
+    def test_managed_systemd_restart_grace_avoids_duplicate_api_recycle(self):
+        with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
+             mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
+             mock.patch.object(supervisor, "restart_owner", return_value="systemd"), \
+             mock.patch.object(supervisor, "restart_firefox", return_value={"ok": True, "status": 200}) as restart:
+            first = supervisor.run_once(now=100)
+            second = supervisor.run_once(now=106)
+            still_grace = supervisor.run_once(now=125)
+            escalated = supervisor.run_once(now=131)
+
+        self.assertEqual("managed-firefox-restart-grace", first["state"])
+        self.assertEqual("managed-firefox-restart-grace", second["state"])
+        self.assertEqual("managed-firefox-restart-grace", still_grace["state"])
+        self.assertIsNone(still_grace["restart"])
+        self.assertEqual("restart-requested", escalated["state"])
+        restart.assert_called_once()
+
     def test_missing_firefox_requires_two_confirmations_then_restarts(self):
         with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
+             mock.patch.object(supervisor, "restart_owner", return_value="supervisor"), \
              mock.patch.object(supervisor, "restart_firefox", return_value={"ok": True, "status": 200}) as restart:
             first = supervisor.run_once(now=100)
             second = supervisor.run_once(now=106)
@@ -68,6 +88,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
         self.state.write_text('{"missing_confirmations": 1, "last_restart_at": 90}\n')
         with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
+             mock.patch.object(supervisor, "restart_owner", return_value="supervisor"), \
              mock.patch.object(supervisor, "restart_firefox") as restart:
             result = supervisor.run_once(now=100)
 
@@ -77,6 +98,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
     def test_no_allocations_does_not_manage_firefox(self):
         with mock.patch.object(supervisor, "allocation_state", return_value=(0, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]) as pids, \
+             mock.patch.object(supervisor, "restart_owner", return_value="systemd"), \
              mock.patch.object(supervisor, "restart_firefox") as restart:
             result = supervisor.run_once(now=100)
 
