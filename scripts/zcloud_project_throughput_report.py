@@ -108,12 +108,14 @@ def build_report(
     malformed_receipts = 0
     malformed_receipt_ids: list[int] = []
     duplicate_done_receipts = 0
-    seen_queue_ids: dict[str, tuple[int, datetime, str]] = {}
+    seen_queue_items: dict[tuple[str, str], tuple[int, datetime]] = {}
     completions: list[tuple[str, str, datetime, int]] = []
 
     for row in rows:
         receipt_id = int(row["id"])
         project_id = str(row["project_id"] or "").strip().lower()
+        if project_filter and project_id not in project_filter:
+            continue
         source = str(row["source"] or "").strip()
         queue_id = source.split(":", 1)[1].strip() if ":" in source else ""
         try:
@@ -139,19 +141,21 @@ def build_report(
             malformed_receipts += 1
             malformed_receipt_ids.append(receipt_id)
             continue
-        if project_filter and project_id not in project_filter:
-            continue
-
-        previous = seen_queue_ids.get(queue_id)
+        queue_key = (project_id, queue_id)
+        previous = seen_queue_items.get(queue_key)
         if previous is not None:
             duplicate_done_receipts += 1
             if observed_at >= previous[1]:
                 continue
             completions = [
                 item for item in completions
-                if not (item[1] == queue_id and item[3] == previous[0])
+                if not (
+                    item[0] == project_id
+                    and item[1] == queue_id
+                    and item[3] == previous[0]
+                )
             ]
-        seen_queue_ids[queue_id] = (receipt_id, observed_at, project_id)
+        seen_queue_items[queue_key] = (receipt_id, observed_at)
         if start_dt <= observed_at <= now_dt:
             completions.append((project_id, queue_id, observed_at, receipt_id))
 
