@@ -63,6 +63,9 @@ class ExtensionFallbackCanaryWorkflowTests(unittest.TestCase):
         )
         self.assertIn('echo "was_active=$active" >> "$GITHUB_OUTPUT"', self.text)
         self.assertIn("if: failure() && steps.snapshot.outcome == 'success'", self.text)
+        self.assertIn("HAD_SERVICE: ${{ steps.snapshot.outputs.had_service }}", self.text)
+        self.assertIn("HAD_PRESTART: ${{ steps.snapshot.outputs.had_prestart }}", self.text)
+        self.assertIn("WAS_ACTIVE: ${{ steps.snapshot.outputs.was_active }}", self.text)
         self.assertIn(
             'install -D -m 0644 "$BACKUP/chatgpt-firefox.service" "$service_unit"',
             self.text,
