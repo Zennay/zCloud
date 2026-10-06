@@ -1,0 +1,52 @@
+name: zCloud control-plane resource protection proof
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_control_plane_resource_protection.py"
+      - "tests/test_control_plane_resource_protection.py"
+      - "tests/test_control_plane_resource_protection_workflow.py"
+      - ".github/workflows/zcloud-control-plane-resource-protection-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-control-plane-resource-protection-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  resource-protection-proof:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "ZCLOUD_CONTROL_PLANE_RESOURCE_EXACT_HEAD=$EXPECTED_SHA"
+
+      - name: Verify permanent VPS runner identity
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused resource-protection regressions
+        run: |
+          python3 -m unittest -v             tests.test_control_plane_resource_protection             tests.test_control_plane_resource_protection_workflow
+
+      - name: Audit live effective scheduling protection read-only
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_control_plane_resource_protection.py --json
+          echo "ZCLOUD_CONTROL_PLANE_RESOURCE_AUDIT_READONLY_GREEN=1"
