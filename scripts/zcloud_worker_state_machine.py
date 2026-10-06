@@ -166,24 +166,39 @@ def classify_worker(
             "fresh" if heartbeat_age <= heartbeat_stale_seconds else "stale"
         )
 
+    active_heartbeat = (
+        heartbeat is not None
+        and heartbeat_freshness == "fresh"
+        and (bool(heartbeat["generating"]) or bool(heartbeat["sending"]))
+    )
+    newest_runtime = heartbeat
+    newest_runtime_key = "ts"
+    if semantic is not None and (
+        newest_runtime is None or _dt(str(semantic["ts"])) > _dt(str(newest_runtime["ts"]))
+    ):
+        newest_runtime = semantic
+
     if desired in {"paused", "draining"}:
         state = desired
         reason = f"desired_state_{desired}"
     elif command is not None and str(command["status"] or "") == "failed" and _newer(
-        command, "updated_at", semantic, "ts"
+        command, "updated_at", newest_runtime, newest_runtime_key
     ):
         _dt(str(command["updated_at"]))
         state = "failed"
         reason = "latest_worker_control_failed"
-    elif semantic is not None and str(semantic["event"] or "") in BLOCK_EVENTS:
+    elif (
+        semantic is not None
+        and str(semantic["event"] or "") in BLOCK_EVENTS
+        and not (
+            active_heartbeat
+            and _dt(str(heartbeat["ts"])) > _dt(str(semantic["ts"]))
+        )
+    ):
         _dt(str(semantic["ts"]))
         state = "blocked"
         reason = "latest_semantic_event_blocked"
-    elif (
-        heartbeat is not None
-        and heartbeat_freshness == "fresh"
-        and (bool(heartbeat["generating"]) or bool(heartbeat["sending"]))
-    ):
+    elif active_heartbeat:
         state = "running"
         reason = "fresh_heartbeat_active"
     else:
