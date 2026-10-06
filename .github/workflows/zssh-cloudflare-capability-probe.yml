@@ -7,6 +7,7 @@ on:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
       - ".github/zssh-cloudflare-capability-trigger"
       - "scripts/zssh_cloudflare_capability_probe.py"
+      - "tests/test_zssh_cloudflare_capability_probe.py"
       - "tests/test_zssh_cloudflare_capability_probe_trust.py"
   pull_request:
     paths:
@@ -43,7 +44,9 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 -m unittest tests/test_zssh_cloudflare_capability_probe_trust.py
+          python3 -m unittest \
+            tests/test_zssh_cloudflare_capability_probe.py \
+            tests/test_zssh_cloudflare_capability_probe_trust.py
 
   prove:
     name: Prove trust contract on permanent VPS
