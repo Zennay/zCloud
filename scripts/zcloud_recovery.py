@@ -335,16 +335,17 @@ TERMINAL_TRANSACTION_EVENTS = frozenset({
 
 
 def terminal_recovery_transactions(state: Path) -> dict[str, str]:
-    """Return terminal rollback transaction ids mapped to their durable log time.
+    """Return ids whose latest valid recovery event is safely terminal.
 
-    Only a terminal recovery.log event makes a transaction directory eligible
-    for retention cleanup. Unknown, in-progress and failed-revert transactions
-    are deliberately omitted and therefore preserved.
+    Seeing a terminal event at any point is not enough: a later rollback_started
+    or rollback_failed_revert_failed entry must make that transaction ineligible
+    again. This keeps cleanup fail-closed even if a transaction id is ever reused
+    or an operator appends corrective recovery evidence.
     """
     log = state / "recovery.log"
     if not log.is_file():
         return {}
-    terminal: dict[str, str] = {}
+    latest: dict[str, tuple[datetime, str, str]] = {}
     try:
         lines = log.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -354,20 +355,23 @@ def terminal_recovery_transactions(state: Path) -> dict[str, str]:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if str(row.get("event") or "") not in TERMINAL_TRANSACTION_EVENTS:
-            continue
         transaction_id = str(row.get("transaction_id") or "").strip()
         observed_at = str(row.get("time") or "").strip()
-        if not transaction_id or not observed_at:
+        event = str(row.get("event") or "").strip()
+        if not transaction_id or not observed_at or not event:
             continue
         try:
-            datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
         except ValueError:
             continue
-        previous = terminal.get(transaction_id)
-        if previous is None or observed_at > previous:
-            terminal[transaction_id] = observed_at
-    return terminal
+        previous = latest.get(transaction_id)
+        if previous is None or parsed >= previous[0]:
+            latest[transaction_id] = (parsed, observed_at, event)
+    return {
+        transaction_id: observed_at
+        for transaction_id, (_, observed_at, event) in latest.items()
+        if event in TERMINAL_TRANSACTION_EVENTS
+    }
 
 
 def prune_recovery_transactions(
