@@ -323,6 +323,23 @@ class ZCloudHealthcheckTests(unittest.TestCase):
             any("runner-target key mismatch" in x for x in scheduler["detail"])
         )
 
+    def test_scheduler_detects_rendered_worker_count_mismatch(self):
+        status, targets = self.sample()
+        targets["projects"]["cloud::w2"]["worker_count"] = 1
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("worker_count mismatch 1 != 2" in x for x in scheduler["detail"])
+        )
+
     def test_violentmonkey_only_requires_live_standalone_firefox(self):
         status, targets = self.sample()
         status["chatgpt_firefox"] = {
