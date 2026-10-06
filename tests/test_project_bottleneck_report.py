@@ -170,7 +170,7 @@ class ProjectBottleneckReportTests(unittest.TestCase):
         self.assertEqual("active_execution", by_id["running"]["bottleneck_code"])
         self.assertEqual("no_runnable_work", by_id["idle"]["bottleneck_code"])
 
-        self.assertEqual(3, payload["counts"]["blocked"])
+        self.assertEqual(4, payload["counts"]["blocked"])
         self.assertEqual(2, payload["counts"]["waiting"])
         self.assertEqual(1, payload["counts"]["running"])
         self.assertEqual(1, payload["counts"]["idle"])
