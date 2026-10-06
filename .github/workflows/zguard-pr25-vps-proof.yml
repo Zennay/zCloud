@@ -1,0 +1,51 @@
+name: zGuard PR25 VPS proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zguard-pr25-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify zGuard PR25 exact head
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    steps:
+      - name: Check out zCloud runner guard
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Check out zGuard exact head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zGuard
+          ref: f4c4f5d495fb5f411f96e658e5a50a9995b119a5
+          path: zguard-source
+          persist-credentials: false
+
+      - name: Verify exact ref and quality contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd zguard-source
+          test "$(git rev-parse HEAD)" = "f4c4f5d495fb5f411f96e658e5a50a9995b119a5"
+          node tests/smoke.test.js
+          bash zbrowse/scripts/validate.sh
+          node tests/zbrowse.repository-hygiene.test.js
+          node tests/zbrowse.install-preflight.test.mjs
+          git check-ignore -q zbrowse/.env
+          if git check-ignore -q zbrowse/.env.example; then
+            echo "zbrowse/.env.example must remain trackable" >&2
+            exit 1
+          fi
+          cd zbrowse/gateway
+          npm ci --omit=dev --ignore-scripts --no-audit
+          npm audit --omit=dev --audit-level=high
