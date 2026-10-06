@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-restart-workers.yml"
+PROOF = ROOT / ".github" / "workflows" / "zcloud-restart-workers-pending-reconcile-proof.yml"
 
 
 class RestartWorkersPendingReconcileTests(unittest.TestCase):
@@ -53,6 +54,35 @@ class RestartWorkersPendingReconcileTests(unittest.TestCase):
         self.assertIn('health_source = "standalone-firefox"', text)
         self.assertIn("os.kill(new_pid, 0)", text)
         self.assertIn("except (ProcessLookupError, TypeError):", text)
+
+
+    def test_proof_is_permanent_vps_bound_and_read_only(self):
+        text = PROOF.read_text(encoding="utf-8")
+
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn(
+            "github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertIn(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
+            text,
+        )
+        self.assertIn("persist-credentials: false", text)
+        self.assertLess(
+            text.index("python3 scripts/zcloud_vps_runner_guard.py --json"),
+            text.index("python3 -m unittest -v"),
+        )
+        for forbidden in (
+            "/home/ubuntu/zennay-cloud",
+            "systemctl ",
+            "scripts/zcloud_transactional_promote.py",
+            "scripts/zcloud_runtime.py",
+            "curl ",
+            "sudo ",
+        ):
+            self.assertNotIn(forbidden, text)
 
 
 if __name__ == "__main__":
