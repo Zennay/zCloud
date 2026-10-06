@@ -10,6 +10,7 @@ all liveness references immediately before any write.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from collections import Counter
@@ -220,7 +221,7 @@ def select(payload: Any, *, now: datetime) -> dict[str, Any]:
             duplicate_binding=binding_counts[key] > 1,
         )
         binding_fingerprint = hashlib.sha256(
-            f'{record["provider"]}\\0{record["conversation_id"]}'.encode("utf-8")
+            f'{record["provider"]}:{record["conversation_id"]}'.encode("utf-8")
         ).hexdigest()
         item = {
             "project_id": record["project_id"],
