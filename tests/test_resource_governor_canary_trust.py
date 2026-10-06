@@ -14,7 +14,10 @@ class ResourceGovernorCanaryTrustTests(unittest.TestCase):
 
     def test_self_hosted_canary_is_owner_guarded(self):
         text = self.text
-        self.assertIn("if: github.actor == 'Zennay' && github.triggering_actor == 'Zennay'", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn("github.triggering_actor == 'Zennay'", text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn("github.event.pull_request.head.repo.owner.login == 'Zennay'", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("permissions:\n  contents: read", text)
         self.assertNotIn("actions: write", text)
