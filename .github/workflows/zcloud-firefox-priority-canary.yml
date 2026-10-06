@@ -1,0 +1,121 @@
+name: zCloud Firefox priority canary
+
+on:
+  push:
+    branches:
+      - fix/firefox-control-plane-priority-20261006
+    paths:
+      - "deploy/chatgpt-firefox.service"
+      - "tests/test_firefox_control_plane_priority.py"
+      - ".github/workflows/zcloud-firefox-priority-canary.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-firefox-priority-canary
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Validate source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_firefox_control_plane_priority
+
+      - name: Capture baseline and restore fair Firefox priority
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_ACTOR}" != "Zennay" ]]; then
+            echo "self-hosted mutation denied for actor ${GITHUB_ACTOR}" >&2
+            exit 1
+          fi
+
+          mapfile -t pids < <(
+            pgrep -u ubuntu -f '/snap/firefox/.*/usr/lib/firefox/firefox' || true
+          )
+          if [[ "${#pids[@]}" -eq 0 ]]; then
+            echo "No live Firefox process found; refusing priority mutation" >&2
+            exit 1
+          fi
+
+          echo "=== BEFORE ==="
+          ps -o pid=,ni=,stat=,%cpu=,%mem=,cmd= -p "$(IFS=,; echo "${pids[*]}")" || true
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=12) as r:
+              payload=json.load(r)
+          runners=payload.get("chatgpt_runners") or {}
+          print(json.dumps({
+              "firefox": payload.get("chatgpt_firefox"),
+              "workers": {
+                  project: [
+                      {
+                          "worker_id": w.get("worker_id"),
+                          "state": w.get("state"),
+                          "generating": w.get("generating"),
+                          "progress_age_seconds": w.get("progress_age_seconds"),
+                      }
+                      for w in (item.get("workers") or [])
+                      if w.get("active")
+                  ]
+                  for project,item in runners.items()
+              }
+          }, sort_keys=True))
+          PY
+
+          sudo -n renice -n 0 -p "${pids[@]}"
+
+          sleep 8
+          echo "=== AFTER ==="
+          mapfile -t after < <(
+            pgrep -u ubuntu -f '/snap/firefox/.*/usr/lib/firefox/firefox' || true
+          )
+          test "${#after[@]}" -gt 0
+          ps -o pid=,ni=,stat=,%cpu=,%mem=,cmd= -p "$(IFS=,; echo "${after[*]}")" || true
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.request
+          proc=subprocess.run(
+              ["pgrep","-u","ubuntu","-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+              text=True,capture_output=True,check=False,
+          )
+          pids=[int(x) for x in proc.stdout.split() if x.isdigit()]
+          nice=[]
+          for pid in pids:
+              try:
+                  raw=open(f"/proc/{pid}/stat").read()
+                  rest=raw.rsplit(")",1)[1].strip().split()
+                  nice.append(int(rest[16]))
+              except Exception:
+                  pass
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=12) as r:
+              payload=json.load(r)
+          active=[
+              w.get("worker_id")
+              for item in (payload.get("chatgpt_runners") or {}).values()
+              for w in (item.get("workers") or [])
+              if w.get("active") and w.get("state") not in {"offline","stale","paused"}
+          ]
+          evidence={
+              "firefox_active": bool((payload.get("chatgpt_firefox") or {}).get("active")),
+              "active_workers": sorted(x for x in active if x),
+              "firefox_processes": len(pids),
+              "nice_values": nice,
+              "loadavg": list(os.getloadavg()),
+          }
+          print("FIREFOX_PRIORITY_CANARY="+json.dumps(evidence, sort_keys=True))
+          if not evidence["firefox_active"] or not active:
+              raise SystemExit("Firefox priority canary lost worker runtime")
+          if nice and max(nice) > 0:
+              raise SystemExit(f"Firefox still deprioritized: {nice}")
+          PY
