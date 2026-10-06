@@ -14,6 +14,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROJECTS = ROOT / "projects.json"
 SCHEMA_VERSION = 1
+CLASSIFICATION_VERSION = "explicit-or-keyword-v1"
 DIMENSIONS = ("research", "build", "validation", "operations")
 
 # Conservative fallback only. An explicit milestone "dimension" field, when present,
@@ -134,12 +135,29 @@ def _valid_progress(value: Any) -> float | None:
     return numeric
 
 
+def _required_trace(project: dict[str, Any], field: str, error: str) -> str:
+    value = project.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ProgressDimensionError(error)
+    return value.strip()
+
+
 def project_dimensions(project: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(project, dict):
         raise ProgressDimensionError("project_invalid")
     project_id = project.get("id")
     if not isinstance(project_id, str) or not project_id.strip():
         raise ProgressDimensionError("project_id_missing")
+    source_revision = _required_trace(
+        project,
+        "milestone_revision",
+        "milestone_revision_missing",
+    )
+    progress_basis = _required_trace(
+        project,
+        "progress_basis",
+        "progress_basis_missing",
+    )
 
     milestones = project.get("milestones")
     if not isinstance(milestones, list):
@@ -148,7 +166,7 @@ def project_dimensions(project: dict[str, Any]) -> dict[str, Any]:
     buckets: dict[str, list[float]] = {dimension: [] for dimension in DIMENSIONS}
     counts = {
         "total_milestones": len(milestones),
-        "valid_milestones": 0,
+        "progress_evidence_milestones": 0,
         "classified_milestones": 0,
         "explicit_milestones": 0,
         "inferred_milestones": 0,
@@ -166,7 +184,7 @@ def project_dimensions(project: dict[str, Any]) -> dict[str, Any]:
         if progress is None:
             counts["invalid_milestones"] += 1
             continue
-        counts["valid_milestones"] += 1
+        counts["progress_evidence_milestones"] += 1
 
         dimension, basis = classify_milestone(milestone)
         if dimension is None:
@@ -198,12 +216,13 @@ def project_dimensions(project: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "schema_version": SCHEMA_VERSION,
+        "classification_version": CLASSIFICATION_VERSION,
         "project_id": project_id.strip(),
         "status": "available" if dimensions else "unavailable",
         "dimensions": dimensions,
         "counts": counts,
-        "source_revision": project.get("milestone_revision"),
-        "progress_basis": project.get("progress_basis"),
+        "source_revision": source_revision,
+        "progress_basis": progress_basis,
     }
 
 
@@ -223,6 +242,7 @@ def registry_dimensions(path: Path = DEFAULT_PROJECTS) -> dict[str, Any]:
     results = [project_dimensions(project) for project in projects]
     return {
         "schema_version": SCHEMA_VERSION,
+        "classification_version": CLASSIFICATION_VERSION,
         "source": path.name,
         "source_sha256": source_sha256,
         "projects": results,
@@ -252,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ProgressDimensionError("project_unknown")
             report = {
                 "schema_version": SCHEMA_VERSION,
+                "classification_version": CLASSIFICATION_VERSION,
                 "source": report["source"],
                 "source_sha256": report["source_sha256"],
                 "project": matches[0],
