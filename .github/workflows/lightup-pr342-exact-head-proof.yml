@@ -20,7 +20,8 @@ env:
 
 jobs:
   prove:
-    name: Exact head on vps-bb300bba (Python ${{ matrix.python }})
+    if: ${{ false }} # retired: LightUp #342 superseded by pre-existing #295
+    name: Retired superseded LightUp PR342 proof
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     strategy:
