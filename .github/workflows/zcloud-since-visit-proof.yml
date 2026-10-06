@@ -1,0 +1,94 @@
+name: zCloud since-visit delta proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_since_visit_report.py
+      - tests/test_since_visit_report.py
+      - tests/test_since_visit_workflow.py
+      - docs/since-visit-delta-contract.md
+      - .github/workflows/zcloud-since-visit-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-since-visit-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Run deterministic contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_since_visit_report.py tests/test_since_visit_report.py tests/test_since_visit_workflow.py
+          python3 -m unittest -v tests.test_since_visit_report tests.test_since_visit_workflow
+
+      - name: Prove bounded read-only live report
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB=/home/ubuntu/zennay-cloud/history.db
+          test -f "$DB"
+          BEFORE="$(python3 - "$DB" <<'PY'
+          import os, sys
+          s=os.stat(sys.argv[1])
+          print(f"{s.st_mtime_ns}:{s.st_size}")
+          PY
+          )"
+          SINCE="$(python3 - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          print((datetime.now(timezone.utc)-timedelta(hours=6)).isoformat())
+          PY
+          )"
+          python3 scripts/zcloud_since_visit_report.py --db "$DB" --since "$SINCE" --row-limit 500 > "$RUNNER_TEMP/since-visit.json"
+          AFTER="$(python3 - "$DB" <<'PY'
+          import os, sys
+          s=os.stat(sys.argv[1])
+          print(f"{s.st_mtime_ns}:{s.st_size}")
+          PY
+          )"
+          test "$BEFORE" = "$AFTER"
+          python3 - "$RUNNER_TEMP/since-visit.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          payload=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert payload["schema_version"] == "since-visit-v1", payload
+          assert payload["project_count"] <= 50, payload
+          assert payload["privacy_contract"] == "compact categorical output only", payload
+          forbidden={"action","blocker","reason","error","evidence_json","next_gate","prompt"}
+          assert forbidden.isdisjoint(payload), payload
+          for project in payload["projects"]:
+              assert forbidden.isdisjoint(project), project
+              assert forbidden.isdisjoint(project["latest_receipt"]), project
+              assert project["change_count"] >= 1, project
+          print("ZCLOUD_SINCE_VISIT_VPS_GREEN=1")
+          PY
