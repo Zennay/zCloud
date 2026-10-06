@@ -38,6 +38,11 @@ jobs:
           from datetime import datetime, timezone
 
           DB = "/home/ubuntu/zennay-cloud/history.db"
+          ORDINARY_COMMAND_STALE_SECONDS = 120
+          LONG_COMMAND_STALE_SECONDS = max(
+              ORDINARY_COMMAND_STALE_SECONDS,
+              int(os.environ.get("ZCLOUD_RUNNER_COMMAND_LONG_STALE_SECONDS", "900")),
+          )
 
           def now():
               return datetime.now(timezone.utc).isoformat()
@@ -351,20 +356,26 @@ jobs:
                       (project, worker_slot),
                   )
                   pending_rows = conn.execute(
-                      "SELECT id,created_at FROM runner_commands "
+                      "SELECT id,action,created_at FROM runner_commands "
                       "WHERE project_id=? AND status='pending' ORDER BY id",
                       (key,),
                   ).fetchall()
                   stale_ids = []
-                  cutoff = time.time() - 120
+                  current_time = time.time()
                   for pending in pending_rows:
+                      action = str(pending["action"] or "").strip().lower()
+                      stale_after = (
+                          LONG_COMMAND_STALE_SECONDS
+                          if action in {"new_chat", "drain"}
+                          else ORDINARY_COMMAND_STALE_SECONDS
+                      )
                       try:
                           created = datetime.fromisoformat(
                               str(pending["created_at"]).replace("Z", "+00:00")
                           ).timestamp()
                       except Exception:
                           created = 0
-                      if created <= cutoff:
+                      if created <= current_time - stale_after:
                           stale_ids.append(int(pending["id"]))
                   if stale_ids:
                       placeholders = ",".join("?" for _ in stale_ids)
