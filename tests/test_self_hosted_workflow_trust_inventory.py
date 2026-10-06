@@ -95,6 +95,27 @@ jobs:
             self.assertIn("checkout_credentials_not_explicitly_disabled", findings)
             self.assertIn("checkout_exact_ref_not_evident", findings)
 
+    def test_inline_pull_request_trigger_is_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write(
+                root,
+                "inline.yml",
+                """
+name: inline
+on: [pull_request, workflow_dispatch]
+jobs:
+  test:
+    runs-on: self-hosted
+""",
+            )
+            report = inventory(root)
+            self.assertTrue(report["jobs"][0]["pull_request_trigger"])
+            self.assertIn(
+                "pr_self_hosted_without_owner_same_repo_guard",
+                report["jobs"][0]["findings"],
+            )
+
     def test_zcloud_vps_without_runner_guard_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
