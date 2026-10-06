@@ -1,0 +1,74 @@
+name: zGuard exact-head VPS quality proof
+
+on:
+  push:
+    branches:
+      - proof/zguard-quality-20261006
+    paths:
+      - ".github/workflows/zguard-exact-head-quality-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-exact-head-quality-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    name: Prove zGuard quality on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    env:
+      ZGUARD_SHA: 92243248b5a49f8efde05004bff710752b0b40a1
+    steps:
+      - name: Verify permanent VPS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          node --version
+          docker --version
+          docker compose version
+
+      - name: Checkout exact zGuard QA head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zGuard
+          ref: ${{ env.ZGUARD_SHA }}
+          path: zguard
+          fetch-depth: 1
+
+      - name: Prove exact source identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zguard
+          test "$(git rev-parse HEAD)" = "$ZGUARD_SHA"
+          test "$(git merge-base HEAD HEAD)" = "$ZGUARD_SHA"
+
+      - name: Run zGuard behavior and package gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zguard
+          node tests/smoke.test.js
+
+      - name: Run zBrowse runtime contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zguard
+          bash zbrowse/scripts/validate.sh
+
+      - name: Build gateway image without deploy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zguard
+          docker build -t "zguard-quality:${GITHUB_RUN_ID}" ./zbrowse/gateway
+
+      - name: Cleanup proof image
+        if: always()
+        shell: bash
+        run: docker image rm -f "zguard-quality:${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
