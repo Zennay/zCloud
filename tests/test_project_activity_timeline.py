@@ -136,6 +136,22 @@ class ProjectActivityTimelineTests(unittest.TestCase):
         self.assertNotIn("SECRET_TOKEN", serialized)
         self.assertNotIn("result", entry)
 
+    def test_untrusted_command_action_and_status_are_sanitized(self):
+        self.add_command(
+            1,
+            "SECRET action with spaces",
+            "SECRET status with spaces",
+            result="ANOTHER_SECRET",
+        )
+        payload = timeline.report(self.db, 24, "cloud", 20, self.now)
+        serialized = json.dumps(payload)
+        self.assertNotIn("SECRET action", serialized)
+        self.assertNotIn("SECRET status", serialized)
+        self.assertNotIn("ANOTHER_SECRET", serialized)
+        entry = payload["timeline"][0]
+        self.assertEqual("control:unknown:unknown", entry["code"])
+        self.assertEqual("Controlactie: unknown", entry["summary"])
+
     def test_raw_runner_target_title_and_error_are_not_exposed(self):
         self.add_event(1, "startup-blocked", reason="unsafe reason with spaces", error="token=super-secret")
         payload = timeline.report(self.db, 24, "cloud", 20, self.now)
@@ -172,6 +188,14 @@ class ProjectActivityTimelineTests(unittest.TestCase):
             connection.execute("CREATE TABLE runner_events(id INTEGER PRIMARY KEY)")
             connection.commit()
         with self.assertRaisesRegex(RuntimeError, "missing required columns"):
+            timeline.report(broken, 24, "cloud", 20, self.now)
+
+    def test_missing_runner_event_id_fails_closed_before_ordering(self):
+        broken = Path(self.tmp.name) / "missing-id.db"
+        with closing(sqlite3.connect(broken)) as connection:
+            connection.execute("CREATE TABLE runner_events(ts TEXT,event TEXT,project_id TEXT)")
+            connection.commit()
+        with self.assertRaisesRegex(RuntimeError, "id"):
             timeline.report(broken, 24, "cloud", 20, self.now)
 
     def test_bounds_are_fail_closed(self):
