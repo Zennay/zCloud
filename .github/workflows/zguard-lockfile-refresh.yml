@@ -17,7 +17,7 @@ concurrency:
 jobs:
   refresh:
     name: Regenerate zGuard gateway lockfile on VPS
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 10
     env:
       ZGUARD_SHA: be94dc79a9a2c8d608bc7e8a65a0fb17dfee3c74
