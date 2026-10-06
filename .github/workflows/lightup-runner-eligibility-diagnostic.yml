@@ -42,7 +42,7 @@ jobs:
           import sys
 
           path = pathlib.Path(sys.argv[1])
-          data = json.loads(path.read_text())
+          data = json.loads(path.read_text(encoding="utf-8-sig"))
           safe = {
               key: data.get(key)
               for key in (
