@@ -67,6 +67,31 @@ class SafeIdleRetryWaitTests(unittest.TestCase):
         self.assertTrue(state["ready"])
         self.assertEqual("idle", state["reason"])
 
+    def test_current_allocation_must_be_idle_not_only_original_blocker(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO ai_global_slots(slot,project_id,worker_slot) VALUES(1,'cloud',1)"
+            )
+            conn.execute(
+                "INSERT INTO ai_global_slots(slot,project_id,worker_slot) VALUES(2,'lightup',1)"
+            )
+            conn.execute(
+                "INSERT INTO runner_events(project_id,worker_slot,event,generating,sending) "
+                "VALUES('cloud',1,'heartbeat',0,0)"
+            )
+            conn.execute(
+                "INSERT INTO runner_events(project_id,worker_slot,event,generating,sending) "
+                "VALUES('lightup',1,'heartbeat',1,0)"
+            )
+            conn.commit()
+        with retry_wait.connect_read_only(self.db) as conn:
+            ids = retry_wait.allocated_worker_ids(conn)
+            states = [retry_wait.blocker_state(conn, worker_id) for worker_id in ids]
+        self.assertEqual(["cloud::w1", "lightup::w1"], ids)
+        self.assertFalse(all(item["ready"] for item in states))
+        self.assertTrue(next(item for item in states if item["worker_id"] == "cloud::w1")["ready"])
+        self.assertFalse(next(item for item in states if item["worker_id"] == "lightup::w1")["ready"])
+
     def test_reader_opens_sqlite_in_read_only_mode(self):
         source = (
             Path(__file__).resolve().parents[1]
