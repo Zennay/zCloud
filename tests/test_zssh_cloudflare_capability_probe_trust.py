@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github/workflows/zssh-cloudflare-capability-probe.yml"
+
+
+class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.text = WORKFLOW.read_text(encoding="utf-8")
+
+    def test_pull_requests_use_hosted_validation_only(self) -> None:
+        text = self.text
+        self.assertIn("pull_request:", text)
+        self.assertIn("github.event_name == 'pull_request'", text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", text)
+        self.assertIn(
+            "python3 -m unittest tests/test_zssh_cloudflare_capability_probe_trust.py",
+            text,
+        )
+        self.assertIn("github.event_name != 'pull_request'", text)
+
+    def test_live_probe_is_main_only_exact_revision_and_permanent_vps_bound(self) -> None:
+        text = self.text
+        self.assertIn("github.repository == 'Zennay/zCloud'", text)
+        self.assertIn("github.ref == 'refs/heads/main'", text)
+        self.assertIn(
+            "(github.event_name != 'workflow_dispatch' || github.actor == 'Zennay')",
+            text,
+        )
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertNotIn("runs-on: self-hosted", text)
+        self.assertIn("ZCLOUD_EXPECTED_SHA: ${{ github.sha }}", text)
+        self.assertRegex(
+            text,
+            r"uses: actions/checkout@[0-9a-f]{40} # v7\.0\.1",
+        )
+        self.assertIn("ref: ${{ env.ZCLOUD_EXPECTED_SHA }}", text)
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn("clean: true", text)
+        self.assertIn("fetch-depth: 1", text)
+        self.assertIn(
+            'test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"',
+            text,
+        )
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn('test "$(id -un)" = "ubuntu"', text)
+        self.assertIn('test "$(id -u)" -ne 0', text)
+
+        exact_revision = text.index('test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"')
+        runner_guard = text.index("scripts/zcloud_vps_runner_guard.py --json")
+        capability_probe = text.index("scripts/zssh_cloudflare_capability_probe.py")
+        self.assertLess(exact_revision, runner_guard)
+        self.assertLess(runner_guard, capability_probe)
+
+    def test_pr_validation_cannot_cancel_live_probe(self) -> None:
+        text = self.text
+        self.assertIn("zssh-cloudflare-capability-probe-${{", text)
+        self.assertIn("format('pr-{0}', github.event.pull_request.number)", text)
+        self.assertIn("|| 'live'", text)
+        self.assertIn("cancel-in-progress: false", text)
+
+    def test_probe_preserves_read_only_cloudflare_semantics(self) -> None:
+        text = self.text
+        self.assertIn("Probe persistent Cloudflare authorization without mutation", text)
+        for forbidden in (
+            "api.cloudflare.com/client/v4",
+            "cloudflare.com/client/v4",
+            "curl -X POST",
+            "curl -X PUT",
+            "curl -X PATCH",
+            "curl -X DELETE",
+            "systemctl restart",
+            "systemctl start",
+            "systemctl stop",
+            "sudo tee",
+        ):
+            self.assertNotIn(forbidden, text)
+
+    def test_remote_actions_are_immutable_and_evidence_is_bounded(self) -> None:
+        text = self.text
+        action_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith("uses:")
+        ]
+        self.assertGreaterEqual(len(action_lines), 3)
+        for line in action_lines:
+            self.assertRegex(line, r"^uses: [^@]+@[0-9a-f]{40}(?: # .+)?$")
+        self.assertIn("Upload non-secret capability evidence", text)
+        self.assertIn("if-no-files-found: error", text)
+        self.assertNotIn("set -x", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
