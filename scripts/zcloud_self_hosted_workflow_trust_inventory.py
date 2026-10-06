@@ -94,8 +94,8 @@ def _runner_kind(value: str) -> str | None:
 
 def _checkout_signals(block: list[str]) -> tuple[list[dict], bool, bool]:
     checkouts: list[dict] = []
-    persist_false = False
-    exact_ref = False
+    persist_results: list[bool] = []
+    exact_ref_results: list[bool] = []
 
     for index, line in enumerate(block):
         match = CHECKOUT_RE.search(line)
@@ -122,8 +122,8 @@ def _checkout_signals(block: list[str]) -> tuple[list[dict], bool, bool]:
                 "HEAD_SHA",
             )
         ) or bool(re.search(r"ref:\s*[0-9a-fA-F]{40}\b", step_text))
-        persist_false = persist_false or step_persist_false
-        exact_ref = exact_ref or step_exact_ref
+        persist_results.append(step_persist_false)
+        exact_ref_results.append(step_exact_ref)
         checkouts.append(
             {
                 "ref": ref,
@@ -133,8 +133,9 @@ def _checkout_signals(block: list[str]) -> tuple[list[dict], bool, bool]:
             }
         )
 
-    all_persist_false = bool(checkouts) and all(persist_results)\n    all_exact_ref = bool(checkouts) and all(exact_ref_results)\n    return checkouts, all_persist_false, all_exact_ref
-
+    all_persist_false = bool(checkouts) and all(persist_results)
+    all_exact_ref = bool(checkouts) and all(exact_ref_results)
+    return checkouts, all_persist_false, all_exact_ref
 
 def inventory(root: Path) -> dict:
     entries: list[dict] = []
