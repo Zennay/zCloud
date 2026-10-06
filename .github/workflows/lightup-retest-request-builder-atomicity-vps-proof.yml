@@ -1,4 +1,4 @@
-name: LightUp retest request builder atomicity VPS proof
+name: LightUp retest request integrity VPS proof
 
 on:
   pull_request:
@@ -16,15 +16,17 @@ concurrency:
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/st5-retest-request-builder-input-atomicity-20261006
-  EXPECTED_SHA: ca4a35c25c2e2b2dcb6f688051ee9d1b26282d48
+  ATOMICITY_BRANCH: chatgpt/st5-retest-request-builder-input-atomicity-20261006
+  ATOMICITY_SHA: ca4a35c25c2e2b2dcb6f688051ee9d1b26282d48
+  SNAPSHOT_BRANCH: chatgpt/st5-retest-request-snapshot-isolation-20261006
+  SNAPSHOT_SHA: 8b188cbd66bc11ae7d38ebd9dd3cdb35c1dd8a9f
 
 jobs:
   prove:
-    name: Retest request builder atomicity exact-head proof
+    name: Retest request integrity exact-head proof
     if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner)
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 35
+    timeout-minutes: 50
 
     steps:
       - name: Checkout exact zCloud proof harness
@@ -41,62 +43,94 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Snapshot exact LightUp head
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d "${LIGHTUP_REPO}/.git"
-          remote_ref="refs/remotes/origin/lightup-retest-request-builder-atomicity-proof"
-          snapshot="${RUNNER_TEMP}/lightup-retest-request-builder-atomicity-${GITHUB_RUN_ID}"
-          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${LIGHTUP_BRANCH}:${remote_ref}"
-          actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
-          test "${actual}" = "${EXPECTED_SHA}"
-          rm -rf "${snapshot}"
-          mkdir -p "${snapshot}"
-          git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
-          echo "LIGHTUP_SNAPSHOT=${snapshot}" >> "${GITHUB_ENV}"
-          echo "ACTUAL_SHA=${actual}" >> "${GITHUB_ENV}"
-
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Prove exact head on Python 3.11
+      - name: Prove exact heads on Python 3.11
         shell: bash
         run: |
           set -euo pipefail
-          cd "${LIGHTUP_SNAPSHOT}"
-          export PYTHONPATH=src:tests
-          python -m compileall -q src tests
-          python -m unittest -v             test_future_security_retest_request_builder_input_atomicity             test_future_security_retest_request
-          python -m unittest discover -s tests -v
-          python -m unittest discover -s tests/integration -v
-          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          prove_head() {
+            label="$1"
+            branch="$2"
+            expected="$3"
+            module="$4"
+            remote_ref="refs/remotes/origin/lightup-${label}-proof-${GITHUB_RUN_ID}"
+            snapshot="${RUNNER_TEMP}/lightup-${label}-py311-${GITHUB_RUN_ID}"
+
+            git -C "${LIGHTUP_REPO}" fetch --prune origin               "+refs/heads/${branch}:${remote_ref}"
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+
+            (
+              cd "${snapshot}"
+              export PYTHONPATH=src:tests
+              python -m compileall -q src tests
+              python -m unittest -v "${module}" test_future_security_retest_request
+              python -m unittest discover -s tests -v
+              python -m unittest discover -s tests/integration -v
+              PYTHONPATH=src python scripts/check_safety_canaries.py
+            )
+            rm -rf "${snapshot}"
+          }
+
+          prove_head atomicity "${ATOMICITY_BRANCH}" "${ATOMICITY_SHA}"             test_future_security_retest_request_builder_input_atomicity
+          prove_head snapshot "${SNAPSHOT_BRANCH}" "${SNAPSHOT_SHA}"             test_future_security_retest_request_snapshot_isolation
 
       - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
-      - name: Prove exact head on Python 3.14
+      - name: Prove exact heads on Python 3.14
         shell: bash
         run: |
           set -euo pipefail
-          cd "${LIGHTUP_SNAPSHOT}"
-          export PYTHONPATH=src:tests
-          python -m compileall -q src tests
-          python -m unittest -v             test_future_security_retest_request_builder_input_atomicity             test_future_security_retest_request
-          python -m unittest discover -s tests -v
-          python -m unittest discover -s tests/integration -v
-          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          prove_head() {
+            label="$1"
+            branch="$2"
+            expected="$3"
+            module="$4"
+            remote_ref="refs/remotes/origin/lightup-${label}-proof-${GITHUB_RUN_ID}"
+            snapshot="${RUNNER_TEMP}/lightup-${label}-py314-${GITHUB_RUN_ID}"
+
+            git -C "${LIGHTUP_REPO}" fetch --prune origin               "+refs/heads/${branch}:${remote_ref}"
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+
+            (
+              cd "${snapshot}"
+              export PYTHONPATH=src:tests
+              python -m compileall -q src tests
+              python -m unittest -v "${module}" test_future_security_retest_request
+              python -m unittest discover -s tests -v
+              python -m unittest discover -s tests/integration -v
+              PYTHONPATH=src python scripts/check_safety_canaries.py
+            )
+            rm -rf "${snapshot}"
+          }
+
+          prove_head atomicity "${ATOMICITY_BRANCH}" "${ATOMICITY_SHA}"             test_future_security_retest_request_builder_input_atomicity
+          prove_head snapshot "${SNAPSHOT_BRANCH}" "${SNAPSHOT_SHA}"             test_future_security_retest_request_snapshot_isolation
 
       - name: Write exact-head receipt
         if: success()
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/lightup-retest-request-builder-atomicity-receipt"
+          mkdir -p "${RUNNER_TEMP}/lightup-retest-request-integrity-receipt"
           python3 - <<'PY'
           import json
           import os
@@ -108,14 +142,22 @@ jobs:
               "result": "success",
               "host": os.uname().nodename,
               "github_run_id": int(os.environ["GITHUB_RUN_ID"]),
-              "branch": os.environ["LIGHTUP_BRANCH"],
-              "expected_sha": os.environ["EXPECTED_SHA"],
-              "actual_sha": os.environ["ACTUAL_SHA"],
-              "issue": 356,
               "python": ["3.11", "3.14"],
+              "heads": {
+                  "builder_input_atomicity": {
+                      "branch": os.environ["ATOMICITY_BRANCH"],
+                      "sha": os.environ["ATOMICITY_SHA"],
+                      "issue": 356,
+                  },
+                  "snapshot_isolation": {
+                      "branch": os.environ["SNAPSHOT_BRANCH"],
+                      "sha": os.environ["SNAPSHOT_SHA"],
+                      "issue": 357,
+                  },
+              },
               "proof": [
                   "exact-sha-binding",
-                  "retest-request-builder-input-atomicity-py311-py314",
+                  "dedicated-regressions-py311-py314",
                   "parent-retest-request-regressions-py311-py314",
                   "compile-py311-py314",
                   "full-unit-suite-py311-py314",
@@ -123,7 +165,7 @@ jobs:
                   "safety-canaries-py311-py314",
               ],
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-retest-request-builder-atomicity-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-retest-request-integrity-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -132,12 +174,12 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-retest-request-builder-atomicity-vps-proof-${{ github.run_id }}
-          path: ${{ runner.temp }}/lightup-retest-request-builder-atomicity-receipt/receipt.json
+          name: lightup-retest-request-integrity-vps-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/lightup-retest-request-integrity-receipt/receipt.json
           if-no-files-found: error
           retention-days: 14
 
-      - name: Cleanup snapshot
+      - name: Cleanup residual snapshots
         if: always()
         shell: bash
-        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
+        run: rm -rf "${RUNNER_TEMP}"/lightup-{atomicity,snapshot}-py{311,314}-${GITHUB_RUN_ID}
