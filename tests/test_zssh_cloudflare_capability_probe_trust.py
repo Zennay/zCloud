@@ -16,7 +16,7 @@ class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
     def test_pull_requests_have_complete_hosted_validation(self) -> None:
         text = self.text
         self.assertIn("pull_request:", text)
-        self.assertGreaterEqual(text.count("tests/test_zssh_cloudflare_capability_probe.py"), 3)
+        self.assertGreaterEqual(text.count("tests/test_zssh_cloudflare_capability_probe.py"), 4)
         self.assertIn("github.event_name == 'pull_request'", text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
         self.assertIn("runs-on: ubuntu-latest", text)
