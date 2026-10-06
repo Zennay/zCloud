@@ -1,4 +1,4 @@
-name: LightUp scope explicit-network entry type expected-RED VPS proof
+name: LightUp scope network-config acceptance expected-RED VPS proof
 
 on:
   pull_request:
@@ -16,12 +16,12 @@ concurrency:
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/scope-authorization-network-entry-type-red-20261006
-  LIGHTUP_EXPECTED_SHA: c5ed7e8bab38dbfb8a16590fb1bd41f73d70e5e8
+  LIGHTUP_BRANCH: chatgpt/scope-authorization-network-config-acceptance-red-20261006
+  LIGHTUP_EXPECTED_SHA: 8a25fa481c3ec049df165c87203ee2e8e2193ed6
 
 jobs:
   prove-red:
-    name: Exact #292 expected-RED contract on vps-bb300bba
+    name: Exact #292 + #296 expected-RED contract on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
 
@@ -43,10 +43,10 @@ jobs:
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --prune origin \
-            "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-scope-network-entry-type-red"
-          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-scope-network-entry-type-red^{commit})"
+            "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-scope-network-config-red"
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-scope-network-config-red^{commit})"
           test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
-          SNAPSHOT="${RUNNER_TEMP}/lightup-scope-network-entry-type-${GITHUB_RUN_ID}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-scope-network-config-${GITHUB_RUN_ID}"
           rm -rf "${SNAPSHOT}"
           mkdir -p "${SNAPSHOT}"
           git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
@@ -58,22 +58,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Python 3.11 scope smoke + #292 expected RED
+      - name: Python 3.11 scope smoke + expected RED
         shell: bash
         run: |
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
           PYTHONPATH=src:tests python -m unittest -v test_scope
-          LOG="${RUNNER_TEMP}/lightup-292-red-py311.log"
+          LOG="${RUNNER_TEMP}/lightup-scope-network-config-red-py311.log"
           set +e
-          PYTHONPATH=src:tests python -m unittest -v test_scope_explicit_network_entry_type_acceptance >"${LOG}" 2>&1
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_scope_explicit_network_entry_type_acceptance \
+            test_scope_canonical_cidr_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 4
-          grep -Fq 'FAILED (failures=4)' "${LOG}"
+          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 6
+          grep -Fq 'FAILED (failures=6)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -82,22 +84,24 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Python 3.14 scope smoke + #292 expected RED
+      - name: Python 3.14 scope smoke + expected RED
         shell: bash
         run: |
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
           PYTHONPATH=src:tests python -m unittest -v test_scope
-          LOG="${RUNNER_TEMP}/lightup-292-red-py314.log"
+          LOG="${RUNNER_TEMP}/lightup-scope-network-config-red-py314.log"
           set +e
-          PYTHONPATH=src:tests python -m unittest -v test_scope_explicit_network_entry_type_acceptance >"${LOG}" 2>&1
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_scope_explicit_network_entry_type_acceptance \
+            test_scope_canonical_cidr_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 4
-          grep -Fq 'FAILED (failures=4)' "${LOG}"
+          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 6
+          grep -Fq 'FAILED (failures=6)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -105,7 +109,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RECEIPT_DIR="${RUNNER_TEMP}/lightup-scope-network-entry-type-expected-red-receipt"
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-scope-network-config-expected-red-receipt"
           mkdir -p "${RECEIPT_DIR}"
           python3 - <<'PY'
           import json
@@ -114,7 +118,7 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issue": 292,
+              "issues": [292, 296],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
@@ -123,11 +127,11 @@ jobs:
               "python": ["3.11", "3.14"],
               "scope_smoke": "green",
               "acceptance_contract": "expected_red",
-              "expected_failures_per_python": 4,
+              "expected_failures_per_python": 6,
               "production_source_changes": 0,
               "safety_canaries": "green",
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-scope-network-entry-type-expected-red-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-scope-network-config-expected-red-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -135,8 +139,8 @@ jobs:
       - name: Upload exact-head expected-RED receipt
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-scope-network-entry-type-expected-red-vps-proof
-          path: ${{ runner.temp }}/lightup-scope-network-entry-type-expected-red-receipt/receipt.json
+          name: lightup-scope-network-config-expected-red-vps-proof
+          path: ${{ runner.temp }}/lightup-scope-network-config-expected-red-receipt/receipt.json
           if-no-files-found: error
 
       - name: Cleanup snapshot
