@@ -105,7 +105,7 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           python -m compileall -q src tests
-          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics -v
+          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics tests.test_scope_definition_opaque_url_identity -v
           python -m unittest discover -s tests -v
           python -m unittest discover -s tests/integration -v
           python scripts/check_safety_canaries.py
@@ -123,7 +123,7 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           python -m compileall -q src tests
-          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics -v
+          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics tests.test_scope_definition_opaque_url_identity -v
           python -m unittest discover -s tests -v
           python -m unittest discover -s tests/integration -v
           python scripts/check_safety_canaries.py
