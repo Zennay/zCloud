@@ -105,6 +105,22 @@ class WorkerStatusLineTests(unittest.TestCase):
         self.assertEqual("offline", result["workers"][0]["status"])
         self.assertEqual(1, result["malformed_workers"])
 
+    def test_invalid_project_identifier_is_omitted_fail_visible(self):
+        result = status_lines.build_lines(
+            {
+                "chatgpt_runners": {
+                    "../cloud": {
+                        "workers": [
+                            {"worker_slot": 1, "work_area": "control-plane", "state": "live"}
+                        ]
+                    }
+                }
+            }
+        )
+        self.assertFalse(result["coverage_complete"])
+        self.assertEqual([], result["workers"])
+        self.assertEqual(1, result["malformed_workers"])
+
     def test_invalid_worker_slot_is_omitted_fail_visible(self):
         result = status_lines.build_lines(
             {"chatgpt_runners": {"cloud": {"workers": [{"worker_slot": 0, "state": "live"}]}}}
