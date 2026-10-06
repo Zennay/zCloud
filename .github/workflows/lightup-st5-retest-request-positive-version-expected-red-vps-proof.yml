@@ -1,3 +1,4 @@
+# #389 composition refresh: pin exact combined LightUp acceptance head
 name: LightUp ST5 retest-request persisted acceptance expected-RED VPS proof
 
 on:
