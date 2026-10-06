@@ -5,30 +5,44 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zssh-gh-admin-capability-probe.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/zssh-gh-admin-capability-probe.yml"
+      - "tests/test_zssh_gh_admin_capability_workflow.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zssh-gh-admin-capability-probe
+  group: zssh-gh-admin-capability-probe-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   probe:
     name: Probe persistent VPS GitHub auth for zSSH administration
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    env:
+      ZCLOUD_EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Check out zCloud control plane
-        uses: actions/checkout@v4
+      - name: Check out exact zCloud control plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.ZCLOUD_EXPECTED_SHA }}
           persist-credentials: false
+          clean: true
+          fetch-depth: 1
 
-      - name: Enforce permanent VPS runner identity
+      - name: Enforce permanent VPS runner identity and exact revision
         shell: bash
         run: |
           set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json \
             | tee "$RUNNER_TEMP/zssh-gh-admin-runner-guard.json"
           test "$(hostname)" = "vps-bb300bba"
@@ -98,7 +112,7 @@ jobs:
 
       - name: Upload non-secret capability evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zssh-gh-admin-capability-${{ github.run_id }}
           path: |
