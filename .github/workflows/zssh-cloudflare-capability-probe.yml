@@ -13,6 +13,7 @@ on:
     paths:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
       - "scripts/zssh_cloudflare_capability_probe.py"
+      - "tests/test_zssh_cloudflare_capability_probe.py"
       - "tests/test_zssh_cloudflare_capability_probe_trust.py"
   workflow_dispatch:
 
