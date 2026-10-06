@@ -1,12 +1,9 @@
-name: zGuard base provenance probe
+name: zGuard base provenance proof
 
 on:
   push:
     branches:
       - "qa/zguard-base-provenance-probe-20261006"
-    paths:
-      - ".github/workflows/zguard-base-provenance-probe.yml"
-  pull_request:
     paths:
       - ".github/workflows/zguard-base-provenance-probe.yml"
   workflow_dispatch:
@@ -15,9 +12,9 @@ permissions:
   contents: read
 
 jobs:
-  resolve:
+  prove:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - name: Guard permanent VPS runner
         shell: bash
@@ -25,46 +22,64 @@ jobs:
           set -euo pipefail
           test "${{ runner.name }}" = "zcloud-vps-1"
 
-      - name: Resolve immutable base-image digests
+      - name: Resolve immutable registry digests
         shell: bash
         run: |
           set -euo pipefail
-
           resolve_digest() {
-            local label="$1"
-            local registry="$2"
-            local repository="$3"
-            local tag="$4"
-            local token_url="$5"
-
+            local label="$1" registry="$2" repository="$3" tag="$4" token_url="$5"
             local token digest
             token="$(curl -fsSL "$token_url" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("token") or data.get("access_token") or "")')"
             test -n "$token"
-
-            digest="$(
-              curl -fsSI \
-                -H "Authorization: Bearer $token" \
-                -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-                "https://$registry/v2/$repository/manifests/$tag" \
-              | tr -d '\r' \
-              | awk 'tolower($1) == "docker-content-digest:" {print $2}' \
-              | tail -n1
-            )"
-
+            digest="$(curl -fsSI -H "Authorization: Bearer $token" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' "https://$registry/v2/$repository/manifests/$tag" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" {print $2}' | tail -n1)"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             printf '%s=%s@%s\n' "$label" "$tag" "$digest"
           }
+          resolve_digest node registry-1.docker.io library/node 22-alpine 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull'
+          resolve_digest selkies ghcr.io linuxserver/baseimage-selkies debiantrixie 'https://ghcr.io/token?service=ghcr.io&scope=repository:linuxserver/baseimage-selkies:pull'
 
-          resolve_digest \
-            node \
-            registry-1.docker.io \
-            library/node \
-            22-alpine \
-            'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull'
+      - name: Validate exact zGuard provenance head
+        shell: bash
+        env:
+          ZGUARD_SHA: a65c6b1862e1c08a86c55de2809f7b35f85b618f
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          git clone --quiet https://github.com/Zennay/zGuard.git "$work/zguard"
+          git -C "$work/zguard" checkout --quiet "$ZGUARD_SHA"
+          test "$(git -C "$work/zguard" rev-parse HEAD)" = "$ZGUARD_SHA"
+          cd "$work/zguard"
+          node tests/smoke.test.js
+          bash zbrowse/scripts/validate.sh
+          cd zbrowse/gateway
+          npm ci --omit=dev --ignore-scripts --no-audit
+          npm audit --omit=dev --audit-level=high
 
-          resolve_digest \
-            selkies \
-            ghcr.io \
-            linuxserver/baseimage-selkies \
-            debiantrixie \
-            'https://ghcr.io/token?service=ghcr.io&scope=repository:linuxserver/baseimage-selkies:pull'
+      - name: Build and report exact image provenance
+        shell: bash
+        env:
+          ZGUARD_SHA: a65c6b1862e1c08a86c55de2809f7b35f85b618f
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null
+          docker info >/dev/null
+          work="$(mktemp -d)"
+          short="${ZGUARD_SHA:0:12}"
+          gw="zbrowse-provenance-gateway:$short"
+          browser="zbrowse-provenance-browser:$short"
+          cleanup() {
+            docker image rm -f "$gw" "$browser" >/dev/null 2>&1 || true
+            rm -rf "$work"
+          }
+          trap cleanup EXIT
+          git clone --quiet https://github.com/Zennay/zGuard.git "$work/zguard"
+          git -C "$work/zguard" checkout --quiet "$ZGUARD_SHA"
+          cd "$work/zguard"
+          echo "gateway-base=$(sed -n 's/^FROM //p' zbrowse/gateway/Dockerfile | head -n1)"
+          echo "browser-base=$(sed -n 's/^FROM //p' zbrowse/browser/Dockerfile | head -n1)"
+          docker build --pull=false -t "$gw" zbrowse/gateway
+          docker build --pull=false -t "$browser" zbrowse/browser
+          echo "gateway-image-id=$(docker image inspect --format '{{.Id}}' "$gw")"
+          echo "browser-image-id=$(docker image inspect --format '{{.Id}}' "$browser")"
+          docker run --rm --network none --entrypoint sh "$browser" -lc 'test -s /opt/zbrowse-build-metadata/apt-packages.tsv && grep -E "^chromium[[:space:]]" /opt/zbrowse-build-metadata/apt-packages.tsv'
