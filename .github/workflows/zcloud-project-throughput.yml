@@ -7,6 +7,7 @@ on:
       - "scripts/zcloud_project_throughput_report.py"
       - "tests/test_project_throughput_report.py"
       - "tests/test_project_throughput_workflow.py"
+      - "tests/test_portfolio_completion_receipt_contract.py"
       - ".github/workflows/zcloud-project-throughput.yml"
   pull_request:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - "scripts/zcloud_project_throughput_report.py"
       - "tests/test_project_throughput_report.py"
       - "tests/test_project_throughput_workflow.py"
+      - "tests/test_portfolio_completion_receipt_contract.py"
       - ".github/workflows/zcloud-project-throughput.yml"
     types: [opened, synchronize, reopened]
 
@@ -40,7 +42,7 @@ jobs:
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Run focused regressions
-        run: python3 -m unittest -v tests.test_project_throughput_report tests.test_project_throughput_workflow
+        run: python3 -m unittest -v tests.test_project_throughput_report tests.test_project_throughput_workflow tests.test_portfolio_completion_receipt_contract
 
       - name: Read-only live throughput proof
         shell: bash
