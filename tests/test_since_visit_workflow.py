@@ -29,7 +29,7 @@ class SinceVisitWorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('payload["schema_version"] == "since-visit-v1"', text)
         self.assertIn('payload["project_count"] <= 50', text)
-        self.assertIn('forbidden={"action","blocker","reason","error","evidence_json","next_gate","prompt"}', text)
+        self.assertIn('forbidden={"action","blocker","phase","reason","error","evidence_json","next_gate","prompt"}', text)
         self.assertIn("ZCLOUD_SINCE_VISIT_VPS_GREEN=1", text)
 
 
