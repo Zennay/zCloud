@@ -21,6 +21,7 @@ class PostdeployCanaryLiveProofWorkflowTests(unittest.TestCase):
             text,
         )
         self.assertIn("persist-credentials: false", text)
+        self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("permissions:\n  contents: read", text)
         self.assertNotIn("contents: write", text)
         self.assertNotIn("sudo ", text)
