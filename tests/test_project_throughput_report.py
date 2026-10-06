@@ -256,6 +256,75 @@ class ProjectThroughputReportTests(unittest.TestCase):
         self.assertEqual(1, report["projects"]["cloud"]["completed"])
         self.assertEqual(1, report["projects"]["ftmo"]["completed"])
 
+    def test_explicit_baseline_makes_zero_throughput_measurable(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            "DELETE FROM project_state_receipts WHERE project_id='cloud'"
+        )
+        connection.execute(
+            """CREATE TABLE throughput_tracking_baselines(
+                project_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO throughput_tracking_baselines(
+                project_id,started_at,source,created_at
+            ) VALUES(?,?,?,?)""",
+            (
+                "cloud",
+                "2026-10-05T09:00:00+00:00",
+                "guarded-production-cutover",
+                "2026-10-05T09:00:00+00:00",
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            projects=["cloud"],
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        coverage = report["projects"]["cloud"]["coverage"]
+        self.assertTrue(report["coverage_complete"])
+        self.assertTrue(coverage["complete"])
+        self.assertTrue(coverage["tracking_baseline_present"])
+        self.assertTrue(coverage["window_fully_tracked"])
+        self.assertEqual(0, report["projects"]["cloud"]["completed"])
+
+    def test_malformed_baseline_fails_coverage_closed(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            "DELETE FROM project_state_receipts WHERE project_id='cloud'"
+        )
+        connection.execute(
+            """CREATE TABLE throughput_tracking_baselines(
+                project_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO throughput_tracking_baselines(project_id,started_at) VALUES(?,?)",
+            ("cloud", "not-a-time"),
+        )
+        connection.commit()
+        connection.close()
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            projects=["cloud"],
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        self.assertFalse(report["coverage_complete"])
+        self.assertFalse(report["projects"]["cloud"]["coverage"]["complete"])
+
     def test_coverage_is_incomplete_when_tracking_starts_inside_window(self):
         connection = sqlite3.connect(self.db)
         connection.execute(
