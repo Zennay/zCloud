@@ -17,14 +17,13 @@ permissions:
   actions: write
   contents: read
 
-concurrency:
-  group: zcloud-self-hosted-queue-watchdog
-  cancel-in-progress: false
-
 jobs:
   observe:
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    concurrency:
+      group: zcloud-self-hosted-queue-watchdog-observe
+      cancel-in-progress: false
     outputs:
       recover: ${{ steps.inspect.outputs.recover }}
       evidence: ${{ steps.inspect.outputs.evidence }}
@@ -116,6 +115,9 @@ jobs:
     if: needs.observe.outputs.recover == 'true'
     runs-on: self-hosted
     timeout-minutes: 5
+    concurrency:
+      group: zcloud-self-hosted-queue-watchdog-recover
+      cancel-in-progress: false
     env:
       QUEUE_EVIDENCE: ${{ needs.observe.outputs.evidence }}
     steps:
