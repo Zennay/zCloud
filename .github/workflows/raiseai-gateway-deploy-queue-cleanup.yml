@@ -1,0 +1,52 @@
+name: Clean superseded RaiseAI gateway deploy queue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/raiseai-gateway-deploy-queue-cleanup.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-gateway-deploy-queue-cleanup
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      RAISE_REPO: Zennay/RaiseAI
+    steps:
+      - name: Cancel only superseded queued gateway deploys
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth status >/dev/null 2>&1
+          main_sha="$(gh api repos/$RAISE_REPO/commits/main --jq .sha)"
+          echo "RAISEAI_MAIN_SHA=$main_sha"
+
+          mapfile -t stale < <(
+            gh api "repos/$RAISE_REPO/actions/runs?per_page=100" --paginate               --jq '.workflow_runs[] |
+                select(.name=="Raise gateway deploy + live smoke") |
+                select(.status=="queued" or .status=="pending" or .status=="waiting") |
+                select(.head_sha != "'"$main_sha"'") |
+                [.id,.head_sha,.status] | @tsv'
+          )
+
+          for row in "${stale[@]}"; do
+            IFS=$'\t' read -r run_id sha status <<<"$row"
+            echo "CANCEL_SUPERSEDED_DEPLOY run=$run_id sha=$sha status=$status"
+            gh api --method POST "repos/$RAISE_REPO/actions/runs/$run_id/cancel" >/dev/null
+          done
+
+          current="$(
+            gh api "repos/$RAISE_REPO/actions/runs?per_page=100"               --jq '[.workflow_runs[] |
+                select(.name=="Raise gateway deploy + live smoke") |
+                select(.head_sha=="'"$main_sha"'")] |
+                sort_by(.created_at) | last // {}'
+          )"
+          echo "CURRENT_MAIN_DEPLOY=$current"
