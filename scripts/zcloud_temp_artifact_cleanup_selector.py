@@ -21,6 +21,8 @@ MAX_INPUT_BYTES = 128 * 1024
 MAX_RECORDS = 512
 MAX_NAME = 180
 MAX_SIZE_BYTES = 128 * 1024 * 1024
+MAX_CANDIDATES = 50
+MAX_CANDIDATE_BYTES = 512 * 1024 * 1024
 MIN_AGE_DAYS = 7
 SAFE_SCOPES = ("system_tmp", "runner_temp")
 SAFE_PREFIXES = (
@@ -160,7 +162,7 @@ def select(payload: Any, *, now: datetime) -> dict[str, Any]:
     if len(records) > MAX_RECORDS:
         raise InputError("too many artifact records")
 
-    candidates: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     for raw in records:
         record = validate_record(raw)
@@ -172,17 +174,34 @@ def select(payload: Any, *, now: datetime) -> dict[str, Any]:
             "size_bytes": record["size_bytes"],
         }
         if decision == "CANDIDATE":
-            candidates.append(item)
+            eligible.append(item)
         else:
             blocked.append({**item, "reasons": reasons})
 
-    candidates.sort(key=lambda item: (-item["age_days"], item["scope"], item["name"]))
+    eligible.sort(key=lambda item: (-item["age_days"], item["scope"], item["name"]))
+    candidates: list[dict[str, Any]] = []
+    selected_bytes = 0
+    for item in eligible:
+        reasons: list[str] = []
+        if len(candidates) >= MAX_CANDIDATES:
+            reasons.append("CANDIDATE_COUNT_BUDGET")
+        if selected_bytes + item["size_bytes"] > MAX_CANDIDATE_BYTES:
+            reasons.append("CANDIDATE_BYTE_BUDGET")
+        if reasons:
+            blocked.append({**item, "reasons": reasons})
+            continue
+        candidates.append(item)
+        selected_bytes += item["size_bytes"]
+
     blocked.sort(key=lambda item: (item["scope"], item["name"]))
     return {
         "schema": SCHEMA,
         "candidate_count": len(candidates),
+        "candidate_bytes": selected_bytes,
         "blocked_count": len(blocked),
         "min_age_days": MIN_AGE_DAYS,
+        "max_candidates": MAX_CANDIDATES,
+        "max_candidate_bytes": MAX_CANDIDATE_BYTES,
         "safe_scopes": list(SAFE_SCOPES),
         "safe_prefixes": list(SAFE_PREFIXES),
         "safe_suffixes": list(SAFE_SUFFIXES),
