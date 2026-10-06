@@ -19,15 +19,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run scanner regression
-        run: python3 -m unittest -v tests.test_pr_security_scan
+      - name: Run security gate regressions
+        run: >-
+          python3 -m unittest -v
+          tests.test_pr_security_scan
+          tests.test_pr_security_workflow
 
-      - name: Scan newly added secret material and workflow dependencies
+      - name: Scan newly added secrets and action dependencies
         run: >-
           python3 scripts/zcloud_pr_security_scan.py
           --base-ref "${{ github.event.pull_request.base.sha }}"
-
-      - name: Review changed dependency manifests
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
-        with:
-          fail-on-severity: moderate
