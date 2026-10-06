@@ -21,6 +21,8 @@ class ProjectThroughputWorkflowTests(unittest.TestCase):
         self.assertIn("ZCLOUD_PROJECT_THROUGHPUT_READONLY_GREEN", text)
         self.assertIn("before_fingerprint=", text)
         self.assertIn("after_fingerprint=", text)
+        self.assertIn("/tmp/zcloud-project-throughput-all.json", text)
+        self.assertIn('"portfolio_projects": portfolio_summary', text)
         self.assertIn(
             "group: zcloud-project-throughput-${{ github.event.pull_request.head.ref || github.ref_name }}",
             text,
