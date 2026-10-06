@@ -156,8 +156,10 @@ def build_report(
                 timestamp,
                 label=f"{project_id} telemetry point {index}",
             )
-            age = max(0, int((observed_at - parsed).total_seconds()))
-            ages.append(age)
+            delta_seconds = int((observed_at - parsed).total_seconds())
+            if delta_seconds < -300:
+                raise ValueError(f"{project_id} telemetry timestamp is implausibly in the future")
+            ages.append(max(0, delta_seconds))
 
         available = bool(snapshot.get("available"))
         if not available or not points:
