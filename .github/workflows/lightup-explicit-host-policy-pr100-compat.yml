@@ -1,0 +1,60 @@
+name: LightUp explicit-host-policy PR100 compatibility
+
+on:
+  push:
+    branches: [ops/lightup-explicit-host-policy-pr100-compat-20261006]
+    paths:
+      - .github/workflows/lightup-explicit-host-policy-pr100-compat.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LIGHTUP_PR100_SHA: ef553b6e0aa0c99855e9907f4b2dee9edc5aac0f
+  LIGHTUP_367_SHA: d0bc8f6f2300805938559dd323797b12a1977352
+
+jobs:
+  compatibility:
+    name: PR100 + #367 contract Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - name: Checkout exact active PR100 head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Lightup
+          ref: ef553b6e0aa0c99855e9907f4b2dee9edc5aac0f
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Overlay only #367 owned regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${LIGHTUP_PR100_SHA}"
+          git fetch origin             refs/heads/chatgpt/scope-authorization-explicit-host-policy-non-url-20261006:refs/remotes/origin/lightup-367
+          test "$(git rev-parse refs/remotes/origin/lightup-367^{commit})" = "${LIGHTUP_367_SHA}"
+          git show refs/remotes/origin/lightup-367:tests/test_scope_authorization_explicit_host_policy_identity.py             > tests/test_scope_authorization_explicit_host_policy_identity.py
+          test "$(git diff --name-only)" = "tests/test_scope_authorization_explicit_host_policy_identity.py"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Prove #367 remains compatible with active PR100
+        env:
+          PYTHONPATH: src:tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q src tests
+          python -m unittest tests.test_scope_authorization_explicit_host_policy_identity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
