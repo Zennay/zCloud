@@ -5,12 +5,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "zssh-governance-runner-priority.yml"
+PROOF_WORKFLOW = ROOT / ".github" / "workflows" / "zssh-governance-runner-priority-contract.yml"
 
 
 class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
+        cls.proof_text = PROOF_WORKFLOW.read_text(encoding="utf-8")
 
     def test_write_permission_is_narrowly_scoped(self):
         text = self.text
@@ -74,6 +76,31 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         upload_block = text[text.index("- name: Upload non-secret queue-priority evidence") :]
         self.assertNotIn("zssh-queued-runs.json", upload_block)
         self.assertNotIn("zssh-cancel-queued-ids.txt", upload_block)
+
+    def test_proof_workflow_is_owner_same_repo_guarded(self):
+        text = self.proof_text
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+
+    def test_proof_workflow_is_exact_head_and_read_only(self):
+        text = self.proof_text
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertNotIn("actions: write", text)
+        self.assertNotIn("contents: write", text)
+        self.assertIn("EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}", text)
+        self.assertIn("uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", text)
+        self.assertIn("ref: ${{ env.EXPECTED_SHA }}", text)
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', text)
+
+    def test_proof_workflow_requires_permanent_vps_before_contract_test(self):
+        text = self.proof_text
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        guard = text.index("python3 scripts/zcloud_vps_runner_guard.py --json")
+        test = text.index("python3 -m unittest -v tests.test_zssh_governance_runner_priority_contract")
+        self.assertLess(guard, test)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn('test "$(id -un)" = "ubuntu"', text)
 
 
 if __name__ == "__main__":
