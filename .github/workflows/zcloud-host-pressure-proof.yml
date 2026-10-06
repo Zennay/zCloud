@@ -1,0 +1,74 @@
+name: zCloud host pressure proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_host_pressure_report.py
+      - tests/test_host_pressure_report.py
+      - tests/test_host_pressure_workflow.py
+      - .github/workflows/zcloud-host-pressure-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-host-pressure-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused host-pressure regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_host_pressure_report tests.test_host_pressure_workflow
+
+      - name: Classify live aggregate host pressure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_host_pressure_report.py --pretty             > "$RUNNER_TEMP/zcloud-host-pressure.json"
+          python3 - "$RUNNER_TEMP/zcloud-host-pressure.json" <<'PY'
+          import json
+          import sys
+          payload=json.load(open(sys.argv[1],encoding="utf-8"))
+          allowed={"healthy","compute_busy","memory_pressure","io_pressure","mixed_pressure"}
+          state=payload["assessment"]["state"]
+          assert state in allowed
+          if state == "compute_busy":
+              assert payload["assessment"]["requires_backpressure"] is False
+          serialized=json.dumps(payload,sort_keys=True).lower()
+          for forbidden in ('"argv"', '"environ"', '"cmdline"', '"pid"', '"processes"'):
+              assert forbidden not in serialized
+          print("ZCLOUD_HOST_PRESSURE_READONLY_GREEN="+state)
+          PY
