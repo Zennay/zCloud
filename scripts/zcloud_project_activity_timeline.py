@@ -102,9 +102,17 @@ def _event_entry(row: sqlite3.Row) -> dict:
 
 
 def _command_entry(row: sqlite3.Row) -> dict:
-    action = str(row["action"] or "")
-    status = str(row["status"] or "unknown").lower()
-    label = ACTION_LABELS.get(action, action.replace("-", " ").replace("_", " ").strip().title() or "Controlactie")
+    raw_action = str(row["action"] or "")
+    raw_status = str(row["status"] or "").lower()
+    action = _safe_reason(raw_action) or "unknown"
+    status = _safe_reason(raw_status) or "unknown"
+    label = ACTION_LABELS.get(action)
+    if label is None:
+        label = (
+            action.replace("-", " ").replace("_", " ").strip().title()
+            if action != "unknown"
+            else "Controlactie"
+        )
     if status == "pending":
         summary = f"{label} aangevraagd"
         category = "control"
@@ -167,7 +175,7 @@ def report(
         runner_cols = _require_columns(
             connection,
             "runner_events",
-            {"ts", "event", "project_id"},
+            {"id", "ts", "event", "project_id"},
         )
         worker_expr = "worker_slot" if "worker_slot" in runner_cols else "NULL AS worker_slot"
         reason_expr = "reason" if "reason" in runner_cols else "NULL AS reason"
@@ -201,7 +209,7 @@ def report(
             timeline.extend(_generic_event_entry(row) for row in generic_rows)
 
         command_cols = _columns(connection, "runner_commands")
-        required_commands = {"project_id", "action", "status", "created_at", "updated_at"}
+        required_commands = {"id", "project_id", "action", "status", "created_at", "updated_at"}
         if required_commands.issubset(command_cols):
             params = [cutoff.isoformat()]
             where = "COALESCE(updated_at,created_at)>=? AND project_id IS NOT NULL AND project_id<>''"
