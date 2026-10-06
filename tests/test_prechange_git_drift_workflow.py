@@ -23,6 +23,11 @@ class PrechangeGitDriftWorkflowTests(unittest.TestCase):
             text,
         )
         self.assertIn("fetch-depth: 513", text)
+        self.assertIn(
+            "git fetch --no-tags --depth=513 origin +refs/heads/main:refs/remotes/origin/main",
+            text,
+        )
+        self.assertIn('test "$(git rev-parse HEAD)" = "$candidate"', text)
         self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("persist-credentials: false", text)
         self.assertNotIn("contents: write", text)
