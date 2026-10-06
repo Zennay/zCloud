@@ -23,7 +23,7 @@ class ResourceGovernorCanaryTrustTests(unittest.TestCase):
         text = self.text
         self.assertEqual(text.count(CHECKOUT_V6), 1)
         self.assertNotIn("actions/checkout@v4", text)
-        self.assertIn("ref: ${{ github.sha }}", text)
+        self.assertIn("ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}", text)
         self.assertIn("fetch-depth: 1", text)
         self.assertIn("clean: true", text)
         self.assertIn("persist-credentials: false", text)
@@ -34,7 +34,7 @@ class ResourceGovernorCanaryTrustTests(unittest.TestCase):
         user = 'test "$(id -un)" = "ubuntu"'
         guard = "python3 scripts/zcloud_vps_runner_guard.py --json"
         canary = "Prove live resource admission and process bounds"
-        self.assertIn("EXPECTED_ZCLOUD_SHA: ${{ github.sha }}", text)
+        self.assertIn("EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}", text)
         self.assertLess(text.index(exact), text.index(guard))
         self.assertLess(text.index(user), text.index(guard))
         self.assertLess(text.index(guard), text.index(canary))
