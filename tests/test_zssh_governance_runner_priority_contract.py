@@ -104,12 +104,13 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         self.assertIn("Run focused contract suite", text)
     def test_proof_workflow_requires_permanent_vps_before_contract_test(self):
         text = self.proof_text
-        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
-        guard = text.index("python3 scripts/zcloud_vps_runner_guard.py --json")
-        test = text.index("python3 -m unittest -v tests.test_zssh_governance_runner_priority_contract")
+        prove = text[text.index("\n  prove:\n") :]
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", prove)
+        guard = prove.index("python3 scripts/zcloud_vps_runner_guard.py --json")
+        test = prove.index("python3 -m unittest -v tests.test_zssh_governance_runner_priority_contract")
         self.assertLess(guard, test)
-        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
-        self.assertIn('test "$(id -un)" = "ubuntu"', text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', prove)
+        self.assertIn('test "$(id -un)" = "ubuntu"', prove)
 
     def test_planner_prefers_queued_governance_over_newer_cloudflare_probe(self):
         runs = [
