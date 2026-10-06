@@ -42,6 +42,26 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertTrue(cmp["current"]["validated"])
         self.assertIsNone(cmp["best"], "Do not invent a best release without a comparable validated criterion")
 
+    def test_ftmo_adapter_tolerates_missing_optional_candidate_metrics(self):
+        cand = (
+            19,
+            "gen19/trial.json",
+            {"trial_hash": "candidate-19"},
+            {"total_pnl": 0.0011, "cost_1_5x_pnl": 0.0007},
+            {},
+        )
+        with patch.object(enhancements, "_ftmo_candidate", return_value=cand), \
+             patch.object(enhancements, "_ftmo_release", return_value=None), \
+             patch.object(enhancements, "_ftmo_readiness", return_value={"available": False}):
+            quality = enhancements.quality_for("ftmo")
+
+        self.assertTrue(quality["available"])
+        self.assertEqual("Generation 19", quality["comparison"]["latest"]["value"])
+        self.assertEqual(
+            ["1.5× cost PnL"],
+            [item["label"] for item in quality["items"]],
+        )
+
     def test_registered_project_adapters_are_explicit(self):
         self.assertEqual(("ftmo", "haxlab", "ulab"), enhancements.telemetry_adapter_projects())
         self.assertIsInstance(
