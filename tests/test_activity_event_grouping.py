@@ -88,8 +88,10 @@ class ActivityEventGroupingTests(unittest.TestCase):
         }
         later = dict(base, ts=(self.now + timedelta(seconds=5)).isoformat())
         other_worker = dict(later, worker_slot=2)
-        self.assertEqual(grouping.semantic_fingerprint(base), grouping.semantic_fingerprint(later))
-        self.assertNotEqual(grouping.semantic_fingerprint(base), grouping.semantic_fingerprint(other_worker))
+        fingerprint = grouping.semantic_fingerprint(base)
+        self.assertEqual(64, len(fingerprint))
+        self.assertEqual(fingerprint, grouping.semantic_fingerprint(later))
+        self.assertNotEqual(fingerprint, grouping.semantic_fingerprint(other_worker))
 
     def test_sanitized_source_prevents_raw_payload_leakage(self):
         ts = (self.now - timedelta(seconds=10)).isoformat()
