@@ -1,0 +1,47 @@
+name: zSSH production-origin mutation semantics audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zssh_production_origin_mutation_audit.py"
+      - "tests/test_zssh_production_origin_mutation_audit.py"
+      - ".github/workflows/zssh-production-origin-mutation-audit.yml"
+      - ".github/workflows/zssh-production-origin-readiness.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-production-origin-mutation-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit production-origin mutation claim
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused mutation-semantics tests
+        run: python3 -m unittest -v tests.test_zssh_production_origin_mutation_audit
+
+      - name: Emit bounded current-state audit
+        run: |
+          python3 scripts/zssh_production_origin_mutation_audit.py \
+            --workflow .github/workflows/zssh-production-origin-readiness.yml
