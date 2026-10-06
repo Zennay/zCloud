@@ -1,0 +1,222 @@
+name: LightUp ST5 evidence-remediation expected-RED VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-st5-evidence-remediation-resolution-direct-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-st5-evidence-remediation-resolution-direct-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  RETEST_BRANCH: chatgpt/st5-retest-request-full-integrity-resolution-id-red-20261007
+  RETEST_EXPECTED_SHA: b845b76ba6e3b3b56da81f83dcb939468888b47e
+  PLAN_BRANCH: chatgpt/st5-remediation-retest-full-producer-invariants-resolution-id-red-20261007
+  PLAN_EXPECTED_SHA: 788b3693ad52e9672d50c83612f580faf113759d
+  DIRECT_BRANCH: chatgpt/st5-retest-request-direct-construction-red-20261007
+  DIRECT_EXPECTED_SHA: 86e15261560d97f62981fc49076fb4343cdb37d3
+
+jobs:
+  prove-red:
+    name: Exact #391/#396/#394 contracts on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          snapshot_candidate() {
+            local branch="$1"
+            local expected="$2"
+            local alias="$3"
+            local env_name="$4"
+            git -C "${LIGHTUP_REPO}" fetch --prune origin "+refs/heads/${branch}:refs/remotes/origin/${alias}"
+            local actual
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${alias}^{commit}")"
+            test "${actual}" = "${expected}"
+            local snapshot="${RUNNER_TEMP}/${alias}-${GITHUB_RUN_ID}"
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+            echo "${env_name}=${snapshot}" >> "${GITHUB_ENV}"
+            echo "${env_name}_SHA=${actual}" >> "${GITHUB_ENV}"
+          }
+
+          snapshot_candidate "${RETEST_BRANCH}" "${RETEST_EXPECTED_SHA}" "lightup-retest-resolution-pack" "RETEST_SNAPSHOT"
+          snapshot_candidate "${PLAN_BRANCH}" "${PLAN_EXPECTED_SHA}" "lightup-plan-resolution-pack" "PLAN_SNAPSHOT"
+          snapshot_candidate "${DIRECT_BRANCH}" "${DIRECT_EXPECTED_SHA}" "lightup-retest-direct-red" "DIRECT_SNAPSHOT"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python 3.11 exact expected-RED contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expect_red() {
+            local snapshot="$1"
+            local log="$2"
+            local expected="$3"
+            shift 3
+            set +e
+            (
+              cd "${snapshot}"
+              PYTHONPATH=src:tests python -m unittest -v "$@"
+            ) >"${log}" 2>&1
+            local rc=$?
+            set -e
+            cat "${log}"
+            test "${rc}" -ne 0
+            test "$(grep -c 'ValueError not raised' "${log}" || true)" -eq "${expected}"
+            grep -Fq "FAILED (failures=${expected})" "${log}"
+            ! grep -Fq 'errors=' "${log}"
+          }
+
+          cd "${RETEST_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_round_trip_accepts_exact_builder_output_for_all_supported_classifications             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_exact_schema_strict_primitives_and_stop_line_fail_closed             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage             test_future_security_retest_request_builder_input_atomicity             test_future_security_retest_request_parser_input_purity             test_future_security_retest_request_snapshot_isolation
+          expect_red "${RETEST_SNAPSHOT}" "${RUNNER_TEMP}/lightup-retest-resolution-red-py311.log" 7             test_future_security_retest_request_positive_version_acceptance             test_future_security_retest_request_cross_item_path_acceptance             test_future_security_retest_request_item_order_acceptance             test_future_security_retest_request_resolution_id_shape_acceptance
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          cd "${PLAN_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_security_remediation_retest_plan_handoff
+          expect_red "${PLAN_SNAPSHOT}" "${RUNNER_TEMP}/lightup-plan-resolution-red-py311.log" 3             test_future_security_remediation_retest_resolution_id_shape_acceptance
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          cd "${DIRECT_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_security_retest_request
+          expect_red "${DIRECT_SNAPSHOT}" "${RUNNER_TEMP}/lightup-retest-direct-red-py311.log" 20             test_future_security_retest_request_direct_construction_acceptance
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Python 3.14 exact expected-RED contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expect_red() {
+            local snapshot="$1"
+            local log="$2"
+            local expected="$3"
+            shift 3
+            set +e
+            (
+              cd "${snapshot}"
+              PYTHONPATH=src:tests python -m unittest -v "$@"
+            ) >"${log}" 2>&1
+            local rc=$?
+            set -e
+            cat "${log}"
+            test "${rc}" -ne 0
+            test "$(grep -c 'ValueError not raised' "${log}" || true)" -eq "${expected}"
+            grep -Fq "FAILED (failures=${expected})" "${log}"
+            ! grep -Fq 'errors=' "${log}"
+          }
+
+          cd "${RETEST_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_round_trip_accepts_exact_builder_output_for_all_supported_classifications             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_exact_schema_strict_primitives_and_stop_line_fail_closed             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage             test_future_security_retest_request_builder_input_atomicity             test_future_security_retest_request_parser_input_purity             test_future_security_retest_request_snapshot_isolation
+          expect_red "${RETEST_SNAPSHOT}" "${RUNNER_TEMP}/lightup-retest-resolution-red-py314.log" 7             test_future_security_retest_request_positive_version_acceptance             test_future_security_retest_request_cross_item_path_acceptance             test_future_security_retest_request_item_order_acceptance             test_future_security_retest_request_resolution_id_shape_acceptance
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          cd "${PLAN_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_security_remediation_retest_plan_handoff
+          expect_red "${PLAN_SNAPSHOT}" "${RUNNER_TEMP}/lightup-plan-resolution-red-py314.log" 3             test_future_security_remediation_retest_resolution_id_shape_acceptance
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          cd "${DIRECT_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_security_retest_request
+          expect_red "${DIRECT_SNAPSHOT}" "${RUNNER_TEMP}/lightup-retest-direct-red-py314.log" 20             test_future_security_retest_request_direct_construction_acceptance
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Write exact-head expected-RED receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-evidence-remediation-resolution-direct-vps-proof"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "issues": [391, 394, 396],
+              "host": os.uname().nodename,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "python": ["3.11", "3.14"],
+              "candidates": {
+                  "retest_persisted_full_pack": {
+                      "branch": os.environ["RETEST_BRANCH"],
+                      "target_sha": os.environ["RETEST_SNAPSHOT_SHA"],
+                      "expected_sha": os.environ["RETEST_EXPECTED_SHA"],
+                      "expected_failures_per_python": 7,
+                  },
+                  "remediation_retest_full_pack": {
+                      "branch": os.environ["PLAN_BRANCH"],
+                      "target_sha": os.environ["PLAN_SNAPSHOT_SHA"],
+                      "expected_sha": os.environ["PLAN_EXPECTED_SHA"],
+                      "expected_failures_per_python": 3,
+                  },
+                  "retest_direct_construction": {
+                      "branch": os.environ["DIRECT_BRANCH"],
+                      "target_sha": os.environ["DIRECT_SNAPSHOT_SHA"],
+                      "expected_sha": os.environ["DIRECT_EXPECTED_SHA"],
+                      "expected_failures_per_python": 20,
+                  },
+              },
+              "acceptance_contract": "expected_red",
+              "production_source_changes_in_new_slices": 0,
+              "safety_canaries": "green",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-evidence-remediation-resolution-direct-vps-proof" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head expected-RED receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-st5-evidence-remediation-resolution-direct-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-evidence-remediation-resolution-direct-vps-proof/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${RETEST_SNAPSHOT:-}" "${PLAN_SNAPSHOT:-}" "${DIRECT_SNAPSHOT:-}"
