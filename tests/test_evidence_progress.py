@@ -286,6 +286,10 @@ class EvidenceProgressTests(unittest.TestCase):
             'test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"',
             workflow,
         )
+        self.assertIn("Prove live FTMO lifecycle telemetry is read-only", workflow)
+        self.assertIn("ZCLOUD_FTMO_LIFECYCLE_TELEMETRY_READONLY_GREEN=1", workflow)
+        self.assertIn("status_path.stat().st_mtime_ns", workflow)
+        self.assertNotIn("status_path.write_", workflow)
 
     def test_renderer_is_project_agnostic(self):
         js = Path("public/enhancements.js").read_text(encoding="utf-8")
