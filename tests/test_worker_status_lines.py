@@ -99,7 +99,7 @@ class WorkerStatusLineTests(unittest.TestCase):
 
     def test_unknown_state_is_fail_visible(self):
         result = status_lines.build_lines(
-            {"chatgpt_runners": {"cloud": {"workers": [{"worker_slot": 1, "state": "mystery"}]}}}
+            {"chatgpt_runners": {"cloud": {"workers": [{"worker_slot": 1, "work_area": "control-plane", "state": "mystery"}]}}}
         )
         self.assertFalse(result["coverage_complete"])
         self.assertEqual("offline", result["workers"][0]["status"])
