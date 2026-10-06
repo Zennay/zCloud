@@ -416,6 +416,23 @@ def main(argv: list[str] | None = None) -> int:
         snap["remediation"] = actions
         history.append(snap)
         print(json.dumps(snap, ensure_ascii=False, sort_keys=True), flush=True)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            live_summary = {
+                "ok": True,
+                "running": True,
+                "started_at": history[0]["ts"],
+                "last_sample_at": snap["ts"],
+                "samples": len(history),
+                "min_workers": args.min_workers,
+                "remediate": args.remediate,
+                "latest": snap,
+                "diagnoses": sorted({reason for item in history for reason in item["diagnosis"]}),
+                "actions": [action for item in history for action in item["remediation"]],
+            }
+            temp = args.output.with_suffix(args.output.suffix + ".tmp")
+            temp.write_text(json.dumps(live_summary, indent=2, ensure_ascii=False))
+            temp.replace(args.output)
 
         if time.monotonic() >= deadline:
             break
@@ -438,7 +455,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps({"summary": summary, "samples": history}, indent=2, ensure_ascii=False))
+        final_payload = {"running": False, "summary": summary, "samples": history}
+        temp = args.output.with_suffix(args.output.suffix + ".tmp")
+        temp.write_text(json.dumps(final_payload, indent=2, ensure_ascii=False))
+        temp.replace(args.output)
 
     # Diagnostic failures should be visible without making transient pressure a
     # workflow failure. Fail only when both desired allocation and live runtime
