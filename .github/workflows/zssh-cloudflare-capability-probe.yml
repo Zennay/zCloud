@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
+      - ".github/zssh-cloudflare-capability-trigger"
       - "scripts/zssh_cloudflare_capability_probe.py"
       - "tests/test_zssh_cloudflare_capability_probe_trust.py"
   pull_request:
