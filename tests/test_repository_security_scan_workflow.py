@@ -29,20 +29,42 @@ class RepositorySecurityScanWorkflowTests(unittest.TestCase):
         )
         self.assertIn("persist-credentials: false", text)
         self.assertIn(
-            "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
+            "aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514",
             text,
         )
+        self.assertIn("version: v0.70.0", text)
         self.assertNotIn("continue-on-error", text)
 
-    def test_vulnerability_and_secret_findings_fail_closed(self):
+    def test_scanner_capability_is_self_tested_before_repository_scan(self):
         text = self.text()
-        self.assertIn("scan-type: fs", text)
-        self.assertIn("scan-ref: .", text)
-        self.assertIn("scanners: vuln,secret", text)
-        self.assertIn("severity: HIGH,CRITICAL", text)
-        self.assertIn("ignore-unfixed: true", text)
-        self.assertIn('exit-code: "1"', text)
-        self.assertIn("format: table", text)
+        self.assertIn("Prove secret scanner fails closed", text)
+        self.assertIn("openssl genpkey -algorithm RSA", text)
+        self.assertIn("--scanners secret", text)
+        self.assertIn("--exit-code 17", text)
+        self.assertIn("TRIVY_SECRET_SELFTEST_GREEN", text)
+
+        self.assertIn("Prove vulnerability scanner fails closed", text)
+        self.assertIn('"lodash": "4.17.20"', text)
+        self.assertIn("--scanners vuln", text)
+        self.assertIn("--exit-code 23", text)
+        self.assertIn("TRIVY_VULN_SELFTEST_GREEN", text)
+
+        self.assertLess(
+            text.index("TRIVY_SECRET_SELFTEST_GREEN"),
+            text.index("Scan tracked repository for vulnerabilities and secrets"),
+        )
+        self.assertLess(
+            text.index("TRIVY_VULN_SELFTEST_GREEN"),
+            text.index("Scan tracked repository for vulnerabilities and secrets"),
+        )
+
+    def test_repository_findings_fail_closed(self):
+        text = self.text()
+        self.assertIn("--scanners vuln,secret", text)
+        self.assertIn("--severity HIGH,CRITICAL", text)
+        self.assertIn("--ignore-unfixed", text)
+        self.assertIn("--exit-code 1", text)
+        self.assertIn("--format table", text)
         self.assertIn("timeout-minutes: 10", text)
 
 
