@@ -1,4 +1,4 @@
-name: LightUp ST5 remediation/retest integrity proof
+name: LightUp evidence-remediation integrity proof
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   verify:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,7 +26,7 @@ jobs:
       - name: Verify permanent zCloud VPS runner
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Verify exact LightUp remediation/retest candidates
+      - name: Verify exact LightUp evidence-remediation candidates
         shell: bash
         env:
           LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
@@ -38,6 +38,8 @@ jobs:
             local branch="$1"
             local expected_sha="$2"
             local dedicated_test="$3"
+            local support_test_one="$4"
+            local support_test_two="$5"
 
             git -C "${LIGHTUP_REPO}" fetch --no-tags origin               "+refs/heads/${branch}:refs/remotes/origin/${branch}"
             local actual_sha
@@ -55,15 +57,17 @@ jobs:
               export PYTHONPATH=src:tests
               python3 -m compileall -q src tests
               python3 -m unittest discover -s tests -p "${dedicated_test}" -v
-              python3 -m unittest discover -s tests                 -p 'test_future_security_remediation_retest_plan_handoff.py' -v
-              python3 -m unittest discover -s tests                 -p 'test_future_security_remediation_retest_plan.py' -v
+              python3 -m unittest discover -s tests -p "${support_test_one}" -v
+              python3 -m unittest discover -s tests -p "${support_test_two}" -v
               python3 -m unittest discover -s tests/integration -v
             )
 
             rm -rf "${tmp_root}"
-            printf 'LIGHTUP_ST5_RETEST_PLAN_INTEGRITY_PROOF branch=%s target_sha=%s host=%s\n'               "${branch}" "${actual_sha}" "$(hostname)"
+            printf 'LIGHTUP_EVIDENCE_REMEDIATION_INTEGRITY_PROOF branch=%s target_sha=%s host=%s\n'               "${branch}" "${actual_sha}" "$(hostname)"
           }
 
-          verify_candidate             "chatgpt/st5-remediation-retest-plan-snapshot-isolation-20261006"             "e6caab71871ae1d4d88cfbdd306236ad74dbeb97"             "test_future_security_remediation_retest_plan_snapshot_isolation.py"
+          verify_candidate             "chatgpt/st5-remediation-retest-plan-snapshot-isolation-20261006"             "e6caab71871ae1d4d88cfbdd306236ad74dbeb97"             "test_future_security_remediation_retest_plan_snapshot_isolation.py"             "test_future_security_remediation_retest_plan_handoff.py"             "test_future_security_remediation_retest_plan.py"
 
-          verify_candidate             "chatgpt/st5-remediation-retest-plan-direct-construction-20261006"             "e14f005b23582982972099b7acb9d0e56f8109bf"             "test_future_security_remediation_retest_plan_direct_construction.py"
+          verify_candidate             "chatgpt/st5-remediation-retest-plan-direct-construction-20261006"             "e14f005b23582982972099b7acb9d0e56f8109bf"             "test_future_security_remediation_retest_plan_direct_construction.py"             "test_future_security_remediation_retest_plan_handoff.py"             "test_future_security_remediation_retest_plan.py"
+
+          verify_candidate             "chatgpt/st4-security-delta-direct-construction-20261006"             "cc069554093001c73c9e7b46dbf2fe2579a2c642"             "test_future_attack_path_security_delta_report_direct_construction.py"             "test_future_attack_path_security_delta_report.py"             "test_future_security_remediation_retest_plan.py"
