@@ -56,7 +56,7 @@ class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
 
         exact_revision = text.index('test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"')
         runner_guard = text.index("scripts/zcloud_vps_runner_guard.py --json")
-        capability_probe = text.index("scripts/zssh_cloudflare_capability_probe.py")
+        capability_probe = text.index("python3 scripts/zssh_cloudflare_capability_probe.py")
         self.assertLess(exact_revision, runner_guard)
         self.assertLess(runner_guard, capability_probe)
 
