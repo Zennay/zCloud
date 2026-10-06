@@ -114,7 +114,16 @@ class IterationEffectGateTests(unittest.TestCase):
             "measurement": measurement(after=8),
         }])
         self.assertEqual("NEXT_ITERATION_ALLOWED", result["decision"])
-        self.assertEqual("prior_iteration_rolled_back", result["reason"])
+        self.assertEqual("prior_iteration_measured_and_rolled_back", result["reason"])
+
+    def test_rollback_without_measurement_still_requires_effect_evidence(self):
+        result = self.evaluate([{
+            "iteration_id": "iter-1",
+            "revision": REV_A,
+            "state": "rolled_back",
+            "measurement": None,
+        }])
+        self.assertEqual("MEASURE_EFFECT_REQUIRED", result["decision"])
 
     def test_duplicate_iteration_ids_are_rejected(self):
         with self.assertRaises(policy.EffectGateError):
