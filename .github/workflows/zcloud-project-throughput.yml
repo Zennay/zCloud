@@ -52,11 +52,13 @@ jobs:
           test -f "$LIVE_DB"
           before_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
           python3 scripts/zcloud_project_throughput_report.py             --db "$LIVE_DB"             --hours 24             --project cloud             > /tmp/zcloud-project-throughput.json
+          python3 scripts/zcloud_project_throughput_report.py             --db "$LIVE_DB"             --hours 24             > /tmp/zcloud-project-throughput-all.json
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           payload=json.loads(Path("/tmp/zcloud-project-throughput.json").read_text())
+          portfolio=json.loads(Path("/tmp/zcloud-project-throughput-all.json").read_text())
           assert payload["schema_version"] == 1
           assert payload["window"]["hours"] == 24
           assert "cloud" in payload["projects"]
@@ -69,6 +71,16 @@ jobs:
           forbidden=("evidence","title","action","blocker","next_gate","commit_sha")
           rendered=json.dumps(payload,sort_keys=True)
           assert not any(f'"{key}"' in rendered for key in forbidden), rendered
+          portfolio_summary={
+              project_id: {
+                  "completed": item["completed"],
+                  "coverage_complete": item["coverage"]["complete"],
+                  "tracking_started_at": item["coverage"]["tracking_started_at"],
+                  "window_fully_tracked": item["coverage"]["window_fully_tracked"],
+                  "missing_done_receipts_after_tracking": item["coverage"]["missing_done_receipts_after_tracking"],
+              }
+              for project_id,item in sorted(portfolio["projects"].items())
+          }
           print(json.dumps({
               "coverage_complete": payload["coverage_complete"],
               "malformed_receipts": payload["malformed_receipts"],
@@ -78,6 +90,7 @@ jobs:
               "tracking_started_at": coverage["tracking_started_at"],
               "window_fully_tracked": coverage["window_fully_tracked"],
               "missing_done_receipts_after_tracking": coverage["missing_done_receipts_after_tracking"],
+              "portfolio_projects": portfolio_summary,
           },sort_keys=True))
           PY
           after_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
