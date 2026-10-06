@@ -1,0 +1,61 @@
+name: zCloud worker-count surface contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - public/app.js
+      - server.py
+      - tests/test_worker_count_surface_contract.py
+      - .github/workflows/zcloud-worker-count-surface-contract.yml
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-count-surface-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Prove worker-count surface contract
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m py_compile tests/test_worker_count_surface_contract.py
+          python3 -m unittest -v tests.test_worker_count_surface_contract
+          echo "ZCLOUD_WORKER_COUNT_SURFACE_GREEN=1"
+
+  permanent-vps-proof:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify exact candidate on permanent VPS
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 -m unittest -v tests.test_worker_count_surface_contract
+          echo "ZCLOUD_WORKER_COUNT_SURFACE_VPS_GREEN=1"
