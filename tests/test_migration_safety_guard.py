@@ -56,6 +56,14 @@ class MigrationSafetyGuardTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["migration_risk"])
 
+    def test_guard_implementation_does_not_self_classify_as_migration(self):
+        result = guard.assess(
+            [change("scripts/zcloud_migration_safety_guard.py", "@@\n+new safety check")],
+            self.root,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["migration_risk"])
+
     def test_sql_ddl_requires_migration_record(self):
         result = guard.assess(
             [change("server.py", "@@\n+conn.execute('ALTER TABLE runner_events ADD COLUMN trace_id TEXT')")],
