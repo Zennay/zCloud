@@ -1,0 +1,117 @@
+name: Recover RaiseAI listener with bounded restart
+
+on:
+  push:
+    branches:
+      - ops/raiseai-current-runner-recovery-20261006-1554
+    paths:
+      - ".github/workflows/raiseai-current-runner-recovery-bounded-20261006.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-current-runner-recovery-bounded-20261006
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      RAISE_REPO: Zennay/RaiseAI
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+      WATCH_RUNS: "37469669430 37470133625 37490639494 37491138070"
+    steps:
+      - name: Repair a stuck idle listener with bounded service operations
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          exec 9>/tmp/raiseai-runner-recovery.lock
+          if ! flock -n 9; then
+            echo "RAISEAI_BOUNDED_RECOVERY=skipped-lock-held"
+            exit 0
+          fi
+
+          any_scheduled=0
+          for run in $WATCH_RUNS; do
+            name="$(gh api "repos/$RAISE_REPO/actions/runs/$run" --jq .name)"
+            status="$(gh api "repos/$RAISE_REPO/actions/runs/$run" --jq .status)"
+            echo "RAISEAI_TARGET run=$run status=$status name=$name"
+            test "$name" = "Raise Watch app CI"
+            [[ "$status" == "in_progress" || "$status" == "completed" ]] && any_scheduled=1
+          done
+          if [[ "$any_scheduled" -eq 1 ]]; then
+            echo "RAISEAI_BOUNDED_RECOVERY=preserve-already-scheduled"
+            exit 0
+          fi
+
+          has_worker() {
+            local cg proc cmdline
+            cg="$(systemctl show "$RAISE_SERVICE" -p ControlGroup --value 2>/dev/null || true)"
+            [[ -n "$cg" && "$cg" != "/" ]] || return 1
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cgroup" || continue
+              grep -Fq "$cg" "$proc/cgroup" || continue
+              test -r "$proc/cmdline" || continue
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmdline" == *"Runner.Worker"* ]] && return 0
+            done
+            return 1
+          }
+
+          if has_worker; then
+            echo "RAISEAI_BOUNDED_RECOVERY=preserve-active-worker"
+            exit 0
+          fi
+
+          sudo -n systemctl reset-failed "$RAISE_SERVICE" || true
+          if ! timeout 20s sudo -n systemctl restart "$RAISE_SERVICE"; then
+            echo "RAISEAI_RESTART_DID_NOT_CONVERGE=1"
+            if has_worker; then
+              echo "Runner.Worker appeared during restart; refusing hard reset" >&2
+              exit 3
+            fi
+            timeout 10s sudo -n systemctl stop "$RAISE_SERVICE" || true
+            if has_worker; then
+              echo "Runner.Worker appeared during stop; refusing hard reset" >&2
+              exit 4
+            fi
+            sudo -n systemctl kill --kill-whom=all --signal=KILL "$RAISE_SERVICE" || true
+            sudo -n systemctl reset-failed "$RAISE_SERVICE" || true
+            timeout 20s sudo -n systemctl start "$RAISE_SERVICE"
+            echo "RAISEAI_BOUNDED_RECOVERY=hard-reset-idle-listener"
+          else
+            echo "RAISEAI_BOUNDED_RECOVERY=restart-idle-listener"
+          fi
+
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "$RAISE_SERVICE" 2>/dev/null || true)"
+            pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value 2>/dev/null || true)"
+            if [[ "$state" == active && "$pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pid/cmdline"; then
+              cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+              if [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]; then
+                echo "RAISEAI_LISTENER_ACTIVE pid=$pid"
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$state" = active
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+
+          scheduled=0
+          for _ in $(seq 1 36); do
+            for run in $WATCH_RUNS; do
+              status="$(gh api "repos/$RAISE_REPO/actions/runs/$run" --jq .status)"
+              echo "RAISEAI_WATCH run=$run status=$status"
+              [[ "$status" == "in_progress" || "$status" == "completed" ]] && scheduled=1
+            done
+            [[ "$scheduled" -eq 1 ]] && break
+            sleep 5
+          done
+          test "$scheduled" -eq 1
+          echo "RAISEAI_BOUNDED_RECOVERY_GREEN=1"
