@@ -28,7 +28,8 @@ class NotionHandoffFreshnessWorkflowTests(unittest.TestCase):
         self.assertIn("mktemp -d", self.text)
         self.assertNotIn("curl ", self.text)
         self.assertNotIn("sqlite3 ", self.text)
-        self.assertNotIn("notion", self.text.lower().split("name:", 1)[-1].split("jobs:", 1)[0])
+        self.assertNotIn("notion_update", self.text.lower())
+        self.assertNotIn("notion_create", self.text.lower())
 
     def test_contract_tests_run_on_hosted_before_vps(self):
         self.assertIn("runs-on: ubuntu-latest", self.text)
