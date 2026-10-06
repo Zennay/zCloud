@@ -31,7 +31,7 @@ jobs:
         env:
           LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
           LIGHTUP_BRANCH: chatgpt/st5-evidence-collection-request-snapshot-isolation-20261006
-          LIGHTUP_SHA: 60a4b3225a77b05c2121be60b46da7d294d7a2e0
+          LIGHTUP_SHA: fa1666031680a2dc9abf295a62853c69c016bce3
         run: |
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
