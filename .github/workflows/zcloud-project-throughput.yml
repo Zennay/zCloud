@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-project-throughput-${{ github.event.pull_request.number || github.ref }}
+  group: zcloud-project-throughput-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
