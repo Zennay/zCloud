@@ -125,6 +125,29 @@ def build_report(
                WHERE status='done'
                ORDER BY created_at,queue_id"""
         ).fetchall()
+        baseline_rows = []
+        if connection.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type='table' AND name='throughput_tracking_baselines'"""
+        ).fetchone():
+            baseline_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(throughput_tracking_baselines)"
+                ).fetchall()
+            }
+            required_baseline = {"project_id", "started_at"}
+            missing_baseline = sorted(required_baseline - baseline_columns)
+            if missing_baseline:
+                raise ValueError(
+                    "throughput_tracking_baselines missing required columns: "
+                    + ",".join(missing_baseline)
+                )
+            baseline_rows = connection.execute(
+                """SELECT project_id,started_at
+                   FROM throughput_tracking_baselines
+                   ORDER BY project_id"""
+            ).fetchall()
     finally:
         connection.close()
 
@@ -133,7 +156,24 @@ def build_report(
     malformed_projects: set[str] = set()
     duplicate_done_receipts = 0
     tracking_started: dict[str, datetime] = {}
+    baseline_projects: set[str] = set()
     seen_queue_items: dict[tuple[str, str], tuple[int, datetime]] = {}
+
+    for row in baseline_rows:
+        project_id = str(row["project_id"] or "").strip().lower()
+        if project_filter and project_id not in project_filter:
+            continue
+        if not project_id:
+            continue
+        try:
+            started_at = _parse_utc(row["started_at"])
+        except (TypeError, ValueError):
+            malformed_projects.add(project_id)
+            continue
+        baseline_projects.add(project_id)
+        previous_tracking = tracking_started.get(project_id)
+        if previous_tracking is None or started_at < previous_tracking:
+            tracking_started[project_id] = started_at
     done_receipt_keys: set[tuple[str, str]] = set()
     completions: list[tuple[str, str, datetime, int]] = []
 
@@ -223,6 +263,7 @@ def build_report(
         | set(selected_projects)
         | set(tracking_started)
         | set(done_rows_by_project)
+        | set(baseline_projects)
     )
     project_rows = {}
     coverage_complete = True
@@ -265,6 +306,7 @@ def build_report(
             "coverage": {
                 "complete": project_coverage_complete,
                 "tracking_started_at": _iso(tracking) if tracking else None,
+                "tracking_baseline_present": project_id in baseline_projects,
                 "window_fully_tracked": window_fully_tracked,
                 "malformed_receipts": project_id in malformed_projects,
                 "missing_done_receipts_after_tracking": len(missing_after_tracking),
