@@ -152,12 +152,13 @@ class WorkerStateMachineTests(unittest.TestCase):
     def test_raw_payloads_are_never_exposed_and_database_is_immutable(self):
         secret = "STATE_MACHINE_SECRET_919"
         self.event("send-blocked", secret=secret)
-        self.command("completed", secret=secret)
+        self.command("completed", action=f"push {secret}", secret=secret)
         before_bytes = self.db.read_bytes()
         before_mtime = self.db.stat().st_mtime_ns
         payload = machine.report(self.db, project="cloud", now=self.now)
         serialized = json.dumps(payload, sort_keys=True)
         self.assertNotIn(secret, serialized)
+        self.assertEqual("unclassified", payload["workers"][0]["latest_control"]["action"])
         for forbidden in ("target", "title", "reason", "error", "result", "conversation_id"):
             self.assertNotIn(f'"{forbidden}"', serialized)
         self.assertEqual(before_bytes, self.db.read_bytes())
