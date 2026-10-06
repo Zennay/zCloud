@@ -119,7 +119,7 @@ class WorkerStartBlockerTests(unittest.TestCase):
                     )
                 )
                 row = report["workers"][0]
-                self.assertEqual("intentional_state", row["primary_blocker"]["category"])
+                self.assertEqual("other", row["primary_blocker"]["category"])
                 self.assertEqual(1, len(row["blockers"]))
 
     def test_unknown_shapes_fail_closed_without_raw_payload(self):
