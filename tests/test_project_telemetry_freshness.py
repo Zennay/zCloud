@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -208,6 +210,27 @@ class ProjectTelemetryFreshnessTests(unittest.TestCase):
                 quality_reader=lambda project_id: {},
                 adapter_projects_reader=lambda: (),
             )
+
+    def test_cli_entrypoint_imports_repo_modules_from_repo_root(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parents[1] / "scripts" / "zcloud_project_telemetry_freshness.py"),
+                "--projects",
+                str(self.projects),
+                "--project",
+                "supa",
+                "--now",
+                NOW.isoformat(),
+            ],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual("generic_only", payload["projects"][0]["status"])
 
     def test_threshold_is_bounded(self) -> None:
         for value in (0, 10081):
