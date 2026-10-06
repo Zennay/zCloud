@@ -2,7 +2,12 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts.zssh_governance_queue_priority_plan import plan_cancellations
+from scripts.zssh_governance_queue_priority_plan import (
+    ALLOWLIST,
+    CLOUDFLARE_PROBE_NAME,
+    GOVERNANCE_NAME,
+    plan_cancellations,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,14 +38,9 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         match = re.search(r"allow = \{(?P<body>.*?)\n\s*\}", self.text, re.DOTALL)
         self.assertIsNotNone(match)
         names = set(re.findall(r'"([^"]+)"', match.group("body")))
-        self.assertEqual(
-            names,
-            {
-                "zSSH production origin readiness (zCloud lane)",
-                "zSSH Caddy topology audit (zCloud lane)",
-                "zSSH public gateway VPS preflight (zCloud lane)",
-            },
-        )
+        self.assertEqual(names, set(ALLOWLIST))
+        self.assertIn(f'governance_name = "{GOVERNANCE_NAME}"', self.text)
+        self.assertIn(f'cloudflare_probe_name = "{CLOUDFLARE_PROBE_NAME}"', self.text)
 
     def test_priority_run_must_itself_be_queued(self):
         text = self.text
@@ -90,6 +90,7 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         self.assertNotIn("actions: write", text)
         self.assertNotIn("contents: write", text)
         self.assertIn("EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}", text)
+        self.assertIn('- "scripts/zssh_governance_queue_priority_plan.py"', text)
         self.assertIn("uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", text)
         self.assertIn("ref: ${{ env.EXPECTED_SHA }}", text)
         self.assertIn("persist-credentials: false", text)
