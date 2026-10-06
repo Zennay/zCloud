@@ -39,6 +39,9 @@ class SelfProjectContractWorkflowTests(unittest.TestCase):
         for token in forbidden:
             self.assertNotIn(token, self.text)
 
+    def test_layout_changes_trigger_contract_gate(self):
+        self.assertIn("'project-layout.json'", self.text)
+
     def test_gate_runs_both_contract_test_modules_and_repo_audit(self):
         self.assertIn("tests.test_self_project_contract", self.text)
         self.assertIn("tests.test_self_project_contract_workflow", self.text)
