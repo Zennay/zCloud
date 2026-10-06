@@ -18,7 +18,7 @@ from typing import Iterable, NamedTuple
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _ADR_NAME_RE = re.compile(r"^(?:\d{4,8}|[a-z0-9][a-z0-9-]{2,63})-[a-z0-9][a-z0-9-]{2,80}\.md$")
-_REQUIRED_SECTIONS = ("Context", "Decision", "Blast Radius", "Rollback", "Validation")
+_REQUIRED_SECTIONS = ("Context", "Decision", "Affected Paths", "Blast Radius", "Rollback", "Validation")
 _PLACEHOLDER_RE = re.compile(r"\b(?:tbd|todo|placeholder|fill me|n/?a)\b", re.IGNORECASE)
 
 _EXACT_HIGH_BLAST = {
@@ -147,7 +147,7 @@ def _section_body(text: str, heading: str) -> str:
     return body
 
 
-def validate_adr(root: Path, relative_path: str) -> None:
+def validate_adr(root: Path, relative_path: str) -> set[str]:
     relative_path = _safe_repo_path(relative_path)
     target = root / relative_path
     if target.is_symlink():
@@ -162,8 +162,16 @@ def validate_adr(root: Path, relative_path: str) -> None:
         raise AdrGuardError("adr_too_large")
     if not text.lstrip().startswith("# ADR"):
         raise AdrGuardError("adr_title_required")
-    for heading in _REQUIRED_SECTIONS:
-        _section_body(text, heading)
+    sections = {heading: _section_body(text, heading) for heading in _REQUIRED_SECTIONS}
+    affected = set()
+    for raw in re.findall(r"`([^`\\n]{1,320})`", sections["Affected Paths"]):
+        try:
+            affected.add(_safe_repo_path(raw))
+        except AdrGuardError:
+            raise AdrGuardError("adr_invalid_affected_path")
+    if not affected:
+        raise AdrGuardError("adr_affected_paths_required")
+    return affected
 
 
 def evaluate(*, root: Path, changed_files: Iterable[str]) -> dict[str, object]:
@@ -190,8 +198,11 @@ def evaluate(*, root: Path, changed_files: Iterable[str]) -> dict[str, object]:
             "adr_count": 0,
         }
 
+    covered_paths: set[str] = set()
     for path in adrs:
-        validate_adr(root, path)
+        covered_paths.update(validate_adr(root, path))
+    if any(risk.path not in covered_paths for risk in risks):
+        raise AdrGuardError("adr_missing_risk_coverage")
 
     return {
         "schema_version": 1,
