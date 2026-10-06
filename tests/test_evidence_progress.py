@@ -72,6 +72,19 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertEqual("ulab-score-v2", quality["comparison"]["latest"]["value"])
         self.assertEqual(38, quality["comparison"]["current"]["value"])
         self.assertIsNone(quality["comparison"]["best"])
+        metrics = [
+            quality["headline"],
+            *quality["items"],
+            quality["comparison"]["latest"],
+            quality["comparison"]["current"],
+        ]
+        for metric in metrics:
+            self.assertEqual(str(projects_path), metric["source"])
+            self.assertIsNotNone(datetime.fromisoformat(metric["observed_at"]).tzinfo)
+        self.assertEqual(
+            "https://example.invalid/ulab-scorecard",
+            quality["meta"]["scorecard_url"],
+        )
 
     def test_all_registered_adapter_metrics_have_source_and_timestamp(self):
         snapshot = {
