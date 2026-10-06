@@ -1,0 +1,43 @@
+name: zCloud activity fingerprint grouping proof
+
+on:
+  push:
+    branches:
+      - "feature/control-plane-event-fingerprint-grouping-20261006"
+    paths:
+      - "scripts/zcloud_activity_event_grouping.py"
+      - "tests/test_activity_event_grouping.py"
+      - "tests/test_activity_event_grouping_workflow.py"
+      - ".github/workflows/zcloud-activity-event-grouping-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-activity-event-grouping-proof
+  cancel-in-progress: true
+
+jobs:
+  exact-head-vps-temporary-state:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prove permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run grouping regressions on temporary SQLite only
+        run: python3 -m unittest -v tests.test_activity_event_grouping tests.test_activity_event_grouping_workflow
+
+      - name: Prove no production-state route exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e /tmp/zcloud-grouping-proof-production-write
+          echo "ZCLOUD_ACTIVITY_EVENT_GROUPING_TEMPSTATE_GREEN"
