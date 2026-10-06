@@ -5,10 +5,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 RETIRED_FTMO_PROVIDER_BUNDLE_AUTHORITY = {
-    ".github/workflows/ftmo-pr496-research-state-sync-proof.yml":
-        "FTMO PR #496 closed and superseded",
-    ".github/workflows/ftmo-pr518-provider-bundle-proof.yml":
-        "FTMO PR #518 closed+merged",
     ".github/workflows/ftmo-pr521-provider-bundle-integration-proof.yml":
         "FTMO PR #521 closed+merged",
     ".github/workflows/ftmo-pr521-runner-recovery.yml":
