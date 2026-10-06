@@ -57,6 +57,45 @@ jobs:
           python -m unittest discover -s tests/integration -v
           python scripts/check_safety_canaries.py
 
+  pr100-compat:
+    name: PR #100 compatibility Python ${{ matrix.python }} (diagnostic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - name: Checkout corrected non-authority pack
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Lightup
+          ref: fda4bdf264f024e829b14c692fba599d7f7f53c2
+          path: pack
+          persist-credentials: false
+      - name: Checkout active PR #100 exact head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Lightup
+          ref: ef553b6e0aa0c99855e9907f4b2dee9edc5aac0f
+          path: pr100
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Overlay only owned contract tests and prove compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C pack rev-parse HEAD)" = "fda4bdf264f024e829b14c692fba599d7f7f53c2"
+          test "$(git -C pr100 rev-parse HEAD)" = "ef553b6e0aa0c99855e9907f4b2dee9edc5aac0f"
+          cp pack/tests/test_scope_authorization_membership_non_authority.py pr100/tests/
+          cp pack/tests/test_scope_authorization_lab_classification_non_authority.py pr100/tests/
+          cd pr100
+          PYTHONPATH=src:tests python -m unittest \
+            tests.test_scope_authorization_membership_non_authority \
+            tests.test_scope_authorization_lab_classification_non_authority -v
+
   prove:
     if: github.event_name == 'pull_request'
     name: Exact pack on vps-bb300bba
