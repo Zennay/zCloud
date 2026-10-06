@@ -20,8 +20,8 @@ concurrency:
 jobs:
   live-canary-proof:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.actor == 'Zennay' &&
+      github.actor == 'Zennay' &&
+      (github.event_name == 'workflow_dispatch' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
