@@ -216,10 +216,15 @@ def _storage_report(
         if key != "total_rows" and value > 0
     }
 
+    query_only = bool(connection.execute("PRAGMA query_only").fetchone()[0])
+    connection_total_changes = int(connection.total_changes)
     structural_ok = not missing and not extras and not type_mismatches
     quality_ok = not quality_failures and not invalid_event_types
+    write_free = query_only and connection_total_changes == 0
     return {
-        "ok": structural_ok and quality_ok,
+        "ok": structural_ok and quality_ok and write_free,
+        "query_only": query_only,
+        "connection_total_changes": connection_total_changes,
         "table": "runner_events",
         "actual_columns": sorted(actual),
         "missing_required_columns": missing,
