@@ -50,7 +50,7 @@ class MigrationSafetyGuardTests(unittest.TestCase):
 
     def test_non_migration_change_passes_without_record(self):
         result = guard.assess(
-            [change("scripts/report.py", "@@\\n+print('read only')")],
+            [change("scripts/report.py", "@@\n+print('read only')")],
             self.root,
         )
         self.assertTrue(result["ok"], result)
@@ -58,7 +58,7 @@ class MigrationSafetyGuardTests(unittest.TestCase):
 
     def test_sql_ddl_requires_migration_record(self):
         result = guard.assess(
-            [change("server.py", "@@\\n+conn.execute('ALTER TABLE runner_events ADD COLUMN trace_id TEXT')")],
+            [change("server.py", "@@\n+conn.execute('ALTER TABLE runner_events ADD COLUMN trace_id TEXT')")],
             self.root,
         )
         self.assertFalse(result["ok"])
@@ -66,7 +66,7 @@ class MigrationSafetyGuardTests(unittest.TestCase):
 
     def test_create_table_is_also_schema_migration(self):
         result = guard.assess(
-            [change("project_runtime.py", "@@\\n+CREATE TABLE IF NOT EXISTS durable_links(id INTEGER)")],
+            [change("project_runtime.py", "@@\n+CREATE TABLE IF NOT EXISTS durable_links(id INTEGER)")],
             self.root,
         )
         self.assertFalse(result["ok"])
@@ -74,7 +74,7 @@ class MigrationSafetyGuardTests(unittest.TestCase):
 
     def test_migration_named_script_requires_record(self):
         result = guard.assess(
-            [change("scripts/zcloud_config_migrate.py", "@@\\n+def migrate(data): return data")],
+            [change("scripts/zcloud_config_migrate.py", "@@\n+def migrate(data): return data")],
             self.root,
         )
         self.assertFalse(result["ok"])
@@ -82,7 +82,7 @@ class MigrationSafetyGuardTests(unittest.TestCase):
 
     def test_config_schema_version_change_requires_record(self):
         result = guard.assess(
-            [change("project-contracts.json", '@@\\n-  "schema_version": 1,\\n+  "schema_version": 2,')],
+            [change("project-contracts.json", '@@\n-  "schema_version": 1,\n+  "schema_version": 2,')],
             self.root,
         )
         self.assertFalse(result["ok"])
@@ -90,7 +90,7 @@ class MigrationSafetyGuardTests(unittest.TestCase):
 
     def test_version_registry_change_requires_record(self):
         result = guard.assess(
-            [change("config-schema-versions.json", '@@\\n+{"projects.json": 2}')],
+            [change("config-schema-versions.json", '@@\n+{"projects.json": 2}')],
             self.root,
         )
         self.assertFalse(result["ok"])
@@ -100,8 +100,8 @@ class MigrationSafetyGuardTests(unittest.TestCase):
         record = self.write_record()
         result = guard.assess(
             [
-                change("server.py", "@@\\n+ALTER TABLE runner_events ADD COLUMN trace_id TEXT"),
-                change(record, "@@\\n+# Migration record", status="A"),
+                change("server.py", "@@\n+ALTER TABLE runner_events ADD COLUMN trace_id TEXT"),
+                change(record, "@@\n+# Migration record", status="A"),
             ],
             self.root,
         )
@@ -124,8 +124,8 @@ Run the migration tests and inspect exact readback before promotion.
         )
         result = guard.assess(
             [
-                change("server.py", "@@\\n+DROP TABLE old_state"),
-                change(record, "@@\\n+# Incomplete", status="A"),
+                change("server.py", "@@\n+DROP TABLE old_state"),
+                change(record, "@@\n+# Incomplete", status="A"),
             ],
             self.root,
         )
@@ -141,8 +141,8 @@ Run the migration tests and inspect exact readback before promotion.
         )
         result = guard.assess(
             [
-                change("server.py", "@@\\n+ALTER TABLE state ADD COLUMN x TEXT"),
-                change(record, "@@\\n+# Migration record", status="A"),
+                change("server.py", "@@\n+ALTER TABLE state ADD COLUMN x TEXT"),
+                change(record, "@@\n+# Migration record", status="A"),
             ],
             self.root,
         )
@@ -152,8 +152,8 @@ Run the migration tests and inspect exact readback before promotion.
     def test_docs_and_tests_do_not_create_false_migration_risk(self):
         result = guard.assess(
             [
-                change("docs/runtime-control-plane.md", "@@\\n+ALTER TABLE example only"),
-                change("tests/test_schema.py", "@@\\n+sql = 'CREATE TABLE sample(id)'"),
+                change("docs/runtime-control-plane.md", "@@\n+ALTER TABLE example only"),
+                change("tests/test_schema.py", "@@\n+sql = 'CREATE TABLE sample(id)'"),
             ],
             self.root,
         )
@@ -167,8 +167,8 @@ Run the migration tests and inspect exact readback before promotion.
         record.symlink_to(real)
         result = guard.assess(
             [
-                change("server.py", "@@\\n+ALTER TABLE state ADD COLUMN x TEXT"),
-                change("docs/migrations/20261006-link.md", "@@\\n+# link", status="A"),
+                change("server.py", "@@\n+ALTER TABLE state ADD COLUMN x TEXT"),
+                change("docs/migrations/20261006-link.md", "@@\n+# link", status="A"),
             ],
             self.root,
         )
