@@ -1,4 +1,4 @@
-name: LightUp durable asset policy pack VPS proof
+name: LightUp durable asset policy pack IP-canonicalization compatibility proof
 
 on:
   push:
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  LIGHTUP_EXPECTED_SHA: 75e79eaceaf77df22aa8edcc7ed4b87cf135835a
+  LIGHTUP_EXPECTED_SHA: 4f53932e85c772da823ce4e5ddc72141245e5df8
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/Lightup
-          ref: 75e79eaceaf77df22aa8edcc7ed4b87cf135835a
+          ref: 4f53932e85c772da823ce4e5ddc72141245e5df8
           path: lightup
           persist-credentials: false
 
@@ -51,7 +51,7 @@ jobs:
           PYTHONPATH: src:tests
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "75e79eaceaf77df22aa8edcc7ed4b87cf135835a"
+          test "$(git rev-parse HEAD)" = "4f53932e85c772da823ce4e5ddc72141245e5df8"
           python -m compileall -q src tests
           python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics tests.test_scope_definition_opaque_url_identity -v
           python -m unittest discover -s tests -v
@@ -82,7 +82,7 @@ jobs:
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --prune origin \
-            refs/heads/chatgpt/scope-authorization-durable-asset-policy-pack-20261006:refs/remotes/origin/lightup-durable-asset-contract-pack-proof
+            refs/heads/chatgpt/scope-authorization-durable-asset-policy-pack-ipcanon-compat-20261006:refs/remotes/origin/lightup-durable-asset-contract-pack-proof
           ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-durable-asset-contract-pack-proof^{commit})"
           test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
           SNAPSHOT="${RUNNER_TEMP}/lightup-durable-asset-contract-pack-${GITHUB_RUN_ID}"
@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/lightup-durable-asset-policy-pack-receipt"
+          mkdir -p "${RUNNER_TEMP}/lightup-durable-asset-policy-pack-ipcanon-compat-receipt"
           python - <<'PY'
           import json
           import os
@@ -141,8 +141,8 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issues": [369, 370, 372],
-              "source_branch": "chatgpt/scope-authorization-durable-asset-policy-pack-20261006",
+              "issues": [151, 369, 370, 372],
+              "source_branch": "chatgpt/scope-authorization-durable-asset-policy-pack-ipcanon-compat-20261006",
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
               "host": os.uname().nodename,
@@ -150,7 +150,7 @@ jobs:
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "proof": "dedicated+compile+unit+integration+safety-canaries",
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-durable-asset-policy-pack-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-durable-asset-policy-pack-ipcanon-compat-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -159,8 +159,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-durable-asset-policy-pack-vps-proof
-          path: ${{ runner.temp }}/lightup-durable-asset-policy-pack-receipt/receipt.json
+          name: lightup-durable-asset-policy-pack-ipcanon-compat-proof
+          path: ${{ runner.temp }}/lightup-durable-asset-policy-pack-ipcanon-compat-receipt/receipt.json
           if-no-files-found: error
 
       - name: Cleanup snapshot
