@@ -76,6 +76,7 @@ jobs:
                   "completed": item["completed"],
                   "coverage_complete": item["coverage"]["complete"],
                   "tracking_started_at": item["coverage"]["tracking_started_at"],
+                  "tracking_baseline_present": item["coverage"]["tracking_baseline_present"],
                   "window_fully_tracked": item["coverage"]["window_fully_tracked"],
                   "missing_done_receipts_after_tracking": item["coverage"]["missing_done_receipts_after_tracking"],
               }
@@ -88,6 +89,7 @@ jobs:
               "cloud_completed_24h": payload["projects"]["cloud"]["completed"],
               "cloud_per_day": payload["projects"]["cloud"]["completed_per_day"],
               "tracking_started_at": coverage["tracking_started_at"],
+              "tracking_baseline_present": coverage["tracking_baseline_present"],
               "window_fully_tracked": coverage["window_fully_tracked"],
               "missing_done_receipts_after_tracking": coverage["missing_done_receipts_after_tracking"],
               "portfolio_projects": portfolio_summary,
