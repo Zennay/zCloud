@@ -89,4 +89,10 @@ jobs:
                   )
 
           summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print("ZCLOUD_SELF_HOSTED_TRUST_COUNTS=" + json.dumps(counts, sort_keys=True))
+          print(
+              "ZCLOUD_SELF_HOSTED_TRUST_FINDINGS="
+              + json.dumps(report["finding_counts"], sort_keys=True)
+          )
+          print("ZCLOUD_SELF_HOSTED_TRUST_INVENTORY_GREEN=1")
           PY
