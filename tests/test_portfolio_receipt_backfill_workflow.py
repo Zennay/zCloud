@@ -15,7 +15,7 @@ class PortfolioReceiptBackfillWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("scripts/zcloud_backfill_project_receipt.py", text)
-        for project_id in ("ftmo", "lightup", "raiseai", "supa", "ulab", "zssh"):
+        for project_id in ("ftmo", "lightup", "raiseai", "supa", "ulab", "zssh", "zguard"):
             self.assertIn(project_id, text)
         self.assertNotIn('["cloud"', text)
         self.assertNotIn('["haxlab"', text)
