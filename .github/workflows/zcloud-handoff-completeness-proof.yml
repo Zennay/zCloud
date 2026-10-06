@@ -85,4 +85,9 @@ jobs:
           print("ZCLOUD_HANDOFF_COMPLETENESS_VPS_GREEN=1")
           print("ZCLOUD_HANDOFF_COMPLETENESS_READY=" + ("1" if payload["ready"] else "0"))
           print("ZCLOUD_HANDOFF_COMPLETENESS_COUNTS=" + json.dumps(payload["counts"], sort_keys=True, separators=(",",":")))
+          project_summary=[
+              {"project_id":p["project_id"],"state":p["state"],"missing":p["missing"]}
+              for p in payload["projects"]
+          ]
+          print("ZCLOUD_HANDOFF_COMPLETENESS_PROJECTS=" + json.dumps(project_summary, sort_keys=True, separators=(",",":")))
           PY
