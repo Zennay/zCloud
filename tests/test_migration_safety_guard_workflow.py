@@ -12,6 +12,7 @@ class MigrationSafetyWorkflowTests(unittest.TestCase):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
 
     def test_exact_sha_immutable_checkout_and_read_only_permissions(self):
+        self.assertNotIn("\\${{", self.text)
         self.assertIn("permissions:\n  contents: read", self.text)
         self.assertIn(
             "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
