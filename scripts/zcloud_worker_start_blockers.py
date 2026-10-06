@@ -25,7 +25,7 @@ AUTH_TOKENS = (
     "forbidden",
 )
 BLOCK_PRIORITY = {
-    "intentional_state": 0,
+    "other": 0,
     "browser": 1,
     "auth": 2,
     "resource": 3,
@@ -91,7 +91,7 @@ def classify_worker_start_blockers(status: dict[str, Any]) -> dict[str, Any]:
             blockers: list[dict[str, str]] = []
 
             if desired_state in {"paused", "draining"}:
-                _add(blockers, "intentional_state", "worker_" + desired_state)
+                _add(blockers, "other", "worker_" + desired_state)
             else:
                 if not firefox_active:
                     _add(blockers, "browser", "firefox_runtime_unavailable")
