@@ -36,7 +36,7 @@
     }
   },
   "privacy": {
-    "public_projection_classes": ["safe_structured"],
+    "canonical_projection_classes": ["safe_structured", "internal_key"],
     "restricted_classes": ["internal_key", "restricted_text", "never_export"],
     "never_export_fields": ["target", "title", "tab_id", "error"],
     "free_text_fields": ["target", "title", "reason", "error"]
