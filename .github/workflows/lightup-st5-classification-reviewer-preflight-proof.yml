@@ -37,7 +37,7 @@ jobs:
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --no-tags origin             "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/${LIGHTUP_BRANCH}"
           target_sha="$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${LIGHTUP_BRANCH}^{commit}")"
-          test "${target_sha}" = "${LIGHTUP_SHA"
+          test "${target_sha}" = "${LIGHTUP_SHA}"
 
           tmp_root="$(mktemp -d)"
           trap 'rm -rf "${tmp_root}"' EXIT
