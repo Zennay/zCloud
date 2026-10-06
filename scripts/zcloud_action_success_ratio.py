@@ -13,6 +13,7 @@ from pathlib import Path
 SCHEMA_VERSION = "zcloud-action-success-ratio-v1"
 ACTION_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+COMMAND_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}(?:::[a-z0-9][a-z0-9_-]{0,63})?$")
 MAX_HOURS = 24 * 90
 
 
@@ -61,8 +62,8 @@ def build_report(
         where = "status IN ('completed','failed') AND updated_at>=?"
         args: list[object] = [since]
         if project:
-            where += " AND project_id=?"
-            args.append(project)
+            where += " AND (project_id=? OR project_id LIKE ?)"
+            args.extend((project, project + "::%"))
         rows = conn.execute(
             "SELECT project_id,action,status,updated_at FROM runner_commands "
             f"WHERE {where} ORDER BY id DESC",
@@ -82,7 +83,7 @@ def build_report(
             if not ACTION_RE.fullmatch(action):
                 malformed += 1
                 continue
-            if pid and not PROJECT_RE.fullmatch(pid):
+            if pid and not COMMAND_PROJECT_RE.fullmatch(pid):
                 malformed += 1
                 continue
             bucket = groups.setdefault(action, {"completed": 0, "failed": 0})
