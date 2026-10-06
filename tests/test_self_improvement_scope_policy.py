@@ -55,8 +55,16 @@ class SelfImprovementScopePolicyTests(unittest.TestCase):
     def test_policy_rejects_unknown_kind_or_schema(self):
         with self.assertRaisesRegex(policy.ScopePolicyError, "unsupported proposal kind"):
             policy.evaluate(proposal("architecture_override"))
-        with self.assertRaisesRegex(policy.ScopePolicyError, "unsupported schema_version"):
-            policy.evaluate(proposal(schema_version=2))
+        for bad_schema in (2, True, 1.0, "1"):
+            with self.subTest(schema_version=bad_schema):
+                with self.assertRaisesRegex(policy.ScopePolicyError, "unsupported schema_version"):
+                    policy.evaluate(proposal(schema_version=bad_schema))
+
+    def test_policy_rejects_non_text_identifiers_and_kinds(self):
+        with self.assertRaisesRegex(policy.ScopePolicyError, "proposal_id must be text"):
+            policy.evaluate(proposal(proposal_id=123))
+        with self.assertRaisesRegex(policy.ScopePolicyError, "kind must be text"):
+            policy.evaluate(proposal(kind=123))
 
     def test_summary_and_identifier_are_bounded(self):
         with self.assertRaisesRegex(policy.ScopePolicyError, "summary length out of bounds"):
@@ -107,6 +115,11 @@ class SelfImprovementScopePolicyTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         result = json.loads(completed.stdout)
         self.assertEqual(result["decision"], "HUMAN_APPROVAL_REQUIRED")
+
+    def test_stdin_decoder_is_size_bounded(self):
+        oversized = b"{" + (b"x" * policy.MAX_INPUT_BYTES) + b"}"
+        with self.assertRaisesRegex(policy.ScopePolicyError, "input too large"):
+            policy._decode_input(oversized)
 
     def test_cli_auto_allows_only_backlog_idea(self):
         with tempfile.TemporaryDirectory() as tmp:
