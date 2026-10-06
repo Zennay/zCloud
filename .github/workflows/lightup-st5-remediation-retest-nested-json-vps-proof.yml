@@ -17,16 +17,14 @@ concurrency:
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  JSON_BRANCH: chatgpt/st5-remediation-retest-nested-json-integrity-20261006
-  JSON_EXPECTED_SHA: 0cc34afa486ebf71fd346fa27eeb0369ce6fef07
-  SCHEMA_BRANCH: chatgpt/st5-remediation-retest-nested-schema-integrity-20261006
-  SCHEMA_EXPECTED_SHA: b47a69526fc388fa25a8c094f21a38717877f12c
+  LIGHTUP_BRANCH: chatgpt/st5-remediation-retest-nested-integrity-pack-20261006
+  LIGHTUP_EXPECTED_SHA: c6e28cfbb4a36aec70d0a1c9183736500e36e95f
 
 jobs:
   prove:
-    name: Exact LightUp nested-integrity heads on vps-bb300bba
+    name: Exact LightUp nested-integrity pack on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 40
+    timeout-minutes: 35
 
     steps:
       - name: Checkout zCloud proof harness
@@ -41,82 +39,54 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Snapshot exact LightUp candidates
+      - name: Snapshot exact LightUp candidate
         shell: bash
         run: |
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-nested-integrity-pack-proof"
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse             refs/remotes/origin/lightup-st5-nested-integrity-pack-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
 
-          snapshot_candidate() {
-            local label="$1"
-            local branch="$2"
-            local expected="$3"
-            local remote_ref="refs/remotes/origin/lightup-st5-${label}-proof"
-            local snapshot="${RUNNER_TEMP}/lightup-st5-${label}-${GITHUB_RUN_ID}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-st5-nested-integrity-pack-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
 
-            git -C "${LIGHTUP_REPO}" fetch --prune origin               "refs/heads/${branch}:${remote_ref}"
-            local actual
-            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
-            test "${actual}" = "${expected}"
-
-            rm -rf "${snapshot}"
-            mkdir -p "${snapshot}"
-            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
-
-            echo "${label^^}_SNAPSHOT=${snapshot}" >> "${GITHUB_ENV}"
-            echo "${label^^}_ACTUAL_SHA=${actual}" >> "${GITHUB_ENV}"
-          }
-
-          snapshot_candidate json "${JSON_BRANCH}" "${JSON_EXPECTED_SHA}"
-          snapshot_candidate schema "${SCHEMA_BRANCH}" "${SCHEMA_EXPECTED_SHA}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Python 3.11 exact-head proofs
+      - name: Python 3.11 exact-head proof
         shell: bash
         run: |
           set -euo pipefail
-
-          prove_candidate() {
-            local snapshot="$1"
-            local dedicated="$2"
-            cd "${snapshot}"
-            PYTHONPATH=src:tests python -m compileall -q src tests
-            PYTHONPATH=src:tests python -m unittest -v               "${dedicated}"               test_future_security_remediation_retest_plan_handoff
-            PYTHONPATH=src:tests python -m unittest discover -s tests -v
-            PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
-            PYTHONPATH=src python scripts/check_safety_canaries.py
-          }
-
-          prove_candidate "${JSON_SNAPSHOT}"             test_future_security_remediation_retest_nested_json_integrity
-          prove_candidate "${SCHEMA_SNAPSHOT}"             test_future_security_remediation_retest_nested_schema_integrity
+          cd "${LIGHTUP_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_nested_json_integrity             test_future_security_remediation_retest_nested_schema_integrity             test_future_security_remediation_retest_plan_handoff
+          PYTHONPATH=src:tests python -m unittest discover -s tests -v
+          PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python scripts/check_safety_canaries.py
 
       - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
-      - name: Python 3.14 exact-head proofs
+      - name: Python 3.14 exact-head proof
         shell: bash
         run: |
           set -euo pipefail
-
-          prove_candidate() {
-            local snapshot="$1"
-            local dedicated="$2"
-            cd "${snapshot}"
-            PYTHONPATH=src:tests python -m compileall -q src tests
-            PYTHONPATH=src:tests python -m unittest -v               "${dedicated}"               test_future_security_remediation_retest_plan_handoff
-            PYTHONPATH=src:tests python -m unittest discover -s tests -v
-            PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
-            PYTHONPATH=src python scripts/check_safety_canaries.py
-          }
-
-          prove_candidate "${JSON_SNAPSHOT}"             test_future_security_remediation_retest_nested_json_integrity
-          prove_candidate "${SCHEMA_SNAPSHOT}"             test_future_security_remediation_retest_nested_schema_integrity
+          cd "${LIGHTUP_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_nested_json_integrity             test_future_security_remediation_retest_nested_schema_integrity             test_future_security_remediation_retest_plan_handoff
+          PYTHONPATH=src:tests python -m unittest discover -s tests -v
+          PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python scripts/check_safety_canaries.py
 
       - name: Write exact-head receipt
         if: success()
@@ -132,24 +102,14 @@ jobs:
 
           payload = {
               "project": "LightUp",
+              "issues": [371, 373],
+              "branch": os.environ["LIGHTUP_BRANCH"],
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
               "host": os.uname().nodename,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "python": ["3.11", "3.14"],
-              "proof": "compile+dedicated+parent-handoff+full-unit+integration+safety-canaries",
-              "candidates": [
-                  {
-                      "issue": 371,
-                      "branch": os.environ["JSON_BRANCH"],
-                      "target_sha": os.environ["JSON_ACTUAL_SHA"],
-                      "expected_sha": os.environ["JSON_EXPECTED_SHA"],
-                  },
-                  {
-                      "issue": 373,
-                      "branch": os.environ["SCHEMA_BRANCH"],
-                      "target_sha": os.environ["SCHEMA_ACTUAL_SHA"],
-                      "expected_sha": os.environ["SCHEMA_EXPECTED_SHA"],
-                  },
-              ],
+              "proof": "compile+both-dedicated+parent-handoff+full-unit+integration+safety-canaries",
           }
           path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-retest-nested-integrity-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -160,12 +120,11 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-st5-remediation-retest-nested-integrity-vps-proof
+          name: lightup-st5-remediation-retest-nested-integrity-pack-vps-proof
           path: ${{ runner.temp }}/lightup-st5-remediation-retest-nested-integrity-receipt/receipt.json
           if-no-files-found: error
 
-      - name: Cleanup snapshots
+      - name: Cleanup snapshot
         if: always()
         shell: bash
-        run: |
-          rm -rf "${JSON_SNAPSHOT:-}" "${SCHEMA_SNAPSHOT:-}"
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
