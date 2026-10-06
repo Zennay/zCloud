@@ -28,6 +28,8 @@ class LiveDebugWorkflowTests(unittest.TestCase):
         self.assertIn("uri=True", text)
         self.assertIn('conn.execute("PRAGMA query_only=ON")', text)
         self.assertIn("db_path.is_symlink()", text)
+        self.assertIn("if conn.total_changes != 0:", text)
+        self.assertIn("read-only history.db diagnostic unexpectedly changed SQLite state", text)
         self.assertNotIn('sqlite3.connect(root/"history.db",timeout=4)', text)
         self.assertNotIn("INSERT INTO config_audit", text)
         self.assertNotIn("UPDATE config_audit", text)
