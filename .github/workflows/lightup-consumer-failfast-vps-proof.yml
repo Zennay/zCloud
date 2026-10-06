@@ -1,0 +1,133 @@
+name: LightUp consumer fail-fast VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-consumer-failfast-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-consumer-failfast-vps-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-consumer-failfast-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  LIGHTUP_BRANCH: chatgpt/st5-classification-review-consumer-failfast-ordering-20261006
+  EXPECTED_SHA: 48afd1600fa36852bdee0e727cd0583cfe465153
+
+jobs:
+  prove:
+    name: Consumer fail-fast exact-head proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          remote_ref="refs/remotes/origin/lightup-consumer-failfast-proof"
+          snapshot="${RUNNER_TEMP}/lightup-consumer-failfast-${GITHUB_RUN_ID}"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${LIGHTUP_BRANCH}:${remote_ref}"
+          actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+          test "${actual}" = "${EXPECTED_SHA}"
+          rm -rf "${snapshot}"
+          mkdir -p "${snapshot}"
+          git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+          echo "LIGHTUP_SNAPSHOT=${snapshot}" >> "${GITHUB_ENV}"
+          echo "ACTUAL_SHA=${actual}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove exact head on Python 3.11
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          export PYTHONPATH=src:tests
+          python -m compileall -q src tests
+          python -m unittest -v             test_future_security_classification_review_request_consumer_failfast_ordering
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove exact head on Python 3.14
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          export PYTHONPATH=src:tests
+          python -m compileall -q src tests
+          python -m unittest -v             test_future_security_classification_review_request_consumer_failfast_ordering
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-consumer-failfast-vps-proof.json
+          import json
+          import os
+          import socket
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "LightUp",
+              "result": "success",
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "branch": os.environ["LIGHTUP_BRANCH"],
+              "expected_sha": os.environ["EXPECTED_SHA"],
+              "actual_sha": os.environ["ACTUAL_SHA"],
+              "proof": [
+                  "compile-py311-py314",
+                  "consumer-failfast-regression-py311-py314",
+                  "full-unit-suite-py311-py314",
+                  "real-producer-integration-py311-py314",
+                  "safety-canary-py311",
+              ],
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-consumer-failfast-vps-proof.json
+
+      - name: Upload receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-consumer-failfast-vps-proof-${{ github.run_id }}
+          path: artifacts/lightup-consumer-failfast-vps-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
