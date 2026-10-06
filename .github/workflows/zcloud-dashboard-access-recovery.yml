@@ -1,4 +1,4 @@
-# Emergency API recovery retrigger 2026-10-06T06:01Z: external 8765 refused after prior production-green receipt.
+# Emergency public-bind recovery retrigger 2026-10-06T06:31Z after local service/listener restore.
 name: zCloud dashboard access recovery
 
 # Manual recovery retrigger 2026-10-05T08:48Z: recover the real /api/status dependency, not only static HTML.
