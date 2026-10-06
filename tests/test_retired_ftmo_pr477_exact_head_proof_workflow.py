@@ -14,11 +14,11 @@ class RetiredFtmoPr477ExactHeadProofWorkflowTests(unittest.TestCase):
             "closed FTMO PR477 merge/proof workflow must stay retired",
         )
 
-    def test_terminal_pr477_merge_markers_are_absent_from_active_workflows(self) -> None:
+    def test_terminal_pr477_markers_are_absent_from_active_workflows(self) -> None:
         markers = (
             "FTMO PR477 exact-head telemetry proof",
             "ftmo-pr477-exact-head-proof",
-            "repos/Zennay/Ftmo/pulls/$TARGET_PR/merge",
+            "FTMO_PR477_ZCLOUD_MERGE_GREEN",
             "runtime-evidence/ftmo-pr477-zcloud-proof.json",
         )
         active = "\n".join(
