@@ -5,11 +5,39 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-cpu-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   cpu-snapshot:
+    if: >-
+      github.actor == 'Zennay' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent zCloud VPS runner and exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Host overview
         shell: bash
         run: |
@@ -25,25 +53,29 @@ jobs:
           cat /proc/loadavg
           free -h
           echo
-          echo "=== TOP CPU PROCESSES (ps lifetime avg) ==="
-          ps -eo pid,ppid,user,psr,%cpu,%mem,etime,stat,cmd --sort=-%cpu | head -n 80
+          echo "=== TOP CPU PROCESSES (names only; no argv) ==="
+          ps -eo pid,ppid,user,psr,%cpu,%mem,etime,stat,comm --sort=-%cpu | head -n 80
           echo
           echo "=== INSTANTANEOUS TOP SAMPLE 1 ==="
-          COLUMNS=260 top -b -n1 -o %CPU | head -n 80 || true
+          COLUMNS=200 top -b -n1 -o %CPU | head -n 80 || true
           sleep 2
           echo
           echo "=== INSTANTANEOUS TOP SAMPLE 2 ==="
-          COLUMNS=260 top -b -n1 -o %CPU | head -n 80 || true
+          COLUMNS=200 top -b -n1 -o %CPU | head -n 80 || true
           sleep 2
           echo
           echo "=== INSTANTANEOUS TOP SAMPLE 3 ==="
-          COLUMNS=260 top -b -n1 -o %CPU | head -n 80 || true
+          COLUMNS=200 top -b -n1 -o %CPU | head -n 80 || true
           echo
-          echo "=== PROJECT/WORKER MATCHES ==="
-          ps -ef | grep -Ei 'zcloud|ftmo|haxlab|lightup|raise|supa|firefox|chrom|python|node|runner|actions-runner|playwright|xvfb|openbox' | grep -v grep || true
+          echo "=== PROJECT/WORKER PROCESS-NAME MATCHES ==="
+          ps -eo pid,ppid,user,psr,%cpu,%mem,etime,stat,comm \
+            | grep -Ei 'zcloud|ftmo|haxlab|lightup|raise|supa|firefox|chrom|python|node|runner|xvfb|openbox' \
+            | grep -v grep || true
           echo
           echo "=== RUNNING SYSTEMD SERVICES (selected) ==="
-          systemctl --no-pager --type=service --state=running 2>/dev/null | grep -Ei 'runner|zcloud|ftmo|hax|raise|firefox|xvfb|openbox|docker|containerd' || true
+          systemctl --no-pager --type=service --state=running 2>/dev/null \
+            | grep -Ei 'runner|zcloud|ftmo|hax|raise|firefox|xvfb|openbox|docker|containerd' || true
           echo
           echo "=== CGROUP CPU SNAPSHOT ==="
           systemd-cgtop -b -n1 -d1 2>/dev/null | head -n 100 || true
+          echo "ZCLOUD_VPS_CPU_DIAGNOSTIC_GREEN=1"
