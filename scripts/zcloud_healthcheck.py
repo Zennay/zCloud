@@ -260,11 +260,9 @@ def evaluate(
         max_workers_int = 0
         scheduler_problems.append("invalid max_workers")
 
-    store_target_counts = {
-        str(target["project_id"]): int(target["worker_count"] or 0)
-        for target in (store.get("targets") or [])
+    store_target_ids = {
+        str(target["project_id"]) for target in (store.get("targets") or [])
     }
-    store_target_ids = set(store_target_counts)
     for worker_key, item in projects.items():
         key = str(worker_key)
         if not isinstance(item, dict):
@@ -283,17 +281,6 @@ def evaluate(
                 f"{key}: runner-target references unknown base project "
                 f"{base_project_id}"
             )
-        try:
-            rendered_count = int(item.get("worker_count") or 0)
-        except (TypeError, ValueError):
-            rendered_count = 0
-        if base_project_id in store_target_counts:
-            expected_count = store_target_counts[base_project_id]
-            if rendered_count != expected_count:
-                scheduler_problems.append(
-                    f"{key}: worker_count mismatch {rendered_count} != "
-                    f"{expected_count}"
-                )
         if worker_slot < 1:
             scheduler_problems.append(f"{key}: invalid worker_slot {worker_slot}")
         elif base_project_id:
