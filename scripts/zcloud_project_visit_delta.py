@@ -178,6 +178,8 @@ def build_delta(
         "project_id": project,
         "since": since_iso,
         "change_count": len(changes),
+        "has_changes": bool(changes),
+        "cursor_receipt_id": current.get("id") if current else None,
         "truncated": truncated,
         "baseline": baseline,
         "current": current,
