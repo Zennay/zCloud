@@ -1,3 +1,4 @@
+# recovery retrigger 2026-10-06T14:27Z after HaxLab listener shutdown
 name: Recover HaxLab runner
 
 on:
