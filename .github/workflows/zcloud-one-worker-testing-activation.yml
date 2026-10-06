@@ -1,6 +1,12 @@
 name: zCloud dynamic worker pool activation
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-one-worker-testing-activation.yml"
+      - "tests/test_dynamic_worker_activation_workflow.py"
+    types: [opened, synchronize, reopened]
   workflow_run:
     workflows: ["zCloud VPS deploy"]
     types: [completed]
@@ -10,21 +16,56 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-dynamic-worker-pool-activation
+  group: zcloud-dynamic-worker-pool-activation-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
   cancel-in-progress: true
 
 jobs:
-  activate:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
-    runs-on: self-hosted
-    timeout-minutes: 8
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Check out the deployed revision
-        uses: actions/checkout@v4
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate activation trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_dynamic_worker_activation_workflow
+
+  activate:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check out exact deployed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           clean: true
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Ensure the Firefox runner runtime is live
         shell: bash
@@ -38,7 +79,9 @@ jobs:
           # fail intentionally when the legacy systemd Firefox unit is disabled.
           if pgrep -u "$(id -u)" -f '/snap/firefox/.*/usr/lib/firefox/firefox' >/dev/null; then
             echo "FIREFOX_RUNTIME=existing-standalone"
-            pgrep -af 'firefox|web-ext' || true
+            pids="$(pgrep -u "$(id -u)" -f 'firefox|web-ext' || true)"
+            count="$(printf '%s\n' "$pids" | sed '/^$/d' | wc -l | tr -d ' ')"
+            echo "FIREFOX_PROCESS_COUNT=$count"
             exit 0
           fi
 
@@ -47,7 +90,9 @@ jobs:
           systemctl --user is-active --quiet chatgpt-firefox.service
           systemctl --user --no-pager --full status chatgpt-firefox.service || true
           journalctl --user -u chatgpt-firefox.service -n 30 --no-pager || true
-          pgrep -af 'firefox|web-ext' || true
+          pids="$(pgrep -u "$(id -u)" -f 'firefox|web-ext' || true)"
+          count="$(printf '%s\n' "$pids" | sed '/^$/d' | wc -l | tr -d ' ')"
+          echo "FIREFOX_PROCESS_COUNT=$count"
 
       - name: Honor dashboard-owned dynamic worker pool
         shell: bash
@@ -99,8 +144,8 @@ jobs:
                           and exc.code == 400
                           and "Ongeldige runneractie" in detail
                       ):
-                          raise AllocationChurn(detail[:1000]) from exc
-                      raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
+                          raise AllocationChurn("runner-target-churn") from exc
+                      raise SystemExit(f"{method} {path} failed with HTTP {exc.code}") from exc
                   except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as exc:
                       if attempt + 1 >= attempts:
                           raise SystemExit(f"{method} {path} transport failed after {attempts} attempt(s): {exc}") from exc
@@ -115,15 +160,36 @@ jobs:
               slot = int(item.get("worker_slot") or 1)
               return f"{project}::w{slot}" if project else ""
 
-          def live_worker(status, key):
+          def raw_worker(status, key):
               base = key.split("::w", 1)[0]
               workers = ((status.get("chatgpt_runners") or {}).get(base) or {}).get("workers") or []
-              return next((
-                  worker for worker in workers
-                  if worker.get("worker_id") == key
-                  and worker.get("state") == "live"
-                  and int(worker.get("age_seconds") or 999999) <= 90
-              ), None)
+              return next((worker for worker in workers if worker.get("worker_id") == key), None)
+
+          def live_worker(status, key):
+              worker = raw_worker(status, key)
+              if not worker:
+                  return None
+              if worker.get("state") != "live":
+                  return None
+              if int(worker.get("age_seconds") or 999999) > 90:
+                  return None
+              return worker
+
+          def worker_summary(status, key):
+              worker = raw_worker(status or {}, key)
+              if not worker:
+                  return {"present": False}
+              command = worker.get("command") or {}
+              last_event = worker.get("last_event") or {}
+              return {
+                  "present": True,
+                  "state": str(worker.get("state") or "")[:40],
+                  "age_seconds": int(worker.get("age_seconds") or 0),
+                  "generating": bool(worker.get("generating")),
+                  "last_event": str(last_event.get("event") or "")[:80],
+                  "command_id": int(command.get("id") or 0),
+                  "command_status": str(command.get("status") or "")[:40],
+              }
 
           DISPATCH_EVENTS = {
               "prompt-sent",
@@ -152,12 +218,9 @@ jobs:
               # the API command is still pending. Fail immediately so a broken
               # selector cannot occupy the sole VPS runner for the full recovery loop.
               if event == "send-blocked":
-                  raise SystemExit(
-                      f"worker dispatch blocked for {key}: "
-                      f"{(worker.get('last_event') or {}).get('reason') or 'unknown'}"
-                  )
+                  raise SystemExit(f"worker dispatch blocked for {key}")
               if command_status == "failed":
-                  raise SystemExit(f"worker command failed for {key}: {command}")
+                  raise SystemExit(f"worker command failed for {key}")
               if command_status != "completed":
                   return None
               if not worker.get("generating") and event not in DISPATCH_EVENTS:
@@ -174,7 +237,7 @@ jobs:
                   raise SystemExit(f"allocation exceeds dashboard limit: {len(selected)} > {limit}")
               keys = [worker_key(item) for item in selected]
               if any(not key for key in keys):
-                  raise SystemExit(f"queue allocation contains worker without identity: {selected}")
+                  raise SystemExit("queue allocation contains worker without identity")
               return limit, selected, keys
 
           before = call("GET", "/api/runner-targets")
@@ -182,7 +245,10 @@ jobs:
 
           if limit == 0:
               if selected:
-                  raise SystemExit(f"dynamic workers are off but queue workers remain allocated: {selected}")
+                  raise SystemExit(
+                      f"dynamic workers are off but {len(selected)} queue worker(s) remain allocated"
+                  )
+              print("ZCLOUD_DYNAMIC_WORKER_ACTIVATION_GREEN=disabled")
               print(json.dumps({
                   "ok": True,
                   "mode": "dashboard",
@@ -192,6 +258,7 @@ jobs:
               raise SystemExit(0)
 
           if not selected:
+              print("ZCLOUD_DYNAMIC_WORKER_ACTIVATION_GREEN=idle")
               print(json.dumps({
                   "ok": True,
                   "mode": "dashboard",
@@ -219,11 +286,11 @@ jobs:
                       )
                       continue
                   if not result.get("ok"):
-                      raise SystemExit(f"worker start was not accepted for {key}: {result}")
+                      raise SystemExit(f"worker start was not accepted for {key}")
                   command_id = int(result.get("command_id") or 0)
                   if not command_id:
-                      raise SystemExit(f"worker start did not return command id for {key}: {result}")
-                  starts[key] = result
+                      raise SystemExit(f"worker start did not return command id for {key}")
+                  starts[key] = command_id
                   command_ids[key] = command_id
 
           start_keys(keys)
@@ -285,10 +352,10 @@ jobs:
                       command_ids.pop(key, None)
                       continue
                   if not recovered.get("ok"):
-                      raise SystemExit(f"worker fresh-chat recovery was not accepted for {key}: {recovered}")
+                      raise SystemExit(f"worker fresh-chat recovery was not accepted for {key}")
                   command_ids[key] = int(recovered.get("command_id") or 0)
                   if not command_ids[key]:
-                      raise SystemExit(f"worker fresh-chat recovery did not return command id for {key}: {recovered}")
+                      raise SystemExit(f"worker fresh-chat recovery did not return command id for {key}")
               for _ in range(12):
                   time.sleep(5)
                   final = call("GET", "/api/runner-targets")
@@ -323,18 +390,25 @@ jobs:
               raise SystemExit(f"more active workers than dashboard limit: {active}")
           missing = [key for key in final_keys if not live.get(key)]
           if missing:
-              print("FINAL_RUNNER_TARGETS=" + json.dumps(final, ensure_ascii=False, sort_keys=True), flush=True)
-              print("FINAL_STATUS=" + json.dumps(status, ensure_ascii=False, sort_keys=True), flush=True)
+              print("FINAL_ALLOCATION=" + json.dumps({
+                  "worker_limit": final_limit,
+                  "selected_workers": final_keys,
+                  "active_workers": active,
+              }, ensure_ascii=False, sort_keys=True), flush=True)
+              print("FINAL_LIVE_SUMMARY=" + json.dumps({
+                  key: worker_summary(status, key) for key in final_keys
+              }, ensure_ascii=False, sort_keys=True), flush=True)
               raise SystemExit(f"no live Firefox heartbeat observed for current allocation: {missing}")
 
+          print("ZCLOUD_DYNAMIC_WORKER_ACTIVATION_GREEN=active")
           print(json.dumps({
               "ok": True,
               "mode": "dashboard",
               "worker_limit": final_limit,
               "selected_workers": final_keys,
               "active_workers": active,
-              "live_workers": {key: live.get(key) for key in final_keys},
+              "live_workers": {key: worker_summary(status, key) for key in final_keys},
               "dispatch_cooldown_seconds": (final.get("global_allocation") or {}).get("dispatch_cooldown_seconds"),
-              "start_commands": starts,
+              "start_command_ids": starts,
           }, ensure_ascii=False, sort_keys=True))
           PY
