@@ -54,6 +54,7 @@ jobs:
           python3 scripts/zcloud_throughput_tracking_baseline.py             --db "$LIVE_DB"             --projects "$LIVE_PROJECTS"             --started-at "2026-10-06T10:29:27.005194+00:00"             --production-sha "55aef90793cbc6236a37d90f623c48f569be96e3"             --source "github-actions:zcloud-vps-deploy:37448947435"             > /tmp/zcloud-throughput-baseline-plan.json
           python3 - <<'PY'
           import json
+          from datetime import datetime
           from pathlib import Path
 
           payload=json.loads(Path("/tmp/zcloud-throughput-baseline-plan.json").read_text())
@@ -65,6 +66,7 @@ jobs:
           assert receipt["workflow_run_id"] == "37448947435"
           assert receipt["commit_sha"] == "55aef90793cbc6236a37d90f623c48f569be96e3"
           assert receipt["observed_at"] == "2026-10-06T10:29:27.005194+00:00"
+          assert datetime.fromisoformat(payload["started_at"]) >= datetime.fromisoformat(receipt["observed_at"])
           print("ZCLOUD_THROUGHPUT_BASELINE_PLAN=" + json.dumps({
               "table_exists": payload["table_exists"],
               "project_count": payload["project_count"],
