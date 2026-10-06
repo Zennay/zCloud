@@ -230,7 +230,7 @@ def _assess(row: sqlite3.Row | None, now: datetime) -> dict:
         "state": state,
         "receipt_id": int(row["id"]),
         "observed_at": observed,
-        "missing": sorted(missing),
+        "missing": missing,
     }
 
 
