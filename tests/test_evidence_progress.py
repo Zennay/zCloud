@@ -165,6 +165,19 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertNotIn("enhancements.quality_for('haxlab')", server)
         self.assertNotIn("enhancements.quality_for('ftmo')", server)
 
+    def test_vps_proof_checks_out_exact_pr_head_before_identity_gate(self):
+        workflow = Path(
+            ".github/workflows/zcloud-project-telemetry-adapters-proof.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+            workflow,
+        )
+        self.assertIn(
+            'test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"',
+            workflow,
+        )
+
     def test_renderer_is_project_agnostic(self):
         js = Path("public/enhancements.js").read_text(encoding="utf-8")
         start = js.index("function evidencePanel")
