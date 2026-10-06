@@ -45,6 +45,44 @@ jobs:
           set -Eeuo pipefail
           python3 -m unittest tests/test_zssh_cloudflare_capability_probe_trust.py
 
+  prove:
+    name: Prove trust contract on permanent VPS
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      ZCLOUD_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.ZCLOUD_EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Enforce exact head and permanent runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+
+      - name: Run focused capability-probe regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m unittest \
+            tests/test_zssh_cloudflare_capability_probe.py \
+            tests/test_zssh_cloudflare_capability_probe_trust.py
+
   probe:
     name: Probe persistent VPS Cloudflare auth for zSSH
     if: >-
