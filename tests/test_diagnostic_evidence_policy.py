@@ -115,6 +115,8 @@ jobs:
             set(output),
         )
         self.assertNotIn("command", output)
+        self.assertEqual(64, len(output["signature"]))
+        self.assertNotIn("Failure evidence", output["signature"])
 
 
 if __name__ == "__main__":
