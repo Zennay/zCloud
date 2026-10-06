@@ -22,7 +22,10 @@ def _parse_utc(value: str) -> str:
     parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("started_at must include a timezone")
-    return parsed.astimezone(timezone.utc).isoformat()
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed > datetime.now(timezone.utc):
+        raise ValueError("started_at must not be in the future")
+    return parsed.isoformat()
 
 
 def _validate_regular_file(path: Path, label: str) -> Path:
@@ -65,10 +68,8 @@ def _table_exists(connection: sqlite3.Connection) -> bool:
 
 
 def _validate_existing_table(connection: sqlite3.Connection) -> None:
-    columns = {
-        str(row["name"])
-        for row in connection.execute(f"PRAGMA table_info({TABLE})").fetchall()
-    }
+    table_info = connection.execute(f"PRAGMA table_info({TABLE})").fetchall()
+    columns = {str(row["name"]) for row in table_info}
     required = {
         "project_id",
         "started_at",
@@ -81,6 +82,12 @@ def _validate_existing_table(connection: sqlite3.Connection) -> None:
         raise ValueError(
             f"{TABLE} missing required columns: " + ",".join(missing)
         )
+    project_column = next(
+        (row for row in table_info if str(row["name"]) == "project_id"),
+        None,
+    )
+    if not project_column or int(project_column["pk"] or 0) != 1:
+        raise ValueError(f"{TABLE}.project_id must be the primary key")
 
 
 def _existing_rows(connection: sqlite3.Connection) -> dict[str, dict]:
