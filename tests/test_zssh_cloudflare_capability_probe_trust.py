@@ -65,6 +65,7 @@ class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
         text = self.text
         proof = text[text.index("\n  prove:\n") : text.index("\n  probe:\n")]
         self.assertIn("name: Prove trust contract on permanent VPS", proof)
+        self.assertIn("needs: validate", proof)
         self.assertIn("github.event_name == 'pull_request'", proof)
         self.assertIn("github.actor == 'Zennay'", proof)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", proof)
