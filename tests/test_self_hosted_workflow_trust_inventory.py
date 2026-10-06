@@ -186,6 +186,9 @@ jobs:
         self.assertNotIn("runs-on: self-hosted", text)
         self.assertNotIn("sudo ", text)
         self.assertNotIn("systemctl ", text)
+        self.assertIn("ZCLOUD_SELF_HOSTED_TRUST_COUNTS=", text)
+        self.assertIn("ZCLOUD_SELF_HOSTED_TRUST_FINDINGS=", text)
+        self.assertIn("ZCLOUD_SELF_HOSTED_TRUST_INVENTORY_GREEN=1", text)
 
 
 if __name__ == "__main__":
