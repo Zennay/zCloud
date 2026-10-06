@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -69,14 +70,21 @@ def evaluate(payload: object) -> dict[str, Any]:
     required = {"schema_version", "proposal_id", "kind", "summary"}
     if not required.issubset(payload):
         raise ScopePolicyError("proposal is incomplete")
-    if payload["schema_version"] != 1:
+    schema_version = payload["schema_version"]
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 1:
         raise ScopePolicyError("unsupported schema_version")
 
-    proposal_id = str(payload["proposal_id"] or "").strip().lower()
+    raw_proposal_id = payload["proposal_id"]
+    if not isinstance(raw_proposal_id, str):
+        raise ScopePolicyError("proposal_id must be text")
+    proposal_id = raw_proposal_id.strip().lower()
     if not PROPOSAL_ID_RE.fullmatch(proposal_id):
         raise ScopePolicyError("invalid proposal_id")
 
-    kind = str(payload["kind"] or "").strip().lower()
+    raw_kind = payload["kind"]
+    if not isinstance(raw_kind, str):
+        raise ScopePolicyError("kind must be text")
+    kind = raw_kind.strip().lower()
     if kind not in ALLOWED_KINDS:
         raise ScopePolicyError("unsupported proposal kind")
 
@@ -101,9 +109,18 @@ def evaluate(payload: object) -> dict[str, Any]:
     }
 
 
+def _decode_input(raw: bytes) -> object:
+    if len(raw) > MAX_INPUT_BYTES:
+        raise ScopePolicyError("input too large")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ScopePolicyError("invalid input json") from exc
+
+
 def _load_input(path: Path | None) -> object:
     if path is None:
-        return json.load(__import__("sys").stdin)
+        return _decode_input(sys.stdin.buffer.read(MAX_INPUT_BYTES + 1))
 
     if path.is_symlink() or not path.is_file():
         raise ScopePolicyError("input must be a regular non-symlink file")
@@ -111,12 +128,7 @@ def _load_input(path: Path | None) -> object:
         raw = path.read_bytes()
     except OSError as exc:
         raise ScopePolicyError("input unreadable") from exc
-    if len(raw) > MAX_INPUT_BYTES:
-        raise ScopePolicyError("input too large")
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as exc:
-        raise ScopePolicyError("invalid input json") from exc
+    return _decode_input(raw)
 
 
 def main(argv: list[str] | None = None) -> int:
