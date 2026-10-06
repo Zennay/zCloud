@@ -13,8 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "zcloud_action_outcome_report.py"
 SPEC = importlib.util.spec_from_file_location("zcloud_action_outcome_report", SCRIPT)
-REPORT = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
+REPORT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REPORT)
 
 
@@ -69,6 +69,7 @@ class ActionOutcomeReportTests(unittest.TestCase):
         self.assertEqual(1, actions["start"]["pending"])
         self.assertEqual(0.0, actions["push"]["success_rate_pct"])
         self.assertEqual(100.0, actions["push"]["failure_rate_pct"])
+        self.assertTrue(report["data_quality"]["timestamp_coverage_complete"])
 
     def test_pending_and_unknown_statuses_do_not_pollute_terminal_ratio(self):
         self.add("pause", "completed")
@@ -90,6 +91,26 @@ class ActionOutcomeReportTests(unittest.TestCase):
 
         report = REPORT.build_report(self.db, 24)
 
+        self.assertEqual(1, report["totals"]["commands"])
+        self.assertEqual(1, report["totals"]["completed"])
+        self.assertEqual(0, report["totals"]["failed"])
+
+    def test_unparseable_timestamps_are_disclosed_not_silently_counted(self):
+        self.add("start", "completed")
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                """
+                INSERT INTO runner_commands(
+                    project_id,action,status,created_at,updated_at,result
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                ("cloud", "start", "failed", "not-a-time", "", "opaque"),
+            )
+
+        report = REPORT.build_report(self.db, 24)
+
+        self.assertFalse(report["data_quality"]["timestamp_coverage_complete"])
+        self.assertEqual(1, report["data_quality"]["unparseable_timestamp_rows"])
         self.assertEqual(1, report["totals"]["commands"])
         self.assertEqual(1, report["totals"]["completed"])
         self.assertEqual(0, report["totals"]["failed"])
