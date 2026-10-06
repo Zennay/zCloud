@@ -1,3 +1,4 @@
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,18 @@ class RestartWorkersPendingReconcileTests(unittest.TestCase):
         self.assertIn("os.kill(new_pid, 0)", text)
         self.assertIn("except (ProcessLookupError, TypeError):", text)
 
+
+
+    def test_embedded_restart_python_compiles(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        marker = "python3 - <<'PY'\n"
+        self.assertEqual(1, text.count(marker))
+        script = text.split(marker, 1)[1].split("\n          PY", 1)[0]
+        compile(
+            textwrap.dedent(script),
+            "zcloud-restart-workers-embedded.py",
+            "exec",
+        )
 
     def test_proof_is_permanent_vps_bound_and_read_only(self):
         text = PROOF.read_text(encoding="utf-8")
