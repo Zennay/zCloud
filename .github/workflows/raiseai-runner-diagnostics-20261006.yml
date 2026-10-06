@@ -1,0 +1,73 @@
+name: Diagnose RaiseAI runner scheduling state
+
+on:
+  push:
+    branches:
+      - ops/raiseai-current-runner-recovery-20261006-1554
+    paths:
+      - ".github/workflows/raiseai-runner-diagnostics-20261006.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      RAISE_REPO: Zennay/RaiseAI
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+    steps:
+      - name: Capture secret-safe runner scheduling evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          echo "== GitHub runner registration =="
+          if gh api "repos/$RAISE_REPO/actions/runners"             --jq '.runners[] | {id,name,status,busy,labels:[.labels[].name]}' ; then
+            echo "RAISEAI_RUNNER_API_OK=1"
+          else
+            echo "RAISEAI_RUNNER_API_OK=0"
+          fi
+
+          echo "== Service identity =="
+          systemctl show "$RAISE_SERVICE"             -p ActiveState -p SubState -p MainPID -p ControlGroup -p User -p ExecMainStartTimestamp             --no-pager
+          systemctl cat "$RAISE_SERVICE" --no-pager |
+            grep -E '^(\[Service\]|User=|WorkingDirectory=|ExecStart=)' || true
+
+          cg="$(systemctl show "$RAISE_SERVICE" -p ControlGroup --value || true)"
+          root_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value || true)"
+          echo "RAISEAI_CGROUP=$cg"
+          echo "RAISEAI_MAIN_PID=$root_pid"
+
+          echo "== Processes inside service cgroup =="
+          found_worker=0
+          if [[ -n "$cg" && "$cg" != "/" ]]; then
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cgroup" || continue
+              grep -Fq "$cg" "$proc/cgroup" || continue
+              pid="${proc#/proc/}"
+              test -r "$proc/cmdline" || continue
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              kind=other
+              [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]] && kind=listener
+              [[ "$cmdline" == *"Runner.Worker"* ]] && { kind=worker; found_worker=1; }
+              ps -p "$pid" -o pid=,ppid=,lstart=,etime=,stat=,%cpu=,%mem=,comm= |
+                sed "s/^/RAISEAI_PROC kind=$kind /"
+            done
+          fi
+          echo "RAISEAI_FOUND_WORKER=$found_worker"
+
+          echo "== GitHub workflow truth =="
+          gh api "repos/$RAISE_REPO/actions/runs?status=in_progress&per_page=100"             --jq '[.workflow_runs[] | {id,name,event,head_sha,head_branch,status,run_started_at}]'
+          gh api "repos/$RAISE_REPO/actions/runs?status=queued&per_page=100"             --jq '[.workflow_runs[] | select(.name=="Raise Watch app CI") | {id,name,head_sha,head_branch,status,created_at}]'
+
+          echo "== Recent service signals =="
+          journalctl -u "$RAISE_SERVICE" --since "-20 minutes" --no-pager 2>/dev/null |
+            grep -Ei 'listening for jobs|running job|job .*completed|session|connect|disconnect|error|failed|runner update|worker' |
+            tail -n 120 |
+            sed -E 's#(https?://[^ ?&]+)[?][^ ]*#\1?[redacted]#g' || true
+
+          echo "RAISEAI_RUNNER_DIAGNOSTICS_COMPLETE=1"
