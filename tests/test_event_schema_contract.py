@@ -185,6 +185,8 @@ class EventSchemaValidatorTests(unittest.TestCase):
 
         after_stat = self.db.stat()
         self.assertTrue(report["ok"], report)
+        self.assertTrue(report["storage"]["query_only"])
+        self.assertEqual(0, report["storage"]["connection_total_changes"])
         self.assertEqual(before_bytes, self.db.read_bytes())
         self.assertEqual(before_stat.st_size, after_stat.st_size)
         self.assertEqual(before_stat.st_mtime_ns, after_stat.st_mtime_ns)
