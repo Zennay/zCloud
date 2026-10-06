@@ -21,7 +21,7 @@ class PortfolioOverviewTests(unittest.TestCase):
             {
                 "chatgpt_runners": {
                     "cloud": {"active_worker_count": 2, "desired_worker_count": 2},
-                    "ftmo": {"active_worker_count": 0, "desired_worker_count": 1},
+                    "ftmo": {"active_worker_count": 0, "desired_worker_count": 1, "attention_worker_count": 0},
                 }
             },
             {
@@ -80,6 +80,17 @@ class PortfolioOverviewTests(unittest.TestCase):
         encoded = json.dumps(self.fixture(), sort_keys=True)
         for secret in ("SECRET_Q1", "SECRET_Q2", "SECRET_A", "SECRET_TITLE", "SECRET_BLOCKER", "SECRET_ACTION", "SECRET_DETAIL"):
             self.assertNotIn(secret, encoded)
+
+    def test_runner_attention_requests_attention(self):
+        result = overview.build_overview(
+            {"chatgpt_runners": {"cloud": {"active_worker_count": 1, "desired_worker_count": 1, "attention_worker_count": 1}}},
+            {"items": []},
+            {"items": []},
+            {"cloud": {}},
+        )
+        item = result["projects"][0]
+        self.assertEqual(1, item["attention_workers"])
+        self.assertTrue(item["needs_attention"])
 
     def test_failed_queue_item_requests_attention_without_claiming_blocked(self):
         result = overview.build_overview(
