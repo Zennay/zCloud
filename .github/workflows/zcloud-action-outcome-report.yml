@@ -36,8 +36,7 @@ jobs:
           db=/home/ubuntu/zennay-cloud/history.db
           test -f "$db"
           test ! -L "$db"
-          before_size="$(stat -c '%s' "$db")"
-          before_mtime="$(stat -c '%Y' "$db")"
+          before_fingerprint="$(stat -c '%s|%y' "$db")"
 
           report="$(python3 scripts/zcloud_action_outcome_report.py "$db" --hours 24)"
           REPORT_JSON="$report" python3 - <<'PY'
@@ -56,8 +55,6 @@ jobs:
           )
           PY
 
-          after_size="$(stat -c '%s' "$db")"
-          after_mtime="$(stat -c '%Y' "$db")"
-          test "$before_size" = "$after_size"
-          test "$before_mtime" = "$after_mtime"
-          echo "ZCLOUD_ACTION_OUTCOME_DB_READ_ONLY_GREEN size=$after_size mtime=$after_mtime"
+          after_fingerprint="$(stat -c '%s|%y' "$db")"
+          test "$before_fingerprint" = "$after_fingerprint"
+          echo "ZCLOUD_ACTION_OUTCOME_DB_READ_ONLY_GREEN fingerprint=$after_fingerprint"
