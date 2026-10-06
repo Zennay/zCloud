@@ -1,3 +1,4 @@
+# retrigger 2026-10-06T06:18Z after workflow registration
 name: zCloud hosted emergency queue sweep
 
 on:
