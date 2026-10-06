@@ -2,6 +2,12 @@ name: Inspect live worker prompts
 # retrigger: inspect live assignment metadata after canary 2026-10-04
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-live-worker-prompts.yml"
+      - "tests/test_live_prompt_diagnostic_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
@@ -11,21 +17,65 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-live-prompt-diagnostic-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate live-prompt diagnostic privacy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_live_prompt_diagnostic_workflow
+
   inspect:
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - name: Print live runner prompts
+      - name: Check out exact diagnostic source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Print live runner prompt metadata
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, urllib.request
+          import hashlib, json, urllib.request
           with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=8) as r:
               payload=json.load(r)
           rows=[]
           for key,cfg in (payload.get("projects") or {}).items():
+              prompt=str(cfg.get("prompt") or "")
               rows.append({
                   "key": key,
                   "base": cfg.get("base_project_id"),
@@ -37,9 +87,10 @@ jobs:
                   "desired_state": cfg.get("desired_state"),
                   "queue_id": (cfg.get("queue_item") or {}).get("queue_id"),
                   "queue_slot": (cfg.get("queue_item") or {}).get("worker_slot"),
-                  "prompt": cfg.get("prompt"),
+                  "prompt_length": len(prompt),
+                  "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest() if prompt else None,
               })
-          print("LIVE_PROMPTS_JSON="+json.dumps(rows,ensure_ascii=False))
+          print("LIVE_PROMPT_METADATA_JSON="+json.dumps(rows,ensure_ascii=False,sort_keys=True))
           PY
 
       - name: Prove live server drift is only the known prompt function
