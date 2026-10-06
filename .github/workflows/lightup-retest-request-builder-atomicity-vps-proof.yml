@@ -20,6 +20,8 @@ env:
   ATOMICITY_SHA: ca4a35c25c2e2b2dcb6f688051ee9d1b26282d48
   SNAPSHOT_BRANCH: chatgpt/st5-retest-request-snapshot-isolation-20261006
   SNAPSHOT_SHA: 8b188cbd66bc11ae7d38ebd9dd3cdb35c1dd8a9f
+  HANDOFF_BRANCH: chatgpt/st5-retest-request-handoff-20261006
+  HANDOFF_SHA: 9af750e83146f50fd625c303544845e54e226a40
 
 jobs:
   hosted:
@@ -50,12 +52,22 @@ jobs:
           persist-credentials: false
           clean: true
 
+      - name: Checkout handoff exact head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/Lightup
+          ref: ${{ env.HANDOFF_BRANCH }}
+          path: handoff
+          persist-credentials: false
+          clean: true
+
       - name: Guard exact heads
         shell: bash
         run: |
           set -euo pipefail
           test "$(git -C atomicity rev-parse HEAD)" = "${ATOMICITY_SHA}"
           test "$(git -C snapshot rev-parse HEAD)" = "${SNAPSHOT_SHA}"
+          test "$(git -C handoff rev-parse HEAD)" = "${HANDOFF_SHA}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -83,6 +95,7 @@ jobs:
 
           prove_tree atomicity test_future_security_retest_request_builder_input_atomicity
           prove_tree snapshot test_future_security_retest_request_snapshot_isolation
+          prove_tree handoff test_future_security_retest_request_handoff
 
   prove:
     name: Retest request integrity exact-head proof
@@ -145,6 +158,7 @@ jobs:
 
           prove_head atomicity "${ATOMICITY_BRANCH}" "${ATOMICITY_SHA}"             test_future_security_retest_request_builder_input_atomicity
           prove_head snapshot "${SNAPSHOT_BRANCH}" "${SNAPSHOT_SHA}"             test_future_security_retest_request_snapshot_isolation
+          prove_head handoff "${HANDOFF_BRANCH}" "${HANDOFF_SHA}"             test_future_security_retest_request_handoff
 
       - name: Setup Python 3.14
         uses: actions/setup-python@v5
@@ -186,6 +200,7 @@ jobs:
 
           prove_head atomicity "${ATOMICITY_BRANCH}" "${ATOMICITY_SHA}"             test_future_security_retest_request_builder_input_atomicity
           prove_head snapshot "${SNAPSHOT_BRANCH}" "${SNAPSHOT_SHA}"             test_future_security_retest_request_snapshot_isolation
+          prove_head handoff "${HANDOFF_BRANCH}" "${HANDOFF_SHA}"             test_future_security_retest_request_handoff
 
       - name: Write exact-head receipt
         if: success()
@@ -216,6 +231,11 @@ jobs:
                       "sha": os.environ["SNAPSHOT_SHA"],
                       "issue": 357,
                   },
+                  "strict_persisted_handoff": {
+                      "branch": os.environ["HANDOFF_BRANCH"],
+                      "sha": os.environ["HANDOFF_SHA"],
+                      "issue": 359,
+                  },
               },
               "proof": [
                   "exact-sha-binding",
@@ -244,4 +264,4 @@ jobs:
       - name: Cleanup residual snapshots
         if: always()
         shell: bash
-        run: rm -rf "${RUNNER_TEMP}"/lightup-{atomicity,snapshot}-py{311,314}-${GITHUB_RUN_ID}
+        run: rm -rf "${RUNNER_TEMP}"/lightup-{atomicity,snapshot,handoff}-py{311,314}-${GITHUB_RUN_ID}
