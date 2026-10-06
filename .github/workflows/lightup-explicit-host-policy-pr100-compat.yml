@@ -37,10 +37,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${LIGHTUP_PR100_SHA}"
-          git fetch origin             refs/heads/chatgpt/scope-authorization-explicit-host-policy-non-url-20261006:refs/remotes/origin/lightup-367
+          git fetch origin \
+            refs/heads/chatgpt/scope-authorization-explicit-host-policy-non-url-20261006:refs/remotes/origin/lightup-367
           test "$(git rev-parse refs/remotes/origin/lightup-367^{commit})" = "${LIGHTUP_367_SHA}"
-          git show refs/remotes/origin/lightup-367:tests/test_scope_authorization_explicit_host_policy_identity.py             > tests/test_scope_authorization_explicit_host_policy_identity.py
-          test "$(git diff --name-only)" = "tests/test_scope_authorization_explicit_host_policy_identity.py"
+          git show refs/remotes/origin/lightup-367:tests/test_scope_authorization_explicit_host_policy_identity.py \
+            > tests/test_scope_authorization_explicit_host_policy_identity.py
+          test "$(git status --porcelain=v1)" = "?? tests/test_scope_authorization_explicit_host_policy_identity.py"
 
       - name: Setup Python
         uses: actions/setup-python@v5
