@@ -48,12 +48,18 @@ class Readiness:
 
 
 def is_deploy_ops_pr(pr: dict[str, Any]) -> bool:
-    text = " ".join(
-        str(pr.get(key) or "")
-        for key in ("title", "body")
-    )
+    title = str(pr.get("title") or "")
+    body = str(pr.get("body") or "")
     head = str((pr.get("head") or {}).get("ref") or "")
-    return bool(DEPLOY_OPS_MARKER.search(text) or DEPLOY_BRANCH.search(head))
+    # Body matches are deliberately limited to the opening scope declaration.
+    # Later coordination sections often mention deploy-ops only to say that a
+    # control-plane PR does not overlap it; those references must not opt in.
+    declared_scope = body[:500]
+    return bool(
+        DEPLOY_OPS_MARKER.search(title)
+        or DEPLOY_BRANCH.search(head)
+        or DEPLOY_OPS_MARKER.search(declared_scope)
+    )
 
 
 def latest_exact_head_regression(
@@ -230,6 +236,8 @@ def render_markdown(rows: list[Readiness], repo: str, base: str) -> str:
         "# zCloud deploy-ops integration readiness",
         "",
         f"Repository: `{repo}` · base: `{base}` · deploy-ops PRs: **{len(rows)}**",
+        "",
+        "> Technical read-only readiness only. **ready never authorizes merge or deploy**; serialized ownership and current handoff gates still apply.",
         "",
     ]
     if counts:
