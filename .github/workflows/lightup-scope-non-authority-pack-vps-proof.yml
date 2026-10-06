@@ -1,6 +1,10 @@
 name: LightUp scope non-authority pack exact-head VPS proof
 
 on:
+  push:
+    branches: [ops/lightup-scope-non-authority-pack-vps-proof-20261006]
+    paths:
+      - .github/workflows/lightup-scope-non-authority-pack-vps-proof.yml
   pull_request:
     branches: [main]
     paths:
@@ -54,6 +58,7 @@ jobs:
           python scripts/check_safety_canaries.py
 
   prove:
+    if: github.event_name == 'pull_request'
     name: Exact pack on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
