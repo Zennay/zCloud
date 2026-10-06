@@ -2,7 +2,6 @@ import copy
 import json
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -80,6 +79,34 @@ class IntensityPolicyTests(unittest.TestCase):
         self.assertFalse(high["guardrails"]["slider_may_override_memory_guard"])
         self.assertFalse(high["guardrails"]["slider_may_preempt_protected_capacity"])
         self.assertEqual(original, CONTRACTS)
+
+    def test_missing_project_worker_cap_uses_canonical_default(self):
+        contracts = copy.deepcopy(CONTRACTS)
+        contracts["defaults"]["ai_worker_cap"] = 3
+        del contracts["projects"]["supa"]["ai_worker_cap"]
+        policy = policy_for("supa", 50, contracts=contracts)
+        self.assertEqual(3, policy["guardrails"]["ai_worker_cap"])
+
+    def test_unknown_pool_and_malformed_safety_fields_fail_closed(self):
+        contracts = copy.deepcopy(CONTRACTS)
+        contracts["projects"]["ftmo"]["compute"]["pool"] = "mystery"
+        with self.assertRaisesRegex(PolicyError, "compute_pool_unknown"):
+            policy_for("ftmo", 50, contracts=contracts)
+
+        contracts = copy.deepcopy(CONTRACTS)
+        contracts["projects"]["ftmo"]["compute"]["protected"] = "false"
+        with self.assertRaisesRegex(PolicyError, "protected_invalid"):
+            policy_for("ftmo", 50, contracts=contracts)
+
+        contracts = copy.deepcopy(CONTRACTS)
+        contracts["projects"]["ftmo"]["compute"]["cpu_soft_cores"] = True
+        with self.assertRaisesRegex(PolicyError, "cpu_soft_cores_invalid"):
+            policy_for("ftmo", 50, contracts=contracts)
+
+        contracts = copy.deepcopy(CONTRACTS)
+        contracts["projects"]["ftmo"]["ai_worker_cap"] = True
+        with self.assertRaisesRegex(PolicyError, "ai_worker_cap_invalid"):
+            policy_for("ftmo", 50, contracts=contracts)
 
     def test_policy_is_monotonic_for_queue_weight_and_cpu_target(self):
         previous_weight = -1
