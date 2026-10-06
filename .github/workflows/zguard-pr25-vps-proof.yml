@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/zGuard
-          ref: f4c4f5d495fb5f411f96e658e5a50a9995b119a5
+          ref: 8db8a60bfc12f8dd5c35679aac94abfcae288895
           path: zguard-source
           persist-credentials: false
 
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           cd zguard-source
-          test "$(git rev-parse HEAD)" = "f4c4f5d495fb5f411f96e658e5a50a9995b119a5"
+          test "$(git rev-parse HEAD)" = "8db8a60bfc12f8dd5c35679aac94abfcae288895"
           node tests/smoke.test.js
           bash zbrowse/scripts/validate.sh
           node tests/zbrowse.repository-hygiene.test.js
