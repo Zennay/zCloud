@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "tests/test_zssh_governance_runner_priority_contract.py"
+      - "scripts/zssh_governance_queue_priority_plan.py"
       - ".github/workflows/zssh-governance-runner-priority-contract.yml"
       - ".github/workflows/zssh-governance-runner-priority.yml"
 
