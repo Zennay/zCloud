@@ -1,0 +1,66 @@
+name: Diagnose RaiseAI runner lifecycle
+
+on:
+  push:
+    branches:
+      - ops/raiseai-current-runner-recovery-20261006-1554
+    paths:
+      - ".github/workflows/raiseai-runner-lifecycle-diagnostics-20261006.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+      RAISE_ROOT: /home/ubuntu/actions-runner-raiseai
+    steps:
+      - name: Inspect non-secret runner lifecycle configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          echo "== systemd lifecycle =="
+          systemctl show "$RAISE_SERVICE"             -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus             -p Restart -p RestartUSec -p NRestarts -p MainPID --no-pager
+
+          echo "== service directives =="
+          systemctl cat "$RAISE_SERVICE" --no-pager |
+            grep -E '^(\[Service\]|User=|WorkingDirectory=|ExecStart=|ExecStop=|Restart=|RestartSec=|KillMode=|KillSignal=|TimeoutStopSec=|SuccessExitStatus=)' || true
+
+          echo "== runner metadata =="
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("/home/ubuntu/actions-runner-raiseai/.runner")
+          if not p.is_file():
+              print("RAISEAI_RUNNER_METADATA=missing")
+          else:
+              data=json.loads(p.read_text())
+              safe={}
+              for key in (
+                  "agentId","agentName","poolId","poolName","workFolder",
+                  "ephemeral","disableUpdate","serverUrl","gitHubUrl"
+              ):
+                  if key in data:
+                      safe[key]=data[key]
+              print("RAISEAI_RUNNER_METADATA="+json.dumps(safe,sort_keys=True))
+              print("RAISEAI_RUNNER_METADATA_KEYS="+json.dumps(sorted(data),sort_keys=True))
+          PY
+
+          echo "== runsvc lifecycle logic =="
+          grep -nE 'Runner.Listener|startuptype|RET=|retry|exit|sleep' "$RAISE_ROOT/runsvc.sh" || true
+
+          echo "== latest listener diagnostic signals =="
+          latest="$(ls -1t "$RAISE_ROOT"/_diag/Runner_*.log 2>/dev/null | head -n 1 || true)"
+          echo "RAISEAI_LATEST_RUNNER_LOG=${latest##*/}"
+          if [[ -n "$latest" ]]; then
+            grep -Ei 'listening for jobs|running job|run once|runonce|once|ephemeral|session|cancel|shutdown|exit|message.*job|job.*message|error|exception' "$latest" |
+              tail -n 160 |
+              sed -E 's#(https?://[^ ?&]+)[?][^ ]*#\1?[redacted]#g' || true
+          fi
+
+          echo "RAISEAI_LIFECYCLE_DIAGNOSTICS_COMPLETE=1"
