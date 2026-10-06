@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 CHILD = textwrap.dedent(
-    r"""
+    r'''
     import json
     import sys
     from pathlib import Path
@@ -138,7 +138,7 @@ CHILD = textwrap.dedent(
         },
     }
     print(json.dumps(payload, sort_keys=True))
-    """
+    '''
 )
 
 
