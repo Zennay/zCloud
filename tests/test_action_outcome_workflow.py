@@ -32,7 +32,12 @@ class ActionOutcomeWorkflowSafetyTests(unittest.TestCase):
 
     def test_live_proof_is_read_only_and_bounded(self):
         self.assertIn("timeout-minutes: 5", self.text)
-        self.assertIn("python3 -m unittest tests.test_action_outcome_report -v", self.text)
+        self.assertIn(
+            "python3 -m unittest tests.test_action_outcome_report "
+            "tests.test_action_outcome_workflow -v",
+            self.text,
+        )
+        self.assertIn('"tests/test_action_outcome_workflow.py"', self.text)
         self.assertIn("zcloud_action_outcome_report.py", self.text)
         self.assertIn("stat -c '%s|%y'", self.text)
         for forbidden in (
