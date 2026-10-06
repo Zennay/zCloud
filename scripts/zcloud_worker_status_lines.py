@@ -89,6 +89,8 @@ def build_lines(payload: object) -> dict:
             execution_lane = worker.get("execution_lane")
             if not lane and isinstance(execution_lane, dict):
                 lane = _text(execution_lane.get("lane_id"), max_len=80)
+            if not lane:
+                malformed += 1
             state = _text(worker.get("state"), max_len=32)
             if state not in ALLOWED_STATES:
                 malformed += 1
