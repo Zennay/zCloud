@@ -187,7 +187,7 @@ def sqlite_snapshot(db_path: Path, *, quick_check: bool = False) -> dict[str, An
             slots = [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT slot,project_id,worker_slot,queue_id FROM ai_global_slots ORDER BY slot"
+                    "SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot"
                 ).fetchall()
             ]
             workers = [
