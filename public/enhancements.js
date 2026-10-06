@@ -27,7 +27,7 @@
     var sourceBits=[];
     if(p.milestone_revision)sourceBits.push('Checkpoint '+String(p.milestone_revision));
     if(p.progress_basis)sourceBits.push(String(p.progress_basis));
-    ['latest','current','best'].forEach(function(k){var x=cmp[k];if(x&&x.source)sourceBits.push((k==='latest'?'Nieuwste':k==='current'?'Huidig':'Beste')+': '+String(x.source))});
+    ['latest','current','best'].forEach(function(k){var x=cmp[k];if(x&&x.source){var stamp=x.observed_at?' @ '+String(x.observed_at):'';sourceBits.push((k==='latest'?'Nieuwste':k==='current'?'Huidig':'Beste')+': '+String(x.source)+stamp)}});
     var comparison=slots?'<div class="evidence-comparison">'+slots+'</div>':'<div class="evidence-empty">No reliable latest/current/best evidence for this project yet.</div>';
     return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Evidence-backed progress</h2><div class="panel-subtitle">Checkpoint progress, change and current bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Change ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Current bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Sources and technical details</summary><p>'+esc(sourceBits.join(' · ')||'No source metadata available')+'</p></details></div>';
   }
