@@ -1,3 +1,4 @@
+# temporary generic VPS scheduling for HaxLab listener recovery 2026-10-06T14:30Z
 # recovery retrigger 2026-10-06T14:27Z after HaxLab listener shutdown
 name: Recover HaxLab runner
 
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   recover:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Recover HaxLab Actions listener
