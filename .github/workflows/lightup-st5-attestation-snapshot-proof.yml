@@ -1,0 +1,55 @@
+name: LightUp ST5 attestation snapshot proof
+
+on:
+  push:
+    branches:
+      - "ops/lightup-st5-attestation-snapshot-proof-20261006"
+    paths:
+      - ".github/workflows/lightup-st5-attestation-snapshot-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-st5-attestation-snapshot-proof
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Verify exact LightUp attestation snapshot candidate
+        shell: bash
+        env:
+          LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+          LIGHTUP_BRANCH: chatgpt/st5-evidence-sufficiency-attestation-snapshot-isolation-20261006
+          LIGHTUP_SHA: a05af39ecc8b88d07b8559ec3089654175b5367b
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --no-tags origin             "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/${LIGHTUP_BRANCH}"
+          target_sha="$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${LIGHTUP_BRANCH}^{commit}")"
+          test "${target_sha}" = "${LIGHTUP_SHA}"
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "${tmp_root}"' EXIT
+          snapshot="${tmp_root}/lightup"
+          mkdir -p "${snapshot}"
+          git -C "${LIGHTUP_REPO}" archive "${target_sha}" | tar -x -C "${snapshot}"
+
+          cd "${snapshot}"
+          export PYTHONPATH=src:tests
+          python3 -m compileall -q src tests
+          python3 -m unittest discover -s tests             -p 'test_future_security_evidence_sufficiency_attestation_snapshot_isolation.py' -v
+          python3 -m unittest discover -s tests             -p 'test_future_security_evidence_sufficiency_attestation_handoff.py' -v
+          python3 -m unittest discover -s tests/integration -v
+
+          printf 'LIGHTUP_ST5_ATTESTATION_SNAPSHOT_PROOF branch=%s target_sha=%s host=%s\n'             "${LIGHTUP_BRANCH}" "${target_sha}" "$(hostname)"
