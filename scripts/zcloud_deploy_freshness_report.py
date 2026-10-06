@@ -70,6 +70,19 @@ def _sha(value: object, label: str) -> str:
     return normalized
 
 
+def _timestamp(value: object, label: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or len(normalized) > 80:
+        raise DeployFreshnessError(f"{label} must be a bounded ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DeployFreshnessError(f"{label} must be a valid ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise DeployFreshnessError(f"{label} must include timezone information")
+    return normalized
+
+
 def _git(
     repo: Path,
     *args: str,
@@ -159,7 +172,11 @@ def load_lkg(state: Path) -> dict:
     manifest = _regular_json(manifest_path)
     if str(manifest.get("snapshot_id") or "") != snapshot_id:
         raise DeployFreshnessError("last-known-good manifest snapshot mismatch")
-    if int(manifest.get("format_version") or 0) != 1:
+    try:
+        format_version = int(manifest.get("format_version") or 0)
+    except (TypeError, ValueError) as exc:
+        raise DeployFreshnessError("invalid last-known-good manifest format") from exc
+    if format_version != 1:
         raise DeployFreshnessError("unsupported last-known-good manifest format")
 
     git = manifest.get("git")
@@ -173,9 +190,13 @@ def load_lkg(state: Path) -> dict:
             "last-known-good manifest lacks POSTDEPLOY_GREEN evidence"
         )
 
+    updated_at = _timestamp(
+        pointer.get("updated_at"),
+        "last-known-good updated_at",
+    )
     return {
         "snapshot_id": snapshot_id,
-        "updated_at": str(pointer.get("updated_at") or ""),
+        "updated_at": updated_at,
         "deployed_sha": deployed_sha,
     }
 
