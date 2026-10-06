@@ -285,6 +285,22 @@ def _comparison_point(label, value, unit="", note="", source=None, observed_at=N
         point["observed_at"] = str(observed_at)
     return point
 
+
+def _metric_point(label, value, unit="", note="", source=None, observed_at=None):
+    point = _comparison_point(
+        label,
+        value,
+        unit=unit,
+        note=note,
+        source=source,
+        observed_at=observed_at,
+        validated=False,
+    )
+    if point:
+        point.pop("validated", None)
+    return point
+
+
 def _comparison_view(latest=None, current=None, best=None):
     return {
         "latest": latest,
@@ -296,11 +312,12 @@ def _comparison_view(latest=None, current=None, best=None):
 def _hax_quality():
     current_path = Path("/var/lib/haxlab/derived/champions/elite-player/current.json")
     live_path = Path("/var/lib/haxlab/derived/champions/elite-player/live.json")
+    fallback_metrics_path = Path("/var/lib/haxlab/derived/training/elite-player-champion-candidate/pipeline-summary.json")
     current = _json(current_path, sudo=True) or {}
     live = _json(live_path, sudo=True) or {}
-    metrics = _json(current.get("metrics_path", ""), sudo=True) if current.get("metrics_path") else None
-    if not metrics:
-        metrics = _json("/var/lib/haxlab/derived/training/elite-player-champion-candidate/pipeline-summary.json") or {}
+    metrics_source = current.get("metrics_path") or str(fallback_metrics_path)
+    metrics = _json(metrics_source, sudo=True) if current.get("metrics_path") else _json(fallback_metrics_path)
+    metrics = metrics or {}
     holdout = _find_metrics_dict(metrics) or {}
     direction = holdout.get("direction_accuracy")
     joint = holdout.get("joint_accuracy")
@@ -309,20 +326,25 @@ def _hax_quality():
     version = live.get("version_id") or current.get("version_id")
     items = []
     if direction is not None:
-        items.append({"label": "Direction accuracy", "value": round(float(direction) * 100, 1), "unit": "%"})
+        items.append(_metric_point("Direction accuracy", round(float(direction) * 100, 1), unit="%", source=metrics_source))
     if joint is not None:
-        items.append({"label": "Joint action accuracy", "value": round(float(joint) * 100, 1), "unit": "%"})
+        items.append(_metric_point("Joint action accuracy", round(float(joint) * 100, 1), unit="%", source=metrics_source))
     if kick_f1 is not None:
-        items.append({"label": "Kick F1", "value": round(float(kick_f1) * 100, 1), "unit": "%"})
-    items.append({"label": "Live champion", "value": "Healthy" if live_healthy else "Not healthy", "unit": ""})
+        items.append(_metric_point("Kick F1", round(float(kick_f1) * 100, 1), unit="%", source=metrics_source))
+    items.append(_metric_point(
+        "Live champion",
+        "Healthy" if live_healthy else "Not healthy",
+        source=str(live_path),
+    ))
     headline = None
     if joint is not None:
-        headline = {
-            "label": "Player imitation",
-            "value": round(float(joint) * 100, 1),
-            "unit": "%",
-            "note": "Frozen-holdout joint action accuracy; geen win-rate.",
-        }
+        headline = _metric_point(
+            "Player imitation",
+            round(float(joint) * 100, 1),
+            unit="%",
+            note="Frozen-holdout joint action accuracy; geen win-rate.",
+            source=metrics_source,
+        )
     latest_version = current.get("version_id") or version
     live_version = live.get("version_id")
     current_point = _comparison_point(
@@ -344,7 +366,7 @@ def _hax_quality():
             "Nieuwste candidate",
             latest_version,
             note=("Frozen-holdout joint accuracy %.1f%%" % (float(joint) * 100)) if joint is not None else "Nieuwste offline candidate",
-            source=current.get("metrics_path") or str(current_path),
+            source=metrics_source,
             validated=joint is not None,
         ),
         current=current_point,
@@ -482,11 +504,23 @@ def _ftmo_quality():
         note = "Generation %s development-only · %s trades" % (gen, trades or 0)
         if wr is not None:
             note += " · %.1f%% WR" % (float(wr) * 100)
-        headline = {"label": "Current dev candidate", "value": pips, "unit": " pips", "note": note}
+        candidate_source = str(trial_path)
+        headline = _metric_point(
+            "Current dev candidate",
+            pips,
+            unit=" pips",
+            note=note,
+            source=candidate_source,
+        )
         items.extend([
-            {"label": "1.5× cost PnL", "value": stressed, "unit": " pips"},
-            {"label": "Dev win rate", "value": round(float(wr) * 100, 1) if wr is not None else None, "unit": "%"},
-            {"label": "Closed trades", "value": trades, "unit": ""},
+            _metric_point("1.5× cost PnL", stressed, unit=" pips", source=candidate_source),
+            _metric_point(
+                "Dev win rate",
+                round(float(wr) * 100, 1) if wr is not None else None,
+                unit="%",
+                source=candidate_source,
+            ),
+            _metric_point("Closed trades", trades, source=candidate_source),
         ])
         meta["candidate_hash"] = trial.get("trial_hash")
         meta["candidate_generation"] = gen
@@ -501,10 +535,21 @@ def _ftmo_quality():
     if rel:
         gen, release, released, holdout = rel
         hres = holdout.get("result") or holdout
+        release_source = (
+            holdout.get("_zcloud_source_path")
+            or release.get("_zcloud_source_path")
+            or release.get("paper_release_hash")
+            or released.get("trial_hash")
+        )
         items.extend([
-            {"label": "Validated holdout PnL", "value": _pips(hres.get("total_pnl")), "unit": " pips"},
-            {"label": "Validated 1.5× cost", "value": _pips(hres.get("cost_1_5x_pnl")), "unit": " pips"},
-            {"label": "Validated win rate", "value": round(float(hres.get("win_rate")) * 100, 1) if hres.get("win_rate") is not None else None, "unit": "%"},
+            _metric_point("Validated holdout PnL", _pips(hres.get("total_pnl")), unit=" pips", source=release_source),
+            _metric_point("Validated 1.5× cost", _pips(hres.get("cost_1_5x_pnl")), unit=" pips", source=release_source),
+            _metric_point(
+                "Validated win rate",
+                round(float(hres.get("win_rate")) * 100, 1) if hres.get("win_rate") is not None else None,
+                unit="%",
+                source=release_source,
+            ),
         ])
         meta["release_hash"] = release.get("paper_release_hash")
         meta["release_generation"] = gen
@@ -513,7 +558,7 @@ def _ftmo_quality():
             "Huidige gevalideerde release",
             ("Generation %s" % gen),
             note=("%s pips · frozen holdout" % validated_pips) if validated_pips is not None else "Frozen-holdout release",
-            source=holdout.get("_zcloud_source_path") or release.get("_zcloud_source_path") or release.get("paper_release_hash") or released.get("trial_hash"),
+            source=release_source,
             validated=True,
         )
     return {
@@ -535,7 +580,7 @@ def _ulab_quality():
     if not project:
         return _empty_quality_snapshot()
 
-    source = project.get("scorecard_url") or str(PROJECTS_FILE)
+    source = str(PROJECTS_FILE)
     observed_at = _source_observed_at(PROJECTS_FILE) or _now()
     milestones = [row for row in (project.get("milestones") or []) if isinstance(row, dict)]
     progress = project.get("progress_override")
