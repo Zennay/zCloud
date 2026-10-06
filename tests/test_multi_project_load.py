@@ -249,13 +249,25 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
         elapsed = time.monotonic() - started
 
         self._check_snapshot(errors, metrics, lock)
+
+        settle_counts = []
+        for _ in range(4):
+            selected = server.portfolio_queue_allocate()
+            server._persist_global_worker_allocation(server.global_worker_allocation())
+            settle_counts.append(len(selected))
+            if len(selected) == 8:
+                break
         final = server.portfolio_queue_allocation()
 
         self.assertEqual([], errors)
         self.assertEqual(8, metrics["max_workers"])
         self.assertGreaterEqual(metrics["samples"], 121)
         self.assertGreaterEqual(len(metrics["projects"]), 6)
-        self.assertEqual(8, len(final["workers"]))
+        self.assertEqual(
+            8,
+            len(final["workers"]),
+            f"allocator did not reconverge to 8 slots after bounded settle ticks: {settle_counts}",
+        )
         self.assertEqual(
             self.initial_runner_worker_rows,
             self._runner_worker_row_count(),
