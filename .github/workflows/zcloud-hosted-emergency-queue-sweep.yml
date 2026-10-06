@@ -1,0 +1,174 @@
+name: zCloud hosted emergency queue sweep
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-hosted-emergency-queue-sweep.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  statuses: write
+
+concurrency:
+  group: zcloud-hosted-emergency-queue-sweep
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Sweep stale self-hosted blockers and publish evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          repo = os.environ["REPO"]
+          token = os.environ["GH_TOKEN"]
+          current_run = int(os.environ["RUN_ID"])
+          now = datetime.now(timezone.utc)
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-hosted-emergency-queue-sweep/1",
+          }
+
+          protected_fragments = (
+              "zcloud-dashboard-access-recovery",
+              "zcloud-restart-workers",
+              "push-all-workers-now",
+              "zcloud-self-hosted-queue-watchdog",
+              "zcloud-hosted-emergency-queue-sweep",
+          )
+
+          def request(path, method="GET", payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  "https://api.github.com" + path,
+                  data=data,
+                  method=method,
+                  headers=headers,
+              )
+              with urllib.request.urlopen(req, timeout=25) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw else {}
+
+          def list_runs(status):
+              return (
+                  request(f"/repos/{repo}/actions/runs?status={status}&per_page=100")
+                  .get("workflow_runs")
+                  or []
+              )
+
+          cancelled = []
+          protected = []
+          retained = []
+          candidates = []
+
+          for status in ("in_progress", "queued"):
+              for run in list_runs(status):
+                  run_id = int(run["id"])
+                  if run_id == current_run:
+                      continue
+                  path = str(run.get("path") or "")
+                  name = str(run.get("name") or "")
+                  haystack = (path + " " + name).lower()
+                  if any(fragment in haystack for fragment in protected_fragments):
+                      protected.append({"id": run_id, "status": status, "name": name, "path": path})
+                      continue
+                  created = datetime.fromisoformat(str(run["created_at"]).replace("Z", "+00:00"))
+                  age_s = int((now - created).total_seconds())
+                  if age_s < 480:
+                      retained.append({"id": run_id, "status": status, "age_s": age_s, "name": name})
+                      continue
+                  jobs = (
+                      request(f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100")
+                      .get("jobs")
+                      or []
+                  )
+                  self_hosted = [
+                      job for job in jobs
+                      if "self-hosted" in {str(x).lower() for x in (job.get("labels") or [])}
+                      and str(job.get("status") or "") in {"queued", "in_progress"}
+                  ]
+                  if not self_hosted:
+                      continue
+                  candidates.append({
+                      "id": run_id,
+                      "status": status,
+                      "age_s": age_s,
+                      "name": name,
+                      "path": path,
+                      "jobs": [
+                          {"id": j.get("id"), "name": j.get("name"), "status": j.get("status"), "labels": j.get("labels")}
+                          for j in self_hosted
+                      ],
+                  })
+
+          for item in candidates:
+              try:
+                  request(f"/repos/{repo}/actions/runs/{item['id']}/cancel", method="POST")
+                  cancelled.append(item)
+              except urllib.error.HTTPError as exc:
+                  if exc.code not in (409, 422):
+                      raise
+                  item = dict(item)
+                  item["cancel_http"] = exc.code
+                  retained.append(item)
+
+          runner_probe = {"available": False}
+          try:
+              runners = request(f"/repos/{repo}/actions/runners?per_page=100").get("runners") or []
+              runner_probe = {
+                  "available": True,
+                  "runners": [
+                      {
+                          "id": r.get("id"),
+                          "name": r.get("name"),
+                          "status": r.get("status"),
+                          "busy": r.get("busy"),
+                          "labels": [x.get("name") for x in (r.get("labels") or [])],
+                      }
+                      for r in runners
+                  ],
+              }
+          except urllib.error.HTTPError as exc:
+              runner_probe = {"available": False, "http": exc.code}
+
+          evidence = {
+              "ok": True,
+              "cancelled_count": len(cancelled),
+              "cancelled": cancelled,
+              "protected_recovery_runs": protected,
+              "retained_recent_or_nonselfhosted": retained,
+              "runner_probe": runner_probe,
+          }
+          print("ZCLOUD_HOSTED_QUEUE_SWEEP=" + json.dumps(evidence, sort_keys=True))
+
+          description = (
+              f"sweep green; cancelled={len(cancelled)} protected={len(protected)}"
+          )[:140]
+          payload = {
+              "state": "success",
+              "context": "zcloud/hosted-queue-sweep",
+              "description": description,
+              "target_url": f"{os.environ['SERVER_URL']}/{repo}/actions/runs/{current_run}",
+          }
+          request(f"/repos/{repo}/statuses/{os.environ['SHA']}", method="POST", payload=payload)
+          PY
