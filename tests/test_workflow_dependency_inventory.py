@@ -7,6 +7,9 @@ from pathlib import Path
 from scripts.zcloud_workflow_dependency_inventory import inventory
 
 
+WORKFLOW = Path(".github/workflows/zcloud-workflow-dependency-inventory.yml")
+
+
 class WorkflowDependencyInventoryTests(unittest.TestCase):
     def _write(self, root: Path, name: str, content: str) -> Path:
         path = root / name
@@ -107,6 +110,25 @@ jobs:
 
             with self.assertRaisesRegex(ValueError, "must not be a symlink"):
                 inventory(root)
+
+    def test_inventory_workflow_is_read_only_and_immutable(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
+            text,
+        )
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', text)
+        self.assertIn(
+            "python3 -m unittest tests.test_workflow_dependency_inventory", text
+        )
+        self.assertIn(
+            "python3 scripts/zcloud_workflow_dependency_inventory.py --json", text
+        )
+        self.assertNotIn("runs-on: self-hosted", text)
+        self.assertNotIn("sudo ", text)
+        self.assertNotIn("systemctl", text)
 
 
 if __name__ == "__main__":
