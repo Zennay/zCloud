@@ -38,6 +38,28 @@ class ProjectThroughputReportTests(unittest.TestCase):
                 created_at TEXT NOT NULL
             )"""
         )
+        connection.execute(
+            """CREATE TABLE portfolio_queue(
+                queue_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        for project_id in ("cloud", "ftmo"):
+            connection.execute(
+                """INSERT INTO project_state_receipts(
+                    project_id,ci_status,source,observed_at,evidence_json,created_at
+                ) VALUES(?,?,?,?,?,?)""",
+                (
+                    project_id,
+                    "in_progress",
+                    "portfolio_queue:tracking-" + project_id,
+                    "2026-10-05T09:00:00+00:00",
+                    json.dumps({"queue_id": "tracking-" + project_id, "result": "CONTINUE"}),
+                    "2026-10-05T09:00:00+00:00",
+                ),
+            )
         connection.commit()
         connection.close()
 
@@ -233,6 +255,70 @@ class ProjectThroughputReportTests(unittest.TestCase):
         self.assertEqual(1, report["projects"]["cloud"]["completed"])
         self.assertEqual(1, report["projects"]["ftmo"]["completed"])
 
+    def test_coverage_is_incomplete_when_tracking_starts_inside_window(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            "DELETE FROM project_state_receipts WHERE project_id='cloud'"
+        )
+        connection.execute(
+            """INSERT INTO project_state_receipts(
+                project_id,ci_status,source,observed_at,evidence_json,created_at
+            ) VALUES(?,?,?,?,?,?)""",
+            (
+                "cloud",
+                "in_progress",
+                "portfolio_queue:late-tracking",
+                "2026-10-06T09:00:00+00:00",
+                json.dumps({"queue_id": "late-tracking", "result": "CONTINUE"}),
+                "2026-10-06T09:00:00+00:00",
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            projects=["cloud"],
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        coverage = report["projects"]["cloud"]["coverage"]
+        self.assertFalse(report["coverage_complete"])
+        self.assertFalse(coverage["complete"])
+        self.assertFalse(coverage["window_fully_tracked"])
+        self.assertEqual(
+            "2026-10-06T09:00:00+00:00",
+            coverage["tracking_started_at"],
+        )
+
+    def test_done_queue_item_after_tracking_without_receipt_is_fail_visible(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            """INSERT INTO portfolio_queue(queue_id,project_id,status,created_at)
+               VALUES(?,?,?,?)""",
+            (
+                "missing-receipt",
+                "cloud",
+                "done",
+                "2026-10-05T12:00:00+00:00",
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            projects=["cloud"],
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        coverage = report["projects"]["cloud"]["coverage"]
+        self.assertFalse(report["coverage_complete"])
+        self.assertEqual(1, coverage["missing_done_receipts_after_tracking"])
+        self.assertEqual(["missing-receipt"], coverage["missing_done_queue_ids"])
+
     def test_malformed_receipt_is_visible_and_not_counted(self):
         connection = sqlite3.connect(self.db)
         connection.execute(
@@ -315,6 +401,14 @@ class ProjectThroughputReportTests(unittest.TestCase):
         broken = Path(self.tmp.name) / "broken.db"
         connection = sqlite3.connect(broken)
         connection.execute("CREATE TABLE project_state_receipts(id INTEGER PRIMARY KEY)")
+        connection.execute(
+            """CREATE TABLE portfolio_queue(
+                queue_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
         connection.commit()
         connection.close()
         with self.assertRaisesRegex(ValueError, "missing required columns"):
