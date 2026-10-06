@@ -8,7 +8,14 @@ on:
       - debug/worker-continuity-20261006
     paths:
       - "scripts/zcloud_worker_continuity_debug.py"
+      - "scripts/zcloud_firefox_supervisor.py"
+      - "deploy/zcloud-firefox-supervisor.service"
+      - "deploy/zcloud-firefox-supervisor.timer"
       - "tests/test_worker_continuity_debug.py"
+      - "tests/test_firefox_supervisor.py"
+      - "public/zcloud-worker.user.js"
+      - "firefox-extension/background.js"
+      - "tests/test_violentmonkey_runner.py"
       - ".github/workflows/zcloud-worker-continuity-debug.yml"
 
 permissions:
@@ -16,7 +23,7 @@ permissions:
 
 concurrency:
   group: zcloud-worker-continuity-debug
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   launch:
@@ -33,8 +40,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/zcloud_worker_continuity_debug.py
-          python3 -m unittest tests.test_worker_continuity_debug
+          python3 -m py_compile scripts/zcloud_worker_continuity_debug.py scripts/zcloud_firefox_supervisor.py
+          python3 -m unittest \
+            tests.test_worker_continuity_debug \
+            tests.test_firefox_supervisor \
+            tests.test_violentmonkey_runner
+          node --check public/zcloud-worker.user.js
+          node --check firefox-extension/background.js
+
+      - name: Install fast Firefox supervisor
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n install -m 0755 scripts/zcloud_firefox_supervisor.py /usr/local/sbin/zcloud-firefox-supervisor
+          sudo -n install -m 0644 deploy/zcloud-firefox-supervisor.service /etc/systemd/system/zcloud-firefox-supervisor.service
+          sudo -n install -m 0644 deploy/zcloud-firefox-supervisor.timer /etc/systemd/system/zcloud-firefox-supervisor.timer
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable --now zcloud-firefox-supervisor.timer
+          sudo -n systemctl start zcloud-firefox-supervisor.service
+          sudo -n systemctl is-active --quiet zcloud-firefox-supervisor.timer
+          sudo -n journalctl -u zcloud-firefox-supervisor.service -n 8 --no-pager
 
       - name: Install and launch bounded two-hour monitor
         shell: bash
