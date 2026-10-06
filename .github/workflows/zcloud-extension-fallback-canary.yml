@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-browser-consumer-repair-${{ github.event_name }}-${{ github.ref }}
+  group: zcloud-browser-consumer-repair-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
   cancel-in-progress: false
 
 jobs:
@@ -201,7 +201,7 @@ jobs:
               with sqlite3.connect(db_uri,uri=True,timeout=5) as con:
                   con.row_factory=sqlite3.Row
                   rows=con.execute(
-                      "SELECT ts,event,project_id,worker_slot,reason,error "
+                      "SELECT ts,event,project_id,worker_slot "
                       "FROM runner_events WHERE project_id='cloud' "
                       "ORDER BY id DESC LIMIT 20"
                   ).fetchall()
@@ -313,7 +313,7 @@ jobs:
           echo "EXTENSION_FALLBACK_PERSISTENT_GREEN=1"
 
       - name: Roll back browser consumer on failure
-        if: failure()
+        if: failure() && steps.snapshot.outcome == 'success'
         shell: bash
         env:
           BACKUP: ${{ steps.snapshot.outputs.path }}
