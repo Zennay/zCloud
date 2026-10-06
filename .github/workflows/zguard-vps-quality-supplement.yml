@@ -47,6 +47,9 @@ jobs:
             "popup:9e7c2d76fd2b973db421b5a2a4d8728128e28801"
             "hygiene:3e5a7db1f5e63077dac4cf3c11a261e2d4908864"
             "docs:21816e232cb8d07b48de09f1472471c285dc2ded"
+            "manifest:47dc81da54d57993ee3658ac5a71710d9191df6b"
+            "config:202cac88644d00e466eecc5cf9ad4026e5ec2553"
+            "proxy:78f7abd0319f3b50e6f7f35f88409e342047cb45"
           )
 
           tmp_root="$(mktemp -d)"
@@ -98,6 +101,15 @@ jobs:
                   fi
                   ;;
                 docs)
+                  ;;
+                manifest)
+                  node tests/zguard.manifest-integrity.test.js
+                  ;;
+                config)
+                  node tests/zbrowse.config-values.test.mjs
+                  ;;
+                proxy)
+                  node tests/zbrowse.request-ip.test.mjs
                   ;;
                 *)
                   echo "unknown validation mode: ${mode}" >&2
