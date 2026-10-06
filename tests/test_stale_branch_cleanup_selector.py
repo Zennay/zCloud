@@ -57,6 +57,8 @@ class StaleBranchSelectorTests(unittest.TestCase):
             selector.select([record(open_prs=False)], now=NOW)
         with self.assertRaises(selector.InputError):
             selector.select([{**record(), "delete": True}], now=NOW)
+        with self.assertRaises(selector.InputError):
+            selector.select({"branches": [record()], "force": True}, now=NOW)
 
     def test_rejects_future_timestamp(self):
         with self.assertRaises(selector.InputError):
