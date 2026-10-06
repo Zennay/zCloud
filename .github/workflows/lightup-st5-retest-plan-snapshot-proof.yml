@@ -121,3 +121,37 @@ jobs:
             "src/lightup/future_security_remediation_retest_plan.py" \
             "test_future_remediation_evidence_bundle.py"
 
+          verify_full_suite() {
+            local branch="$1"
+            local expected_sha="$2"
+
+            git -C "${LIGHTUP_REPO}" fetch --no-tags origin \
+              "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+            test "$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${branch}^{commit}")" = "${expected_sha}"
+
+            local tmp_root snapshot
+            tmp_root="$(mktemp -d)"
+            snapshot="${tmp_root}/lightup"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${expected_sha}" | tar -x -C "${snapshot}"
+
+            (
+              cd "${snapshot}"
+              export PYTHONPATH=src:tests
+              python3 -m compileall -q src tests
+              python3 -m unittest discover -s tests -p 'test_*.py' -v
+            )
+
+            rm -rf "${tmp_root}"
+            printf 'LIGHTUP_FULL_SUITE_PROOF branch=%s target_sha=%s host=%s\n' \
+              "${branch}" "${expected_sha}" "$(hostname)"
+          }
+
+          verify_full_suite \
+            "chatgpt/st5-remediation-retest-plan-direct-construction-20261006" \
+            "cf2725755487071fe72ee28318e5a83f8979fee6"
+
+          verify_full_suite \
+            "chatgpt/st4-security-delta-direct-construction-20261006" \
+            "baa39ce561201c6f8be27f66c718581f5de7e78a"
+
