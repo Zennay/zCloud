@@ -1,0 +1,156 @@
+name: Recover RaiseAI Actions listener for PR101
+
+on:
+  push:
+    branches:
+      - ops/raiseai-pr101-runner-recovery-20261006
+    paths:
+      - ".github/workflows/raiseai-pr101-runner-recovery-20261006.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: raiseai-pr101-runner-recovery-20261006
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    env:
+      RAISE_REPO: Zennay/RaiseAI
+      TARGET_PR: "101"
+      TARGET_HEAD: 2e20306727c37802f3e43425bfddd24de044b709
+      TARGET_RUN: "37447519997"
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+    steps:
+      - name: Verify recovery scope and protected gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" != "vps-bb300bba"
+
+          pr="$(gh api "repos/$RAISE_REPO/pulls/$TARGET_PR")"
+          test "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])' <<<"$pr")" = "open"
+          test "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head"]["sha"])' <<<"$pr")" = "$TARGET_HEAD"
+
+          run="$(gh api "repos/$RAISE_REPO/actions/runs/$TARGET_RUN")"
+          test "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])' <<<"$run")" = "$TARGET_HEAD"
+          test "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' <<<"$run")" = "Raise Watch app CI"
+          echo "RAISEAI_PR101_RECOVERY_SCOPE_GREEN=1"
+          echo "RECOVERY_EXECUTION_RUNNER=${RUNNER_NAME:-unknown}"
+
+      - name: Recover only idle or disconnected RaiseAI listener
+        id: recover
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          before="$(gh api "repos/$RAISE_REPO/actions/runs?status=queued&per_page=100")"
+          python3 - <<'PY' <<<"$before" >"$RUNNER_TEMP/raiseai-queued-before.txt"
+          import json,sys
+          payload=json.load(sys.stdin)
+          for run in payload.get("workflow_runs") or []:
+              if run.get("name") == "Raise Watch app CI":
+                  print(run["id"])
+          PY
+          queued_before="$(wc -l < "$RUNNER_TEMP/raiseai-queued-before.txt" | tr -d ' ')"
+
+          pre_state="$(systemctl is-active "$RAISE_SERVICE" || true)"
+          pre_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value 2>/dev/null || true)"
+          control_group="$(systemctl show "$RAISE_SERVICE" -p ControlGroup --value 2>/dev/null || true)"
+          listener_before=0
+          worker_before=0
+
+          if [[ "$pre_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pre_pid/cmdline"; then
+            cmd="$(tr '\0' ' ' < "/proc/$pre_pid/cmdline" 2>/dev/null || true)"
+            [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]] && listener_before=1 || true
+          fi
+
+          if [[ -n "$control_group" && "$control_group" != "/" ]]; then
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cgroup" || continue
+              grep -Fq "$control_group" "$proc/cgroup" || continue
+              test -r "$proc/cmdline" || continue
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              if [[ "$cmd" == *"Runner.Worker"* ]]; then
+                worker_before=1
+                break
+              fi
+            done
+          fi
+
+          target_status="$(gh api "repos/$RAISE_REPO/actions/runs/$TARGET_RUN" --jq .status)"
+          echo "RAISEAI_RUNNER_PRE state=$pre_state pid=$pre_pid listener=$listener_before worker=$worker_before target=$target_status queued=$queued_before"
+
+          action=preserve
+          if [[ "$target_status" != "queued" ]]; then
+            action=preserve-target-already-scheduled
+          elif [[ "$worker_before" -eq 1 ]]; then
+            action=preserve-active-worker
+          else
+            sudo -n systemctl reset-failed "$RAISE_SERVICE" || true
+            sudo -n systemctl restart "$RAISE_SERVICE"
+            action=restart-idle-listener
+          fi
+
+          post_state=""
+          post_pid=""
+          listener_after=0
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$RAISE_SERVICE" || true)"
+            post_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value 2>/dev/null || true)"
+            listener_after=0
+            if [[ "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              cmd="$(tr '\0' ' ' < "/proc/$post_pid/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"Runner.Listener"* || "$cmd" == *"runsvc.sh"* ]] && listener_after=1 || true
+            fi
+            [[ "$post_state" == "active" && "$listener_after" -eq 1 ]] && break
+            sleep 2
+          done
+
+          test "$post_state" = "active"
+          test "$listener_after" -eq 1
+          echo "RAISEAI_RUNNER_RECOVERY_ACTION=$action"
+          echo "RAISEAI_RUNNER_POST state=$post_state pid=$post_pid listener=$listener_after"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+
+      - name: Prove the protected queue starts draining
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t protected < "$RUNNER_TEMP/raiseai-queued-before.txt"
+          test "${#protected[@]}" -gt 0
+
+          drained=""
+          for _ in $(seq 1 36); do
+            all="$(gh api "repos/$RAISE_REPO/actions/runs?per_page=100")"
+            drained="$(python3 - "${protected[@]}" <<'PY' <<<"$all"
+          import json,sys
+          protected={int(x) for x in sys.argv[1:]}
+          payload=json.load(sys.stdin)
+          for run in payload.get("workflow_runs") or []:
+              rid=int(run.get("id") or 0)
+              if rid in protected and run.get("name")=="Raise Watch app CI" and run.get("status")!="queued":
+                  print(f"{rid}:{run.get('status')}:{run.get('conclusion') or ''}")
+                  break
+          PY
+            )"
+            if [[ -n "$drained" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          test -n "$drained"
+          echo "RAISEAI_QUEUE_DRAIN_PROOF=$drained"
+          echo "RAISEAI_PR101_STATUS=$(gh api "repos/$RAISE_REPO/actions/runs/$TARGET_RUN" --jq .status)"
