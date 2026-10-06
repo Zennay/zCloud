@@ -1,4 +1,4 @@
-name: LightUp ST5 remediation/retest nested integrity VPS proof
+name: LightUp ST5 remediation/retest handoff hardening VPS proof
 
 on:
   push:
@@ -12,17 +12,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: lightup-st5-remediation-retest-nested-integrity-vps-proof
+  group: lightup-st5-remediation-retest-handoff-hardening-vps-proof
   cancel-in-progress: true
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/st5-remediation-retest-nested-integrity-pack-20261006
-  LIGHTUP_EXPECTED_SHA: c6e28cfbb4a36aec70d0a1c9183736500e36e95f
+  LIGHTUP_BRANCH: chatgpt/st5-remediation-retest-handoff-hardening-pack-20261006
+  LIGHTUP_EXPECTED_SHA: 71b4b2c582edbbaac9f6a93883b5890bac846fce
 
 jobs:
   prove:
-    name: Exact LightUp nested-integrity pack on vps-bb300bba
+    name: Exact LightUp remediation/retest hardening pack on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 35
 
@@ -44,11 +44,11 @@ jobs:
         run: |
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
-          git -C "${LIGHTUP_REPO}" fetch --prune origin             "refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-nested-integrity-pack-proof"
-          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse             refs/remotes/origin/lightup-st5-nested-integrity-pack-proof^{commit})"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-remediation-retest-hardening-proof"
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse             refs/remotes/origin/lightup-st5-remediation-retest-hardening-proof^{commit})"
           test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
 
-          SNAPSHOT="${RUNNER_TEMP}/lightup-st5-nested-integrity-pack-${GITHUB_RUN_ID}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-st5-remediation-retest-hardening-${GITHUB_RUN_ID}"
           rm -rf "${SNAPSHOT}"
           mkdir -p "${SNAPSHOT}"
           git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
@@ -67,7 +67,7 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_nested_json_integrity             test_future_security_remediation_retest_nested_schema_integrity             test_future_security_remediation_retest_plan_handoff
+          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_nested_json_integrity             test_future_security_remediation_retest_nested_schema_integrity             test_future_security_remediation_retest_graph_action_coherence             test_future_security_remediation_retest_plan_handoff
           PYTHONPATH=src:tests python -m unittest discover -s tests -v
           PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
           PYTHONPATH=src python scripts/check_safety_canaries.py
@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_nested_json_integrity             test_future_security_remediation_retest_nested_schema_integrity             test_future_security_remediation_retest_plan_handoff
+          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_nested_json_integrity             test_future_security_remediation_retest_nested_schema_integrity             test_future_security_remediation_retest_graph_action_coherence             test_future_security_remediation_retest_plan_handoff
           PYTHONPATH=src:tests python -m unittest discover -s tests -v
           PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
           PYTHONPATH=src python scripts/check_safety_canaries.py
@@ -93,7 +93,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-remediation-retest-nested-integrity-receipt"
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-remediation-retest-hardening-receipt"
           mkdir -p "${RECEIPT_DIR}"
           python3 - <<'PY'
           import json
@@ -102,16 +102,16 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issues": [371, 373],
+              "issues": [371, 373, 375],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
               "host": os.uname().nodename,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "python": ["3.11", "3.14"],
-              "proof": "compile+both-dedicated+parent-handoff+full-unit+integration+safety-canaries",
+              "proof": "compile+three-dedicated+parent-handoff+full-unit+integration+safety-canaries",
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-retest-nested-integrity-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-retest-hardening-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -120,8 +120,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-st5-remediation-retest-nested-integrity-pack-vps-proof
-          path: ${{ runner.temp }}/lightup-st5-remediation-retest-nested-integrity-receipt/receipt.json
+          name: lightup-st5-remediation-retest-handoff-hardening-pack-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-remediation-retest-hardening-receipt/receipt.json
           if-no-files-found: error
 
       - name: Cleanup snapshot
