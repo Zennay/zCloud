@@ -18,6 +18,10 @@ DEFAULT_DB = Path(os.environ.get("ZCLOUD_DB", str(DEFAULT_ROOT / "history.db")))
 DEFAULT_BASE_URL = os.environ.get("ZCLOUD_BASE_URL", "http://127.0.0.1:8765")
 DEEP_STATUS_TIMEOUT_SECONDS = 40.0
 FAST_API_TIMEOUT_SECONDS = 5.0
+LONG_PENDING_COMMAND_SECONDS = max(
+    300,
+    int(os.environ.get("ZCLOUD_HEALTH_LONG_PENDING_COMMAND_SECONDS", "900")),
+)
 DEFAULT_RUNTIME_EXTENSION = Path(os.environ.get(
     "ZCLOUD_FIREFOX_RUNTIME_EXTENSION",
     str(Path.home() / "snap/firefox/common/chatgpt-project-extension/background.js"),
@@ -165,22 +169,29 @@ def inspect_store(
         ).fetchall()
         stale_pending = []
         for row in pending_rows:
+            action = str(row["action"] or "").strip().lower()
+            stale_after = (
+                max(max_pending_age_seconds, LONG_PENDING_COMMAND_SECONDS)
+                if action in {"new_chat", "drain"}
+                else max_pending_age_seconds
+            )
             try:
                 age = (now - parse_time(row["created_at"])).total_seconds()
             except Exception:
-                age = max_pending_age_seconds + 1
-            if age > max_pending_age_seconds:
+                age = stale_after + 1
+            if age > stale_after:
                 stale_pending.append({
                     "id": row["id"],
                     "project_id": row["project_id"],
                     "action": row["action"],
                     "age_seconds": round(age),
+                    "stale_after_seconds": stale_after,
                 })
         result["stale_pending_commands"] = stale_pending
         if stale_pending:
             result["problems"].append(
-                f"{len(stale_pending)} pending runner command(s) older than "
-                f"{max_pending_age_seconds}s"
+                f"{len(stale_pending)} pending runner command(s) exceeded "
+                "their action-specific stale limit"
             )
         conn.close()
     except Exception as exc:
