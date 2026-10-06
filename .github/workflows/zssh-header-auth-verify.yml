@@ -5,23 +5,36 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zssh-header-auth-verify.yml
+  pull_request:
+    paths:
+      - .github/workflows/zssh-header-auth-verify.yml
+      - tests/test_zssh_header_auth_verify_workflow.py
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: zssh-header-auth-verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     env:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+      ZCLOUD_EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Check out exact zCloud guard source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.ZCLOUD_EXPECTED_SHA }}
           persist-credentials: false
           clean: true
           fetch-depth: 1
@@ -30,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json \
             | tee "$RUNNER_TEMP/zssh-header-auth-runner-guard.json"
           test "$(hostname)" = "vps-bb300bba"
