@@ -101,7 +101,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.16", required.group(1))
+        self.assertEqual("1.3.17", required.group(1))
 
     def test_workers_rotate_to_fresh_chat_on_broken_or_new_assignment(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
@@ -127,7 +127,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.16";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.17";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -304,11 +304,33 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("if (!acknowledged)", fresh_block)
         self.assertLess(fresh_block.index("commandResult("), fresh_block.index("location.assign("))
 
+    def test_stale_generation_forces_fresh_chat_instead_of_deferring_forever(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        self.assertIn("STALE_GENERATION_RECOVERY_MS = 10 * 60 * 1000", userscript)
+        self.assertIn("function generationStaleForRecovery()", userscript)
+        self.assertIn('"stale-generation-forced-recovery"', userscript)
+        self.assertIn('requestFreshConversation("stale-generation-no-progress")', userscript)
+
+        command_start = userscript.index("async function handleCommands()")
+        command_end = userscript.index("async function tick()", command_start)
+        command_block = userscript[command_start:command_end]
+        new_chat = command_block[command_block.index('command.action === "new_chat"'):]
+        self.assertIn("const staleGeneration = generationStaleForRecovery();", new_chat)
+        self.assertIn("(generationActive() && !staleGeneration)", new_chat)
+        self.assertIn("(sawGeneration && !staleGeneration)", new_chat)
+
+        fresh_start = userscript.index("async function requestFreshConversation(")
+        fresh_end = userscript.index("function claimKey(", fresh_start)
+        fresh_block = userscript[fresh_start:fresh_end]
+        self.assertIn("const staleGeneration = generating && generationStaleForRecovery();", fresh_block)
+        self.assertIn("(generating && !staleGeneration)", fresh_block)
+
     def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
-        self.assertIn("// @version      1.3.16", userscript)
-        self.assertIn('const SCRIPT_VERSION = "1.3.16";', userscript)
+        self.assertIn("// @version      1.3.17", userscript)
+        self.assertIn('const SCRIPT_VERSION = "1.3.17";', userscript)
         self.assertIn(
             'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
             userscript,
