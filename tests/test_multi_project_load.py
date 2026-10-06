@@ -254,6 +254,56 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
             metrics["samples"] += 1
             metrics["projects"].update(counts)
 
+    def test_sequential_continue_churn_reconverges_to_safe_capacity(self):
+        for iteration in range(30):
+            snapshot = server.portfolio_queue_allocation()
+            workers = list(snapshot.get("workers") or [])
+            self.assertTrue(workers)
+            item = workers[iteration % len(workers)]
+            result = server.portfolio_queue_finish(
+                item["global_worker_slot"],
+                item["queue_id"],
+                "CONTINUE",
+                evidence="sequential synthetic churn",
+            )
+            self.assertTrue(result.get("updated"), result)
+            server.portfolio_queue_allocate()
+            server._persist_global_worker_allocation(server.global_worker_allocation())
+
+        settle_counts = []
+        for _ in range(4):
+            selected = server.portfolio_queue_allocate()
+            server._persist_global_worker_allocation(server.global_worker_allocation())
+            settle_counts.append(len(selected))
+            if len(selected) == 8:
+                break
+
+        atomic_rows = self._atomic_active_rows()
+        active_counts = collections.Counter(row["project_id"] for row in atomic_rows)
+        queue_rows = server.portfolio_queue_items(True)
+        queued = [
+            {
+                "queue_id": row["queue_id"],
+                "project_id": row["project_id"],
+                "status": row["status"],
+                "eligible": row["eligible"],
+                "worker_slot": row.get("worker_slot"),
+                "execution_lane": (row.get("execution_lane") or {}).get("lane_id"),
+            }
+            for row in queue_rows
+            if row["status"] not in ("done", "dropped")
+        ]
+
+        self.assertEqual(
+            8,
+            len(atomic_rows),
+            "sequential churn did not reconverge: "
+            f"settle={settle_counts} active_counts={dict(active_counts)} queue={queued}",
+        )
+        for project_id, count in active_counts.items():
+            cap = int(server._portfolio_project_hard_cap(project_id))
+            self.assertLessEqual(count, cap, f"{project_id} active={count} cap={cap}")
+
     def test_eight_slot_multi_project_churn_keeps_read_model_coherent(self):
         barrier = threading.Barrier(9)
         lock = threading.Lock()
