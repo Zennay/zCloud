@@ -46,13 +46,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Snapshot exact LightUp PR #52 head
+      - name: Snapshot exact LightUp PR #342 head
         shell: bash
         run: |
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --prune origin \
-            refs/pull/52/head:refs/remotes/origin/lightup-pr342-proof
+            refs/pull/342/head:refs/remotes/origin/lightup-pr342-proof
 
           ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse \
             refs/remotes/origin/lightup-pr342-proof^{commit})"
