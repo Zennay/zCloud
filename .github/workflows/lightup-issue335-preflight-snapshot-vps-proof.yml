@@ -1,0 +1,138 @@
+name: LightUp issue335 preflight snapshot VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-issue335-preflight-snapshot-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-issue335-preflight-snapshot-vps-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-issue335-preflight-snapshot-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  LIGHTUP_EXPECTED_SHA: 5ea27f32ee0597478c137a8a8326014b7acfa3df
+
+jobs:
+  prove:
+    name: Issue335 exact-head producer snapshot proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp issue #335 head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin \
+            refs/heads/chatgpt/st5-classification-reviewer-preflight-producer-snapshot-isolation-20261006:refs/remotes/origin/lightup-issue335-proof
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse \
+            refs/remotes/origin/lightup-issue335-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+
+          SNAPSHOT="${RUNNER_TEMP}/lightup-issue335-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove snapshot contract on Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest -v \
+            test_future_security_classification_reviewer_preflight_producer_snapshot_isolation \
+            test_future_security_classification_reviewer_preflight
+          python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove snapshot contract on Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest -v \
+            test_future_security_classification_reviewer_preflight_producer_snapshot_isolation \
+            test_future_security_classification_reviewer_preflight
+          python -m unittest discover -s tests/integration -v
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-issue335-preflight-snapshot-vps-proof.json
+          import json
+          import os
+          import socket
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "LightUp",
+              "issue": 335,
+              "result": "success",
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "actual_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "proof": [
+                  "compile-py311-py314",
+                  "classification-reviewer-preflight-producer-snapshot-py311-py314",
+                  "classification-reviewer-preflight-parent-py311-py314",
+                  "real-producer-integration-py311-py314",
+                  "safety-canary-py311",
+              ],
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-issue335-preflight-snapshot-vps-proof.json
+
+      - name: Upload receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-issue335-preflight-snapshot-vps-proof-${{ github.run_id }}
+          path: artifacts/lightup-issue335-preflight-snapshot-vps-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
