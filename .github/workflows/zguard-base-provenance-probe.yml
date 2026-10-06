@@ -1,0 +1,65 @@
+name: zGuard base provenance probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/zguard-base-provenance-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ runner.name }}" = "zcloud-vps-1"
+
+      - name: Resolve immutable base-image digests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          resolve_digest() {
+            local label="$1"
+            local registry="$2"
+            local repository="$3"
+            local tag="$4"
+            local token_url="$5"
+
+            local token digest
+            token="$(curl -fsSL "$token_url" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("token") or data.get("access_token") or "")')"
+            test -n "$token"
+
+            digest="$(
+              curl -fsSI \
+                -H "Authorization: Bearer $token" \
+                -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+                "https://$registry/v2/$repository/manifests/$tag" \
+              | tr -d '\r' \
+              | awk 'tolower($1) == "docker-content-digest:" {print $2}' \
+              | tail -n1
+            )"
+
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s=%s@%s\n' "$label" "$tag" "$digest"
+          }
+
+          resolve_digest \
+            node \
+            registry-1.docker.io \
+            library/node \
+            22-alpine \
+            'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull'
+
+          resolve_digest \
+            selkies \
+            ghcr.io \
+            linuxserver/baseimage-selkies \
+            debiantrixie \
+            'https://ghcr.io/token?service=ghcr.io&scope=repository:linuxserver/baseimage-selkies:pull'
