@@ -36,6 +36,11 @@ jobs:
           # Stop the managed browser before snapshotting its Violentmonkey IDB.
           # Restart only through systemd afterwards; spawning /usr/bin/firefox
           # directly here creates a second orphan browser tree beside web-ext.
+          restore_managed_firefox() {
+            systemctl --user reset-failed chatgpt-firefox.service || true
+            systemctl --user start chatgpt-firefox.service || true
+          }
+          trap restore_managed_firefox EXIT
           systemctl --user stop chatgpt-firefox.service || true
           python3 - <<'PY'
           import configparser
@@ -292,9 +297,6 @@ jobs:
                   pids.append(pid)
                   if main is None: main=(pid,cmd)
 
-          if main is None:
-              raise SystemExit("main Firefox process not found")
-
           for p in pids:
               try: os.kill(p,signal.SIGTERM)
               except ProcessLookupError: pass
@@ -359,8 +361,8 @@ jobs:
 
           PY
 
-          systemctl --user reset-failed chatgpt-firefox.service || true
-          systemctl --user start chatgpt-firefox.service
+          restore_managed_firefox
+          trap - EXIT
           for _ in $(seq 1 30); do
             if systemctl --user is-active --quiet chatgpt-firefox.service; then
               break
