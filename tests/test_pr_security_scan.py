@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.zcloud_pr_security_scan import parse_added_lines, scan_patch
+from scripts.zcloud_pr_security_scan import changed_paths, parse_added_lines, scan_patch
 
 
 class PrSecurityScanTests(unittest.TestCase):
@@ -27,6 +27,32 @@ new file mode 100644
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].code, "dependency:action-unpinned")
         self.assertEqual(findings[0].line_no, 5)
+
+    def test_blocks_new_dependency_manifest_until_vulnerability_scanner_exists(self):
+        patch = """diff --git a/package.json b/package.json
+new file mode 100644
+--- /dev/null
++++ b/package.json
+@@ -0,0 +1,3 @@
++{
++  "dependencies": {}
++}
+"""
+        findings = scan_patch(patch)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].code, "dependency:manifest-review-required")
+        self.assertEqual(findings[0].path, "package.json")
+
+    def test_blocks_requirements_variant(self):
+        patch = """diff --git a/requirements-dev.txt b/requirements-dev.txt
+new file mode 100644
+--- /dev/null
++++ b/requirements-dev.txt
+@@ -0,0 +1 @@
++example-lib==1.2.3
+"""
+        findings = scan_patch(patch)
+        self.assertEqual([f.code for f in findings], ["dependency:manifest-review-required"])
 
     def test_blocks_high_confidence_new_secrets(self):
         github_token = "gh" + "p_" + ("A" * 36)
@@ -63,6 +89,22 @@ new file mode 100644
 +api_key="example-placeholder-value-123456789"
 """
         self.assertEqual(scan_patch(patch), [])
+
+    def test_changed_paths_are_unique_and_ignore_deletions(self):
+        patch = """diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1 +1 @@
+-old
++new
+diff --git a/b.txt b/b.txt
+deleted file mode 100644
+--- a/b.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-old
+"""
+        self.assertEqual(changed_paths(patch), ["a.txt"])
 
     def test_added_line_numbers_follow_hunks_and_context(self):
         patch = """diff --git a/a.txt b/a.txt
