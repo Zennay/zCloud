@@ -89,7 +89,7 @@ def audit(root: Path) -> dict:
     refresh = _extract_function(userscript, "async function refreshTarget()")
     poll = _extract_function(background, "async function pollCommands()")
     new_chat = _extract_function(background, "async function newProjectChat(projectId, reason, commandId)")
-    replacement = _extract_function(background, "browser.runtime.onMessage.addListener")
+    tab_listener = _extract_function(background, "browser.runtime.onMessage.addListener(message =>")\n    replacement = _extract_function(background, "browser.runtime.onMessage.addListener((message, sender) =>")
 
     checks = [
         _contains(handle, "const sameWorker = command.project_id === target.project_id;", "userscript_same_worker_only"),
@@ -104,7 +104,7 @@ def audit(root: Path) -> dict:
         _contains(poll, "else if (command.action === \"start\") await startProject(command.project_id, command.id);", "extension_start_routes_same_project"),
         _contains(poll, "else if (command.action === \"pause\") await pauseProject(command.project_id, command.id);", "extension_pause_routes_same_project"),
         _contains(poll, "else if (command.action === \"drain\") await drainProject(command.project_id, command.id);", "extension_drain_routes_same_project"),
-        _contains(new_chat, "const oldTab = projectTabs[projectId];", "replacement_closes_only_project_tab"),
+        _contains(tab_listener, "if (!message || message.projectId !== cfg.projectId) return;", "tab_listener_rejects_foreign_project_messages"),\n        _contains(new_chat, "const oldTab = projectTabs[projectId];", "replacement_closes_only_project_tab"),
         _contains(new_chat, "delete tabTargets[oldTab];", "replacement_clears_exact_old_tab_binding"),
         _contains(replacement, "const target = tabId != null ? tabTargets[tabId] : null;", "handoff_uses_sender_tab_binding"),
         _contains(replacement, "if (!target || target.project_id !== message.projectId) return {ok:false, reason:\"worker-tab-mismatch\"};", "handoff_rejects_cross_project_sender"),
