@@ -1,0 +1,61 @@
+name: RaiseAI PR215 VPS exact-head proof
+
+on:
+  push:
+    branches:
+      - ops/raiseai-pr215-vps-proof-20261006
+    paths:
+      - ".github/workflows/raiseai-pr215-vps-proof-20261006.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-pr215-vps-proof-20261006
+  cancel-in-progress: true
+
+jobs:
+  exact-head-proof:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+    env:
+      TARGET_REPO: https://github.com/Zennay/RaiseAI.git
+      TARGET_SHA: 1b6924c77946289e9cec990039fd3726803e6bd8
+    steps:
+      - name: Fetch exact RaiseAI head
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf RaiseAI
+          git init RaiseAI
+          git -C RaiseAI remote add origin "$TARGET_REPO"
+          git -C RaiseAI fetch --depth=1 origin "$TARGET_SHA"
+          git -C RaiseAI checkout --detach FETCH_HEAD
+          test "$(git -C RaiseAI rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git -C RaiseAI status --porcelain --untracked-files=normal)"
+
+      - name: Configure Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: "platform-tools"
+
+      - name: Install Android 35 toolchain
+        shell: bash
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Exact-head app-core build and unit tests
+        working-directory: RaiseAI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          java -version
+          python3 --version
+          ./gradlew --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx1280m -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.workers.max=1 \
+            :app:verifyEvidenceBuildIdentity testDebugUnitTest assembleDebug
+          grep -R --fixed-strings "$TARGET_SHA" app/build/generated >/dev/null
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          echo "RAISEAI_PR215_VPS_PROOF_GREEN=1"
