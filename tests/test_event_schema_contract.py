@@ -113,6 +113,68 @@ class EventSchemaValidatorTests(unittest.TestCase):
             report["storage"]["event_types"]["classification_coverage_pct"], 100.0
         )
 
+    def test_canonical_projection_excludes_sensitive_free_text(self):
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        row = {
+            "id": 7,
+            "ts": "2026-10-06T10:00:00Z",
+            "event": "heartbeat",
+            "target": "https://private.invalid/token",
+            "title": "PRIVATE TITLE",
+            "generating": 1,
+            "sending": 0,
+            "reason": "PRIVATE REASON",
+            "tab_id": 99,
+            "error": "PRIVATE ERROR",
+            "project_id": "cloud",
+            "progress_at": "2026-10-06T09:59:00+00:00",
+            "assistant_chars": 123,
+            "worker_slot": 2,
+        }
+
+        projected = VALIDATOR.project_event_row(row, schema)
+
+        self.assertEqual(
+            {
+                "event_id",
+                "observed_at",
+                "event_type",
+                "project_id",
+                "worker_slot",
+                "generating",
+                "sending",
+                "progress_at",
+                "assistant_chars",
+            },
+            set(projected),
+        )
+        encoded = json.dumps(projected, sort_keys=True)
+        for secret in (
+            "private.invalid",
+            "PRIVATE TITLE",
+            "PRIVATE REASON",
+            "PRIVATE ERROR",
+        ):
+            self.assertNotIn(secret, encoded)
+        self.assertEqual("2026-10-06T10:00:00+00:00", projected["observed_at"])
+
+    def test_canonical_projection_fails_closed_on_invalid_state(self):
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        row = {
+            "id": 1,
+            "ts": "2026-10-06T10:00:00",
+            "event": "bad_event",
+            "project_id": "cloud",
+            "worker_slot": 0,
+            "generating": 3,
+            "sending": 0,
+            "progress_at": None,
+            "assistant_chars": -1,
+        }
+
+        with self.assertRaises(VALIDATOR.EventSchemaError):
+            VALIDATOR.project_event_row(row, schema)
+
     def test_unknown_event_type_is_reported_without_breaking_contract(self):
         self.insert_event("future-safe-event")
 
