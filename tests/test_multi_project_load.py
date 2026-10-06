@@ -136,6 +136,20 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
         selected = server.portfolio_queue_allocate()
         server._persist_global_worker_allocation(server.global_worker_allocation())
         self.assertEqual(8, len(selected))
+        initial_counts = collections.Counter(item["project_id"] for item in selected)
+        initial_caps = {
+            project_id: int(server._portfolio_project_hard_cap(project_id))
+            for project_id in initial_counts
+        }
+        self.assertEqual(
+            {},
+            {
+                project_id: (count, initial_caps[project_id])
+                for project_id, count in initial_counts.items()
+                if count > initial_caps[project_id]
+            },
+            f"initial allocator oversubscribed project hard caps: counts={dict(initial_counts)} caps={initial_caps}",
+        )
         self.initial_runner_worker_rows = self._runner_worker_row_count()
 
     def tearDown(self):
