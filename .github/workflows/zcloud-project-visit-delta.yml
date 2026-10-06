@@ -1,0 +1,73 @@
+name: zCloud project visit delta proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_project_visit_delta.py
+      - tests/test_project_visit_delta.py
+      - .github/workflows/zcloud-project-visit-delta.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-visit-delta-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused delta regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_project_visit_delta
+
+      - name: Prove live read-only delta against VPS state
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB=/home/ubuntu/zennay-cloud/history.db
+          test -f "$DB"
+          test ! -L "$DB"
+          SINCE="$(python3 - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          print((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+          PY
+          )"
+          OUT="$(python3 scripts/zcloud_project_visit_delta.py --db "$DB" --project cloud --since "$SINCE" --limit 50)"
+          DELTA="$OUT" python3 - <<'PY'
+          import json
+          import os
+          payload = json.loads(os.environ["DELTA"])
+          if payload.get("ok") is not True:
+              raise SystemExit("delta reporter did not return ok=true")
+          if payload.get("project_id") != "cloud":
+              raise SystemExit("delta reporter crossed project boundary")
+          if "evidence_json" in os.environ["DELTA"]:
+              raise SystemExit("raw receipt evidence leaked into delta output")
+          if int(payload.get("change_count", -1)) < 0:
+              raise SystemExit("invalid change_count")
+          print("ZCLOUD_PROJECT_VISIT_DELTA_GREEN")
+          PY
