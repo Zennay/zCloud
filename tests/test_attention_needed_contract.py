@@ -45,12 +45,17 @@ class AttentionNeededContractTests(unittest.TestCase):
         )
 
         open_items = server.portfolio_attention_items()
-        self.assertEqual(["attention-urgent", "attention-later"], [x["attention_id"] for x in open_items])
+        ids = [x["attention_id"] for x in open_items]
+        self.assertLess(ids.index("attention-urgent"), ids.index("attention-later"))
         self.assertTrue(all(x["status"] == "open" for x in open_items))
+        self.assertTrue(any(x["attention_id"] == "ulab-ha006-usability" for x in open_items))
 
         result = server.portfolio_attention_resolve(urgent["attention_id"])
         self.assertTrue(result["resolved"])
-        self.assertEqual(["attention-later"], [x["attention_id"] for x in server.portfolio_attention_items()])
+        remaining = {x["attention_id"] for x in server.portfolio_attention_items()}
+        self.assertNotIn("attention-urgent", remaining)
+        self.assertIn("attention-later", remaining)
+        self.assertIn("ulab-ha006-usability", remaining)
 
         all_items = {x["attention_id"]: x for x in server.portfolio_attention_items(include_resolved=True)}
         self.assertEqual("resolved", all_items[urgent["attention_id"]]["status"])
@@ -65,7 +70,7 @@ class AttentionNeededContractTests(unittest.TestCase):
             "cloud", "Approve external gate", "updated detail", severity="urgent"
         )
         self.assertEqual(first["attention_id"], second["attention_id"])
-        rows = server.portfolio_attention_items()
+        rows = [x for x in server.portfolio_attention_items() if x["attention_id"] == first["attention_id"]]
         self.assertEqual(1, len(rows))
         self.assertEqual("updated detail", rows[0]["detail"])
         self.assertEqual("urgent", rows[0]["severity"])
