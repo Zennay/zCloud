@@ -14,7 +14,7 @@ from pathlib import Path
 ITERATION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 METRIC_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-EFFECT_OUTCOMES = {"improved", "neutral", "regressed"}
+DESIRED_DIRECTIONS = {"increase", "decrease", "stable"}
 VALIDATION_OUTCOMES = {"passed", "failed"}
 MAX_HISTORY = 20
 
@@ -37,6 +37,7 @@ class EffectMeasurement:
     metric_id: str
     before: float
     after: float
+    desired_direction: str
     effect_outcome: str
     validation_outcome: str
 
@@ -48,7 +49,7 @@ class EffectMeasurement:
             "metric_id",
             "before",
             "after",
-            "effect_outcome",
+            "desired_direction",
             "validation_outcome",
         }
         if set(value) - allowed:
@@ -58,16 +59,27 @@ class EffectMeasurement:
         metric_id = str(value.get("metric_id") or "").strip().lower()
         if not METRIC_ID_RE.fullmatch(metric_id):
             raise EffectGateError("metric_id must be a bounded machine identifier")
-        effect_outcome = str(value.get("effect_outcome") or "").strip().lower()
+        before = finite_number(value.get("before"), "before")
+        after = finite_number(value.get("after"), "after")
+        desired_direction = str(value.get("desired_direction") or "").strip().lower()
         validation_outcome = str(value.get("validation_outcome") or "").strip().lower()
-        if effect_outcome not in EFFECT_OUTCOMES:
-            raise EffectGateError("unsupported effect_outcome")
+        if desired_direction not in DESIRED_DIRECTIONS:
+            raise EffectGateError("unsupported desired_direction")
         if validation_outcome not in VALIDATION_OUTCOMES:
             raise EffectGateError("unsupported validation_outcome")
+        if before == after:
+            effect_outcome = "neutral"
+        elif desired_direction == "increase":
+            effect_outcome = "improved" if after > before else "regressed"
+        elif desired_direction == "decrease":
+            effect_outcome = "improved" if after < before else "regressed"
+        else:
+            effect_outcome = "regressed"
         return cls(
             metric_id=metric_id,
-            before=finite_number(value.get("before"), "before"),
-            after=finite_number(value.get("after"), "after"),
+            before=before,
+            after=after,
+            desired_direction=desired_direction,
             effect_outcome=effect_outcome,
             validation_outcome=validation_outcome,
         )
