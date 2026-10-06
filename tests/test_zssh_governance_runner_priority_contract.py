@@ -141,6 +141,31 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             plan_cancellations(runs)
 
+    def test_planner_rejects_boolean_or_nonpositive_relevant_ids(self):
+        bad_runs = [
+            {"id": True, "name": "zSSH main protection VPS apply", "status": "queued", "created_at": "2026-10-06T18:00:00Z"},
+        ]
+        with self.assertRaises(ValueError):
+            plan_cancellations(bad_runs)
+
+        bad_runs[0]["id"] = 0
+        with self.assertRaises(ValueError):
+            plan_cancellations(bad_runs)
+
+    def test_planner_rejects_missing_or_naive_relevant_timestamps(self):
+        missing = [
+            {"id": 40, "name": "zSSH main protection VPS apply", "status": "queued", "created_at": ""},
+        ]
+        with self.assertRaises(ValueError):
+            plan_cancellations(missing)
+
+        naive = [
+            {"id": 41, "name": "zSSH public gateway VPS preflight (zCloud lane)", "status": "queued", "created_at": "2026-10-06T17:00:00"},
+            {"id": 42, "name": "zSSH main protection VPS apply", "status": "queued", "created_at": "2026-10-06T18:00:00Z"},
+        ]
+        with self.assertRaises(ValueError):
+            plan_cancellations(naive)
+
 
 if __name__ == "__main__":
     unittest.main()
