@@ -92,6 +92,18 @@ class SafeIdleRetryWaitTests(unittest.TestCase):
         self.assertTrue(next(item for item in states if item["worker_id"] == "cloud::w1")["ready"])
         self.assertFalse(next(item for item in states if item["worker_id"] == "lightup::w1")["ready"])
 
+    def test_reader_enables_query_only_and_rejects_writes(self):
+        with retry_wait.connect_read_only(self.db) as conn:
+            self.assertEqual(1, conn.execute("PRAGMA query_only").fetchone()[0])
+            with self.assertRaises(sqlite3.OperationalError):
+                conn.execute("CREATE TABLE should_not_exist(id INTEGER)")
+
+    def test_reader_rejects_symlink_database_path(self):
+        link = Path(self.tmp.name) / "history-link.db"
+        link.symlink_to(self.db)
+        with self.assertRaises(retry_wait.RetryWaitError):
+            retry_wait.connect_read_only(link)
+
     def test_reader_opens_sqlite_in_read_only_mode(self):
         source = (
             Path(__file__).resolve().parents[1]
@@ -99,6 +111,7 @@ class SafeIdleRetryWaitTests(unittest.TestCase):
             / "zcloud_safe_idle_retry_wait.py"
         ).read_text(encoding="utf-8")
         self.assertIn('mode=ro', source)
+        self.assertIn('PRAGMA query_only=ON', source)
         for forbidden in ("INSERT INTO", "UPDATE ", "DELETE FROM", "REPLACE INTO", "DROP TABLE", "ALTER TABLE"):
             self.assertNotIn(forbidden, source.upper())
 
