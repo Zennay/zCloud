@@ -31,6 +31,15 @@ jobs:
           persist-credentials: false
           clean: true
 
+      - name: Fetch canonical main ref read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(git rev-parse HEAD)"
+          git fetch --no-tags --depth=513 origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$candidate"
+          test -n "$(git rev-parse origin/main)"
+
       - name: Enforce permanent zCloud VPS runner identity
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
