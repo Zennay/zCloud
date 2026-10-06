@@ -1,6 +1,11 @@
 name: zGuard base provenance probe
 
 on:
+  push:
+    branches:
+      - "qa/zguard-base-provenance-probe-20261006"
+    paths:
+      - ".github/workflows/zguard-base-provenance-probe.yml"
   pull_request:
     paths:
       - ".github/workflows/zguard-base-provenance-probe.yml"
