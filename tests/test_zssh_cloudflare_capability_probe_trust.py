@@ -13,17 +13,16 @@ class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
     def setUp(self) -> None:
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_pull_requests_use_hosted_validation_only(self) -> None:
+    def test_pull_requests_have_complete_hosted_validation(self) -> None:
         text = self.text
         self.assertIn("pull_request:", text)
+        self.assertGreaterEqual(text.count("tests/test_zssh_cloudflare_capability_probe.py"), 3)
         self.assertIn("github.event_name == 'pull_request'", text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
         self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", text)
-        self.assertIn(
-            "python3 -m unittest tests/test_zssh_cloudflare_capability_probe_trust.py",
-            text,
-        )
+        self.assertIn("tests/test_zssh_cloudflare_capability_probe.py", text)
+        self.assertIn("tests/test_zssh_cloudflare_capability_probe_trust.py", text)
         self.assertIn("github.event_name != 'pull_request'", text)
 
     def test_live_probe_is_main_only_exact_revision_and_permanent_vps_bound(self) -> None:
