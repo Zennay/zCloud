@@ -88,9 +88,12 @@ class ExtensionFallbackCanaryWorkflowTests(unittest.TestCase):
         self.assertIn('"prompt_sha256": hashlib.sha256', self.text)
         self.assertIn('"prompt_length": len(', self.text)
         self.assertNotIn('"prompt": cfg.get("prompt")', self.text)
-        self.assertNotIn("SELECT id,status,result,updated_at", self.text)
+        self.assertIn("SELECT id,status,result,updated_at", self.text)
+        self.assertIn('busy_noop=result=="Runner is al bezig; extra prompt was niet nodig"', self.text)
+        self.assertIn('"command":safe_command', self.text)
+        self.assertNotIn('"result": cmd["result"]', self.text)
         self.assertNotIn("SELECT ts,event,reason,error", self.text)
-        self.assertIn("SELECT id,status,updated_at", self.text)
+        self.assertIn("safe_command = {", self.text)
         self.assertIn("SELECT ts,event FROM runner_events", self.text)
 
 
