@@ -161,6 +161,20 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
         with server.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM runner_workers").fetchone()[0]
 
+    def _atomic_active_rows(self):
+        with server.connect() as conn:
+            rows = conn.execute(
+                """SELECT queue_id,project_id,worker_slot,status
+                   FROM portfolio_queue
+                   WHERE worker_slot IS NOT NULL
+                     AND status IN ('claimed','running','verifying')
+                     AND eligible=1
+                     AND (claim_expires IS NULL OR claim_expires>?)
+                   ORDER BY worker_slot""",
+                (server.now(),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _check_snapshot(self, errors, metrics, lock):
         snapshot = server.portfolio_queue_allocation()
         base = server.runner_targets()
@@ -173,6 +187,8 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
         slots = [int(item["global_worker_slot"]) for item in workers]
         keys = [str(item["worker_key"]) for item in workers]
         counts = collections.Counter(str(item["project_id"]) for item in workers)
+        atomic_rows = self._atomic_active_rows()
+        atomic_counts = collections.Counter(str(item["project_id"]) for item in atomic_rows)
 
         local_errors = []
         if len(workers) > 8:
@@ -187,7 +203,23 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
         for project_id, count in counts.items():
             cap = int(server.project_runtime.project_contract(project_id)["ai_worker_cap"])
             if count > cap:
-                local_errors.append(f"project-cap:{project_id}:{count}>{cap}")
+                atomic_count = atomic_counts.get(project_id, 0)
+                local_errors.append(
+                    f"snapshot-project-cap:{project_id}:{count}>{cap}:atomic={atomic_count}"
+                )
+
+        for project_id, count in atomic_counts.items():
+            cap = int(server.project_runtime.project_contract(project_id)["ai_worker_cap"])
+            if count > cap:
+                local_errors.append(f"atomic-project-cap:{project_id}:{count}>{cap}")
+
+        snapshot_ids = {str(item["queue_id"]) for item in workers}
+        atomic_ids = {str(item["queue_id"]) for item in atomic_rows}
+        if snapshot_ids != atomic_ids:
+            local_errors.append(
+                "snapshot-atomic-divergence:"
+                f"snapshot={sorted(snapshot_ids)}:atomic={sorted(atomic_ids)}"
+            )
 
         for item in workers:
             key = item["worker_key"]
