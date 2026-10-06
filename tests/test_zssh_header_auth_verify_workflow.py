@@ -12,6 +12,18 @@ class ZsshHeaderAuthVerifyWorkflowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
 
+    def test_pr_admission_is_owner_same_repo_only(self):
+        self.assertIn("pull_request:", self.text)
+        self.assertIn("github.actor == 'Zennay'", self.text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            self.text,
+        )
+        self.assertIn(
+            "github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha",
+            self.text,
+        )
+
     def test_uses_permanent_vps_runner_and_immutable_exact_checkout(self):
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", self.text)
         self.assertNotIn("runs-on: self-hosted\n", self.text)
@@ -19,9 +31,9 @@ class ZsshHeaderAuthVerifyWorkflowTests(unittest.TestCase):
             self.text,
             r"uses: actions/checkout@[0-9a-f]{40} # v6",
         )
-        self.assertIn("ref: ${{ github.sha }}", self.text)
+        self.assertIn("ref: ${{ env.ZCLOUD_EXPECTED_SHA }}", self.text)
         self.assertIn("persist-credentials: false", self.text)
-        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', self.text)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"', self.text)
 
     def test_runner_guard_precedes_live_zssh_reads(self):
         guard = self.text.index("scripts/zcloud_vps_runner_guard.py --json")
@@ -34,9 +46,8 @@ class ZsshHeaderAuthVerifyWorkflowTests(unittest.TestCase):
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', self.text)
         self.assertIn('test "$(id -un)" = "ubuntu"', self.text)
 
-    def test_remains_read_only_and_not_pr_triggered(self):
+    def test_remains_read_only(self):
         self.assertIn("permissions:\n  contents: read", self.text)
-        self.assertNotIn("pull_request:", self.text)
         for forbidden in (
             "systemctl --user restart",
             "systemctl --user stop",
