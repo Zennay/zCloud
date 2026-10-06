@@ -12,6 +12,10 @@ class VpsExecutionProbeTriggerTests(unittest.TestCase):
         pull_request = text[text.index("  pull_request:"):text.index("\npermissions:")]
         self.assertIn("- scripts/zcloud_recovery.py", pull_request)
         self.assertIn("- tests/test_zcloud_recovery.py", pull_request)
+        self.assertIn("- scripts/zcloud_safe_idle_retry_wait.py", pull_request)
+        self.assertIn("- tests/test_safe_idle_retry_wait.py", pull_request)
+        self.assertIn("- tests/test_safe_idle_retry_workflow.py", pull_request)
+        self.assertIn("- .github/workflows/zcloud-safe-idle-retry.yml", pull_request)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
 
 
