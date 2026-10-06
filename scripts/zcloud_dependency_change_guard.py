@@ -132,7 +132,7 @@ def _git(*args: str) -> str:
 def collect_changes(base: str, head: str) -> list[dict]:
     range_spec = f"{base}...{head}"
     names = _git("diff", "--name-status", "--find-renames", range_spec)
-    numstat = _git("diff", "--numstat", range_spec)
+    numstat = _git("diff", "--numstat", "--no-renames", range_spec)
 
     counts: dict[str, tuple[int, int]] = {}
     for line in numstat.splitlines():
