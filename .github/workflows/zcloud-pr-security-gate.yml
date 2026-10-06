@@ -1,0 +1,33 @@
+name: zCloud PR security gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run scanner regression
+        run: python3 -m unittest -v tests.test_pr_security_scan
+
+      - name: Scan newly added secret material and workflow dependencies
+        run: >-
+          python3 scripts/zcloud_pr_security_scan.py
+          --base-ref "${{ github.event.pull_request.base.sha }}"
+
+      - name: Review changed dependency manifests
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        with:
+          fail-on-severity: moderate
