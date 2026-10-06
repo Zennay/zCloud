@@ -245,6 +245,30 @@ class ThroughputTrackingBaselineTests(unittest.TestCase):
                 source=SOURCE,
             )
 
+    def test_baseline_cannot_precede_proven_production_receipt(self):
+        with self.assertRaisesRegex(ValueError, "writer was live before"):
+            module.plan_baseline(
+                self.db,
+                self.projects,
+                started_at="2026-10-06T10:00:00+00:00",
+                production_sha=SHA,
+                source=SOURCE,
+            )
+
+    def test_now_started_at_is_supported_and_not_backdated(self):
+        plan = module.plan_baseline(
+            self.db,
+            self.projects,
+            started_at="now",
+            production_sha=SHA,
+            source=SOURCE,
+        )
+        started = module.datetime.fromisoformat(plan["started_at"])
+        receipt = module.datetime.fromisoformat(
+            plan["production_receipt"]["observed_at"]
+        )
+        self.assertGreaterEqual(started, receipt)
+
     def test_future_started_at_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "future"):
             module.plan_baseline(
