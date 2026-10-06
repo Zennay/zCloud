@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - debug/worker-continuity-20261006
     paths:
       - "scripts/zcloud_worker_continuity_debug.py"
