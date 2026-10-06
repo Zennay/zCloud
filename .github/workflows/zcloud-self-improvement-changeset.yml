@@ -11,7 +11,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: zcloud-changeset-guard-\${{ github.event.pull_request.number || github.sha }}
+  group: zcloud-changeset-guard-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -22,21 +22,21 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: \${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify exact candidate
         env:
-          EXPECTED_SHA: \${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Run change-set guard regressions
         run: python3 -m unittest -v tests.test_self_improvement_changeset_guard tests.test_self_improvement_changeset_guard_workflow
       - name: Prove separate PR change-set
         env:
-          BASE_SHA: \${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: \${{ github.event.pull_request.head.sha }}
-          BASE_REF: \${{ github.event.pull_request.base.ref }}
-          HEAD_REF: \${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           python3 scripts/zcloud_self_improvement_changeset_guard.py pr \
@@ -52,12 +52,12 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: \${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify exact candidate and permanent runner
         env:
-          EXPECTED_SHA: \${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
@@ -65,10 +65,10 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Prove branch/change-set policy
         env:
-          BASE_SHA: \${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: \${{ github.event.pull_request.head.sha }}
-          BASE_REF: \${{ github.event.pull_request.base.ref }}
-          HEAD_REF: \${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           python3 -m unittest -v tests.test_self_improvement_changeset_guard tests.test_self_improvement_changeset_guard_workflow
@@ -86,26 +86,26 @@ jobs:
       - name: Checkout exact main commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: \${{ github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
       - name: Verify exact main commit
         env:
-          EXPECTED_SHA: \${{ github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Fetch associated pull requests read-only
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh api \
             -H "Accept: application/vnd.github+json" \
-            "/repos/\${GITHUB_REPOSITORY}/commits/\${GITHUB_SHA}/pulls" \
-            > "\${RUNNER_TEMP}/associated-prs.json"
+            "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            > "${RUNNER_TEMP}/associated-prs.json"
       - name: Reject direct main pushes
         run: |
           set -euo pipefail
           python3 scripts/zcloud_self_improvement_changeset_guard.py push \
-            --head-sha "\${GITHUB_SHA}" \
-            --ref "\${GITHUB_REF}" \
-            --associated-prs-json "\${RUNNER_TEMP}/associated-prs.json"
+            --head-sha "${GITHUB_SHA}" \
+            --ref "${GITHUB_REF}" \
+            --associated-prs-json "${RUNNER_TEMP}/associated-prs.json"
