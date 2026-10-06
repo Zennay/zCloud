@@ -1,5 +1,6 @@
 import importlib.util
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ MODULE_PATH = ROOT / "scripts" / "zcloud_control_plane_resource_protection.py"
 spec = importlib.util.spec_from_file_location("resource_protection", MODULE_PATH)
 resource_protection = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
+sys.modules[spec.name] = resource_protection
 spec.loader.exec_module(resource_protection)
 
 
