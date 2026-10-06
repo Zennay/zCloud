@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +143,64 @@ def validate_contract(schema: dict[str, Any]) -> list[str]:
         errors.append("semantic_target_types must be a non-empty string array")
 
     return sorted(set(errors))
+
+
+def _rfc3339(value: Any, field: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise EventSchemaError(f"{field} must be a non-empty RFC3339 timestamp")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise EventSchemaError(f"{field} must be RFC3339") from exc
+    if parsed.tzinfo is None:
+        raise EventSchemaError(f"{field} must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def project_event_row(row: dict[str, Any] | sqlite3.Row, schema: dict[str, Any]) -> dict[str, Any]:
+    errors = validate_contract(schema)
+    if errors:
+        raise EventSchemaError("event schema contract invalid: " + "; ".join(errors))
+
+    fields = schema["canonical_projection"]["fields"]
+    projected: dict[str, Any] = {}
+    for field, spec in fields.items():
+        source = str(spec["source"])
+        try:
+            value = row[source]
+        except (KeyError, IndexError) as exc:
+            raise EventSchemaError(f"event row missing source column {source}") from exc
+
+        if value is None or (isinstance(value, str) and not value.strip()):
+            if bool(spec.get("required")):
+                raise EventSchemaError(f"event row missing required field {field}")
+            projected[field] = None
+            continue
+
+        fmt = spec.get("format")
+        if fmt == "rfc3339":
+            value = _rfc3339(value, field)
+        elif fmt == "kebab-case":
+            pattern = re.compile(str(schema["event_type_contract"]["pattern"]))
+            value = str(value).strip()
+            if not pattern.fullmatch(value):
+                raise EventSchemaError(f"{field} violates event type pattern")
+
+        if "values" in spec and value not in spec["values"]:
+            raise EventSchemaError(f"{field} has unsupported value {value!r}")
+        if "minimum" in spec:
+            try:
+                if float(value) < float(spec["minimum"]):
+                    raise EventSchemaError(
+                        f"{field} must be >= {spec['minimum']}"
+                    )
+            except (TypeError, ValueError) as exc:
+                raise EventSchemaError(f"{field} must be numeric") from exc
+
+        projected[field] = value
+
+    return projected
 
 
 def _db_uri(path: Path) -> str:
