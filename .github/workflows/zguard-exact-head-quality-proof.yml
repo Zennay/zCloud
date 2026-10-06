@@ -61,6 +61,17 @@ jobs:
           cd zguard
           bash zbrowse/scripts/validate.sh
 
+      - name: Audit gateway production dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd zguard/zbrowse/gateway
+          set +e
+          npm audit --omit=dev --audit-level=high
+          audit_status=$?
+          set -e
+          echo "ZGUARD_NPM_AUDIT_STATUS=$audit_status"
+
       - name: Build gateway image without deploy
         shell: bash
         run: |
