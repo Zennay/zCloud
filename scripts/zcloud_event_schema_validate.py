@@ -73,16 +73,28 @@ def validate_contract(schema: dict[str, Any]) -> list[str]:
         if source not in columns:
             errors.append(f"canonical field {field} references unknown source {source!r}")
             continue
-        privacy = (columns.get(source) or {}).get("privacy")
-        if privacy in {"never_export", "restricted_text"}:
+        source_privacy = (columns.get(source) or {}).get("privacy")
+        allowed_projection_classes = set(
+            ((schema.get("privacy") or {}).get("canonical_projection_classes") or [])
+        )
+        if source_privacy not in allowed_projection_classes:
             errors.append(
-                f"canonical field {field} may not project {privacy} source {source}"
+                f"canonical field {field} may not project {source_privacy} source {source}"
             )
 
     privacy = schema.get("privacy")
     if not isinstance(privacy, dict):
         errors.append("privacy must be an object")
         privacy = {}
+    projection_classes = set(privacy.get("canonical_projection_classes") or [])
+    invalid_projection_classes = sorted(projection_classes - PRIVACY_CLASSES)
+    if invalid_projection_classes:
+        errors.append(
+            "canonical_projection_classes contains invalid classes: "
+            + ",".join(invalid_projection_classes)
+        )
+    if not projection_classes:
+        errors.append("canonical_projection_classes must be non-empty")
     never_export = set(privacy.get("never_export_fields") or [])
     free_text = set(privacy.get("free_text_fields") or [])
     unknown_privacy_fields = sorted((never_export | free_text) - set(columns))
@@ -99,6 +111,8 @@ def validate_contract(schema: dict[str, Any]) -> list[str]:
     if not isinstance(event_contract, dict):
         errors.append("event_type_contract must be an object")
         event_contract = {}
+    if not isinstance(event_contract.get("allow_unclassified_types"), bool):
+        errors.append("event_type_contract.allow_unclassified_types must be boolean")
     pattern = event_contract.get("pattern")
     try:
         re.compile(str(pattern or ""))
@@ -259,6 +273,9 @@ def validate(
             ((schema.get("canonical_projection") or {}).get("fields") or {}).keys()
         ),
         "privacy": {
+            "canonical_projection_classes": list(
+                ((schema.get("privacy") or {}).get("canonical_projection_classes") or [])
+            ),
             "never_export_fields": list(
                 ((schema.get("privacy") or {}).get("never_export_fields") or [])
             ),
