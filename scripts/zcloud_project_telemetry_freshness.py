@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -14,7 +15,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import enhancements  # noqa: E402
+
+def _load_enhancements_module():
+    path = _REPO_ROOT / "enhancements.py"
+    spec = importlib.util.spec_from_file_location("_zcloud_telemetry_enhancements", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("unable to load zCloud enhancements module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 STATUSES = ("fresh", "stale", "missing", "incomplete", "generic_only")
@@ -113,13 +122,22 @@ def build_report(
     project_ids: list[str] | None = None,
     stale_minutes: int = 240,
     now: datetime | None = None,
-    quality_reader: Callable[[str], dict] = enhancements.quality_for,
-    adapter_projects_reader: Callable[[], Iterable[str]] = enhancements.telemetry_adapter_projects,
+    quality_reader: Callable[[str], dict] | None = None,
+    adapter_projects_reader: Callable[[], Iterable[str]] | None = None,
 ) -> dict:
     if stale_minutes < 1 or stale_minutes > 7 * 24 * 60:
         raise ValueError("stale_minutes must be between 1 and 10080")
 
     observed_at = (now or _now()).astimezone(timezone.utc)
+    if quality_reader is None or adapter_projects_reader is None:
+        enhancements_module = _load_enhancements_module()
+        if quality_reader is None:
+            quality_reader = getattr(enhancements_module, "quality_for", None)
+        if adapter_projects_reader is None:
+            adapter_projects_reader = getattr(enhancements_module, "telemetry_adapter_projects", None)
+    if not callable(quality_reader) or not callable(adapter_projects_reader):
+        raise RuntimeError("zCloud telemetry adapter contract is unavailable")
+
     active = _active_project_ids(projects_path)
     selected = _select_projects(active, project_ids)
     adapter_projects = {str(value).strip() for value in adapter_projects_reader()}
