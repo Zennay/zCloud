@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts import zcloud_backlog_selection as selection
 
@@ -88,6 +90,23 @@ class BacklogSelectionTests(unittest.TestCase):
             self.choose(c("../bad", 3, 1))
         with self.assertRaises(ValueError):
             self.choose(c("Upper", 3, 1))
+
+    def test_file_input_is_bounded_and_symlinks_fail_closed(self):
+        with tempfile.TemporaryDirectory(prefix="zcloud-backlog-selection-") as tmp:
+            root = Path(tmp)
+            good = root / "good.json"
+            good.write_bytes(b"{}")
+            self.assertEqual(b"{}", selection._load_bytes(good))
+
+            large = root / "large.json"
+            large.write_bytes(b"x" * (selection.MAX_INPUT_BYTES + 1))
+            with self.assertRaises(ValueError):
+                selection._load_bytes(large)
+
+            link = root / "link.json"
+            link.symlink_to(good)
+            with self.assertRaises(ValueError):
+                selection._load_bytes(link)
 
     def test_schema_shape_is_exact(self):
         with self.assertRaises(ValueError):
