@@ -13,25 +13,27 @@ from typing import Iterable
 
 WORKFLOW_DIR = ".github/workflows"
 
+COMMAND_PREFIX = r"^[ \\t]*(?:run:[ \\t]*)?(?:\\([ \\t]*)?"
+
 HEAVY_PATTERNS = {
     "screenshot_capture": (
-        re.compile(r"(?mi)^[ \t]*(?:sudo[ \t]+(?:-n[ \t]+)?)?(?:scrot|gnome-screenshot)(?:[ \t]|$)"),
-        re.compile(r"(?mi)^[ \t]*(?:sudo[ \t]+(?:-n[ \t]+)?)?import[ \t]+-(?:window|screen)\b"),
-        re.compile(r"(?i)\b(?:Page\.captureScreenshot|captureVisibleTab)\b"),
-        re.compile(r"(?mi)^[ \t]*ffmpeg\b[^\n]*\bx11grab\b"),
+        re.compile(COMMAND_PREFIX + r"(?:sudo[ \\t]+(?:-n[ \\t]+)?)?(?:scrot|gnome-screenshot)(?:[ \\t]|$)", re.I | re.M),
+        re.compile(COMMAND_PREFIX + r"(?:sudo[ \\t]+(?:-n[ \\t]+)?)?import[ \\t]+-(?:window|screen)\\b", re.I | re.M),
+        re.compile(r"(?i)\\b(?:Page\\.captureScreenshot|captureVisibleTab)\\b"),
+        re.compile(COMMAND_PREFIX + r"ffmpeg\\b[^\\n]*\\bx11grab\\b", re.I | re.M),
     ),
     "raw_journal_dump": (
-        re.compile(r"(?mi)^[ \t]*(?:\([ \t]*)?(?:sudo[ \t]+-n[ \t]+)?journalctl\b"),
+        re.compile(COMMAND_PREFIX + r"(?:sudo[ \\t]+-n[ \\t]+)?journalctl\\b", re.I | re.M),
     ),
     "service_status_dump": (
-        re.compile(r"(?mi)^[ \t]*(?:sudo[ \t]+-n[ \t]+)?systemctl\b[^\n]*\bstatus\b"),
+        re.compile(COMMAND_PREFIX + r"(?:sudo[ \\t]+-n[ \\t]+)?systemctl\\b[^\\n]*\\bstatus\\b", re.I | re.M),
     ),
     "process_commandline_dump": (
-        re.compile(r"(?mi)^[ \t]*ps\b[^\n]*(?:\bcmd\b|\bargs\b)"),
-        re.compile(r"(?mi)^[ \t]*pgrep\b[^\n]*-[^\n]*a"),
+        re.compile(COMMAND_PREFIX + r"ps\\b[^\\n]*(?:\\bcmd\\b|\\bargs\\b)", re.I | re.M),
+        re.compile(COMMAND_PREFIX + r"pgrep\\b[^\\n]*-[^\\n]*a", re.I | re.M),
     ),
     "debug_archive": (
-        re.compile(r"(?mi)^[ \t]*tar\b[^\n]*(?:\blog\b|\bdiag\b|/var/log)"),
+        re.compile(COMMAND_PREFIX + r"tar\\b[^\\n]*(?:\\blog\\b|\\bdiag\\b|/var/log)", re.I | re.M),
     ),
 }
 
