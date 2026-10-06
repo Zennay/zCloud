@@ -11,6 +11,7 @@ SPEC.loader.exec_module(continuity)
 
 
 class ContinuityDebugTests(unittest.TestCase):
+    """Regression coverage for the live two-hour continuity probe."""
     def test_extract_runtime_reads_real_runner_live_shape(self):
         payload = {
             "chatgpt_runners": {
