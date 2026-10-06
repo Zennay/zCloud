@@ -4,6 +4,9 @@ name: zCloud self-hosted queue watchdog
 on:
   schedule:
     - cron: "*/5 * * * *"
+  workflow_run:
+    workflows: ["zCloud regression smoke"]
+    types: [completed]
   push:
     branches: [main]
     paths:
@@ -21,6 +24,7 @@ concurrency:
 jobs:
   observe:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     outputs:
       recover: ${{ steps.inspect.outputs.recover }}
       evidence: ${{ steps.inspect.outputs.evidence }}
