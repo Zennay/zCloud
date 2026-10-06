@@ -1,0 +1,130 @@
+name: LightUp scope-policy-monotonicity exact-head VPS proof
+
+on:
+  push:
+    branches: [ops/lightup-scope-policy-monotonicity-vps-proof-20261006]
+    paths:
+      - .github/workflows/lightup-scope-policy-monotonicity-exact-head-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-scope-policy-monotonicity-exact-head-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_EXPECTED_SHA: ecb80c67ffc407482f4b8fdf0c4f379105d07523
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    name: Exact head on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp scope-policy-monotonicity branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin \
+            refs/heads/chatgpt/scope-authorization-policy-monotonicity-20261006:refs/remotes/origin/lightup-scope-policy-monotonicity-proof
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-scope-policy-monotonicity-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-scope-policy-monotonicity-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_scope_policy_monotonicity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_scope_policy_monotonicity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/lightup-scope-policy-monotonicity-receipt"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "issue": 346,
+              "source_branch": "chatgpt/scope-authorization-policy-monotonicity-20261006",
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "dedicated+compile+unit+integration+safety-canaries",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-scope-policy-monotonicity-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-scope-policy-monotonicity-vps-proof
+          path: ${{ runner.temp }}/lightup-scope-policy-monotonicity-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
