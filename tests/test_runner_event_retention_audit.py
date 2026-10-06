@@ -51,13 +51,15 @@ class RunnerEventRetentionAuditTests(unittest.TestCase):
         self.add((observed - timedelta(days=1)).isoformat(), "heartbeat")
         self.add((observed - timedelta(days=8)).isoformat(), "heartbeat")
         self.add((observed - timedelta(days=31)).isoformat(), "heartbeat")
-        self.add((observed - timedelta(days=91)).isoformat(), "prompt-sent")
+        self.add((observed - timedelta(days=91)).isoformat().replace("+00:00", "Z"), "prompt-sent")
+        self.add("not-a-timestamp", "malformed-ts")
 
         result = audit.audit(self.db, observed_at=observed)
 
         self.assertTrue(result["ok"])
         self.assertEqual("read-only", result["mode"])
-        self.assertEqual(4, result["runner_events"]["total"])
+        self.assertEqual(5, result["runner_events"]["total"])
+        self.assertEqual(1, result["runner_events"]["invalid_ts"])
         self.assertEqual(["event", "ts", "id"], result["selected_columns"])
         self.assertFalse(result["sensitive_fields_selected"])
         by_event = {
@@ -77,6 +79,10 @@ class RunnerEventRetentionAuditTests(unittest.TestCase):
             },
         )
         self.assertEqual(1, by_event["prompt-sent"]["older_90d"])
+        self.assertEqual(1, by_event["malformed-ts"]["invalid_ts"])
+        self.assertEqual(0, by_event["malformed-ts"]["older_90d"])
+        self.assertIsNone(by_event["malformed-ts"]["oldest_ts"])
+        self.assertIsNone(by_event["malformed-ts"]["newest_ts"])
         encoded = json.dumps(result)
         self.assertNotIn("secret-target", encoded)
         self.assertNotIn("secret-reason", encoded)
