@@ -82,6 +82,9 @@ jobs:
   deploy:
     needs: preflight
     if: needs.preflight.result == 'success' && needs.preflight.outputs.deploy == 'true'
+    outputs:
+      deploy_sha: ${{ steps.freshness.outputs.deploy_sha }}
+      pending_marked: ${{ steps.production_pending.outputs.marked }}
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
     steps:
@@ -272,6 +275,7 @@ jobs:
           fi
 
       - name: Mark production deploy pending
+        id: production_pending
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         env:
@@ -311,6 +315,7 @@ jobs:
                   raise RuntimeError(f"unexpected GitHub status response: {response.status}")
           print(f"PRODUCTION_DEPLOY_STATUS=pending sha={sha}")
           PY
+          echo "marked=true" >> "$GITHUB_OUTPUT"
 
       - name: Suspend external self-heal during guarded deploy
         id: self_heal_guard
@@ -928,55 +933,6 @@ jobs:
           )
           PY
 
-      - name: Publish production deploy result
-        if: always() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
-          DEPLOY_RESULT: ${{ job.status }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          result = os.environ.get("DEPLOY_RESULT", "failure")
-          state = "success" if result == "success" else "failure"
-          description = (
-              "HEALTH_GREEN + POSTDEPLOY_GREEN LKG"
-              if state == "success"
-              else "VPS production promotion failed"
-          )
-          repo = os.environ["GITHUB_REPOSITORY"]
-          sha = os.environ["DEPLOY_SHA"]
-          token = os.environ["GITHUB_TOKEN"]
-          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-          payload = json.dumps({
-              "state": state,
-              "context": "zcloud/vps-production",
-              "description": description,
-              "target_url": run_url,
-          }).encode()
-          request = urllib.request.Request(
-              f"https://api.github.com/repos/{repo}/statuses/{sha}",
-              data=payload,
-              method="POST",
-              headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-                  "Content-Type": "application/json",
-                  "User-Agent": "zcloud-vps-deploy",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=15) as response:
-              if response.status != 201:
-                  raise RuntimeError(f"unexpected GitHub status response: {response.status}")
-          print(f"PRODUCTION_DEPLOY_STATUS={state} sha={sha}")
-          PY
-
       - name: Write deploy operator summary
         if: always()
         continue-on-error: true
@@ -1015,3 +971,58 @@ jobs:
           esac
           rm -rf -- "$ZCLOUD_RUN_STATE_DIR"
           echo "ZCLOUD_STABLE_STATE_CLEANED"
+
+
+  finalize-production-status:
+    needs: deploy
+    if: always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish production deploy result
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ needs.deploy.outputs.deploy_sha }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          result = os.environ.get("DEPLOY_RESULT", "failure")
+          state = "success" if result == "success" else "failure"
+          description = (
+              "HEALTH_GREEN + POSTDEPLOY_GREEN LKG"
+              if state == "success"
+              else "VPS production promotion failed"
+          )
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["DEPLOY_SHA"]
+          token = os.environ["GITHUB_TOKEN"]
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          payload = json.dumps({
+              "state": state,
+              "context": "zcloud/vps-production",
+              "description": description,
+              "target_url": run_url,
+          }).encode()
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/statuses/{sha}",
+              data=payload,
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "Content-Type": "application/json",
+                  "User-Agent": "zcloud-vps-deploy-finalizer",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=15) as response:
+              if response.status != 201:
+                  raise RuntimeError(f"unexpected GitHub status response: {response.status}")
+          print(f"PRODUCTION_DEPLOY_STATUS={state} sha={sha}")
+          PY
