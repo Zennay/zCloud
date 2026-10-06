@@ -1,3 +1,4 @@
+# incident retrigger 2026-10-06T06:30Z: inspect API reset after worker restart attempt 3
 name: zCloud live dynamic worker debug
 # retrigger: inspect zCloud service health before worker activation
 
