@@ -17,7 +17,7 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/st5-remediation-retest-required-lineage-red-20261006
-  LIGHTUP_EXPECTED_SHA: aab4ba6c304489411428c25943a0a14084608309
+  LIGHTUP_EXPECTED_SHA: 8f5139d2a774bc7ada7f147b756490e3e596fc84
 
 jobs:
   prove-red:
