@@ -30,13 +30,13 @@ Heartbeats and unknown event types are ignored.
   rows after the current observation time are excluded.
 - Lookback is bounded to 31 days.
 - Each source is capped at 2,000 rows and output at 50 projects.
-- Project filters use a strict lowercase identifier grammar.
+- Project filters and runtime project IDs use a strict lowercase identifier grammar; non-canonical casing is rejected/ignored rather than normalized.
 - Raw action, phase, blocker, next-gate, reason, error, evidence and prompt text
   is never selected into the output.
 - CI status is emitted only through a small allowlist.
 - Commit evidence is only emitted as a 12-character prefix when the source is a
   valid 40-64 character hex SHA.
-- Missing required runtime tables/columns and naive/future/out-of-bounds caller
+- Missing required runtime tables/columns and naive/any-future/out-of-bounds caller
   timestamps fail closed.
 
 ## Output
