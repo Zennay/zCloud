@@ -20,6 +20,8 @@ def _parse_utc(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         raise ValueError("started_at is required")
+    if text.lower() == "now":
+        return datetime.now(timezone.utc).isoformat()
     parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("started_at must include a timezone")
@@ -198,7 +200,9 @@ def _verify_production_receipt(
             evidence = json.loads(str(row["evidence_json"] or "{}"))
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
-        if observed != started_at or not isinstance(evidence, dict):
+        if not isinstance(evidence, dict):
+            continue
+        if datetime.fromisoformat(observed) > datetime.fromisoformat(started_at):
             continue
         if str(evidence.get("workflow_run_id") or "") != run_id:
             continue
@@ -208,7 +212,7 @@ def _verify_production_receipt(
             "commit_sha": production_sha,
         }
     raise ValueError(
-        "no exact successful zCloud production receipt matches the requested baseline"
+        "no exact successful zCloud production receipt proves the writer was live before the requested baseline"
     )
 
 
