@@ -1,6 +1,13 @@
 name: Deploy zBrowse via VPS bridge
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-zbrowse-bridge.yml"
+      - "tests/test_zbrowse_bridge_deploy_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches:
       - main
@@ -12,19 +19,79 @@ permissions:
   contents: read
 
 concurrency:
-  group: zbrowse-vps-bridge
+  group: zbrowse-vps-bridge-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    runs-on: self-hosted
-    timeout-minutes: 20
-
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Deploy latest zGuard zBrowse
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate zBrowse bridge deploy safety contract
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_zbrowse_bridge_deploy_workflow
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+      ZGUARD_REMOTE: https://github.com/Zennay/zGuard.git
+
+    steps:
+      - name: Check out exact zCloud deploy source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Resolve immutable zGuard main revision
+        id: zguard
+        shell: bash
+        run: |
+          set -euo pipefail
+          zguard_sha="$(git ls-remote "$ZGUARD_REMOTE" refs/heads/main | awk 'NR == 1 {print $1}')"
+          if [[ ! "$zguard_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve an immutable zGuard main revision" >&2
+            exit 1
+          fi
+          echo "sha=$zguard_sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved zGuard source revision: ${zguard_sha:0:12}"
+
+      - name: Deploy resolved zGuard zBrowse revision
+        shell: bash
+        env:
+          ZGUARD_SHA: ${{ steps.zguard.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$ZGUARD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid zGuard source revision" >&2
+            exit 1
+          fi
 
           sudo systemctl start docker
           sudo systemctl is-active --quiet docker
@@ -32,14 +99,16 @@ jobs:
           if [ ! -d /opt/zbrowse-source/.git ]; then
             sudo mkdir -p /opt/zbrowse-source
             sudo chown -R "$USER":"$USER" /opt/zbrowse-source
-            git clone https://github.com/Zennay/zGuard.git /opt/zbrowse-source
+            git -C /opt/zbrowse-source init
+            git -C /opt/zbrowse-source remote add origin "$ZGUARD_REMOTE"
           else
             sudo chown -R "$USER":"$USER" /opt/zbrowse-source
-            cd /opt/zbrowse-source
-            git remote set-url origin https://github.com/Zennay/zGuard.git
-            git fetch origin main
-            git reset --hard origin/main
+            git -C /opt/zbrowse-source remote set-url origin "$ZGUARD_REMOTE"
           fi
+
+          git -C /opt/zbrowse-source fetch --depth=1 origin "$ZGUARD_SHA"
+          git -C /opt/zbrowse-source reset --hard "$ZGUARD_SHA"
+          test "$(git -C /opt/zbrowse-source rev-parse HEAD)" = "$ZGUARD_SHA"
 
           cd /opt/zbrowse-source/zbrowse
 
