@@ -50,6 +50,9 @@ class HighBlastRadiusAdrGuardTests(unittest.TestCase):
         cases = {
             ".github/workflows/zcloud-production-deploy.yml": "mutating_workflow",
             ".github/workflows/recover-workers.yml": "mutating_workflow",
+            ".github/workflows/reactivate-workers.yml": "mutating_workflow",
+            ".github/workflows/zcloud-safe-idle-retry.yml": "mutating_workflow",
+            ".github/workflows/zcloud-queue-sweep.yml": "mutating_workflow",
             "scripts/zcloud_scheduler_reconcile.py": "mutating_script",
             "scripts/rollback_release.py": "mutating_script",
         }
