@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
