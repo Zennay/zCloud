@@ -20,7 +20,7 @@ env:
   JSON_BRANCH: chatgpt/st5-remediation-retest-nested-json-integrity-20261006
   JSON_EXPECTED_SHA: 0cc34afa486ebf71fd346fa27eeb0369ce6fef07
   SCHEMA_BRANCH: chatgpt/st5-remediation-retest-nested-schema-integrity-20261006
-  SCHEMA_EXPECTED_SHA: b9092f56e6a67ced00e27da063394f50c325543a
+  SCHEMA_EXPECTED_SHA: b47a69526fc388fa25a8c094f21a38717877f12c
 
 jobs:
   prove:
