@@ -33,6 +33,10 @@ jobs:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
+          # Stop the managed browser before snapshotting its Violentmonkey IDB.
+          # Restart only through systemd afterwards; spawning /usr/bin/firefox
+          # directly here creates a second orphan browser tree beside web-ext.
+          systemctl --user stop chatgpt-firefox.service || true
           python3 - <<'PY'
           import configparser
           import json
@@ -291,21 +295,6 @@ jobs:
           if main is None:
               raise SystemExit("main Firefox process not found")
 
-          pid,cmd=main
-          args=cmd.split()
-          urls=[x for x in args[1:] if x.startswith("http://") or x.startswith("https://")]
-          env=os.environ.copy()
-          env.pop("RUNNER_TRACKING_ID",None)
-          try:
-              for item in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0"):
-                  if b"=" not in item: continue
-                  k,v=item.split(b"=",1)
-                  key=k.decode("utf-8","replace")
-                  if key in {"DISPLAY","XAUTHORITY","WAYLAND_DISPLAY","DBUS_SESSION_BUS_ADDRESS","XDG_RUNTIME_DIR","HOME","USER","LOGNAME"}:
-                      env[key]=v.decode("utf-8","replace")
-          except OSError:
-              pass
-
           for p in pids:
               try: os.kill(p,signal.SIGTERM)
               except ProcessLookupError: pass
@@ -368,20 +357,18 @@ jobs:
                       result["records"].append({"table":table,"rowid":row[0],"hits":hits})
           print("VM_DB_INSPECT="+json.dumps(result,ensure_ascii=False))
 
-          log=Path("/tmp/zcloud-vm-diagnostic-restart.log")
-          with log.open("ab",buffering=0) as out:
-              subprocess.Popen(["/usr/bin/firefox",*urls],stdin=subprocess.DEVNULL,stdout=out,stderr=out,env=env,start_new_session=True,close_fds=True)
-          deadline=time.time()+30
-          new=None
-          while time.time()<deadline:
-              p=subprocess.run(["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],text=True,capture_output=True,check=False)
-              candidates=[int(x) for x in p.stdout.split() if x.isdigit() and int(x) not in pids]
-              if candidates:
-                  new=candidates[0]; break
-              time.sleep(1)
-          if not new:
-              raise SystemExit("Firefox failed to restart after diagnostic")
-          print("VM_DIAGNOSTIC_RESTART_GREEN="+str(new))
           PY
+
+          systemctl --user reset-failed chatgpt-firefox.service || true
+          systemctl --user start chatgpt-firefox.service
+          for _ in $(seq 1 30); do
+            if systemctl --user is-active --quiet chatgpt-firefox.service; then
+              break
+            fi
+            sleep 1
+          done
+          systemctl --user is-active chatgpt-firefox.service
+          main_pid="$(systemctl --user show -p MainPID --value chatgpt-firefox.service)"
+          echo "VM_DIAGNOSTIC_MANAGED_RESTART_GREEN main_pid=$main_pid"
 
 # push-test diagnostic rerun after prompt-contract repair 2026-10-04
