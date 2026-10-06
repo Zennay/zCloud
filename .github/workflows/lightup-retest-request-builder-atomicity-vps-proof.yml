@@ -21,9 +21,11 @@ env:
   SNAPSHOT_BRANCH: chatgpt/st5-retest-request-snapshot-isolation-20261006
   SNAPSHOT_SHA: 8b188cbd66bc11ae7d38ebd9dd3cdb35c1dd8a9f
   HANDOFF_BRANCH: chatgpt/st5-retest-request-handoff-20261006
-  HANDOFF_SHA: 9af750e83146f50fd625c303544845e54e226a40
+  HANDOFF_SHA: 8a79b1675b7dd7f1f758749282810e7b788bb3dd
   PARSER_BRANCH: chatgpt/st5-retest-request-parser-input-purity-20261006
-  PARSER_SHA: 2f1b8d81c21995ae635ad68d431f525bf3f46160
+  PARSER_SHA: 83336f4b2d87dc95518ece5470d09dd7ca56f5ca
+  PACK_BRANCH: chatgpt/st5-retest-request-integrity-pack-20261006
+  PACK_SHA: f00e1fc17039f941c17444678846ada13dbe1fe1
 
 jobs:
   hosted:
@@ -72,6 +74,15 @@ jobs:
           persist-credentials: false
           clean: true
 
+      - name: Checkout promotion pack exact head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/Lightup
+          ref: ${{ env.PACK_BRANCH }}
+          path: pack
+          persist-credentials: false
+          clean: true
+
       - name: Guard exact heads
         shell: bash
         run: |
@@ -80,6 +91,7 @@ jobs:
           test "$(git -C snapshot rev-parse HEAD)" = "${SNAPSHOT_SHA}"
           test "$(git -C handoff rev-parse HEAD)" = "${HANDOFF_SHA}"
           test "$(git -C parser rev-parse HEAD)" = "${PARSER_SHA}"
+          test "$(git -C pack rev-parse HEAD)" = "${PACK_SHA}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -109,6 +121,7 @@ jobs:
           prove_tree snapshot test_future_security_retest_request_snapshot_isolation
           prove_tree handoff test_future_security_retest_request_handoff
           prove_tree parser test_future_security_retest_request_parser_input_purity
+          prove_tree pack test_future_security_retest_request_handoff
 
   prove:
     name: Retest request integrity exact-head proof
@@ -173,6 +186,7 @@ jobs:
           prove_head snapshot "${SNAPSHOT_BRANCH}" "${SNAPSHOT_SHA}"             test_future_security_retest_request_snapshot_isolation
           prove_head handoff "${HANDOFF_BRANCH}" "${HANDOFF_SHA}"             test_future_security_retest_request_handoff
           prove_head parser "${PARSER_BRANCH}" "${PARSER_SHA}"             test_future_security_retest_request_parser_input_purity
+          prove_head pack "${PACK_BRANCH}" "${PACK_SHA}"             test_future_security_retest_request_handoff
 
       - name: Setup Python 3.14
         uses: actions/setup-python@v5
@@ -216,6 +230,7 @@ jobs:
           prove_head snapshot "${SNAPSHOT_BRANCH}" "${SNAPSHOT_SHA}"             test_future_security_retest_request_snapshot_isolation
           prove_head handoff "${HANDOFF_BRANCH}" "${HANDOFF_SHA}"             test_future_security_retest_request_handoff
           prove_head parser "${PARSER_BRANCH}" "${PARSER_SHA}"             test_future_security_retest_request_parser_input_purity
+          prove_head pack "${PACK_BRANCH}" "${PACK_SHA}"             test_future_security_retest_request_handoff
 
       - name: Write exact-head receipt
         if: success()
@@ -256,6 +271,11 @@ jobs:
                       "sha": os.environ["PARSER_SHA"],
                       "issue": 363,
                   },
+                  "promotion_pack": {
+                      "branch": os.environ["PACK_BRANCH"],
+                      "sha": os.environ["PACK_SHA"],
+                      "base": "e44abdc141ea21e3298894238bd14c62e0c1227f",
+                  },
               },
               "proof": [
                   "exact-sha-binding",
@@ -284,4 +304,4 @@ jobs:
       - name: Cleanup residual snapshots
         if: always()
         shell: bash
-        run: rm -rf "${RUNNER_TEMP}"/lightup-{atomicity,snapshot,handoff,parser}-py{311,314}-${GITHUB_RUN_ID}
+        run: rm -rf "${RUNNER_TEMP}"/lightup-{atomicity,snapshot,handoff,parser,pack}-py{311,314}-${GITHUB_RUN_ID}
