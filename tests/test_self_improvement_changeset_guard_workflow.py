@@ -24,19 +24,20 @@ class SelfImprovementChangeSetWorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(self.text.count("persist-credentials: false"), 3)
         self.assertGreaterEqual(self.text.count('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'), 3)
         self.assertNotIn("actions/checkout@v", self.text)
+        self.assertNotIn("\\${{", self.text)
 
     def test_permanent_vps_proof_is_owner_same_repo_guarded(self):
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", self.text)
-        self.assertIn("github.actor == 'Zennay'", self.text)
+        self.assertIn("github.actor == \'Zennay\'", self.text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.text)
         self.assertIn("zcloud_vps_runner_guard.py --json", self.text)
         self.assertIn('test "$(id -un)" = "ubuntu"', self.text)
 
     def test_push_provenance_uses_exact_commit_pull_association(self):
-        self.assertIn("/commits/\${GITHUB_SHA}/pulls", self.text)
+        self.assertIn("/commits/${GITHUB_SHA}/pulls", self.text)
         self.assertIn("associated-prs.json", self.text)
         self.assertIn("zcloud_self_improvement_changeset_guard.py push", self.text)
-        self.assertIn('--ref "\${GITHUB_REF}"', self.text)
+        self.assertIn('--ref "${GITHUB_REF}"', self.text)
 
     def test_pr_guard_receives_base_head_and_branch_refs(self):
         for token in (
