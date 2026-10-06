@@ -119,6 +119,28 @@ def select_candidates(
     ]
 
 
+def eligible_counts(conn: sqlite3.Connection, *, cutoff: str) -> dict[str, int]:
+    placeholders = ",".join("?" for _ in PRUNABLE_EVENTS)
+    event_values = tuple(sorted(PRUNABLE_EVENTS))
+    rows = conn.execute(
+        f"""SELECT event,COUNT(*) AS n
+            FROM runner_events
+            WHERE event IN ({placeholders})
+              AND unixepoch(ts) IS NOT NULL
+              AND unixepoch(ts) < unixepoch(?)
+              AND id NOT IN (
+                    SELECT MAX(id)
+                    FROM runner_events
+                    WHERE event IN ({placeholders})
+                    GROUP BY event
+              )
+            GROUP BY event
+            ORDER BY event""",
+        (*event_values, cutoff, *event_values),
+    ).fetchall()
+    return {str(row["event"]): int(row["n"] or 0) for row in rows}
+
+
 def database_meta(conn: sqlite3.Connection) -> dict:
     return {
         "page_count": int(conn.execute("PRAGMA page_count").fetchone()[0]),
@@ -159,6 +181,7 @@ def run_retention(
         if apply:
             conn.execute("BEGIN IMMEDIATE")
         before = database_meta(conn)
+        eligible_by_event = eligible_counts(conn, cutoff=cutoff)
         candidates = select_candidates(
             conn,
             cutoff=cutoff,
@@ -202,11 +225,16 @@ def run_retention(
             "non_allowlisted_events_preserved": True,
             "vacuum": False,
         },
+        "eligible": {
+            "count": sum(eligible_by_event.values()),
+            "by_event": dict(sorted(eligible_by_event.items())),
+        },
         "planned": {
             "count": len(candidates),
             "by_event": dict(sorted(planned_by_event.items())),
             "oldest_id": candidates[0]["id"] if candidates else None,
             "newest_id": candidates[-1]["id"] if candidates else None,
+            "has_more": sum(eligible_by_event.values()) > len(candidates),
         },
         "deleted": {
             "count": deleted,
