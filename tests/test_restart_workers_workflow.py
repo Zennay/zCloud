@@ -23,6 +23,15 @@ class RestartWorkersWorkflowTests(unittest.TestCase):
         self.assertIn('(key, "new_chat", "pending", ts, ts)', text)
         self.assertIn("restart commands remained pending", text)
 
+    def test_restart_preserves_long_running_replacement_commands(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("ORDINARY_COMMAND_STALE_SECONDS = 120", text)
+        self.assertIn('ZCLOUD_RUNNER_COMMAND_LONG_STALE_SECONDS", "900"', text)
+        self.assertIn('"SELECT id,action,created_at FROM runner_commands "', text)
+        self.assertIn('if action in {"new_chat", "drain"}', text)
+        self.assertIn("else ORDINARY_COMMAND_STALE_SECONDS", text)
+        self.assertNotIn("cutoff = time.time() - 120", text)
+
 
 if __name__ == "__main__":
     unittest.main()
