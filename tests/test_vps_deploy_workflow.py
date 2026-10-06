@@ -401,8 +401,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("steps.freshness.outputs.regression_mode", text)
         self.assertIn("steps.prewrite.outputs.deploy", text)
         self.assertIn("zcloud-production-deploy-evidence-${{ github.run_id }}", text)
-        self.assertLess(text.index("Publish production deploy result"), text.index(summary))
         self.assertLess(text.index(summary), text.index(cleanup))
+        self.assertIn("finalize-production-status:", text)
 
     def test_code_deploy_preserves_runtime_owned_project_catalog(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
@@ -486,7 +486,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         step = "Record evidence-backed production state receipt"
         self.assertIn(step, text)
-        receipt = text[text.index("- name: " + step):text.index("- name: Publish production deploy result")]
+        receipt = text[text.index("- name: " + step):text.index("- name: Write deploy operator summary")]
         self.assertIn("if: success()", receipt)
         self.assertIn("scripts/zcloud_runtime.py", receipt)
         self.assertIn("--db /home/ubuntu/zennay-cloud/history.db", receipt)
@@ -511,15 +511,26 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('state.get("commit_sha") != expected_sha', receipt)
         self.assertIn("ZCLOUD_PRODUCTION_RECEIPT_GREEN", receipt)
         self.assertLess(text.index("Resume external self-heal"), text.index(step))
-        self.assertLess(text.index(step), text.index("Publish production deploy result"))
+        self.assertLess(text.index(step), text.index("Write deploy operator summary"))
 
-    def test_publish_status_requires_actual_prewrite_confirmation(self):
+    def test_terminal_production_status_is_hosted_and_survives_vps_job_failure(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
-        publish = text[text.index("- name: Publish production deploy result"):]
+        self.assertIn("id: production_pending", text)
+        self.assertIn('echo "marked=true" >> "$GITHUB_OUTPUT"', text)
+        self.assertIn("deploy_sha: ${{ steps.freshness.outputs.deploy_sha }}", text)
+        self.assertIn("pending_marked: ${{ steps.production_pending.outputs.marked }}", text)
+        publish = text[text.index("  finalize-production-status:"):]
+        self.assertIn("needs: deploy", publish)
         self.assertIn(
-            "if: always() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'",
+            "if: always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''",
             publish,
         )
+        self.assertIn("runs-on: ubuntu-latest", publish)
+        self.assertIn("DEPLOY_SHA: ${{ needs.deploy.outputs.deploy_sha }}", publish)
+        self.assertIn("DEPLOY_RESULT: ${{ needs.deploy.result }}", publish)
+        self.assertIn('"context": "zcloud/vps-production"', publish)
+        self.assertIn("VPS production promotion failed", publish)
+        self.assertEqual(1, text.count("- name: Publish production deploy result"))
         self.assertIn("MAIN_MOVED_BEFORE_VPS_WRITE", text)
 
     def test_live_deploy_diagnostics_use_permanent_zcloud_vps_runner(self):
