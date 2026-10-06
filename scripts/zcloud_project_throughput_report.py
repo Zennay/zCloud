@@ -26,6 +26,7 @@ REQUIRED_QUEUE_COLUMNS = {
     "project_id",
     "status",
     "created_at",
+    "updated_at",
 }
 
 
@@ -119,7 +120,7 @@ def build_report(
                ORDER BY id"""
         ).fetchall()
         done_queue_rows = connection.execute(
-            """SELECT queue_id,project_id,created_at
+            """SELECT queue_id,project_id,created_at,updated_at
                FROM portfolio_queue
                WHERE status='done'
                ORDER BY created_at,queue_id"""
@@ -233,12 +234,16 @@ def build_report(
         if tracking is not None:
             for row in done_rows_by_project.get(project_id, []):
                 try:
-                    created_at = _parse_utc(row["created_at"])
+                    updated_at = _parse_utc(row["updated_at"])
                 except (TypeError, ValueError):
                     missing_after_tracking.append(str(row["queue_id"] or ""))
                     continue
                 queue_key = (project_id, str(row["queue_id"] or "").strip())
-                if created_at >= tracking and queue_key not in done_receipt_keys:
+                # updated_at is NOT interpreted as completion time. It is used only
+                # as a conservative integrity boundary: a DONE row touched at/after
+                # receipt tracking began must have an immutable DONE receipt. This
+                # catches items created before the cutover but completed afterwards.
+                if updated_at >= tracking and queue_key not in done_receipt_keys:
                     missing_after_tracking.append(queue_key[1])
         project_coverage_complete = (
             window_fully_tracked
