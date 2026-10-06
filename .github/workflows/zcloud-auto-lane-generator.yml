@@ -7,9 +7,11 @@ on:
       - lane_generator.py
       - server.py
       - projects.json
+      - scripts/zcloud_vps_runner_guard.py
       - tests/test_lane_generator.py
       - tests/test_portfolio_queue_backend.py
       - tests/test_task_claims.py
+      - tests/test_auto_lane_workflow.py
       - .github/workflows/zcloud-auto-lane-generator.yml
   pull_request:
     branches: [main]
@@ -17,22 +19,49 @@ on:
       - lane_generator.py
       - server.py
       - projects.json
+      - scripts/zcloud_vps_runner_guard.py
       - tests/test_lane_generator.py
       - tests/test_portfolio_queue_backend.py
       - tests/test_task_claims.py
+      - tests/test_auto_lane_workflow.py
       - .github/workflows/zcloud-auto-lane-generator.yml
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-auto-lane-generator-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lane-regression:
-    runs-on: self-hosted
+    if: github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent zCloud VPS runner and exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Compile lane control plane
         run: python3 -m py_compile lane_generator.py server.py
+
       - name: Prove deterministic non-overlapping lane allocation
         run: |
           python3 -m unittest -v tests.test_lane_generator
           python3 -m unittest -v tests.test_portfolio_queue_backend
           python3 -m unittest -v tests.test_task_claims
+          python3 -m unittest -v tests.test_auto_lane_workflow
