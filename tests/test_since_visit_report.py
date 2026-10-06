@@ -100,6 +100,20 @@ class SinceVisitReportTests(unittest.TestCase):
         payload = delta.report(self.db, self.since, now=self.now)
         self.assertEqual([], payload["projects"])
 
+    def test_future_runtime_rows_are_excluded(self):
+        future = (self.now + timedelta(hours=1)).isoformat()
+        with closing(sqlite3.connect(self.db)) as c:
+            c.execute("""INSERT INTO project_state_receipts(
+                project_id,phase,action,commit_sha,ci_status,blocker,next_gate,source,
+                observed_at,evidence_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("cloud", "validation", "", "a"*40, "success", "", "", "test", future, "{}", future))
+            c.execute("""INSERT INTO runner_events(ts,event,reason,error,project_id,worker_slot)
+                         VALUES(?,?,?,?,?,?)""", (future, "generation-finished", "", "", "cloud", 1))
+            c.commit()
+        payload = delta.report(self.db, self.since, now=self.now)
+        self.assertEqual([], payload["projects"])
+
     def test_project_filter_is_exact_and_bounded(self):
         self.add_receipt("cloud", 60)
         self.add_receipt("ftmo", 30)
