@@ -71,3 +71,53 @@ jobs:
           verify_candidate             "chatgpt/st5-remediation-retest-plan-direct-construction-20261006"             "cf2725755487071fe72ee28318e5a83f8979fee6"             "test_future_security_remediation_retest_plan_direct_construction.py"             "test_future_security_remediation_retest_plan_handoff.py"             "test_future_security_remediation_retest_plan.py"
 
           verify_candidate             "chatgpt/st4-security-delta-direct-construction-20261006"             "baa39ce561201c6f8be27f66c718581f5de7e78a"             "test_future_attack_path_security_delta_report_direct_construction.py"             "test_future_attack_path_security_delta_report.py"             "test_future_security_remediation_retest_plan.py"
+
+          verify_downstream_overlay() {
+            local downstream_branch="$1"
+            local downstream_sha="$2"
+            local source_branch="$3"
+            local source_sha="$4"
+            local source_path="$5"
+            local test_pattern="$6"
+
+            git -C "${LIGHTUP_REPO}" fetch --no-tags origin \
+              "+refs/heads/${downstream_branch}:refs/remotes/origin/${downstream_branch}" \
+              "+refs/heads/${source_branch}:refs/remotes/origin/${source_branch}"
+            test "$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${downstream_branch}^{commit}")" = "${downstream_sha}"
+            test "$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${source_branch}^{commit}")" = "${source_sha}"
+
+            local tmp_root snapshot
+            tmp_root="$(mktemp -d)"
+            snapshot="${tmp_root}/lightup"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${downstream_sha}" | tar -x -C "${snapshot}"
+            git -C "${LIGHTUP_REPO}" show "${source_sha}:${source_path}" > "${snapshot}/${source_path}"
+
+            (
+              cd "${snapshot}"
+              export PYTHONPATH=src:tests
+              python3 -m compileall -q src tests
+              python3 -m unittest discover -s tests -p "${test_pattern}" -v
+            )
+
+            rm -rf "${tmp_root}"
+            printf 'LIGHTUP_DOWNSTREAM_OVERLAY_PROOF downstream=%s downstream_sha=%s source_sha=%s test=%s host=%s\n' \
+              "${downstream_branch}" "${downstream_sha}" "${source_sha}" "${test_pattern}" "$(hostname)"
+          }
+
+          verify_downstream_overlay \
+            "chatgpt/st5-isolated-retest-request-20261005" \
+            "e44abdc141ea21e3298894238bd14c62e0c1227f" \
+            "chatgpt/st5-remediation-retest-plan-direct-construction-20261006" \
+            "cf2725755487071fe72ee28318e5a83f8979fee6" \
+            "src/lightup/future_security_remediation_retest_plan.py" \
+            "test_future_security_retest_request.py"
+
+          verify_downstream_overlay \
+            "chatgpt/st5-remediation-evidence-bundle-20261005" \
+            "0f1e3a54ef7bb985e8280f8944223d4a0c9d3d14" \
+            "chatgpt/st5-remediation-retest-plan-direct-construction-20261006" \
+            "cf2725755487071fe72ee28318e5a83f8979fee6" \
+            "src/lightup/future_security_remediation_retest_plan.py" \
+            "test_future_remediation_evidence_bundle.py"
+
