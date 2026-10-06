@@ -13,7 +13,11 @@ class HighBlastRadiusAdrGuardWorkflowTests(unittest.TestCase):
         self.assertIn("branches: [main]", text)
         self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("runs-on: ubuntu-latest", text)
-        self.assertNotIn("self-hosted", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn('test "$(id -un)" = "ubuntu"', text)
+        self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertNotIn("actions: write", text)
         self.assertNotIn("statuses: write", text)
         self.assertIn(
@@ -38,6 +42,9 @@ class HighBlastRadiusAdrGuardWorkflowTests(unittest.TestCase):
             "gh api",
             "curl ",
             "runner-control",
+            "systemctl restart",
+            "systemctl stop",
+            "systemctl start",
         ):
             self.assertNotIn(forbidden, text)
 
