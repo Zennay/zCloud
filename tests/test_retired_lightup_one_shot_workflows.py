@@ -13,6 +13,11 @@ RETIRED = {
     "lightup-pr40-zcloud-runner-recovery.yml": ("40", "37341085861"),
     "lightup-pr41-exact-head-proof.yml": ("41", "7668943e0f8dd719d95e6da4f30f621cc8adf642"),
     "lightup-pr42-exact-head-proof.yml": ("42", "8afa27a7d1846bdc08ffb221e087360d2378c27d"),
+    "lightup-pr44-exact-head-proof.yml": ("44", "2a678f33ecc71bed09f298f7136a48514ccb15fc"),
+    "lightup-pr47-exact-head-proof.yml": ("47", "c1d9e3c15ca3ffe7b2583e4296ea192d4f482f6d"),
+    "lightup-pr49-exact-head-proof.yml": ("49", "70b49cebd9d7d43dc5883d190c4afcacebbfd0ff"),
+    "lightup-pr50-exact-head-proof.yml": ("50", "ebe1b2e0f03da737e2d9314308bb09d22c77a9c2"),
+    "lightup-pr51-exact-head-proof.yml": ("51", "5ad1dbb3654c1c0aff0388999c1761788798328b"),
 }
 
 
