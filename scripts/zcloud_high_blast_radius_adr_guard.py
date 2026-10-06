@@ -32,6 +32,8 @@ _EXACT_HIGH_BLAST = {
 _MUTATING_TOKENS = {
     "activate",
     "activation",
+    "apply",
+    "bootstrap",
     "allocator",
     "deploy",
     "emergency",
