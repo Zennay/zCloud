@@ -29,6 +29,11 @@ def _token(name: str, value: str | None) -> str | None:
     return text
 
 
+def _output_token(value: object) -> str:
+    text = str(value or "").strip()
+    return text if TOKEN_RE.fullmatch(text) else "unclassified"
+
+
 def _timestamp(value: str) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
@@ -136,7 +141,7 @@ def report(
                         "kind": "event",
                         "id": int(row["id"]),
                         "observed_at": observed_at,
-                        "event": str(row["event"] or ""),
+                        "event": _output_token(row["event"]),
                         "generating": bool(row["generating"]),
                         "sending": bool(row["sending"]),
                     }
@@ -173,8 +178,8 @@ def report(
                         "kind": "control",
                         "id": int(row["id"]),
                         "observed_at": observed_at,
-                        "action": str(row["action"] or ""),
-                        "status": str(row["status"] or ""),
+                        "action": _output_token(row["action"]),
+                        "status": _output_token(row["status"]),
                     }
                 )
 
