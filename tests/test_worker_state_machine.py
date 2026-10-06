@@ -111,6 +111,14 @@ class WorkerStateMachineTests(unittest.TestCase):
         self.assertEqual("running", item["state"])
         self.assertEqual("fresh_heartbeat_active", item["reason_code"])
 
+    def test_later_active_heartbeat_recovers_old_block_and_failed_control(self):
+        self.event("send-blocked", seconds=30)
+        self.command("failed", seconds=20)
+        self.event("heartbeat", seconds=5, generating=1)
+        item = self.state()
+        self.assertEqual("running", item["state"])
+        self.assertEqual("fresh_heartbeat_active", item["reason_code"])
+
     def test_stale_or_idle_heartbeat_is_waiting(self):
         self.event("heartbeat", seconds=600, generating=1)
         stale = self.state()
