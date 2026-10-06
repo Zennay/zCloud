@@ -1,0 +1,155 @@
+name: LightUp implementation-plan live-validation atomicity exact-head proof
+
+on:
+  push:
+    branches: [ops/lightup-implementation-plan-live-validation-atomicity-20261006]
+    paths:
+      - .github/workflows/lightup-implementation-plan-live-validation-atomicity.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-implementation-plan-live-validation-atomicity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-implementation-plan-live-validation-atomicity-exact-head-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_EXPECTED_SHA: afb36c2801b66e3138940f0d0f9d5dde3a2ca444
+  LIGHTUP_SOURCE_BRANCH: chatgpt/st5-implementation-plan-live-validation-atomicity-20261006
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  hosted:
+    name: Hosted Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - name: Checkout exact LightUp head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Lightup
+          ref: afb36c2801b66e3138940f0d0f9d5dde3a2ca444
+          path: lightup
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Prove #360 offline
+        working-directory: lightup
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${LIGHTUP_EXPECTED_SHA}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_future_remediation_implementation_plan_live_validation_atomicity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+
+  prove:
+    if: github.event_name == 'pull_request'
+    name: Exact #360 head on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Snapshot exact LightUp head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "refs/heads/${LIGHTUP_SOURCE_BRANCH}:refs/remotes/origin/lightup-implementation-plan-live-validation-atomicity-proof"
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-implementation-plan-live-validation-atomicity-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-implementation-plan-live-validation-atomicity-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prove #360 Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_future_remediation_implementation_plan_live_validation_atomicity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Prove #360 Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_future_remediation_implementation_plan_live_validation_atomicity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/lightup-implementation-plan-live-validation-atomicity-receipt"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          payload = {
+              "project": "LightUp",
+              "issue": 360,
+              "focus": "evidence-remediation",
+              "source_branch": os.environ["LIGHTUP_SOURCE_BRANCH"],
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "dedicated-#360+compile+unit+integration+safety-canaries",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-implementation-plan-live-validation-atomicity-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+      - name: Upload exact-head receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-implementation-plan-live-validation-atomicity-vps-proof
+          path: ${{ runner.temp }}/lightup-implementation-plan-live-validation-atomicity-receipt/receipt.json
+          if-no-files-found: error
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
