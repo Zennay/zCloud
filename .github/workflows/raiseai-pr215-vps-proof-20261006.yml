@@ -21,6 +21,7 @@ jobs:
     env:
       TARGET_REPO: https://github.com/Zennay/RaiseAI.git
       TARGET_SHA: 1b6924c77946289e9cec990039fd3726803e6bd8
+      RAISE_BUILD_REVISION: 1b6924c77946289e9cec990039fd3726803e6bd8
     steps:
       - name: Fetch exact RaiseAI head
         shell: bash
@@ -32,6 +33,7 @@ jobs:
           git -C RaiseAI fetch --depth=1 origin "$TARGET_SHA"
           git -C RaiseAI checkout --detach FETCH_HEAD
           test "$(git -C RaiseAI rev-parse HEAD)" = "$TARGET_SHA"
+          test "$RAISE_BUILD_REVISION" = "$TARGET_SHA"
           test -z "$(git -C RaiseAI status --porcelain --untracked-files=normal)"
 
       - name: Configure Android SDK
@@ -49,6 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$RAISE_BUILD_REVISION" = "$TARGET_SHA"
           test -z "$(git status --porcelain --untracked-files=normal)"
           java -version
           python3 --version
