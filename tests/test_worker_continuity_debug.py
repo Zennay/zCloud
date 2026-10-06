@@ -1,4 +1,6 @@
 import importlib.util
+import sqlite3
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,6 +14,47 @@ SPEC.loader.exec_module(continuity)
 
 class ContinuityDebugTests(unittest.TestCase):
     """Regression coverage for the live two-hour continuity probe."""
+    def test_sqlite_snapshot_uses_live_ai_global_slots_schema(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "history.db"
+            with sqlite3.connect(db) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE ai_global_slots(
+                        slot INTEGER PRIMARY KEY,
+                        project_id TEXT NOT NULL,
+                        worker_slot INTEGER NOT NULL,
+                        assigned_at TEXT NOT NULL
+                    );
+                    CREATE TABLE runner_workers(
+                        project_id TEXT NOT NULL,
+                        worker_slot INTEGER NOT NULL,
+                        provider TEXT NOT NULL,
+                        desired_state TEXT NOT NULL,
+                        conversation_id TEXT
+                    );
+                    CREATE TABLE runner_commands(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+                    INSERT INTO ai_global_slots(slot,project_id,worker_slot,assigned_at)
+                    VALUES(1,'cloud',1,'2026-10-06T10:00:00+00:00');
+                    INSERT INTO runner_workers(project_id,worker_slot,provider,desired_state,conversation_id)
+                    VALUES('cloud',1,'chatgpt','running',NULL);
+                    """
+                )
+
+            snap = continuity.sqlite_snapshot(db, quick_check=True)
+
+        self.assertTrue(snap["ok"], snap)
+        self.assertEqual("ok", snap["quick_check"])
+        self.assertEqual(1, len(snap["slots"]))
+        self.assertEqual("cloud", snap["slots"][0]["project_id"])
+        self.assertIn("assigned_at", snap["slots"][0])
+
     def test_extract_runtime_reads_real_runner_live_shape(self):
         payload = {
             "chatgpt_runners": {
