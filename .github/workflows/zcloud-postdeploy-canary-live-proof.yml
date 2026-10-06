@@ -1,0 +1,74 @@
+name: zCloud postdeploy canary live proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_postdeploy_canary.py
+      - tests/test_postdeploy_canary.py
+      - tests/test_postdeploy_canary_live_proof_workflow.py
+      - .github/workflows/zcloud-postdeploy-canary-live-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-postdeploy-canary-live-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-canary-proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          clean: true
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify canary unit contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_postdeploy_canary
+
+      - name: Run read-only live postdeploy canary
+        id: canary
+        shell: bash
+        env:
+          REPORT: ${{ runner.temp }}/zcloud-postdeploy-canary-live-proof.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_postdeploy_canary.py \
+            --root /home/ubuntu/zennay-cloud \
+            --db /home/ubuntu/zennay-cloud/history.db \
+            --base-url http://127.0.0.1:8765 \
+            --runtime-extension "$HOME/snap/firefox/common/chatgpt-project-extension/background.js" \
+            --json \
+            | tee "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if payload.get("ok") is not True:
+              raise SystemExit("live postdeploy canary is not green")
+          print("ZCLOUD_POSTDEPLOY_CANARY_LIVE_PROOF_GREEN")
+          PY
+
+      - name: Upload read-only canary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-postdeploy-canary-live-proof-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/zcloud-postdeploy-canary-live-proof.json
