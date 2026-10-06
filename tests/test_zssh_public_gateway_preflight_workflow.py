@@ -59,7 +59,8 @@ class ZsshPublicGatewayPreflightWorkflowTests(unittest.TestCase):
 
     def test_raw_review_target_report_is_not_printed(self):
         self.assertNotIn('printf \'%s\\n\' "$output"', self.text)
-        self.assertIn('"trusted_key_count": trusted.size', self.text)
+        self.assertIn("console.log(JSON.stringify({", self.text)
+        self.assertIn("trusted_key_count: trusted.size", self.text)
 
 
 if __name__ == "__main__":
