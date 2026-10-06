@@ -151,7 +151,7 @@ def validate_project_contracts(
     priorities: set[str],
     errors: list[str],
 ) -> dict:
-    summary = {"project_count": 0, "resource_pools": []}
+    summary = {"project_count": 0, "resource_pools": [], "ai_worker_caps": {}}
     if not isinstance(data, dict):
         errors.append("project-contracts.json: object required")
         return summary
@@ -197,7 +197,10 @@ def validate_project_contracts(
             f"{prefix}.lane_profile: expected one of {sorted(SUPPORTED_PROFILES)}",
         )
         cap = contract.get("ai_worker_cap")
-        add(errors, isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0, f"{prefix}.ai_worker_cap: integer >= 0 required")
+        cap_valid = isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0
+        add(errors, cap_valid, f"{prefix}.ai_worker_cap: integer >= 0 required")
+        if cap_valid:
+            summary["ai_worker_caps"][str(pid)] = int(cap)
 
         autonomy = contract.get("autonomy")
         if not isinstance(autonomy, dict):
@@ -259,7 +262,13 @@ def validate_resource_policy(
         add(errors, priority in priorities, f"resource-policy.json.{pid}.priority: expected one of {sorted(priorities)}")
 
 
-def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int, errors: list[str]) -> dict:
+def validate_worker_state(
+    db_path: Path,
+    project_ids: set[str],
+    max_workers: int,
+    project_worker_caps: dict[str, int],
+    errors: list[str],
+) -> dict:
     summary = {"checked": False, "targets": 0, "workers": 0}
     if not db_path.exists():
         errors.append("history.db: missing worker-state store")
@@ -302,6 +311,19 @@ def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int
             count = int(target["worker_count"])
             add(errors, pid in project_ids or pid == "portfolio-review", f"history.db: unknown runner target {pid!r}")
             add(errors, 1 <= count <= max_workers, f"history.db: worker_count out of range for {pid}: {count}")
+            if pid != "portfolio-review" and pid in project_ids:
+                project_cap = project_worker_caps.get(pid)
+                add(
+                    errors,
+                    project_cap is not None,
+                    f"history.db: missing runtime worker cap for {pid}",
+                )
+                if project_cap is not None:
+                    add(
+                        errors,
+                        count <= project_cap,
+                        f"history.db: worker_count exceeds project runtime cap for {pid}: {count}>{project_cap}",
+                    )
             missing = [slot for slot in range(1, count + 1) if slot not in by_project.get(pid, set())]
             add(errors, not missing, f"history.db: missing configured worker slots for {pid}: {missing}")
     except Exception as exc:
@@ -367,7 +389,13 @@ def validate(
         errors,
     )
     worker_state = (
-        validate_worker_state(db_path, project_ids, max_workers, errors)
+        validate_worker_state(
+            db_path,
+            project_ids,
+            max_workers,
+            runtime_contracts.get("ai_worker_caps", {}),
+            errors,
+        )
         if db_path is not None and isinstance(max_workers, int) and max_workers > 0
         else {"checked": False}
     )
