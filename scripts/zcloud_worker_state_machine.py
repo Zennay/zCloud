@@ -48,6 +48,11 @@ def _token(name: str, value: str | None) -> str | None:
     return text
 
 
+def _output_token(value: object) -> str:
+    text = str(value or "").strip()
+    return text if TOKEN_RE.fullmatch(text) else "unclassified"
+
+
 def _dt(value: str) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
@@ -238,8 +243,8 @@ def classify_worker(
         ),
         "latest_control": (
             {
-                "action": str(command["action"] or ""),
-                "status": str(command["status"] or ""),
+                "action": _output_token(command["action"]),
+                "status": _output_token(command["status"]),
                 "observed_at": str(command["updated_at"]),
             }
             if command is not None
