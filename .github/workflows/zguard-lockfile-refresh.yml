@@ -1,0 +1,61 @@
+name: zGuard gateway lockfile refresh
+
+on:
+  push:
+    branches:
+      - proof/zguard-quality-20261006
+    paths:
+      - ".github/workflows/zguard-lockfile-refresh.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zguard-lockfile-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    name: Regenerate zGuard gateway lockfile on VPS
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      ZGUARD_SHA: be94dc79a9a2c8d608bc7e8a65a0fb17dfee3c74
+    steps:
+      - name: Checkout proof carrier
+        uses: actions/checkout@v4
+        with:
+          path: control
+          fetch-depth: 1
+
+      - name: Checkout exact zGuard QA head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zGuard
+          ref: ${{ env.ZGUARD_SHA }}
+          path: zguard
+          fetch-depth: 1
+
+      - name: Regenerate and audit production lockfile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          cd zguard
+          test "$(git rev-parse HEAD)" = "$ZGUARD_SHA"
+          cd zbrowse/gateway
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
+
+      - name: Persist generated lockfile to isolated proof branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p control/.proof
+          cp zguard/zbrowse/gateway/package-lock.json control/.proof/zguard-gateway-package-lock.json
+          cd control
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .proof/zguard-gateway-package-lock.json
+          git commit -m "ci: capture audited zGuard gateway lockfile"
+          git push origin HEAD:proof/zguard-quality-20261006
