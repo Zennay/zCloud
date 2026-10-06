@@ -47,6 +47,7 @@ jobs:
 
   prove:
     name: Prove trust contract on permanent VPS
+    needs: validate
     if: >-
       github.event_name == 'pull_request' &&
       github.actor == 'Zennay' &&
