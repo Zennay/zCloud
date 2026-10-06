@@ -149,19 +149,18 @@ def gate(iterations: list[Iteration]) -> dict:
         }
 
     latest = iterations[-1]
-    if latest.state == "rolled_back":
-        return {
-            "decision": "NEXT_ITERATION_ALLOWED",
-            "reason": "prior_iteration_rolled_back",
-            "effect_outcome": latest.measurement.effect_outcome if latest.measurement else None,
-        }
-
     measurement = latest.measurement
     if measurement is None:
         return {
             "decision": "MEASURE_EFFECT_REQUIRED",
             "reason": "completed_iteration_missing_measurement",
             "effect_outcome": None,
+        }
+    if latest.state == "rolled_back":
+        return {
+            "decision": "NEXT_ITERATION_ALLOWED",
+            "reason": "prior_iteration_measured_and_rolled_back",
+            "effect_outcome": measurement.effect_outcome,
         }
     if measurement.validation_outcome != "passed":
         return {
