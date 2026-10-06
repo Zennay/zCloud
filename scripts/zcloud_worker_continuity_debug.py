@@ -118,7 +118,64 @@ def firefox_processes() -> dict[str, Any]:
         check=False,
     )
     pids = [int(item) for item in proc.stdout.split() if item.isdigit()]
-    return {"count": len(pids), "pids": pids[:20]}
+    nice_values: list[int] = []
+    for pid in pids[:20]:
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_text()
+            # proc(5): nice is field 19; comm may contain spaces inside (...), so
+            # split only after the closing parenthesis.
+            rest = raw.rsplit(")", 1)[1].strip().split()
+            nice_values.append(int(rest[16]))
+        except Exception:
+            continue
+    return {
+        "count": len(pids),
+        "pids": pids[:20],
+        "nice_values": nice_values,
+        "min_nice": min(nice_values) if nice_values else None,
+        "max_nice": max(nice_values) if nice_values else None,
+    }
+
+
+def firefox_systemd_policy() -> dict[str, Any]:
+    env = os.environ.copy()
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
+    proc = subprocess.run(
+        [
+            "systemctl", "--user", "show", "chatgpt-firefox.service",
+            "-p", "LoadState",
+            "-p", "ActiveState",
+            "-p", "SubState",
+            "-p", "Nice",
+            "-p", "CPUWeight",
+            "-p", "CPUQuotaPerSecUSec",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+        timeout=5,
+    )
+    fields: dict[str, Any] = {}
+    for line in proc.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key] = value
+    try:
+        fields["Nice"] = int(fields.get("Nice") or 0)
+    except Exception:
+        pass
+    try:
+        fields["CPUWeight"] = int(fields.get("CPUWeight") or 0)
+    except Exception:
+        pass
+    return {
+        "ok": proc.returncode == 0,
+        "fields": fields,
+        "error": proc.stderr.strip()[:500] if proc.returncode else "",
+    }
 
 
 def sqlite_snapshot(db_path: Path) -> dict[str, Any]:
@@ -254,6 +311,10 @@ def classify(snapshot: dict[str, Any], min_workers: int) -> list[str]:
         reasons.append("cpu-load-pressure")
     if snapshot["firefox"]["count"] == 0:
         reasons.append("firefox-process-missing")
+    policy = (snapshot.get("firefox_systemd") or {}).get("fields") or {}
+    nice = policy.get("Nice")
+    if isinstance(nice, int) and nice > 0 and desired >= 4:
+        reasons.append("browser-deprioritized")
     if snapshot.get("ghost_generating_keys"):
         reasons.append("ghost-generating")
     if not reasons:
@@ -288,6 +349,7 @@ def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
         "memory": meminfo(),
         "load": host_load(),
         "firefox": firefox_processes(),
+        "firefox_systemd": firefox_systemd_policy(),
         "desired_chatgpt": chatgpt,
         "desired_claude": claude,
         "desired_total": desired,
