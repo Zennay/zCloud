@@ -119,6 +119,19 @@ def build_delta(
     connection = _open_read_only(Path(db_path))
     try:
         _validate_schema(connection)
+        invalid_time = connection.execute(
+            """
+            SELECT id FROM project_state_receipts
+            WHERE project_id=? AND julianday(observed_at) IS NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (project,),
+        ).fetchone()
+        if invalid_time is not None:
+            raise ValueError(
+                "project_state_receipts contains invalid observed_at for project "
+                + project
+            )
         before_row = connection.execute(
             """
             SELECT id,project_id,phase,action,commit_sha,ci_status,blocker,next_gate,
