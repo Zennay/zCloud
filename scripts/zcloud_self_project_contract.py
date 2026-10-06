@@ -13,6 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_PROJECTS = REPO / "projects.json"
 DEFAULT_CONTRACTS = REPO / "project-contracts.json"
 DEFAULT_RESOURCES = REPO / "resource-policy.json"
+DEFAULT_LAYOUT = REPO / "project-layout.json"
 DEFAULT_LEGACY_AUTONOMY = REPO / "autonomy-policy.json"
 CANONICAL_REPO_URL = "https://github.com/zennay/zcloud"
 
@@ -40,6 +41,7 @@ def audit(
     projects_path: Path = DEFAULT_PROJECTS,
     contracts_path: Path = DEFAULT_CONTRACTS,
     resources_path: Path = DEFAULT_RESOURCES,
+    layout_path: Path = DEFAULT_LAYOUT,
     legacy_autonomy_path: Path = DEFAULT_LEGACY_AUTONOMY,
 ) -> dict[str, Any]:
     errors: list[str] = []
@@ -49,6 +51,7 @@ def audit(
         projects = _load_json(projects_path)
         contracts = _load_json(contracts_path)
         resources = _load_json(resources_path)
+        layout = _load_json(layout_path)
         legacy_autonomy = _load_json(legacy_autonomy_path)
     except ContractError as exc:
         return {"ok": False, "errors": [str(exc)], "checks": checks}
@@ -194,6 +197,7 @@ def main() -> int:
     parser.add_argument("--projects", type=Path, default=DEFAULT_PROJECTS)
     parser.add_argument("--contracts", type=Path, default=DEFAULT_CONTRACTS)
     parser.add_argument("--resources", type=Path, default=DEFAULT_RESOURCES)
+    parser.add_argument("--layout", type=Path, default=DEFAULT_LAYOUT)
     parser.add_argument("--legacy-autonomy", type=Path, default=DEFAULT_LEGACY_AUTONOMY)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
