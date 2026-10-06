@@ -124,6 +124,21 @@ class DeployFreshnessReportTests(unittest.TestCase):
         self.assertEqual(["server.py"], result["validation"]["runtime_changed_paths"])
         self.assertEqual(1, result["validation"]["runtime_changed_count"])
 
+
+    def test_deleted_runtime_path_is_explicitly_unvalidated(self):
+        (self.repo / "server.py").unlink()
+        self.git("add", "-A")
+        self.git("commit", "-m", "delete runtime file")
+        current = self.head()
+
+        result = self.build(self.deployed_sha, current)
+
+        self.assertEqual(
+            "runtime_changes_unvalidated",
+            result["validation"]["status"],
+        )
+        self.assertEqual(["server.py"], result["validation"]["runtime_changed_paths"])
+
     def test_current_commit_behind_green_evidence_is_not_claimed_valid(self):
         green = self.commit_file(
             "docs/validated-later.md",
