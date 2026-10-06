@@ -17,7 +17,7 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/scope-authorization-network-config-acceptance-red-20261006
-  LIGHTUP_EXPECTED_SHA: e31b769e8ccad57196b36318f2036021c782b31c
+  LIGHTUP_EXPECTED_SHA: 55f3901d87cce86f5c726366855c0ff4bee6a914
 
 jobs:
   prove-red:
@@ -75,7 +75,7 @@ jobs:
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 8
+          test "$(grep -c 'not raised' "${LOG}" || true)" -eq 8
           grep -Fq 'FAILED (failures=8)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
@@ -102,7 +102,7 @@ jobs:
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 8
+          test "$(grep -c 'not raised' "${LOG}" || true)" -eq 8
           grep -Fq 'FAILED (failures=8)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
