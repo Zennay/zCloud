@@ -1,0 +1,148 @@
+name: LightUp scope decision purity VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-scope-decision-purity-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-scope-decision-purity-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-scope-decision-purity-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_EXPECTED_SHA: ce394e152f6467d2c0eb6c398c9c78db6222435d
+  LIGHTUP_BRANCH: chatgpt/scope-authorization-decision-purity-20261006
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    name: Scope decision purity on vps-bb300bba (Python ${{ matrix.python }})
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Snapshot exact LightUp branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$LIGHTUP_REPO/.git"
+          git -C "$LIGHTUP_REPO" fetch --prune origin "refs/heads/$LIGHTUP_BRANCH:refs/remotes/origin/lightup-scope-decision-purity-proof"
+          ACTUAL_SHA="$(git -C "$LIGHTUP_REPO" rev-parse refs/remotes/origin/lightup-scope-decision-purity-proof^{commit})"
+          test "$ACTUAL_SHA" = "$LIGHTUP_EXPECTED_SHA"
+          SNAPSHOT="$RUNNER_TEMP/lightup-scope-decision-purity-${{ matrix.python }}-$GITHUB_RUN_ID"
+          rm -rf "$SNAPSHOT"
+          mkdir -p "$SNAPSHOT"
+          git -C "$LIGHTUP_REPO" archive "$ACTUAL_SHA" | tar -x -C "$SNAPSHOT"
+          echo "LIGHTUP_SNAPSHOT=$SNAPSHOT" >> "$GITHUB_ENV"
+          echo "LIGHTUP_ACTUAL_SHA=$ACTUAL_SHA" >> "$GITHUB_ENV"
+
+      - name: Compile exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$LIGHTUP_SNAPSHOT"
+          python -m compileall -q src tests
+
+      - name: Focused scope decision purity regression
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          cd "$LIGHTUP_SNAPSHOT"
+          python -m unittest discover -s tests -p 'test_scope_decision_purity.py' -v
+
+      - name: Full unit suite
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          cd "$LIGHTUP_SNAPSHOT"
+          python -m unittest discover -s tests -v
+
+      - name: Real producer integration
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "$LIGHTUP_SNAPSHOT"
+          python -m unittest discover -s tests/integration -v
+
+      - name: Safety canary
+        if: matrix.python == '3.11'
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          cd "$LIGHTUP_SNAPSHOT"
+          python scripts/check_safety_canaries.py
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="$RUNNER_TEMP/lightup-scope-decision-purity-receipt-${{ matrix.python }}"
+          mkdir -p "$RECEIPT_DIR"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "issue": 344,
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": os.uname().nodename,
+              "python": "${{ matrix.python }}",
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "compile+focused+unit+integration+safety-canary",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-scope-decision-purity-receipt-${{ matrix.python }}" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-scope-decision-purity-vps-proof-py${{ matrix.python }}
+          path: ${{ runner.temp }}/lightup-scope-decision-purity-receipt-${{ matrix.python }}/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "$LIGHTUP_SNAPSHOT"
