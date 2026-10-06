@@ -142,4 +142,44 @@ printf 'ZCLOUD_AUTONOMY_API_END\n'
 printf 'ZCLOUD_SCHEDULER_LOG_BEGIN\n'
 journalctl -u zennay-cloud.service -n 120 --no-pager 2>/dev/null | grep -E 'Autonomy|scheduler|push|worker|ERROR|Exception' | tail -n 80 || true
 printf 'ZCLOUD_SCHEDULER_LOG_END\n'
+printf 'ZCLOUD_SAFE_IDLE_DIAGNOSTIC_BEGIN\n'
+python3 - <<'PY'
+import json
+import sqlite3
+
+db_path = "/home/ubuntu/zennay-cloud/history.db"
+try:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+    conn.row_factory = sqlite3.Row
+    slots = conn.execute(
+        "SELECT slot,project_id,worker_slot,assigned_at "
+        "FROM ai_global_slots ORDER BY slot"
+    ).fetchall()
+    workers = conn.execute(
+        "SELECT project_id,worker_slot,desired_state,conversation_id "
+        "FROM runner_workers ORDER BY project_id,worker_slot"
+    ).fetchall()
+    drains = conn.execute(
+        "SELECT id,project_id,action,status,created_at,updated_at,result "
+        "FROM runner_commands WHERE action='drain' "
+        "ORDER BY id DESC LIMIT 40"
+    ).fetchall()
+    events = conn.execute(
+        "SELECT id,ts,event,project_id,worker_slot,reason,error,generating,sending "
+        "FROM runner_events "
+        "WHERE event IN ('runner-drained','runner-paused','heartbeat',"
+        "'generation-started','generation-finished','assignment-refresh-failed') "
+        "ORDER BY id DESC LIMIT 160"
+    ).fetchall()
+    print(json.dumps({
+        "ai_global_slots": [dict(row) for row in slots],
+        "runner_workers": [dict(row) for row in workers],
+        "recent_drain_commands": [dict(row) for row in drains],
+        "recent_worker_events": [dict(row) for row in events],
+    }, ensure_ascii=False, sort_keys=True))
+    conn.close()
+except Exception as exc:
+    print(json.dumps({"error": str(exc)[:500]}, ensure_ascii=False))
+PY
+printf 'ZCLOUD_SAFE_IDLE_DIAGNOSTIC_END\n'
 printf 'ZCLOUD_VPS_PROBE=GREEN\n'
