@@ -1,0 +1,106 @@
+name: zCloud uLab telemetry report proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_ulab_telemetry_report.py
+      - tests/test_ulab_telemetry_report.py
+      - tests/test_ulab_telemetry_report_workflow.py
+      - docs/ulab-control-plane-telemetry-report.md
+      - .github/workflows/zcloud-ulab-telemetry-report-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-ulab-telemetry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Run focused telemetry contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_ulab_telemetry_report.py tests/test_ulab_telemetry_report.py tests/test_ulab_telemetry_report_workflow.py
+          python3 -m unittest -v tests.test_ulab_telemetry_report tests.test_ulab_telemetry_report_workflow
+
+  permanent-vps-proof:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Read current uLab telemetry evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 scripts/zcloud_ulab_telemetry_report.py --projects projects.json)"
+          python3 - "$output" <<'PY'
+          import json
+          import re
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          if payload.get("project_id") != "ulab":
+              raise SystemExit("wrong project")
+          github = payload.get("github") or {}
+          if github.get("repository") != "Zennay/uLab":
+              raise SystemExit("wrong repository")
+          if not re.fullmatch(r"[0-9a-f]{40}", str(github.get("main_sha") or "")):
+              raise SystemExit("missing exact uLab main SHA")
+          if not isinstance(github.get("open_pr_count"), int):
+              raise SystemExit("open PR count missing")
+          ci = github.get("ci") or {}
+          if ci.get("status") not in {"success", "failure", "in_progress", "not_configured", "unknown"}:
+              raise SystemExit("invalid CI state")
+          scorecard = payload.get("scorecard") or {}
+          if not scorecard.get("milestones"):
+              raise SystemExit("milestone evidence missing")
+          if not isinstance(payload.get("implementation_gates"), list):
+              raise SystemExit("gate evidence missing")
+          print("ZCLOUD_ULAB_TELEMETRY_PROOF=" + json.dumps({
+              "main_sha": github["main_sha"],
+              "open_pr_count": github["open_pr_count"],
+              "ci_status": ci["status"],
+              "milestone_count": len(scorecard["milestones"]),
+              "gate_count": len(payload["implementation_gates"]),
+          }, sort_keys=True, separators=(",", ":")))
+          PY
