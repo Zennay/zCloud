@@ -5,6 +5,10 @@ on:
     branches: [ops/lightup-scope-revocation-precedence-vps-proof-20261006]
     paths:
       - .github/workflows/lightup-scope-revocation-precedence-vps-proof.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-scope-revocation-precedence-vps-proof.yml
   workflow_dispatch:
 
 permissions:
