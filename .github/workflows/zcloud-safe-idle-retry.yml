@@ -1,0 +1,202 @@
+name: Retry transient zCloud safe-idle deploy
+
+on:
+  workflow_run:
+    workflows: ["zCloud VPS deploy"]
+    types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-safe-idle-retry.yml"
+      - "scripts/zcloud_safe_idle_retry_wait.py"
+      - "tests/test_safe_idle_retry_wait.py"
+      - "tests/test_safe_idle_retry_workflow.py"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  statuses: write
+
+concurrency:
+  group: zcloud-safe-idle-retry-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    if: >
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      retry: ${{ steps.classify.outputs.retry }}
+      deploy_sha: ${{ steps.classify.outputs.deploy_sha }}
+      blockers: ${{ steps.classify.outputs.blockers }}
+    steps:
+      - name: Classify transient generating-only safe-idle failure
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_RUN_ID: ${{ github.event.workflow_run.id }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "retry=false" >> "$GITHUB_OUTPUT"
+          echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+
+          current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          if [[ "$DEPLOY_SHA" != "$current_main" ]]; then
+            echo "ZCLOUD_SAFE_IDLE_RETRY_STALE_SHA deploy_sha=$DEPLOY_SHA current_main=$current_main"
+            exit 0
+          fi
+
+          prior_status_count="$(
+            gh api "repos/${GITHUB_REPOSITORY}/commits/$DEPLOY_SHA/status"               --jq '[.statuses[] | select(.context == "zcloud/vps-safe-idle-retry")] | length'
+          )"
+          if [[ "$prior_status_count" != "0" ]]; then
+            echo "ZCLOUD_SAFE_IDLE_RETRY_ALREADY_USED sha=$DEPLOY_SHA"
+            exit 0
+          fi
+
+          deploy_job_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$DEPLOY_RUN_ID/jobs?per_page=100"               --jq '.jobs[] | select(.name == "deploy" and .conclusion == "failure") | .id'               | head -n 1
+          )"
+          if [[ -z "$deploy_job_id" ]]; then
+            echo "ZCLOUD_SAFE_IDLE_RETRY_NO_FAILED_DEPLOY_JOB run_id=$DEPLOY_RUN_ID"
+            exit 0
+          fi
+
+          log_file="$(mktemp)"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/$deploy_job_id/logs" > "$log_file"
+
+          export ZCLOUD_DEPLOY_LOG_FILE="$log_file"
+          classify_json="$(
+            python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          text = Path(os.environ["ZCLOUD_DEPLOY_LOG_FILE"]).read_text(
+              encoding="utf-8", errors="replace"
+          )
+          pattern = re.compile(
+              r"ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: "
+              r"browser workers did not reach safe-idle before deployment timeout; "
+              r"(\[[^\r\n]+\])"
+          )
+          matches = pattern.findall(text)
+          if not matches:
+              print(json.dumps({"retry": False, "reason": "marker-missing"}))
+              raise SystemExit(0)
+
+          try:
+              blockers = json.loads(matches[-1])
+          except json.JSONDecodeError:
+              print(json.dumps({"retry": False, "reason": "invalid-blocker-json"}))
+              raise SystemExit(0)
+
+          if not isinstance(blockers, list) or not blockers:
+              print(json.dumps({"retry": False, "reason": "empty-blockers"}))
+              raise SystemExit(0)
+
+          active_only = all(
+              isinstance(item, dict)
+              and isinstance(item.get("worker_id"), str)
+              and (item.get("generating") is True or item.get("sending") is True)
+              for item in blockers
+          )
+          worker_ids = [item["worker_id"] for item in blockers if isinstance(item, dict) and item.get("worker_id")]
+          print(json.dumps({
+              "retry": bool(active_only and worker_ids),
+              "reason": "transient-active-blockers" if active_only else "non-transient-blocker",
+              "blockers": worker_ids,
+          }, separators=(",", ":")))
+          PY
+          )"
+
+          retry="$(python3 -c 'import json,sys; print("true" if json.load(sys.stdin).get("retry") else "false")' <<<"$classify_json")"
+          blockers="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("blockers") or [], separators=(",",":")))' <<<"$classify_json")"
+          reason="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "unknown")' <<<"$classify_json")"
+          echo "ZCLOUD_SAFE_IDLE_RETRY_CLASSIFIED retry=$retry reason=$reason blockers=$blockers"
+          if [[ "$retry" != "true" ]]; then
+            exit 0
+          fi
+
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/$DEPLOY_SHA"             -f state=pending             -f context='zcloud/vps-safe-idle-retry'             -f description='Waiting for transient browser work to become idle'             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"             >/dev/null
+
+          echo "retry=true" >> "$GITHUB_OUTPUT"
+          echo "blockers=$blockers" >> "$GITHUB_OUTPUT"
+
+  wait-and-dispatch:
+    needs: classify
+    if: needs.classify.outputs.retry == 'true'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    outputs:
+      outcome: ${{ steps.dispatch.outputs.outcome }}
+    steps:
+      - name: Check out failed production revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.classify.outputs.deploy_sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Wait read-only for transient blockers
+        env:
+          BLOCKERS_JSON: ${{ needs.classify.outputs.blockers }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_safe_idle_retry_wait.py             --blockers-json "$BLOCKERS_JSON"             --timeout-seconds 900             --poll-seconds 5             --stable-seconds 20             --json
+
+      - name: Reconfirm exact main and dispatch one fresh regression
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ needs.classify.outputs.deploy_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          if [[ "$current_main" != "$DEPLOY_SHA" ]]; then
+            echo "outcome=obsolete-main-moved" >> "$GITHUB_OUTPUT"
+            echo "ZCLOUD_SAFE_IDLE_RETRY_MAIN_MOVED expected=$DEPLOY_SHA actual=$current_main"
+            exit 0
+          fi
+          gh api --method POST             "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-regression-smoke.yml/dispatches"             -f ref=main >/dev/null
+          echo "outcome=regression-dispatched" >> "$GITHUB_OUTPUT"
+          echo "ZCLOUD_SAFE_IDLE_RETRY_DISPATCHED sha=$DEPLOY_SHA"
+
+  finalize:
+    needs: [classify, wait-and-dispatch]
+    if: always() && needs.classify.outputs.retry == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Publish bounded retry result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ needs.classify.outputs.deploy_sha }}
+          WAIT_RESULT: ${{ needs.wait-and-dispatch.result }}
+          RETRY_OUTCOME: ${{ needs.wait-and-dispatch.outputs.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=failure
+          description='Safe-idle retry wait did not complete'
+          if [[ "$WAIT_RESULT" == "success" ]]; then
+            state=success
+            if [[ "$RETRY_OUTCOME" == "regression-dispatched" ]]; then
+              description='One bounded safe-idle retry dispatched'
+            else
+              description='Safe-idle retry became obsolete after main moved'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/$DEPLOY_SHA"             -f state="$state"             -f context='zcloud/vps-safe-idle-retry'             -f description="$description"             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"             >/dev/null
+          echo "ZCLOUD_SAFE_IDLE_RETRY_STATUS=$state outcome=${RETRY_OUTCOME:-none}"

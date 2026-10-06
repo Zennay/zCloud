@@ -1,0 +1,138 @@
+name: zCloud production status recovery
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_run:
+    workflows: ["zCloud VPS deploy"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  statuses: read
+
+concurrency:
+  group: zcloud-production-status-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover-missing-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Re-arm regression when current main lost production status
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-production-status-recovery",
+          }
+
+          def get(path):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}{path}",
+                  headers=headers,
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.load(response)
+
+          main = get("/commits/main")
+          sha = str(main.get("sha") or "")
+          if not sha:
+              raise SystemExit("could not resolve current main SHA")
+
+          status = get(f"/commits/{sha}/status")
+          production = [
+              item for item in status.get("statuses", [])
+              if str(item.get("context") or "") == "zcloud/vps-production"
+          ]
+          if production:
+              latest = max(
+                  production,
+                  key=lambda item: (
+                      str(item.get("created_at") or ""),
+                      int(item.get("id") or 0),
+                  ),
+              )
+              print(
+                  "PRODUCTION_STATUS_RECOVERY=noop "
+                  f"sha={sha} state={latest.get('state')}"
+              )
+              raise SystemExit(0)
+
+          deploy_runs = get(
+              "/actions/workflows/zcloud-vps-deploy.yml/runs"
+              "?branch=main&per_page=100"
+          ).get("workflow_runs", [])
+          deploy_active = any(
+              str(run.get("head_sha") or "") == sha
+              and str(run.get("head_branch") or "") == "main"
+              and str(run.get("status") or "") in {
+                  "queued", "in_progress", "pending", "waiting", "requested"
+              }
+              for run in deploy_runs
+          )
+          if deploy_active:
+              print(f"PRODUCTION_STATUS_RECOVERY=deploy_already_active sha={sha}")
+              raise SystemExit(0)
+
+          regression_runs = get(
+              "/actions/workflows/zcloud-regression-smoke.yml/runs"
+              "?branch=main&per_page=100"
+          ).get("workflow_runs", [])
+
+          exact_green = any(
+              str(run.get("head_sha") or "") == sha
+              and str(run.get("head_branch") or "") == "main"
+              and str(run.get("conclusion") or "") == "success"
+              and str(run.get("event") or "") in {"push", "workflow_dispatch"}
+              for run in regression_runs
+          )
+          if not exact_green:
+              print(f"PRODUCTION_STATUS_RECOVERY=wait_regression sha={sha}")
+              raise SystemExit(0)
+
+          regression_active = any(
+              str(run.get("head_sha") or "") == sha
+              and str(run.get("head_branch") or "") == "main"
+              and str(run.get("status") or "") in {
+                  "queued", "in_progress", "pending", "waiting", "requested"
+              }
+              for run in regression_runs
+          )
+          if regression_active:
+              print(
+                  f"PRODUCTION_STATUS_RECOVERY=regression_already_active sha={sha}"
+              )
+              raise SystemExit(0)
+
+          payload = json.dumps({"ref": "main"}).encode()
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/workflows/"
+              "zcloud-regression-smoke.yml/dispatches",
+              data=payload,
+              method="POST",
+              headers={**headers, "Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              if response.status != 204:
+                  raise RuntimeError(
+                      f"unexpected workflow dispatch response: {response.status}"
+                  )
+
+          print(f"PRODUCTION_STATUS_RECOVERY=regression_dispatched sha={sha}")
+          PY

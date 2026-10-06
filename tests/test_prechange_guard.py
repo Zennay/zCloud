@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_prechange_guard.py"
 SPEC = importlib.util.spec_from_file_location("zcloud_prechange_guard", MODULE_PATH)
@@ -228,6 +229,34 @@ class PrechangeGuardTests(unittest.TestCase):
         result = self.evaluate()
         self.assertFalse(result["ok"])
         self.assertIn("scripts/new_deploy.py", result["unexpected_changes"])
+
+
+    def test_http_health_retries_short_transient_gap(self):
+        self.assertEqual(2.0, guard.http_healthy.__defaults__[0])
+        with mock.patch.object(
+            guard, "http_healthy", side_effect=[False, False, True]
+        ) as probe, mock.patch.object(guard.time, "sleep") as sleep:
+            self.assertTrue(
+                guard.wait_http_healthy(
+                    "http://127.0.0.1:8765/",
+                    retry_window=10.0,
+                    interval=0.5,
+                )
+            )
+        self.assertEqual(3, probe.call_count)
+        self.assertEqual(2, sleep.call_count)
+
+    def test_http_health_retry_remains_fail_closed_after_budget(self):
+        with mock.patch.object(guard, "http_healthy", return_value=False), \
+             mock.patch.object(guard.time, "monotonic", side_effect=[0.0, 4.0, 10.0]), \
+             mock.patch.object(guard.time, "sleep"):
+            self.assertFalse(
+                guard.wait_http_healthy(
+                    "http://127.0.0.1:8765/",
+                    retry_window=10.0,
+                    interval=0.5,
+                )
+            )
 
 
 if __name__ == "__main__":
