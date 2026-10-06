@@ -29,8 +29,9 @@ class ProjectBottleneckWorkflowTests(unittest.TestCase):
         self.assertIn(live, text)
         self.assertLess(text.index(focused), text.index(live))
         self.assertIn("--project cloud", text)
-        self.assertIn('/home/ubuntu/zennay-cloud/history.db', text)
-        self.assertIn('/home/ubuntu/zennay-cloud/projects.json', text)
+        self.assertIn("runtime_root=/home/ubuntu/zennay-cloud", text)
+        self.assertIn('$runtime_root/history.db', text)
+        self.assertIn('$runtime_root/projects.json', text)
 
     def test_proof_has_no_runtime_mutation_route(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
