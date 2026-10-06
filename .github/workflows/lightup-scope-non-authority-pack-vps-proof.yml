@@ -58,7 +58,7 @@ jobs:
           python scripts/check_safety_canaries.py
 
   pr100-compat:
-    name: PR #100 compatibility Python ${{ matrix.python }} (diagnostic)
+    name: "PR #100 compatibility Python ${{ matrix.python }} (diagnostic)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -97,7 +97,7 @@ jobs:
             tests.test_scope_authorization_lab_classification_non_authority -v
 
   prove:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request'
     name: Exact pack on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
