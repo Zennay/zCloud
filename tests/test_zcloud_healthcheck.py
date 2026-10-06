@@ -104,11 +104,13 @@ class ZCloudHealthcheckTests(unittest.TestCase):
                     "project_id": "cloud::w1",
                     "base_project_id": "cloud",
                     "worker_slot": 1,
+                    "worker_count": 2,
                 },
                 "cloud::w2": {
                     "project_id": "cloud::w2",
                     "base_project_id": "cloud",
                     "worker_slot": 2,
+                    "worker_count": 2,
                 },
             },
         }
