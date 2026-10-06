@@ -209,7 +209,27 @@ heal_project_runtimes() {
 
 heal_worker_progress() {
   [[ -x "${WORKER_WATCHDOG}" ]] || return 0
-  if ! "${WORKER_WATCHDOG}" --json; then
+
+  # Keep every SQLite writer on the same runtime identity as zennay-cloud.service.
+  # The self-heal unit itself runs as root so it can recover system services; if
+  # the watchdog also runs as root, SQLite may create history.db-wal/-shm owned
+  # by root and the ubuntu-owned zCloud process then fails with SQLITE_READONLY.
+  local runtime_home state_dir watchdog_state
+  runtime_home="$(getent passwd "${RUNTIME_USER}" 2>/dev/null | cut -d: -f6 || true)"
+  [[ -n "${runtime_home}" ]] || runtime_home="/home/${RUNTIME_USER}"
+  state_dir="${runtime_home}/.local/state/zcloud"
+  watchdog_state="${state_dir}/worker-progress-watchdog.json"
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    install -d -o "${RUNTIME_USER}" -g "$(id -gn "${RUNTIME_USER}")" -m 0755 "${state_dir}"
+    if ! runuser -u "${RUNTIME_USER}" -- env \
+      HOME="${runtime_home}" \
+      ZCLOUD_WORKER_WATCHDOG_STATE="${watchdog_state}" \
+      "${WORKER_WATCHDOG}" --json; then
+      logger -t zcloud-worker-watchdog "watchdog invocation failed; retrying on next timer tick"
+      return 0
+    fi
+  elif ! ZCLOUD_WORKER_WATCHDOG_STATE="${watchdog_state}" "${WORKER_WATCHDOG}" --json; then
     logger -t zcloud-worker-watchdog "watchdog invocation failed; retrying on next timer tick"
     return 0
   fi
