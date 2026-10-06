@@ -121,7 +121,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(text.index(reconcile), text.index(promote))
 
         final_reconcile = "Reconcile stale browser commands before final health evidence"
-        restore = "Restore browser workers after guarded promotion"
+        restore = "Restore browser workers after worker-runtime promotion"
         evidence = "Capture green production deploy evidence"
         self.assertIn(final_reconcile, text)
         self.assertIn("zcloud-stale-command-final-reconcile.json", text)
