@@ -10,6 +10,7 @@ on:
       - project_runtime.py
       - project-contracts.json
       - tests/test_resource_governor_canary_workflow.py
+      - tests/test_resource_governor_canary_trust.py
   workflow_dispatch:
 
 permissions:
@@ -17,10 +18,26 @@ permissions:
 
 jobs:
   canary:
+    if: github.actor == 'Zennay' && github.triggering_actor == 'Zennay'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          clean: true
+          persist-credentials: false
+
+      - name: Verify exact zCloud checkout
+        shell: bash
+        env:
+          EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
 
       - name: Verify permanent zCloud VPS runner
         run: python3 scripts/zcloud_vps_runner_guard.py --json
