@@ -1,0 +1,146 @@
+name: LightUp PR330 parser rejection VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-pr330-parser-rejection-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-pr330-parser-rejection-vps-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr330-parser-rejection-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  LIGHTUP_EXPECTED_SHA: 28da93c5ac2520a3e26a9abfe08ef46e7c63e39c
+
+jobs:
+  prove:
+    name: PR330 exact-head parser rejection proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp PR #330 head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin \
+            refs/pull/330/head:refs/remotes/origin/lightup-pr330-parser-rejection-proof
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse \
+            refs/remotes/origin/lightup-pr330-parser-rejection-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+
+          SNAPSHOT="${RUNNER_TEMP}/lightup-pr330-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove parser rejection boundary on Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest -v \
+            test_future_security_evidence_remediation_parser_rejection_purity \
+            test_future_security_evidence_collection_handoff \
+            test_future_security_evidence_freshness_handoff \
+            test_future_security_evidence_freshness_admission_handoff \
+            test_future_security_evidence_sufficiency_attestation_handoff \
+            test_future_security_classification_review_request_handoff
+          python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove parser rejection boundary on Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest -v \
+            test_future_security_evidence_remediation_parser_rejection_purity \
+            test_future_security_evidence_collection_handoff \
+            test_future_security_evidence_freshness_handoff \
+            test_future_security_evidence_freshness_admission_handoff \
+            test_future_security_evidence_sufficiency_attestation_handoff \
+            test_future_security_classification_review_request_handoff
+          python -m unittest discover -s tests/integration -v
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-pr330-parser-rejection-vps-proof.json
+          import json
+          import os
+          import socket
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "LightUp",
+              "pull_request": 330,
+              "result": "success",
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "actual_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "proof": [
+                  "compile-py311-py314",
+                  "parser-rejection-purity-py311-py314",
+                  "five-strict-parent-handoffs-py311-py314",
+                  "real-producer-integration-py311-py314",
+                  "safety-canary-py311",
+              ],
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-pr330-parser-rejection-vps-proof.json
+
+      - name: Upload receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr330-parser-rejection-vps-proof-${{ github.run_id }}
+          path: artifacts/lightup-pr330-parser-rejection-vps-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
