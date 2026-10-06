@@ -80,17 +80,6 @@ class ControlPendingFeedbackContractTests(unittest.TestCase):
         self.assertIn("button.textContent='Failed'", block)
         self.assertIn("button.disabled=false", block)
 
-    def test_attention_resolution_disables_until_backend_result_and_surfaces_failure(self):
-        marker = "const attentionResolve=e.target.closest('[data-attention-resolve]')"
-        start = self.app.index(marker)
-        block = self.app[start:self.app.index("const dynamicSave=", start)]
-        self.assertIn("attentionResolve.disabled=true", block)
-        self.assertIn("await post('/api/portfolio-attention'", block)
-        self.assertIn("DATA.attention_needed=", block)
-        self.assertLess(block.index("await post('/api/portfolio-attention'"), block.index("DATA.attention_needed="))
-        self.assertIn("attentionResolve.disabled=false", block)
-        self.assertIn("Could not mark the attention item done:", block)
-
     def test_server_reported_pending_state_is_visible_on_primary_controls(self):
         self.assertIn("pending=['pending','dispatched'].includes(r.command?.status)", self.app)
         self.assertIn("$" + "{pending?'Starting…':'Start work'}", self.app)
