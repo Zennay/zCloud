@@ -15,7 +15,7 @@ class PostdeployCanaryLiveProofWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_postdeploy_canary.py", text)
         self.assertIn("tests/test_postdeploy_canary.py", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
-        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn("github.actor == 'Zennay' &&", text)
         self.assertIn(
             "github.event.pull_request.head.repo.full_name == github.repository",
             text,
