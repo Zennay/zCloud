@@ -25,15 +25,98 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Scan tracked repository for vulnerabilities and secrets
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install pinned Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
         with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          format: table
-          hide-progress: true
+          version: v0.70.0
           cache: true
+
+      - name: Prove secret scanner fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/zcloud-trivy-secret-selftest"
+          rm -rf "$fixture"
+          mkdir -p "$fixture"
+          trap 'rm -rf "$fixture"' EXIT
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            -out "$fixture/ephemeral-private-key.pem" >/dev/null 2>&1
+
+          set +e
+          trivy fs \
+            --quiet \
+            --scanners secret \
+            --exit-code 17 \
+            "$fixture"
+          rc=$?
+          set -e
+
+          if [[ "$rc" -ne 17 ]]; then
+            echo "TRIVY_SECRET_SELFTEST_BLOCKED expected=17 actual=$rc" >&2
+            exit 2
+          fi
+          echo "TRIVY_SECRET_SELFTEST_GREEN"
+
+      - name: Prove vulnerability scanner fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/zcloud-trivy-vuln-selftest"
+          rm -rf "$fixture"
+          mkdir -p "$fixture"
+          trap 'rm -rf "$fixture"' EXIT
+          cat > "$fixture/package-lock.json" <<'JSON'
+          {
+            "name": "zcloud-trivy-selftest",
+            "version": "1.0.0",
+            "lockfileVersion": 2,
+            "requires": true,
+            "packages": {
+              "": {
+                "name": "zcloud-trivy-selftest",
+                "version": "1.0.0",
+                "dependencies": {
+                  "lodash": "4.17.20"
+                }
+              },
+              "node_modules/lodash": {
+                "version": "4.17.20"
+              }
+            },
+            "dependencies": {
+              "lodash": {
+                "version": "4.17.20"
+              }
+            }
+          }
+          JSON
+
+          set +e
+          trivy fs \
+            --quiet \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 23 \
+            "$fixture"
+          rc=$?
+          set -e
+
+          if [[ "$rc" -ne 23 ]]; then
+            echo "TRIVY_VULN_SELFTEST_BLOCKED expected=23 actual=$rc" >&2
+            exit 2
+          fi
+          echo "TRIVY_VULN_SELFTEST_GREEN"
+
+      - name: Scan tracked repository for vulnerabilities and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy fs \
+            --quiet \
+            --scanners vuln,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --format table \
+            .
