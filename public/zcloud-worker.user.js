@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.15
+// @version      1.3.16
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.15";
+  const SCRIPT_VERSION = "1.3.16";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -289,8 +289,8 @@
     }
   }
 
-  async function requestFreshConversation(reason) {
-    if (freshConversationPending || !target?.project_id || generationActive() || sending) return false;
+  async function requestFreshConversation(reason, commandId = 0) {
+    if (freshConversationPending || !target?.project_id || generationActive() || sending || awaitingGeneration) return false;
     freshConversationPending = true;
     const queueId = String(target?.queue_item?.queue_id || "").trim();
     if (queueId) rememberQueueId(target.project_id, queueId);
@@ -300,6 +300,18 @@
       previousConversation: conversationId(),
       queueItem: queueId
     });
+    if (commandId) {
+      const acknowledged = await commandResult(
+        commandId,
+        "completed",
+        "Fresh chat requested by Violentmonkey worker"
+      );
+      if (!acknowledged) {
+        freshConversationPending = false;
+        return false;
+      }
+      lastHandledCommandId = Math.max(lastHandledCommandId, Number(commandId || 0));
+    }
     location.assign(freshConversationNavigationUrl(target));
     return true;
   }
@@ -1211,9 +1223,20 @@
           await reportSendBlocked("push-deferred-busy");
           continue;
         }
+        if (!assignmentReady(target)) {
+          await refreshTarget();
+          if (!target || !assignmentReady(target)) {
+            await reportSendBlocked("push-deferred-assignment:" + assignmentDiagnostic(target));
+            continue;
+          }
+        }
         const ok = await sendPrompt("database-push");
-        await commandResult(id, ok ? "completed" : "failed", ok ? "Prompt sent by Violentmonkey worker" : "Violentmonkey worker could not send safely");
-        lastHandledCommandId = Math.max(lastHandledCommandId, id);
+        if (!ok) {
+          await reportSendBlocked("push-deferred-send-unavailable");
+          continue;
+        }
+        const acknowledged = await commandResult(id, "completed", "Prompt sent by Violentmonkey worker");
+        if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);
       } else if (command.action === "start") {
         // Direct worker Start belongs to the primary Violentmonkey runner once
         // it has announced readiness. Keep the command pending until a real
@@ -1223,6 +1246,13 @@
           await reportSendBlocked("start-deferred-busy");
           continue;
         }
+        if (!assignmentReady(target)) {
+          await refreshTarget();
+          if (!target || !assignmentReady(target)) {
+            await reportSendBlocked("start-deferred-assignment:" + assignmentDiagnostic(target));
+            continue;
+          }
+        }
         const ok = await sendPrompt("database-start");
         if (!ok) continue;
         const acknowledged = await commandResult(
@@ -1231,6 +1261,23 @@
           "Prompt sent by Violentmonkey start command"
         );
         if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);
+      } else if (command.action === "new_chat") {
+        // Fresh-chat recovery belongs to the primary userscript too. This makes
+        // recovery independent from the legacy WebExtension command consumer.
+        if (generationActive() || sending || awaitingGeneration || sawGeneration) {
+          await reportSendBlocked("new-chat-deferred-busy");
+          continue;
+        }
+        if (!assignmentReady(target)) {
+          await refreshTarget();
+          if (!target || !assignmentReady(target)) {
+            await reportSendBlocked("new-chat-deferred-assignment:" + assignmentDiagnostic(target));
+            continue;
+          }
+        }
+        const navigating = await requestFreshConversation("database-new-chat", id);
+        if (!navigating) continue;
+        return;
       } else if (command.action === "drain") {
         draining = true;
         await status("runner-draining", {reason: "database-drain"});
