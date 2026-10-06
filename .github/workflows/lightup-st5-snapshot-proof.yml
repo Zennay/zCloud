@@ -17,7 +17,7 @@ concurrency:
 jobs:
   verify:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,32 +26,46 @@ jobs:
       - name: Verify permanent zCloud VPS runner
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Verify exact LightUp snapshot candidate
+      - name: Verify exact LightUp snapshot candidates
         shell: bash
         env:
           LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-          TARGET_BRANCH: chatgpt/st5-implementation-plan-review-snapshot-isolation-20261006
-          EXPECTED_SHA: afbbf3c6973553e46b7f74b668d2c2981939eda2
         run: |
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
 
-          git -C "${LIGHTUP_REPO}" fetch --no-tags origin             "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
-          TARGET_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${TARGET_BRANCH}^{commit}")"
-          test "${TARGET_SHA}" = "${EXPECTED_SHA}"
+          verify_candidate() {
+            local branch="$1"
+            local expected_sha="$2"
+            local pattern="$3"
+            local run_chain="$4"
 
-          TMP_ROOT="$(mktemp -d)"
-          trap 'rm -rf "${TMP_ROOT}"' EXIT
-          SNAPSHOT="${TMP_ROOT}/lightup"
-          mkdir -p "${SNAPSHOT}"
-          git -C "${LIGHTUP_REPO}" archive "${TARGET_SHA}" | tar -x -C "${SNAPSHOT}"
+            git -C "${LIGHTUP_REPO}" fetch --no-tags origin               "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+            local target_sha
+            target_sha="$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${branch}^{commit}")"
+            test "${target_sha}" = "${expected_sha}"
 
-          cd "${SNAPSHOT}"
-          export PYTHONPATH=src:tests
+            local tmp_root snapshot
+            tmp_root="$(mktemp -d)"
+            snapshot="${tmp_root}/lightup"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${target_sha}" | tar -x -C "${snapshot}"
 
-          python3 -m compileall -q src tests
-          python3 -m unittest discover -s tests             -p 'test_future_remediation_implementation_plan_review_snapshot_isolation.py' -v
-          python3 -m unittest discover -s tests             -p 'test_future_remediation_implementation_plan_review_chain_invariant.py' -v
-          python3 -m unittest discover -s tests/integration -v
+            (
+              cd "${snapshot}"
+              export PYTHONPATH=src:tests
+              python3 -m compileall -q src tests
+              python3 -m unittest discover -s tests -p "${pattern}" -v
+              if [ "${run_chain}" = "yes" ]; then
+                python3 -m unittest discover -s tests                   -p 'test_future_remediation_implementation_plan_review_chain_invariant.py' -v
+                python3 -m unittest discover -s tests/integration -v
+              fi
+            )
 
-          printf 'LIGHTUP_ST5_SNAPSHOT_PROOF target_sha=%s host=%s\n'             "${TARGET_SHA}" "$(hostname)"
+            rm -rf "${tmp_root}"
+            printf 'LIGHTUP_ST5_SNAPSHOT_PROOF branch=%s target_sha=%s host=%s\n'               "${branch}" "${target_sha}" "$(hostname)"
+          }
+
+          verify_candidate             "chatgpt/st5-implementation-plan-review-snapshot-isolation-20261006"             "afbbf3c6973553e46b7f74b668d2c2981939eda2"             "test_future_remediation_implementation_plan_review_snapshot_isolation.py"             "yes"
+
+          verify_candidate             "chatgpt/st5-plan-review-request-snapshot-isolation-20261006"             "6f3219d623d6247168c41f87a34a89a832e4d189"             "test_future_remediation_implementation_plan_review_request_snapshot_isolation.py"             "no"
