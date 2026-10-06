@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 
@@ -11,6 +12,7 @@ SPEC = importlib.util.spec_from_file_location(
 )
 guard = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
+sys.modules[SPEC.name] = guard
 SPEC.loader.exec_module(guard)
 
 
