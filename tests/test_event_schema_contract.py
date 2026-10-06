@@ -94,6 +94,11 @@ class EventSchemaValidatorTests(unittest.TestCase):
         self.assertEqual([], VALIDATOR.validate_contract(schema))
         self.assertEqual(1, schema["schema_version"])
         self.assertFalse(schema["storage"]["allow_unclassified_columns"])
+        self.assertEqual(
+            ["safe_structured", "internal_key"],
+            schema["privacy"]["canonical_projection_classes"],
+        )
+        self.assertTrue(schema["event_type_contract"]["allow_unclassified_types"])
 
     def test_live_shape_and_core_event_are_green(self):
         self.insert_event("heartbeat")
@@ -216,6 +221,28 @@ class EventSchemaValidatorTests(unittest.TestCase):
         self.assertNotIn("secret-title", proc.stdout)
         self.assertNotIn("secret-reason", proc.stdout)
         self.assertNotIn("secret-error", proc.stdout)
+
+    def test_contract_rejects_forbidden_projection_privacy(self):
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        schema["canonical_projection"]["fields"]["unsafe"] = {"source": "reason"}
+
+        errors = VALIDATOR.validate_contract(schema)
+
+        self.assertIn(
+            "canonical field unsafe may not project restricted_text source reason",
+            errors,
+        )
+
+    def test_contract_requires_boolean_unclassified_policy(self):
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        schema["event_type_contract"]["allow_unclassified_types"] = "yes"
+
+        errors = VALIDATOR.validate_contract(schema)
+
+        self.assertIn(
+            "event_type_contract.allow_unclassified_types must be boolean",
+            errors,
+        )
 
     def test_contract_rejects_duplicate_family_assignment(self):
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
