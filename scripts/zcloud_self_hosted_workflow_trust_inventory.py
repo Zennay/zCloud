@@ -133,7 +133,7 @@ def _checkout_signals(block: list[str]) -> tuple[list[dict], bool, bool]:
             }
         )
 
-    return checkouts, persist_false, exact_ref
+    all_persist_false = bool(checkouts) and all(persist_results)\n    all_exact_ref = bool(checkouts) and all(exact_ref_results)\n    return checkouts, all_persist_false, all_exact_ref
 
 
 def inventory(root: Path) -> dict:
