@@ -115,6 +115,8 @@ class ProjectVisitDeltaTests(unittest.TestCase):
         )
 
         self.assertEqual(2, payload["change_count"])
+        self.assertTrue(payload["has_changes"])
+        self.assertEqual(payload["current"]["id"], payload["cursor_receipt_id"])
         self.assertEqual("baseline", payload["baseline"]["action"])
         self.assertEqual(["action", "commit_sha", "next_gate"], payload["changes"][0]["changed_fields"])
         self.assertEqual("validated", payload["current"]["action"])
