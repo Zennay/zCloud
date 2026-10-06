@@ -219,11 +219,14 @@ def select(payload: Any, *, now: datetime) -> dict[str, Any]:
             now=now,
             duplicate_binding=binding_counts[key] > 1,
         )
+        binding_fingerprint = hashlib.sha256(
+            f'{record["provider"]}\\0{record["conversation_id"]}'.encode("utf-8")
+        ).hexdigest()
         item = {
             "project_id": record["project_id"],
             "worker_slot": record["worker_slot"],
             "provider": record["provider"],
-            "conversation_id": record["conversation_id"],
+            "binding_fingerprint": binding_fingerprint,
             "tombstone_reason": record["tombstone_reason"],
             "age_days": age_days,
         }
@@ -238,7 +241,7 @@ def select(payload: Any, *, now: datetime) -> dict[str, Any]:
             item["project_id"],
             item["worker_slot"],
             item["provider"],
-            item["conversation_id"],
+            item["binding_fingerprint"],
         )
     )
     blocked.sort(
@@ -246,7 +249,7 @@ def select(payload: Any, *, now: datetime) -> dict[str, Any]:
             item["project_id"],
             item["worker_slot"],
             item["provider"],
-            item["conversation_id"],
+            item["binding_fingerprint"],
         )
     )
     return {
