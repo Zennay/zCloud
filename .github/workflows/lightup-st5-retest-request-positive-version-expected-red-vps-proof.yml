@@ -1,4 +1,4 @@
-name: LightUp ST5 retest-request positive-version expected-RED VPS proof
+name: LightUp ST5 retest-request persisted acceptance expected-RED VPS proof
 
 on:
   pull_request:
@@ -11,17 +11,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: lightup-st5-retest-request-positive-version-expected-red-vps-proof
+  group: lightup-st5-retest-request-persisted-acceptance-expected-red-vps-proof
   cancel-in-progress: true
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/st5-retest-request-positive-versions-red-20261006
-  LIGHTUP_EXPECTED_SHA: 188610e1ad1bcc6e5eeecbd59326803a4bf0d685
+  LIGHTUP_BRANCH: chatgpt/st5-retest-request-persisted-acceptance-red-20261006
+  LIGHTUP_EXPECTED_SHA: cc5ce4d73d6c4bfb15544f73b30fc2598af4a974
 
 jobs:
   prove-red:
-    name: Exact #387 expected-RED contract on vps-bb300bba
+    name: Exact #387/#388 expected-RED contract on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
 
@@ -43,10 +43,10 @@ jobs:
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --prune origin \
-            "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-retest-request-positive-version-red"
-          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-st5-retest-request-positive-version-red^{commit})"
+            "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-retest-request-persisted-acceptance-red"
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-st5-retest-request-persisted-acceptance-red^{commit})"
           test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
-          SNAPSHOT="${RUNNER_TEMP}/lightup-st5-retest-request-positive-version-${GITHUB_RUN_ID}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-st5-retest-request-persisted-acceptance-${GITHUB_RUN_ID}"
           rm -rf "${SNAPSHOT}"
           mkdir -p "${SNAPSHOT}"
           git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
@@ -58,22 +58,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Python 3.11 parent green + #387 expected RED
+      - name: Python 3.11 parent smoke + #387/#388 expected RED
         shell: bash
         run: |
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v test_future_security_retest_request_handoff
-          LOG="${RUNNER_TEMP}/lightup-387-red-py311.log"
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_round_trip_accepts_exact_builder_output_for_all_supported_classifications \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_exact_schema_strict_primitives_and_stop_line_fail_closed \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage
+          LOG="${RUNNER_TEMP}/lightup-387-388-red-py311.log"
           set +e
-          PYTHONPATH=src:tests python -m unittest -v test_future_security_retest_request_positive_version_acceptance >"${LOG}" 2>&1
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_security_retest_request_positive_version_acceptance \
+            test_future_security_retest_request_cross_item_path_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 2
-          grep -Fq 'FAILED (failures=2)' "${LOG}"
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -82,22 +89,29 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Python 3.14 parent green + #387 expected RED
+      - name: Python 3.14 parent smoke + #387/#388 expected RED
         shell: bash
         run: |
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v test_future_security_retest_request_handoff
-          LOG="${RUNNER_TEMP}/lightup-387-red-py314.log"
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_round_trip_accepts_exact_builder_output_for_all_supported_classifications \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_exact_schema_strict_primitives_and_stop_line_fail_closed \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified \
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage
+          LOG="${RUNNER_TEMP}/lightup-387-388-red-py314.log"
           set +e
-          PYTHONPATH=src:tests python -m unittest -v test_future_security_retest_request_positive_version_acceptance >"${LOG}" 2>&1
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_security_retest_request_positive_version_acceptance \
+            test_future_security_retest_request_cross_item_path_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 2
-          grep -Fq 'FAILED (failures=2)' "${LOG}"
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -105,7 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-retest-request-positive-version-expected-red-receipt"
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-retest-request-persisted-acceptance-expected-red-receipt"
           mkdir -p "${RECEIPT_DIR}"
           python3 - <<'PY'
           import json
@@ -114,20 +128,21 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issue": 387,
+              "issues": [387, 388],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
               "host": os.uname().nodename,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "python": ["3.11", "3.14"],
-              "parent_handoff": "green",
+              "parent_selected_smoke_tests": 5,
+              "known_parent_test_excluded": "test_canonical_identifiers_lineage_and_path_shape_fail_closed",
               "acceptance_contract": "expected_red",
-              "expected_failures_per_python": 2,
+              "expected_failures_per_python": 3,
               "production_source_changes": 0,
               "safety_canaries": "green",
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-retest-request-positive-version-expected-red-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-retest-request-persisted-acceptance-expected-red-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -135,8 +150,8 @@ jobs:
       - name: Upload exact-head expected-RED receipt
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-st5-retest-request-positive-version-expected-red-vps-proof
-          path: ${{ runner.temp }}/lightup-st5-retest-request-positive-version-expected-red-receipt/receipt.json
+          name: lightup-st5-retest-request-persisted-acceptance-expected-red-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-retest-request-persisted-acceptance-expected-red-receipt/receipt.json
           if-no-files-found: error
 
       - name: Cleanup snapshot
