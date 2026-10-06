@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: zcloud-self-hosted-queue-watchdog
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   observe:
