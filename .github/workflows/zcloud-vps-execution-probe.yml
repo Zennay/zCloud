@@ -5,7 +5,9 @@ on:
   push:
     paths:
       - scripts/zcloud_runtime_project_schema_repair.py
+      - scripts/zcloud_config_validate.py
       - tests/test_runtime_project_schema_repair.py
+      - tests/test_config_validation.py
       - tests/test_vps_deploy_workflow.py
       - .github/workflows/zcloud-vps-execution-probe.yml
   workflow_run:
@@ -119,6 +121,19 @@ jobs:
           python3 -m unittest -v \
             tests.test_runtime_project_schema_repair \
             tests.test_vps_deploy_workflow
+
+      - name: Verify canonical project worker caps against live read-only state
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_config_validation
+          python3 scripts/zcloud_config_validate.py \
+            --projects projects.json \
+            --layout project-layout.json \
+            --resource-policy resource-policy.json \
+            --project-contracts project-contracts.json \
+            --server server.py \
+            --enhancements enhancements.py \
+            --db /home/ubuntu/zennay-cloud/history.db
 
       - name: Inspect sanitized deploy pre-change evidence
         run: |
