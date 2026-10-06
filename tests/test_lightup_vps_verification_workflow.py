@@ -6,20 +6,40 @@ WORKFLOW = ROOT / ".github/workflows/lightup-vps-verification.yml"
 
 
 class LightUpVpsVerificationWorkflowTests(unittest.TestCase):
-    def test_workflow_is_bound_to_permanent_runner_and_exact_zcloud_revision(self):
+    def test_pr_execution_is_owner_guarded_and_exact_head(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("pull_request:", text)
+        self.assertIn("types: [opened, synchronize, reopened]", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn("github.triggering_actor == 'Zennay'", text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertIn(
+            "EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}",
+            text,
+        )
+        self.assertIn(
+            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+            text,
+        )
+        self.assertIn('test "$actual" = "$EXPECTED_ZCLOUD_SHA"', text)
+
+    def test_workflow_is_bound_to_permanent_runner_and_immutable_checkout(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertNotIn("runs-on: self-hosted\n", text)
-        self.assertNotIn("pull_request:", text)
+        self.assertIn("cancel-in-progress: true", text)
 
         pinned_checkout = (
             "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6"
         )
         self.assertIn(pinned_checkout, text)
         self.assertNotIn("actions/checkout@v4", text)
-        self.assertIn("ref: ${{ github.sha }}", text)
         self.assertIn("persist-credentials: false", text)
         self.assertIn("fetch-depth: 1", text)
 
@@ -27,7 +47,6 @@ class LightUpVpsVerificationWorkflowTests(unittest.TestCase):
         guard = "Verify permanent zCloud VPS runner"
         proof = "Test isolated LightUp snapshot"
         self.assertIn(exact, text)
-        self.assertIn('test "$actual" = "$GITHUB_SHA"', text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn('test "$(id -un)" = ubuntu', text)
         self.assertLess(text.index(exact), text.index(guard))
