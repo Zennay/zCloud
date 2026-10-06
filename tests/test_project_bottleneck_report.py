@@ -175,6 +175,20 @@ class ProjectBottleneckReportTests(unittest.TestCase):
         self.assertEqual(1, payload["counts"]["running"])
         self.assertEqual(1, payload["counts"]["idle"])
 
+    def test_zero_cap_external_gate_is_classified_even_with_execution_queue_mode(self) -> None:
+        contracts = json.loads(self.contracts.read_text(encoding="utf-8"))
+        contracts["projects"]["idle"] = {
+            "queue_mode": "execution",
+            "ai_worker_cap": 0,
+            "autonomy": {"mode": "external_gate"},
+        }
+        self.contracts.write_text(json.dumps(contracts), encoding="utf-8")
+
+        payload = self._report()
+        by_id = {item["project_id"]: item for item in payload["projects"]}
+        self.assertEqual("external_or_human_gate", by_id["idle"]["bottleneck_code"])
+        self.assertEqual("blocked", by_id["idle"]["state"])
+
     def test_does_not_emit_raw_blocker_or_queue_payloads(self) -> None:
         serialized = json.dumps(self._report(), sort_keys=True)
         self.assertNotIn("super-secret-token-value", serialized)
