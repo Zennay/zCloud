@@ -2,8 +2,8 @@
 """Bounded read-only "since last visit" delta report for zCloud.
 
 The reporter intentionally exposes only compact, machine-readable change
-categories. It never returns raw action, blocker, error, reason, evidence or
-prompt text from runtime state.
+categories. It never returns raw action, blocker, phase, error, reason,
+evidence or prompt text from runtime state.
 """
 from __future__ import annotations
 
@@ -41,9 +41,15 @@ def _dt(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _normalize_now(value: datetime | None) -> datetime:
+    current = value or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    return current.astimezone(timezone.utc)
+
+
 def _normalize_since(value: str, now: datetime) -> datetime:
     since = _dt(value)
-    now = now.astimezone(timezone.utc)
     if since > now + timedelta(minutes=1):
         raise ValueError("since timestamp cannot be in the future")
     if now - since > MAX_LOOKBACK:
@@ -73,7 +79,7 @@ def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
 
 def _require_schema(connection: sqlite3.Connection) -> None:
     required = {
-        "project_state_receipts": {"id", "project_id", "observed_at", "phase", "ci_status", "commit_sha"},
+        "project_state_receipts": {"id", "project_id", "observed_at", "ci_status", "commit_sha"},
         "runner_events": {"id", "project_id", "ts", "event"},
     }
     for table, columns in required.items():
@@ -83,15 +89,6 @@ def _require_schema(connection: sqlite3.Connection) -> None:
         missing = columns - actual
         if missing:
             raise RuntimeError(f"required runtime columns missing from {table}: {','.join(sorted(missing))}")
-
-
-def _safe_phase(value: object) -> str:
-    phase = str(value or "").strip().lower()
-    if not phase:
-        return ""
-    if re.fullmatch(r"[a-z0-9][a-z0-9._/-]{0,47}", phase):
-        return phase
-    return "other"
 
 
 def _safe_ci(value: object) -> str:
@@ -118,7 +115,7 @@ def report(
     now: datetime | None = None,
     row_limit: int = MAX_ROWS,
 ) -> dict:
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now = _normalize_now(now)
     since_dt = _normalize_since(since, now)
     project_id = _project(project)
     if not isinstance(row_limit, int) or isinstance(row_limit, bool) or row_limit < 1 or row_limit > MAX_ROWS:
@@ -128,9 +125,9 @@ def report(
     with closing(_open_ro(db)) as connection:
         _require_schema(connection)
 
-        receipt_where = "observed_at>=? AND project_id IS NOT NULL AND project_id<>''"
+        receipt_where = "unixepoch(observed_at)>=unixepoch(?) AND project_id IS NOT NULL AND project_id<>''"
         receipt_params: list[object] = [since_iso]
-        event_where = "ts>=? AND project_id IS NOT NULL AND project_id<>''"
+        event_where = "unixepoch(ts)>=unixepoch(?) AND project_id IS NOT NULL AND project_id<>''"
         event_params: list[object] = [since_iso]
         if project_id:
             receipt_where += " AND project_id=?"
@@ -139,10 +136,10 @@ def report(
             event_params.append(project_id)
 
         receipts = connection.execute(
-            f"""SELECT id,project_id,observed_at,phase,ci_status,commit_sha
+            f"""SELECT id,project_id,observed_at,ci_status,commit_sha
                 FROM project_state_receipts
                 WHERE {receipt_where}
-                ORDER BY observed_at,id
+                ORDER BY unixepoch(observed_at),id
                 LIMIT ?""",
             [*receipt_params, row_limit + 1],
         ).fetchall()
@@ -152,7 +149,7 @@ def report(
             f"""SELECT id,project_id,ts,event
                 FROM runner_events
                 WHERE {event_where} AND event IN ({placeholders})
-                ORDER BY ts,id
+                ORDER BY unixepoch(ts),id
                 LIMIT ?""",
             [*event_params, *MEANINGFUL_RUNNER_EVENTS.keys(), row_limit + 1],
         ).fetchall()
@@ -166,7 +163,6 @@ def report(
             "counts": defaultdict(int),
             "latest_at": None,
             "latest_source": None,
-            "latest_phase": "",
             "latest_ci_status": "",
             "latest_commit": None,
         }
@@ -174,9 +170,10 @@ def report(
 
     def touch(pid: str, observed_at: str, source: str) -> None:
         entry = state[pid]
+        observed = _dt(observed_at)
         current = entry["latest_at"]
-        if current is None or _dt(observed_at) >= _dt(current):
-            entry["latest_at"] = _dt(observed_at).isoformat()
+        if current is None or observed >= _dt(current):
+            entry["latest_at"] = observed.isoformat()
             entry["latest_source"] = source
 
     for row in receipts:
@@ -186,10 +183,8 @@ def report(
         entry = state[pid]
         entry["counts"]["state_receipt"] += 1
         touch(pid, str(row["observed_at"]), "state_receipt")
-        if entry["latest_source"] == "state_receipt":
-            entry["latest_phase"] = _safe_phase(row["phase"])
-            entry["latest_ci_status"] = _safe_ci(row["ci_status"])
-            entry["latest_commit"] = _safe_sha(row["commit_sha"])
+        entry["latest_ci_status"] = _safe_ci(row["ci_status"])
+        entry["latest_commit"] = _safe_sha(row["commit_sha"])
 
     for row in events:
         pid = str(row["project_id"]).strip().lower()
@@ -216,7 +211,6 @@ def report(
                 "change_count": sum(counts.values()),
                 "counts": counts,
                 "latest_receipt": {
-                    "phase": entry["latest_phase"],
                     "ci_status": entry["latest_ci_status"],
                     "commit": entry["latest_commit"],
                 },
