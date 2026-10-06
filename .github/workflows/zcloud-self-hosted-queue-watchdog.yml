@@ -1,3 +1,4 @@
+# emergency restore trigger 2026-10-06T06:04Z: recover stalled self-hosted queue, zCloud runner, and seven-worker push
 name: zCloud self-hosted queue watchdog
 
 on:
