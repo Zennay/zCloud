@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
       - name: Run dead conversation selector tests
-        run: python3 -m unittest -v tests.test_dead_conversation_cleanup_selector
+        run: python3 -m unittest -v tests.test_dead_conversation_cleanup_selector tests.test_dead_conversation_cleanup_selector_workflow
 
   permanent-vps-proof:
     if: >-
@@ -65,4 +65,4 @@ jobs:
           test "$(id -un)" = "ubuntu"
           python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Prove selector without live conversation or SQLite mutation
-        run: python3 -m unittest -v tests.test_dead_conversation_cleanup_selector
+        run: python3 -m unittest -v tests.test_dead_conversation_cleanup_selector tests.test_dead_conversation_cleanup_selector_workflow
