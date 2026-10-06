@@ -5,6 +5,7 @@ on:
     paths:
       - "scripts/zcloud_action_outcome_report.py"
       - "tests/test_action_outcome_report.py"
+      - "tests/test_action_outcome_workflow.py"
       - ".github/workflows/zcloud-action-outcome-report.yml"
   workflow_dispatch:
 
