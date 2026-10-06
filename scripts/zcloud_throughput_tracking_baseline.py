@@ -242,7 +242,15 @@ def _plan(
             "production_sha": production_sha,
             "source": source,
         }
-        if current == requested:
+        # started_at is immutable once a project baseline exists. A later
+        # initializer run commonly supplies "now" for newly added projects;
+        # existing rows with the same proven writer provenance must remain a
+        # safe no-op rather than conflicting merely because wall-clock time moved.
+        same_provenance = (
+            current["production_sha"] == production_sha
+            and current["source"] == source
+        )
+        if same_provenance:
             unchanged.append(project_id)
         else:
             conflicts.append(
