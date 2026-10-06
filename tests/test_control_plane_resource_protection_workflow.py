@@ -53,7 +53,7 @@ class ResourceProtectionWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, live)
 
     def test_workflow_has_read_only_repository_permissions(self):
-        self.assertIn("permissions:\\n  contents: read", self.text)
+        self.assertIn("permissions:\n  contents: read", self.text)
 
 
 if __name__ == "__main__":
