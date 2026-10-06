@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/zcloud_browser_project_isolation_contract.py tests/test_browser_project_isolation_contract.py
-          python3 -m unittest -v tests.test_browser_project_isolation_contract
+          python3 -m py_compile scripts/zcloud_browser_project_isolation_contract.py tests/test_browser_project_isolation_contract.py tests/test_browser_project_isolation_workflow.py
+          python3 -m unittest -v tests.test_browser_project_isolation_contract tests.test_browser_project_isolation_workflow
           python3 scripts/zcloud_browser_project_isolation_contract.py --root . --pretty
           echo "ZCLOUD_BROWSER_PROJECT_ISOLATION_GREEN=1"
