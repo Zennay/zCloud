@@ -43,10 +43,14 @@ jobs:
 
       - name: Run focused resource-protection regressions
         run: |
-          python3 -m unittest -v             tests.test_control_plane_resource_protection             tests.test_control_plane_resource_protection_workflow
+          python3 -m unittest -v \
+            tests.test_control_plane_resource_protection \
+            tests.test_control_plane_resource_protection_workflow
 
       - name: Audit live effective scheduling protection read-only
         run: |
           set -euo pipefail
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
           python3 scripts/zcloud_control_plane_resource_protection.py --json
           echo "ZCLOUD_CONTROL_PLANE_RESOURCE_AUDIT_READONLY_GREEN=1"
