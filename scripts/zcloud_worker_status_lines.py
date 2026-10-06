@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime
 from pathlib import Path
+
+PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 SCHEMA_VERSION = "zcloud-worker-status-lines-v1"
 ALLOWED_STATES = {"paused", "draining", "starting", "stalled", "live", "stale", "offline"}
@@ -65,6 +68,9 @@ def build_lines(payload: object) -> dict:
     lines = []
     malformed = 0
     for project_id in sorted(runners):
+        if not PROJECT_RE.fullmatch(str(project_id)):
+            malformed += 1
+            continue
         project = runners.get(project_id)
         if not isinstance(project, dict):
             malformed += 1
