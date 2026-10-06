@@ -267,6 +267,62 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
 
+    def test_scheduler_detects_ghost_api_project(self):
+        status, targets = self.sample()
+        targets["projects"]["ghost::w1"] = {
+            "project_id": "ghost::w1",
+            "base_project_id": "ghost",
+            "worker_slot": 1,
+        }
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("unknown base project ghost" in x for x in scheduler["detail"])
+        )
+
+    def test_scheduler_detects_runner_target_identity_mismatch(self):
+        status, targets = self.sample()
+        targets["projects"]["cloud::w2"]["project_id"] = "cloud::w1"
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("project_id identity mismatch" in x for x in scheduler["detail"])
+        )
+
+    def test_scheduler_detects_runner_target_key_slot_mismatch(self):
+        status, targets = self.sample()
+        targets["projects"]["cloud::w3"] = targets["projects"].pop("cloud::w2")
+        targets["projects"]["cloud::w3"]["project_id"] = "cloud::w3"
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("runner-target key mismatch" in x for x in scheduler["detail"])
+        )
+
     def test_violentmonkey_only_requires_live_standalone_firefox(self):
         status, targets = self.sample()
         status["chatgpt_firefox"] = {
