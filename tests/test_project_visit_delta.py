@@ -126,6 +126,24 @@ class ProjectVisitDeltaTests(unittest.TestCase):
         self.assertNotIn("still-private", encoded)
         self.assertNotIn("evidence_json", encoded)
 
+    def test_no_new_receipt_keeps_baseline_cursor_without_false_change(self):
+        self.add(
+            "2026-10-06T08:00:00+00:00",
+            action="already-seen",
+            commit_sha="abc",
+            ci_status="success",
+        )
+        payload = delta.build_delta(
+            self.db,
+            project_id="cloud",
+            since="2026-10-06T09:00:00Z",
+        )
+        self.assertEqual(0, payload["change_count"])
+        self.assertFalse(payload["has_changes"])
+        self.assertEqual(payload["baseline"]["id"], payload["cursor_receipt_id"])
+        self.assertEqual(payload["baseline"], payload["current"])
+        self.assertEqual([], payload["changes"])
+
     def test_project_isolation_and_limit_bounds(self):
         self.add("2026-10-06T09:00:00+00:00", project="ftmo", action="other")
         self.add("2026-10-06T09:05:00+00:00", action="cloud")
