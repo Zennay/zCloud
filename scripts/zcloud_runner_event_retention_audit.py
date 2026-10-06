@@ -66,11 +66,12 @@ def audit(db: Path, *, observed_at: datetime | None = None) -> dict:
             """SELECT
                    event,
                    COUNT(*) AS total,
-                   MIN(ts) AS oldest_ts,
-                   MAX(ts) AS newest_ts,
-                   SUM(CASE WHEN ts<? THEN 1 ELSE 0 END) AS older_7d,
-                   SUM(CASE WHEN ts<? THEN 1 ELSE 0 END) AS older_30d,
-                   SUM(CASE WHEN ts<? THEN 1 ELSE 0 END) AS older_90d
+                   MIN(CASE WHEN unixepoch(ts) IS NOT NULL THEN ts END) AS oldest_ts,
+                   MAX(CASE WHEN unixepoch(ts) IS NOT NULL THEN ts END) AS newest_ts,
+                   SUM(CASE WHEN unixepoch(ts) IS NULL THEN 1 ELSE 0 END) AS invalid_ts,
+                   SUM(CASE WHEN unixepoch(ts)<unixepoch(?) THEN 1 ELSE 0 END) AS older_7d,
+                   SUM(CASE WHEN unixepoch(ts)<unixepoch(?) THEN 1 ELSE 0 END) AS older_30d,
+                   SUM(CASE WHEN unixepoch(ts)<unixepoch(?) THEN 1 ELSE 0 END) AS older_90d
                FROM runner_events
                GROUP BY event
                ORDER BY total DESC,event""",
@@ -93,6 +94,7 @@ def audit(db: Path, *, observed_at: datetime | None = None) -> dict:
             "total": int(row["total"] or 0),
             "oldest_ts": row["oldest_ts"],
             "newest_ts": row["newest_ts"],
+            "invalid_ts": int(row["invalid_ts"] or 0),
             "older_7d": int(row["older_7d"] or 0),
             "older_30d": int(row["older_30d"] or 0),
             "older_90d": int(row["older_90d"] or 0),
@@ -107,6 +109,7 @@ def audit(db: Path, *, observed_at: datetime | None = None) -> dict:
             "total": int(total or 0),
             "max_id": int(max_id or 0),
             "event_types": len(events),
+            "invalid_ts": sum(item["invalid_ts"] for item in events),
             "events": events,
         },
         "database": {
