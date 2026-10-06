@@ -17,11 +17,11 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/st5-retest-request-persisted-acceptance-red-20261006
-  LIGHTUP_EXPECTED_SHA: cc5ce4d73d6c4bfb15544f73b30fc2598af4a974
+  LIGHTUP_EXPECTED_SHA: fe2833b61774cd21892fce0c917f6e916170e31c
 
 jobs:
   prove-red:
-    name: Exact #387/#388 expected-RED contract on vps-bb300bba
+    name: Exact #387/#388/#389 expected-RED contract on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
 
@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Python 3.11 parent smoke + #387/#388 expected RED
+      - name: Python 3.11 parent smoke + #387/#388/#389 expected RED
         shell: bash
         run: |
           set -euo pipefail
@@ -70,17 +70,18 @@ jobs:
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage
-          LOG="${RUNNER_TEMP}/lightup-387-388-red-py311.log"
+          LOG="${RUNNER_TEMP}/lightup-387-388-389-red-py311.log"
           set +e
           PYTHONPATH=src:tests python -m unittest -v \
             test_future_security_retest_request_positive_version_acceptance \
-            test_future_security_retest_request_cross_item_path_acceptance >"${LOG}" 2>&1
+            test_future_security_retest_request_cross_item_path_acceptance \
+            test_future_security_retest_request_item_order_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
-          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 4
+          grep -Fq 'FAILED (failures=4)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -89,7 +90,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Python 3.14 parent smoke + #387/#388 expected RED
+      - name: Python 3.14 parent smoke + #387/#388/#389 expected RED
         shell: bash
         run: |
           set -euo pipefail
@@ -101,17 +102,18 @@ jobs:
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage
-          LOG="${RUNNER_TEMP}/lightup-387-388-red-py314.log"
+          LOG="${RUNNER_TEMP}/lightup-387-388-389-red-py314.log"
           set +e
           PYTHONPATH=src:tests python -m unittest -v \
             test_future_security_retest_request_positive_version_acceptance \
-            test_future_security_retest_request_cross_item_path_acceptance >"${LOG}" 2>&1
+            test_future_security_retest_request_cross_item_path_acceptance \
+            test_future_security_retest_request_item_order_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
-          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 4
+          grep -Fq 'FAILED (failures=4)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -128,7 +130,7 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issues": [387, 388],
+              "issues": [387, 388, 389],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
@@ -138,7 +140,7 @@ jobs:
               "parent_selected_smoke_tests": 5,
               "known_parent_test_excluded": "test_canonical_identifiers_lineage_and_path_shape_fail_closed",
               "acceptance_contract": "expected_red",
-              "expected_failures_per_python": 3,
+              "expected_failures_per_python": 4,
               "production_source_changes": 0,
               "safety_canaries": "green",
           }
