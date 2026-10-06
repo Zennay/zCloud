@@ -158,6 +158,24 @@ class ProjectTelemetryFreshnessTests(unittest.TestCase):
                 adapter_projects_reader=lambda: ("ftmo",),
             )
 
+    def test_implausible_future_timestamp_fails_closed(self) -> None:
+        snapshots = {
+            "ftmo": {
+                "available": True,
+                "headline": self._point(1, "2026-10-06T12:00:00+00:00"),
+                "items": [],
+                "comparison": {},
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "implausibly in the future"):
+            freshness.build_report(
+                self.projects,
+                project_ids=["ftmo"],
+                now=NOW,
+                quality_reader=lambda project_id: snapshots[project_id],
+                adapter_projects_reader=lambda: ("ftmo",),
+            )
+
     def test_project_filter_is_bounded_and_deduplicated(self) -> None:
         payload = freshness.build_report(
             self.projects,
