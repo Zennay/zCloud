@@ -68,3 +68,26 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Prove read-only eventstream projection
         run: python3 -m unittest -v tests.test_central_eventstream tests.test_central_eventstream_workflow
+      - name: Smoke live zCloud event evidence read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=/home/ubuntu/zennay-cloud/history.db
+          test -f "$db"
+          out="$RUNNER_TEMP/zcloud-central-eventstream.json"
+          python3 scripts/zcloud_central_eventstream.py \
+            --db "$db" --project cloud --limit 20 --require-complete > "$out"
+          python3 - "$out" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data["schema_version"] == "zcloud-central-eventstream-v1"
+          assert data["coverage_complete"] is True
+          assert data["missing_sources"] == []
+          assert all(value == 0 for value in data["malformed_rows"].values())
+          assert all(item["project_id"] == "cloud" for item in data["events"])
+          forbidden = {"detail", "title", "error", "reason", "target", "evidence_json", "old_value_json", "new_value_json"}
+          assert all(not (forbidden & set(item)) for item in data["events"])
+          print("ZCLOUD_CENTRAL_EVENTSTREAM_LIVE_READ_GREEN", f"events={len(data['events'])}")
+          PY
