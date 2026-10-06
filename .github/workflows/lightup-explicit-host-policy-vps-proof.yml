@@ -1,0 +1,164 @@
+name: LightUp explicit-host-policy exact-head VPS proof
+
+on:
+  push:
+    branches: [ops/lightup-explicit-host-policy-vps-proof-20261006]
+    paths:
+      - .github/workflows/lightup-explicit-host-policy-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-explicit-host-policy-exact-head-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_EXPECTED_SHA: d0bc8f6f2300805938559dd323797b12a1977352
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  hosted:
+    name: Hosted exact-head Python ${{ matrix.python }} (diagnostic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - name: Checkout exact LightUp head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Lightup
+          ref: d0bc8f6f2300805938559dd323797b12a1977352
+          path: lightup
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Prove exact head offline
+        working-directory: lightup
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d0bc8f6f2300805938559dd323797b12a1977352"
+          python -m compileall -q src tests
+          python -m unittest tests.test_scope_authorization_explicit_host_policy_identity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+
+  prove:
+    name: Exact head on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp explicit-host-policy branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             refs/heads/chatgpt/scope-authorization-explicit-host-policy-non-url-20261006:refs/remotes/origin/lightup-explicit-host-policy-proof
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-explicit-host-policy-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-explicit-host-policy-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_scope_authorization_explicit_host_policy_identity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest tests.test_scope_authorization_explicit_host_policy_identity -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/lightup-explicit-host-policy-receipt"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "issue": 367,
+              "source_branch": "chatgpt/scope-authorization-explicit-host-policy-non-url-20261006",
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "dedicated+compile+unit+integration+safety-canaries",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-explicit-host-policy-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-explicit-host-policy-vps-proof
+          path: ${{ runner.temp }}/lightup-explicit-host-policy-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
