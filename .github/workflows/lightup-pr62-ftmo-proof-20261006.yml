@@ -1,0 +1,120 @@
+name: LightUp PR62 independent exact-head VPS proof
+
+on:
+  push:
+    branches:
+      - chatgpt/lightup-pr62-ftmo-proof-20261006
+    paths:
+      - ".github/workflows/lightup-pr62-ftmo-proof-20261006.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr62-ftmo-proof-20261006
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    name: LightUp PR62 exact head on FTMO VPS lane (Python ${{ matrix.python-version }})
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    env:
+      LIGHTUP_REPO: Zennay/Lightup
+      LIGHTUP_PR: "62"
+      EXPECTED_SHA: 04f3f010756e7609707fda467f8ab1809f361ae4
+
+    steps:
+      - name: Guard host and exact PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          state="$(gh api "repos/$LIGHTUP_REPO/pulls/$LIGHTUP_PR" --jq .state)"
+          live="$(gh api "repos/$LIGHTUP_REPO/pulls/$LIGHTUP_PR" --jq .head.sha)"
+          test "$state" = "open"
+          test "$live" = "$EXPECTED_SHA"
+          echo "LIGHTUP_PR62_HEAD_GUARD_GREEN sha=$live host=$(hostname) runner=${RUNNER_NAME:-unknown}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Fetch exact LightUp head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          work="$RUNNER_TEMP/lightup-pr62-$GITHUB_RUN_ID-${{ matrix.python-version }}"
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" remote add origin "https://github.com/$LIGHTUP_REPO.git"
+          git -C "$work" -c protocol.version=2 fetch -q --depth=1 origin "$EXPECTED_SHA"
+          git -C "$work" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$work" rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "LIGHTUP_WORK=$work" >> "$GITHUB_ENV"
+
+      - name: Compile and full unit suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$LIGHTUP_WORK"
+          export PYTHONPATH=src
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -v
+
+      - name: Real producer integration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$LIGHTUP_WORK"
+          export PYTHONPATH=src:tests
+          python -m unittest discover -s tests/integration -v
+
+      - name: Offline activation and web canaries
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$LIGHTUP_WORK"
+          export PYTHONPATH=src
+          python scripts/check_safety_canaries.py
+
+      - name: Emit exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/lightup-proof-receipts"
+          receipt="$RUNNER_TEMP/lightup-proof-receipts/pr62-${{ matrix.python-version }}.json"
+          python - <<'PY' > "$receipt"
+          import json, os, socket
+          print(json.dumps({
+              "schema_version": 1,
+              "result": "success",
+              "host": socket.gethostname(),
+              "source_repository": "Zennay/Lightup",
+              "pull_request": 62,
+              "head_sha": os.environ["EXPECTED_SHA"],
+              "python": os.environ.get("pythonLocation", ""),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "runner_name": os.environ.get("RUNNER_NAME", ""),
+          }, sort_keys=True, indent=2))
+          PY
+          cat "$receipt"
+          echo "LIGHTUP_PR62_CROSS_LANE_PROOF_GREEN sha=$EXPECTED_SHA python=${{ matrix.python-version }} host=$(hostname)"
+
+      - name: Upload receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr62-ftmo-proof-${{ matrix.python-version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/lightup-proof-receipts/pr62-${{ matrix.python-version }}.json
+          if-no-files-found: error
+          retention-days: 14
