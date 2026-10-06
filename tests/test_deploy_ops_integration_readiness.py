@@ -63,6 +63,15 @@ class DeployOpsIntegrationReadinessTests(unittest.TestCase):
                 )
             )
         )
+        self.assertFalse(
+            is_deploy_ops_pr(
+                pr(
+                    title="Control plane activity",
+                    body="Control-plane owner. " + ("x" * 600) + " Does not overlap deploy-ops.",
+                    head="feature/control-plane-activity",
+                )
+            )
+        )
 
     def test_behind_main_always_requires_restack_even_when_green(self):
         row = classify(
@@ -155,6 +164,7 @@ class DeployOpsIntegrationReadinessTests(unittest.TestCase):
         self.assertIn("#1", output)
         self.assertIn("ready", output)
         self.assertIn(SHA_A[:12], output)
+        self.assertIn("ready never authorizes merge or deploy", output)
         self.assertNotIn(SHA_A, output)
 
 
