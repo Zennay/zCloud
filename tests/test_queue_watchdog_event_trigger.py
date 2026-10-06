@@ -17,9 +17,9 @@ class QueueWatchdogEventTriggerTests(unittest.TestCase):
         self.assertIn("observe:\n    runs-on: ubuntu-latest", self.text)
         self.assertIn("timeout-minutes: 3", self.text)
 
-    def test_event_trigger_reuses_single_cancel_in_progress_watchdog(self):
+    def test_event_trigger_keeps_one_running_watchdog_alive(self):
         self.assertIn("group: zcloud-self-hosted-queue-watchdog", self.text)
-        self.assertIn("cancel-in-progress: true", self.text)
+        self.assertIn("cancel-in-progress: false", self.text)
         self.assertIn("cancelled_superseded_runs", self.text)
         self.assertIn("/actions/runs/{item['run_id']}/cancel", self.text)
 
