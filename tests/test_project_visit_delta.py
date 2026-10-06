@@ -175,6 +175,15 @@ class ProjectVisitDeltaTests(unittest.TestCase):
         self.assertEqual(before_stat.st_size, after_stat.st_size)
         self.assertEqual(before_stat.st_mtime_ns, after_stat.st_mtime_ns)
 
+    def test_malformed_receipt_timestamp_fails_closed(self):
+        self.add("not-a-time", action="bad")
+        with self.assertRaisesRegex(ValueError, "invalid observed_at"):
+            delta.build_delta(
+                self.db,
+                project_id="cloud",
+                since="2026-10-06T08:00:00Z",
+            )
+
     def test_missing_receipt_schema_fails_closed(self):
         broken = Path(self.tmp.name) / "broken.db"
         with sqlite3.connect(broken) as conn:
