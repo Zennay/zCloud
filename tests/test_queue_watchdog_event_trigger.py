@@ -17,9 +17,11 @@ class QueueWatchdogEventTriggerTests(unittest.TestCase):
         self.assertIn("observe:\n    runs-on: ubuntu-latest", self.text)
         self.assertIn("timeout-minutes: 3", self.text)
 
-    def test_event_trigger_keeps_one_running_watchdog_alive(self):
-        self.assertIn("group: zcloud-self-hosted-queue-watchdog", self.text)
-        self.assertIn("cancel-in-progress: false", self.text)
+    def test_hosted_observe_and_vps_recover_have_separate_concurrency(self):
+        self.assertNotIn("\nconcurrency:\n  group: zcloud-self-hosted-queue-watchdog\n", self.text)
+        self.assertIn("group: zcloud-self-hosted-queue-watchdog-observe", self.text)
+        self.assertIn("group: zcloud-self-hosted-queue-watchdog-recover", self.text)
+        self.assertEqual(2, self.text.count("cancel-in-progress: false"))
         self.assertIn("cancelled_superseded_runs", self.text)
         self.assertIn("/actions/runs/{item['run_id']}/cancel", self.text)
 
