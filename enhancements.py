@@ -5,6 +5,7 @@ import hashlib, json, os, re, sqlite3, subprocess, time
 import project_runtime
 
 ROOT = Path("/home/ubuntu/zennay-cloud")
+PROJECTS_FILE = ROOT / "projects.json"
 RESOURCE_FILE = ROOT / "resource-policy.json"
 ALERT_STATE_FILE = ROOT / "alert-state.json"
 SIGNALS_DIR = ROOT / "signals"
@@ -254,7 +255,20 @@ def _find_metrics_dict(data):
                 return hit
     return None
 
-def _comparison_point(label, value, unit="", note="", source=None, validated=False):
+def _source_observed_at(source):
+    """Return an evidence timestamp for a local source path without inventing one."""
+    if not source:
+        return None
+    try:
+        path = Path(str(source))
+        if not path.exists() or not path.is_file():
+            return None
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _comparison_point(label, value, unit="", note="", source=None, observed_at=None, validated=False):
     if value is None or value == "":
         return None
     point = {
@@ -266,7 +280,26 @@ def _comparison_point(label, value, unit="", note="", source=None, validated=Fal
     }
     if source:
         point["source"] = str(source)
+        observed_at = observed_at or _source_observed_at(source)
+    if observed_at:
+        point["observed_at"] = str(observed_at)
     return point
+
+
+def _metric_point(label, value, unit="", note="", source=None, observed_at=None):
+    point = _comparison_point(
+        label,
+        value,
+        unit=unit,
+        note=note,
+        source=source,
+        observed_at=observed_at,
+        validated=False,
+    )
+    if point:
+        point.pop("validated", None)
+    return point
+
 
 def _comparison_view(latest=None, current=None, best=None):
     return {
@@ -277,11 +310,14 @@ def _comparison_view(latest=None, current=None, best=None):
     }
 
 def _hax_quality():
-    current = _json("/var/lib/haxlab/derived/champions/elite-player/current.json", sudo=True) or {}
-    live = _json("/var/lib/haxlab/derived/champions/elite-player/live.json", sudo=True) or {}
-    metrics = _json(current.get("metrics_path", ""), sudo=True) if current.get("metrics_path") else None
-    if not metrics:
-        metrics = _json("/var/lib/haxlab/derived/training/elite-player-champion-candidate/pipeline-summary.json") or {}
+    current_path = Path("/var/lib/haxlab/derived/champions/elite-player/current.json")
+    live_path = Path("/var/lib/haxlab/derived/champions/elite-player/live.json")
+    fallback_metrics_path = Path("/var/lib/haxlab/derived/training/elite-player-champion-candidate/pipeline-summary.json")
+    current = _json(current_path, sudo=True) or {}
+    live = _json(live_path, sudo=True) or {}
+    metrics_source = current.get("metrics_path") or str(fallback_metrics_path)
+    metrics = _json(metrics_source, sudo=True) if current.get("metrics_path") else _json(fallback_metrics_path)
+    metrics = metrics or {}
     holdout = _find_metrics_dict(metrics) or {}
     direction = holdout.get("direction_accuracy")
     joint = holdout.get("joint_accuracy")
@@ -290,34 +326,39 @@ def _hax_quality():
     version = live.get("version_id") or current.get("version_id")
     items = []
     if direction is not None:
-        items.append({"label": "Direction accuracy", "value": round(float(direction) * 100, 1), "unit": "%"})
+        items.append(_metric_point("Direction accuracy", round(float(direction) * 100, 1), unit="%", source=metrics_source))
     if joint is not None:
-        items.append({"label": "Joint action accuracy", "value": round(float(joint) * 100, 1), "unit": "%"})
+        items.append(_metric_point("Joint action accuracy", round(float(joint) * 100, 1), unit="%", source=metrics_source))
     if kick_f1 is not None:
-        items.append({"label": "Kick F1", "value": round(float(kick_f1) * 100, 1), "unit": "%"})
-    items.append({"label": "Live champion", "value": "Healthy" if live_healthy else "Not healthy", "unit": ""})
+        items.append(_metric_point("Kick F1", round(float(kick_f1) * 100, 1), unit="%", source=metrics_source))
+    items.append(_metric_point(
+        "Live champion",
+        "Healthy" if live_healthy else "Not healthy",
+        source=str(live_path),
+    ))
     headline = None
     if joint is not None:
-        headline = {
-            "label": "Player imitation",
-            "value": round(float(joint) * 100, 1),
-            "unit": "%",
-            "note": "Frozen-holdout joint action accuracy; geen win-rate.",
-        }
+        headline = _metric_point(
+            "Player imitation",
+            round(float(joint) * 100, 1),
+            unit="%",
+            note="Frozen-holdout joint action accuracy; geen win-rate.",
+            source=metrics_source,
+        )
     latest_version = current.get("version_id") or version
     live_version = live.get("version_id")
     current_point = _comparison_point(
         "Huidige live champion",
         live_version,
         note="Live health groen" if live_healthy else "Live health niet groen",
-        source=live.get("metrics_path") or live.get("source"),
+        source=str(live_path),
         validated=live_healthy,
     )
     best_point = _comparison_point(
         "Beste gevalideerde champion",
         live_version,
         note="Gepromoveerde live champion" if live_healthy else "Champion bestaat, maar live health is niet groen",
-        source=live.get("metrics_path") or live.get("source"),
+        source=str(live_path),
         validated=live_healthy,
     )
     comparison = _comparison_view(
@@ -325,7 +366,7 @@ def _hax_quality():
             "Nieuwste candidate",
             latest_version,
             note=("Frozen-holdout joint accuracy %.1f%%" % (float(joint) * 100)) if joint is not None else "Nieuwste offline candidate",
-            source=current.get("metrics_path"),
+            source=metrics_source,
             validated=joint is not None,
         ),
         current=current_point,
@@ -373,6 +414,10 @@ def _ftmo_release():
             run_path = release_path.parent / str(exp) / "holdout-run.json"
             holdout = _json(run_path) or {}
             if holdout:
+                release = dict(release)
+                holdout = dict(holdout)
+                release["_zcloud_source_path"] = str(release_path)
+                holdout["_zcloud_source_path"] = str(run_path)
                 releases.append((_gen_number(release.get("generation_id") or release_path.parent.name), release, rel, holdout))
     return max(releases, key=lambda x: x[0]) if releases else None
 
@@ -459,11 +504,23 @@ def _ftmo_quality():
         note = "Generation %s development-only · %s trades" % (gen, trades or 0)
         if wr is not None:
             note += " · %.1f%% WR" % (float(wr) * 100)
-        headline = {"label": "Current dev candidate", "value": pips, "unit": " pips", "note": note}
+        candidate_source = str(trial_path)
+        headline = _metric_point(
+            "Current dev candidate",
+            pips,
+            unit=" pips",
+            note=note,
+            source=candidate_source,
+        )
         items.extend([
-            {"label": "1.5× cost PnL", "value": stressed, "unit": " pips"},
-            {"label": "Dev win rate", "value": round(float(wr) * 100, 1) if wr is not None else None, "unit": "%"},
-            {"label": "Closed trades", "value": trades, "unit": ""},
+            _metric_point("1.5× cost PnL", stressed, unit=" pips", source=candidate_source),
+            _metric_point(
+                "Dev win rate",
+                round(float(wr) * 100, 1) if wr is not None else None,
+                unit="%",
+                source=candidate_source,
+            ),
+            _metric_point("Closed trades", trades, source=candidate_source),
         ])
         meta["candidate_hash"] = trial.get("trial_hash")
         meta["candidate_generation"] = gen
@@ -478,10 +535,21 @@ def _ftmo_quality():
     if rel:
         gen, release, released, holdout = rel
         hres = holdout.get("result") or holdout
+        release_source = (
+            holdout.get("_zcloud_source_path")
+            or release.get("_zcloud_source_path")
+            or release.get("paper_release_hash")
+            or released.get("trial_hash")
+        )
         items.extend([
-            {"label": "Validated holdout PnL", "value": _pips(hres.get("total_pnl")), "unit": " pips"},
-            {"label": "Validated 1.5× cost", "value": _pips(hres.get("cost_1_5x_pnl")), "unit": " pips"},
-            {"label": "Validated win rate", "value": round(float(hres.get("win_rate")) * 100, 1) if hres.get("win_rate") is not None else None, "unit": "%"},
+            _metric_point("Validated holdout PnL", _pips(hres.get("total_pnl")), unit=" pips", source=release_source),
+            _metric_point("Validated 1.5× cost", _pips(hres.get("cost_1_5x_pnl")), unit=" pips", source=release_source),
+            _metric_point(
+                "Validated win rate",
+                round(float(hres.get("win_rate")) * 100, 1) if hres.get("win_rate") is not None else None,
+                unit="%",
+                source=release_source,
+            ),
         ])
         meta["release_hash"] = release.get("paper_release_hash")
         meta["release_generation"] = gen
@@ -490,25 +558,181 @@ def _ftmo_quality():
             "Huidige gevalideerde release",
             ("Generation %s" % gen),
             note=("%s pips · frozen holdout" % validated_pips) if validated_pips is not None else "Frozen-holdout release",
-            source=release.get("paper_release_hash") or released.get("trial_hash"),
+            source=release_source,
             validated=True,
         )
     return {
         "available": bool(headline),
         "headline": headline,
-        "items": [x for x in items if x.get("value") is not None],
+        "items": [x for x in items if x and x.get("value") is not None],
         "stage": stage,
         "meta": meta,
         "comparison": _comparison_view(latest=latest_point, current=current_point),
         "readiness": _ftmo_readiness(),
     }
 
-def quality_for(project):
-    if project == "haxlab":
+def _ulab_quality():
+    projects = _json(PROJECTS_FILE) or []
+    project = next(
+        (row for row in projects if isinstance(row, dict) and row.get("id") == "ulab"),
+        None,
+    )
+    if not project:
+        return _empty_quality_snapshot()
+
+    source = str(PROJECTS_FILE)
+    observed_at = _source_observed_at(PROJECTS_FILE) or _now()
+    milestones = [row for row in (project.get("milestones") or []) if isinstance(row, dict)]
+    progress = project.get("progress_override")
+    if progress is None and milestones:
+        progress = round(
+            sum(float(row.get("progress", 100 if row.get("done") else 0)) for row in milestones)
+            / len(milestones),
+            1,
+        )
+
+    items = []
+    for row in milestones:
+        value = row.get("progress", 100 if row.get("done") else 0)
+        items.append({
+            "label": str(row.get("title") or "Milestone"),
+            "value": value,
+            "unit": "%",
+            "source": source,
+            "observed_at": observed_at,
+        })
+
+    revision = project.get("milestone_revision")
+    latest = _comparison_point(
+        "Latest scorecard checkpoint",
+        revision,
+        note=str(project.get("phase") or ""),
+        source=source,
+        observed_at=observed_at,
+        validated=True,
+    )
+    current = _comparison_point(
+        "Current evidence score",
+        progress,
+        unit="%",
+        note=str(project.get("progress_basis") or ""),
+        source=source,
+        observed_at=observed_at,
+        validated=True,
+    )
+    headline = None
+    if progress is not None:
+        headline = {
+            "label": "Weighted V0–V3 score",
+            "value": progress,
+            "unit": "%",
+            "note": str(project.get("phase") or ""),
+            "source": source,
+            "observed_at": observed_at,
+        }
+    return {
+        "available": headline is not None,
+        "headline": headline,
+        "items": items,
+        "stage": project.get("phase"),
+        "meta": {
+            "milestone_revision": revision,
+            "scorecard_url": project.get("scorecard_url"),
+        },
+        "comparison": _comparison_view(latest=latest, current=current),
+    }
+
+
+def _stamp_snapshot_provenance(snapshot, default_source):
+    """Ensure every rendered adapter metric carries an evidence source and observation time."""
+    if not isinstance(snapshot, dict):
+        return _empty_quality_snapshot()
+    observed_at = _source_observed_at(default_source) or _now()
+
+    points = []
+    headline = snapshot.get("headline")
+    if isinstance(headline, dict):
+        points.append(headline)
+    points.extend(row for row in (snapshot.get("items") or []) if isinstance(row, dict))
+    comparison = snapshot.get("comparison") or {}
+    if isinstance(comparison, dict):
+        points.extend(
+            point for point in (comparison.get("latest"), comparison.get("current"), comparison.get("best"))
+            if isinstance(point, dict)
+        )
+
+    for point in points:
+        if point.get("value") is None or point.get("value") == "":
+            continue
+        point.setdefault("source", str(default_source))
+        point.setdefault("observed_at", _source_observed_at(point.get("source")) or observed_at)
+    return snapshot
+
+
+class ProjectTelemetryAdapter:
+    """Project-specific evidence adapter contract used by the generic dashboard renderer."""
+
+    project_id = None
+    default_source = None
+
+    def snapshot(self):
+        raise NotImplementedError
+
+    def read(self):
+        return _stamp_snapshot_provenance(self.snapshot(), self.default_source)
+
+
+class HaxLabTelemetryAdapter(ProjectTelemetryAdapter):
+    project_id = "haxlab"
+    default_source = "/var/lib/haxlab/derived"
+
+    def snapshot(self):
         return _hax_quality()
-    if project == "ftmo":
+
+
+class FTMOTelemetryAdapter(ProjectTelemetryAdapter):
+    project_id = "ftmo"
+    default_source = "/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes"
+
+    def snapshot(self):
         return _ftmo_quality()
-    return {"available": False, "headline": None, "items": [], "stage": None, "meta": {}, "comparison": _comparison_view()}
+
+
+class ULabTelemetryAdapter(ProjectTelemetryAdapter):
+    project_id = "ulab"
+
+    @property
+    def default_source(self):
+        return str(PROJECTS_FILE)
+
+    def snapshot(self):
+        return _ulab_quality()
+
+
+_TELEMETRY_ADAPTERS = {
+    adapter.project_id: adapter
+    for adapter in (HaxLabTelemetryAdapter(), FTMOTelemetryAdapter(), ULabTelemetryAdapter())
+}
+
+
+def telemetry_adapter_projects():
+    return tuple(sorted(_TELEMETRY_ADAPTERS))
+
+
+def _empty_quality_snapshot():
+    return {
+        "available": False,
+        "headline": None,
+        "items": [],
+        "stage": None,
+        "meta": {},
+        "comparison": _comparison_view(),
+    }
+
+
+def quality_for(project):
+    adapter = _TELEMETRY_ADAPTERS.get(project)
+    return adapter.read() if adapter else _empty_quality_snapshot()
 
 def init_db(c):
     c.execute("""CREATE TABLE IF NOT EXISTS alerts(

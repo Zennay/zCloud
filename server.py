@@ -1141,16 +1141,22 @@ def collect():
             except Exception:
                 p['source_status']='unavailable'; p['message']='Git-bron tijdelijk niet beschikbaar'
         p['services']=[]
+        try:
+            project_quality=enhancements.quality_for(p['id'])
+            if (
+                project_quality.get('available')
+                or project_quality.get('items')
+                or (project_quality.get('comparison') or {}).get('available')
+            ):
+                p['quality']=project_quality
+        except Exception:
+            pass
         if p['id']=='haxlab':
             names=['haxlab-analyzer.service','haxlab-ingest.service','haxlab-worker.service','haxlab-autonomy.timer','haxlab-autonomy.service',RUNNERS['haxlab']]
             try:p['metrics']=replay_metrics()
             except Exception:p['metrics']={'available':False}
-            try:p['quality']=enhancements.quality_for('haxlab')
-            except Exception:p['quality']={'available':False,'items':[]}
         elif p['id']=='ftmo':
             names=['ftmo-autonomous.timer','ftmo-autonomous.service',RUNNERS['ftmo']]
-            try:p['quality']=enhancements.quality_for('ftmo')
-            except Exception:p['quality']={'available':False,'items':[]}
         elif p['id']=='supa': names=[SUPA_SYNC]
         elif p['id']=='raiseai': names=['raise-gateway.service']
         elif p['id']=='zssh': names=['zssh.service']

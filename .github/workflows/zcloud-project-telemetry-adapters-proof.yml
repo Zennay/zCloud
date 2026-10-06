@@ -1,0 +1,54 @@
+name: zCloud project telemetry adapters proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - enhancements.py
+      - server.py
+      - public/enhancements.js
+      - tests/test_evidence_progress.py
+      - .github/workflows/zcloud-project-telemetry-adapters-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-telemetry-adapters-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Prove telemetry adapter contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile enhancements.py tests/test_evidence_progress.py
+          node --check public/enhancements.js
+          python3 -m unittest -v tests.test_evidence_progress
+          echo "ZCLOUD_PROJECT_TELEMETRY_ADAPTERS_GREEN=1"
