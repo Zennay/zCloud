@@ -26,7 +26,33 @@ class ThroughputTrackingBaselineTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-throughput-baseline-")
         root = Path(self.tmp.name)
         self.db = root / "history.db"
-        sqlite3.connect(self.db).close()
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            """CREATE TABLE project_state_receipts(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                commit_sha TEXT NOT NULL,
+                ci_status TEXT NOT NULL,
+                source TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                evidence_json TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO project_state_receipts(
+                project_id,commit_sha,ci_status,source,observed_at,evidence_json
+            ) VALUES(?,?,?,?,?,?)""",
+            (
+                "cloud",
+                SHA,
+                "success",
+                "github-actions:zcloud-vps-deploy",
+                STARTED_AT,
+                json.dumps({"workflow_run_id": 37448947435}),
+            ),
+        )
+        connection.commit()
+        connection.close()
         self.projects = root / "projects.json"
         self.projects.write_text(
             json.dumps(
@@ -171,6 +197,35 @@ class ThroughputTrackingBaselineTests(unittest.TestCase):
             {"cloud", "ftmo"},
             {item["project_id"] for item in plan["conflicts"]},
         )
+
+    def test_exact_production_receipt_is_required(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute("DELETE FROM project_state_receipts")
+        connection.commit()
+        connection.close()
+
+        with self.assertRaisesRegex(ValueError, "no exact successful"):
+            self.plan()
+
+    def test_wrong_production_run_source_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "no exact successful"):
+            module.plan_baseline(
+                self.db,
+                self.projects,
+                started_at=STARTED_AT,
+                production_sha=SHA,
+                source="github-actions:zcloud-vps-deploy:999",
+            )
+
+    def test_non_production_source_format_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "source must be"):
+            module.plan_baseline(
+                self.db,
+                self.projects,
+                started_at=STARTED_AT,
+                production_sha=SHA,
+                source="manual",
+            )
 
     def test_invalid_started_at_and_sha_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "timezone"):
