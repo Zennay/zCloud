@@ -122,6 +122,91 @@ class RecoveryTests(unittest.TestCase):
         pointer = json.loads((self.state / "last-known-good.json").read_text())
         self.assertEqual(second["snapshot_id"], pointer["snapshot_id"])
 
+    def test_capture_prunes_old_valid_snapshots_but_keeps_active_lkg(self):
+        self.assertEqual(8, recovery.RECOVERY_SNAPSHOT_RETENTION)
+        with patch.object(
+            recovery,
+            "snapshot_stamp",
+            return_value="20261005T230000Z",
+        ):
+            manifests = [self.capture() for _ in range(10)]
+        self.assertEqual(
+            10,
+            len({manifest["snapshot_id"] for manifest in manifests}),
+        )
+        snapshots = self.state / "snapshots"
+        valid_dirs = sorted(
+            path.name
+            for path in snapshots.iterdir()
+            if path.is_dir() and (path / "manifest.json").is_file()
+        )
+        self.assertEqual(8, len(valid_dirs))
+        self.assertFalse((snapshots / manifests[0]["snapshot_id"]).exists())
+        self.assertFalse((snapshots / manifests[1]["snapshot_id"]).exists())
+        for manifest in manifests[2:]:
+            self.assertTrue((snapshots / manifest["snapshot_id"]).exists())
+        pointer = json.loads((self.state / "last-known-good.json").read_text())
+        self.assertEqual(manifests[-1]["snapshot_id"], pointer["snapshot_id"])
+        events = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        prune_events = [
+            event for event in events
+            if event.get("event") == "recovery_snapshots_pruned"
+        ]
+        self.assertTrue(prune_events)
+        self.assertEqual(
+            recovery.RECOVERY_SNAPSHOT_RETENTION,
+            prune_events[-1]["retained"],
+        )
+
+    def test_pruning_preserves_unrecognized_snapshot_directories(self):
+        unknown = self.state / "snapshots" / "manual-do-not-delete"
+        unknown.mkdir(parents=True)
+        (unknown / "notes.txt").write_text("operator evidence\n")
+        manifests = [self.capture() for _ in range(10)]
+        self.assertTrue(unknown.exists())
+        self.assertTrue((unknown / "notes.txt").exists())
+        valid = [
+            path
+            for path in (self.state / "snapshots").iterdir()
+            if path.is_dir() and (path / "manifest.json").is_file()
+        ]
+        self.assertEqual(8, len(valid))
+        pointer = json.loads((self.state / "last-known-good.json").read_text())
+        self.assertEqual(manifests[-1]["snapshot_id"], pointer["snapshot_id"])
+
+    def test_capture_remains_valid_when_retention_housekeeping_fails(self):
+        with patch.object(
+            recovery,
+            "prune_recovery_snapshots",
+            side_effect=OSError("simulated retention failure"),
+        ):
+            manifest = self.capture()
+
+        pointer = json.loads((self.state / "last-known-good.json").read_text())
+        self.assertEqual(manifest["snapshot_id"], pointer["snapshot_id"])
+        self.assertTrue(
+            (
+                self.state
+                / "snapshots"
+                / manifest["snapshot_id"]
+                / "manifest.json"
+            ).exists()
+        )
+        events = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        failures = [
+            event
+            for event in events
+            if event.get("event") == "recovery_snapshot_prune_failed"
+        ]
+        self.assertEqual(1, len(failures))
+        self.assertIn("simulated retention failure", failures[0]["error"])
+
     def test_rollback_restores_source_and_preserves_chat_mapping(self):
         manifest = self.capture()
         before = recovery.mapping_fingerprint(self.root / "history.db")
