@@ -17,7 +17,7 @@ concurrency:
 jobs:
   recover:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 6
+    timeout-minutes: 8
     env:
       RAISE_REPO: Zennay/RaiseAI
       RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
@@ -100,5 +100,22 @@ jobs:
             [[ "$scheduled" -eq 1 ]] && break
             sleep 5
           done
-          test "$scheduled" -eq 1
+          if [[ "$scheduled" -ne 1 ]]; then
+            echo "RAISEAI_RECOVERY_DIAGNOSTICS_BEGIN"
+            systemctl show "$RAISE_SERVICE" -p Id -p ActiveState -p SubState -p MainPID -p ControlGroup -p FragmentPath -p ExecStart -p WorkingDirectory --no-pager || true
+            systemctl status "$RAISE_SERVICE" --no-pager -l || true
+            journalctl -u "$RAISE_SERVICE" --since "-20 min" --no-pager -n 160 || true
+            echo "RAISEAI_LISTENER_PROCESSES"
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cmdline" || continue
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmdline" == *"Runner.Listener"* ]] || continue
+              pid="${proc##*/}"
+              cwd="$(readlink -f "$proc/cwd" 2>/dev/null || true)"
+              cg="$(cat "$proc/cgroup" 2>/dev/null || true)"
+              printf 'pid=%s cwd=%s cmd=%s cgroup=%s\n' "$pid" "$cwd" "$cmdline" "$cg"
+            done
+            echo "RAISEAI_RECOVERY_DIAGNOSTICS_END"
+            exit 2
+          fi
           echo "RAISEAI_CURRENT_RUNNER_RECOVERY_GREEN=1"
