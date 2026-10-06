@@ -1,0 +1,57 @@
+name: LightUp ST5 remediation/retest snapshot proof
+
+on:
+  push:
+    branches:
+      - "ops/lightup-st5-retest-plan-snapshot-proof-20261006"
+    paths:
+      - ".github/workflows/lightup-st5-retest-plan-snapshot-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-st5-retest-plan-snapshot-proof
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Verify exact LightUp remediation/retest snapshot candidate
+        shell: bash
+        env:
+          LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+          TARGET_BRANCH: chatgpt/st5-remediation-retest-plan-snapshot-isolation-20261006
+          TARGET_SHA: e6caab71871ae1d4d88cfbdd306236ad74dbeb97
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          git -C "${LIGHTUP_REPO}" fetch --no-tags origin             "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          actual_sha="$(git -C "${LIGHTUP_REPO}" rev-parse "refs/remotes/origin/${TARGET_BRANCH}^{commit}")"
+          test "${actual_sha}" = "${TARGET_SHA}"
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "${tmp_root}"' EXIT
+          snapshot="${tmp_root}/lightup"
+          mkdir -p "${snapshot}"
+          git -C "${LIGHTUP_REPO}" archive "${TARGET_SHA}" | tar -x -C "${snapshot}"
+
+          cd "${snapshot}"
+          export PYTHONPATH=src:tests
+          python3 -m compileall -q src tests
+          python3 -m unittest discover -s tests             -p 'test_future_security_remediation_retest_plan_snapshot_isolation.py' -v
+          python3 -m unittest discover -s tests             -p 'test_future_security_remediation_retest_plan_handoff.py' -v
+          python3 -m unittest discover -s tests             -p 'test_future_security_remediation_retest_plan.py' -v
+          python3 -m unittest discover -s tests/integration -v
+
+          printf 'LIGHTUP_ST5_RETEST_PLAN_SNAPSHOT_PROOF branch=%s target_sha=%s host=%s\n'             "${TARGET_BRANCH}" "${TARGET_SHA}" "$(hostname)"
