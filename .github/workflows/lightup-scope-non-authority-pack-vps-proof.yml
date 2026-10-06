@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  LIGHTUP_EXPECTED_SHA: ec6e80660635500fdbc4031ac82c9957fe40be38
+  LIGHTUP_EXPECTED_SHA: fda4bdf264f024e829b14c692fba599d7f7f53c2
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/Lightup
-          ref: ec6e80660635500fdbc4031ac82c9957fe40be38
+          ref: fda4bdf264f024e829b14c692fba599d7f7f53c2
           path: lightup
           persist-credentials: false
       - uses: actions/setup-python@v5
