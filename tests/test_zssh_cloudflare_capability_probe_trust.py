@@ -23,17 +23,18 @@ class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", text)
         self.assertIn("tests/test_zssh_cloudflare_capability_probe.py", text)
         self.assertIn("tests/test_zssh_cloudflare_capability_probe_trust.py", text)
-        self.assertIn("github.event_name != 'pull_request'", text)
+        self.assertIn("github.event_name == 'push'", text)
+        self.assertIn("github.event_name == 'workflow_dispatch'", text)
 
     def test_live_probe_is_main_only_exact_revision_and_permanent_vps_bound(self) -> None:
         text = self.text
         live = text[text.index("\n  probe:\n") :]
         self.assertIn("github.repository == 'Zennay/zCloud'", live)
         self.assertIn("github.ref == 'refs/heads/main'", live)
-        self.assertIn(
-            "(github.event_name != 'workflow_dispatch' || github.actor == 'Zennay')",
-            live,
-        )
+        self.assertIn("github.event_name == 'push'", live)
+        self.assertIn("github.event_name == 'workflow_dispatch'", live)
+        self.assertIn("github.actor == 'Zennay'", live)
+        self.assertNotIn("github.event_name != 'pull_request'", live)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", live)
         self.assertNotIn("runs-on: self-hosted", live)
         self.assertIn("ZCLOUD_EXPECTED_SHA: ${{ github.sha }}", live)
