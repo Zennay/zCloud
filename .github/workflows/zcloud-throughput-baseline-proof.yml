@@ -51,7 +51,7 @@ jobs:
           test -f "$LIVE_DB"
           test -f "$LIVE_PROJECTS"
           before_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
-          python3 scripts/zcloud_throughput_tracking_baseline.py             --db "$LIVE_DB"             --projects "$LIVE_PROJECTS"             --started-at "2026-10-06T10:29:27.005194+00:00"             --production-sha "55aef90793cbc6236a37d90f623c48f569be96e3"             --source "github-actions:zcloud-vps-deploy:37448947435"             > /tmp/zcloud-throughput-baseline-plan.json
+          python3 scripts/zcloud_throughput_tracking_baseline.py             --db "$LIVE_DB"             --projects "$LIVE_PROJECTS"             --started-at "now"             --production-sha "55aef90793cbc6236a37d90f623c48f569be96e3"             --source "github-actions:zcloud-vps-deploy:37448947435"             > /tmp/zcloud-throughput-baseline-plan.json
           python3 - <<'PY'
           import json
           from datetime import datetime
