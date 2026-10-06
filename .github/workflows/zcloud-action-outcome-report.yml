@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Run focused regressions
-        run: python3 -m unittest tests.test_action_outcome_report -v
+        run: python3 -m unittest tests.test_action_outcome_report tests.test_action_outcome_workflow -v
 
       - name: Prove live database remains read-only
         shell: bash
