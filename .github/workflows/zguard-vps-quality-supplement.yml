@@ -47,6 +47,7 @@ jobs:
             "popup:9e7c2d76fd2b973db421b5a2a4d8728128e28801"
             "hygiene:3e5a7db1f5e63077dac4cf3c11a261e2d4908864"
             "docs:21816e232cb8d07b48de09f1472471c285dc2ded"
+            "containment:aa85c18c7daaffa390f32fa33e1c611e4c18721b"
             "manifest:47dc81da54d57993ee3658ac5a71710d9191df6b"
             "config:202cac88644d00e466eecc5cf9ad4026e5ec2553"
             "proxy:78f7abd0319f3b50e6f7f35f88409e342047cb45"
@@ -101,6 +102,10 @@ jobs:
                   fi
                   ;;
                 docs)
+                  ;;
+                containment)
+                  node tests/zbrowse.runtime-containment.test.mjs
+                  node tests/zguard.permission-boundary.test.mjs
                   ;;
                 manifest)
                   node tests/zguard.manifest-integrity.test.js
