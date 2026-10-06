@@ -271,10 +271,21 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
             server._persist_global_worker_allocation(server.global_worker_allocation())
 
         settle_counts = []
+        settle_snapshots = []
         for _ in range(4):
             selected = server.portfolio_queue_allocate()
             server._persist_global_worker_allocation(server.global_worker_allocation())
             settle_counts.append(len(selected))
+            settle_snapshots.append(
+                [
+                    (
+                        int(item["worker_slot"]),
+                        str(item["project_id"]),
+                        str(item["queue_id"]),
+                    )
+                    for item in selected
+                ]
+            )
             if len(selected) == 8:
                 break
 
@@ -298,7 +309,8 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
             8,
             len(atomic_rows),
             "sequential churn did not reconverge: "
-            f"settle={settle_counts} active_counts={dict(active_counts)} queue={queued}",
+            f"settle={settle_counts} settle_snapshots={settle_snapshots} "
+            f"active_counts={dict(active_counts)} queue={queued}",
         )
         for project_id, count in active_counts.items():
             cap = int(server._portfolio_project_hard_cap(project_id))
