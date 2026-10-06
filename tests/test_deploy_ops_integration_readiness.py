@@ -133,6 +133,10 @@ class DeployOpsIntegrationReadinessTests(unittest.TestCase):
 
     def test_inventory_is_bounded_to_deploy_ops_and_sorted(self):
         class FakeReader:
+            def branch_sha(self, base):
+                self.requested_base = base
+                return "d" * 40
+
             def open_pulls(self):
                 return [
                     pr(number=9, title="Deploy-ops B", sha=SHA_B),
@@ -154,16 +158,20 @@ class DeployOpsIntegrationReadinessTests(unittest.TestCase):
                 return [regression(sha=head_sha)]
 
         reader = FakeReader()
-        rows = inventory(reader, "main")
+        base_sha, rows = inventory(reader, "main")
+        self.assertEqual("d" * 40, base_sha)
+        self.assertEqual("main", reader.requested_base)
+        self.assertEqual("d" * 40, reader.assert_base)
         self.assertEqual([4, 9], [row.number for row in rows])
         self.assertTrue(all(row.decision == "ready" for row in rows))
 
     def test_markdown_exposes_only_bounded_readiness_fields(self):
         row = classify(pr(title="Safe readiness"), {"behind_by": 0, "ahead_by": 1}, [regression()])
-        output = render_markdown([row], "Zennay/zCloud", "main")
+        output = render_markdown([row], "Zennay/zCloud", "main", SHA_B)
         self.assertIn("#1", output)
         self.assertIn("ready", output)
         self.assertIn(SHA_A[:12], output)
+        self.assertIn(SHA_B, output)
         self.assertIn("ready never authorizes merge or deploy", output)
         self.assertNotIn(SHA_A, output)
 
