@@ -76,12 +76,12 @@ jobs:
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'invalid legacy authorization provenance was accepted' "${LOG}" || true)" -eq 6
-          test "$(grep -c 'legacy authorization assets were not snapshotted' "${LOG}" || true)" -eq 1
-          test "$(grep -c 'external asset mutation widened legacy authorization' "${LOG}" || true)" -eq 1
-          test "$(grep -c 'external asset mutation narrowed legacy authorization' "${LOG}" || true)" -eq 1
-          test "$(grep -c 'type-confused authorization timestamp was accepted' "${LOG}" || true)" -eq 6
-          test "$(grep -c 'duck-typed legacy authorization was accepted' "${LOG}" || true)" -eq 2
+          test "$(grep -c 'AssertionError: invalid legacy authorization provenance was accepted' "${LOG}" || true)" -eq 6
+          test "$(grep -c 'AssertionError: legacy authorization assets were not snapshotted' "${LOG}" || true)" -eq 1
+          test "$(grep -c 'AssertionError: external asset mutation widened legacy authorization' "${LOG}" || true)" -eq 1
+          test "$(grep -c 'AssertionError: external asset mutation narrowed legacy authorization' "${LOG}" || true)" -eq 1
+          test "$(grep -c 'AssertionError: type-confused authorization timestamp was accepted' "${LOG}" || true)" -eq 6
+          test "$(grep -c 'AssertionError: duck-typed legacy authorization was accepted' "${LOG}" || true)" -eq 2
           grep -Fq 'FAILED (failures=17)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
@@ -109,12 +109,12 @@ jobs:
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'invalid legacy authorization provenance was accepted' "${LOG}" || true)" -eq 6
-          test "$(grep -c 'legacy authorization assets were not snapshotted' "${LOG}" || true)" -eq 1
-          test "$(grep -c 'external asset mutation widened legacy authorization' "${LOG}" || true)" -eq 1
-          test "$(grep -c 'external asset mutation narrowed legacy authorization' "${LOG}" || true)" -eq 1
-          test "$(grep -c 'type-confused authorization timestamp was accepted' "${LOG}" || true)" -eq 6
-          test "$(grep -c 'duck-typed legacy authorization was accepted' "${LOG}" || true)" -eq 2
+          test "$(grep -c 'AssertionError: invalid legacy authorization provenance was accepted' "${LOG}" || true)" -eq 6
+          test "$(grep -c 'AssertionError: legacy authorization assets were not snapshotted' "${LOG}" || true)" -eq 1
+          test "$(grep -c 'AssertionError: external asset mutation widened legacy authorization' "${LOG}" || true)" -eq 1
+          test "$(grep -c 'AssertionError: external asset mutation narrowed legacy authorization' "${LOG}" || true)" -eq 1
+          test "$(grep -c 'AssertionError: type-confused authorization timestamp was accepted' "${LOG}" || true)" -eq 6
+          test "$(grep -c 'AssertionError: duck-typed legacy authorization was accepted' "${LOG}" || true)" -eq 2
           grep -Fq 'FAILED (failures=17)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
