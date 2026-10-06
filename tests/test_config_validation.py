@@ -196,6 +196,15 @@ class ConfigValidationTests(unittest.TestCase):
         result = self.validate()
         self.assertTrue(result["ok"], result)
 
+    def test_blocks_worker_count_over_project_runtime_cap(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id=\'cloud\'")
+            conn.execute("INSERT INTO runner_workers VALUES(\'cloud\',2,\'running\')")
+            conn.commit()
+        result = self.validate()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("worker_count exceeds project runtime cap for cloud: 2>1" in x for x in result["errors"]))
+
     def test_blocks_worker_count_over_runtime_max(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute("UPDATE runner_targets SET worker_count=9 WHERE project_id='cloud'")
