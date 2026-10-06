@@ -1,0 +1,164 @@
+name: LightUp evidence root runner recovery
+
+on:
+  push:
+    branches:
+      - chatgpt/lightup-evidence-root-runner-recovery-20261006
+    paths:
+      - ".github/workflows/lightup-evidence-root-runner-recovery-20261006.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-evidence-root-runner-recovery
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 7
+    env:
+      LIGHTUP_REPO: Zennay/Lightup
+      LIGHTUP_ROOT_RUN_ID: "37385689475"
+      LIGHTUP_ROOT_SHA: "04f3f010756e7609707fda467f8ab1809f361ae4"
+
+    steps:
+      - name: Guard exact stalled LightUp root proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from datetime import datetime, timezone
+
+          repo=os.environ["LIGHTUP_REPO"]
+          run_id=os.environ["LIGHTUP_ROOT_RUN_ID"]
+          expected_sha=os.environ["LIGHTUP_ROOT_SHA"]
+
+          def get(path):
+              req=urllib.request.Request(
+                  "https://api.github.com"+path,
+                  headers={"Accept":"application/vnd.github+json","User-Agent":"lightup-evidence-runner-recovery/1"},
+              )
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  return json.load(response)
+
+          run=get(f"/repos/{repo}/actions/runs/{run_id}")
+          if run.get("head_sha") != expected_sha:
+              raise SystemExit(f"unexpected LightUp root SHA: {run.get('head_sha')}")
+          if run.get("status") not in {"queued","in_progress"}:
+              raise SystemExit(f"LightUp root run is not recoverable: {run.get('status')} / {run.get('conclusion')}")
+
+          jobs=get(f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100").get("jobs") or []
+          states=[(job.get("name"),job.get("status"),job.get("conclusion")) for job in jobs]
+          if not jobs or not all(job.get("status") in {"queued","in_progress"} for job in jobs):
+              raise SystemExit(f"unexpected LightUp root job states: {states}")
+
+          created=datetime.fromisoformat(str(run["created_at"]).replace("Z","+00:00"))
+          age_s=int((datetime.now(timezone.utc)-created).total_seconds())
+          if age_s < 300:
+              raise SystemExit(f"LightUp root queue is not stale enough for recovery: {age_s}s")
+
+          in_progress=get(f"/repos/{repo}/actions/runs?status=in_progress&per_page=100").get("total_count",0)
+          queued=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("total_count",0)
+          print(f"LIGHTUP_QUEUE_GUARD root_age_s={age_s} in_progress={in_progress} queued={queued} states={states}")
+          PY
+
+      - name: Discover and recover only the idle LightUp listener
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mapfile -t services < <(
+            systemctl list-unit-files --type=service --no-legend 'actions.runner.*' 2>/dev/null |
+            awk '{print $1}' |
+            grep -Ei '^actions\.runner\..*lightup.*\.service$' || true
+          )
+          if [[ "${#services[@]}" -ne 1 ]]; then
+            printf 'Expected exactly one LightUp Actions service, found %s: %s\n' "${#services[@]}" "${services[*]:-none}" >&2
+            exit 1
+          fi
+          service="${services[0]}"
+
+          unit_text="$(systemctl cat "$service")"
+          runner_root="$(
+            sed -nE 's|^ExecStart="?([^" ]+)/runsvc\.sh.*|\1|p' <<<"$unit_text" |
+            head -n 1
+          )"
+          if [[ -z "$runner_root" || ! -x "$runner_root/runsvc.sh" ]]; then
+            echo "Could not derive executable runner root for $service" >&2
+            exit 1
+          fi
+
+          process_pids() {
+            local needle="$1"
+            for proc in /proc/[0-9]*; do
+              local pid="${proc##*/}"
+              local cmd
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$runner_root/bin/$needle"* ]] && echo "$pid"
+            done
+          }
+
+          state="$(systemctl is-active "$service" || true)"
+          mapfile -t workers < <(process_pids Runner.Worker)
+          mapfile -t listeners < <(process_pids Runner.Listener)
+          echo "LIGHTUP_RUNNER_PRE service=$service root=$runner_root state=$state workers=${workers[*]:-none} listeners=${listeners[*]:-none}"
+
+          action=preserve-active-worker
+          if [[ "${#workers[@]}" -eq 0 ]]; then
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl restart "$service"
+            action=restart-idle-lightup-listener
+          fi
+
+          if [[ "$action" == "restart-idle-lightup-listener" ]]; then
+            for _ in $(seq 1 30); do
+              state="$(systemctl is-active "$service" || true)"
+              mapfile -t workers < <(process_pids Runner.Worker)
+              mapfile -t listeners < <(process_pids Runner.Listener)
+              [[ "$state" == "active" && "${#listeners[@]}" -eq 1 ]] && break
+              sleep 1
+            done
+            test "$state" = "active"
+            test "${#listeners[@]}" -eq 1
+          fi
+
+          echo "LIGHTUP_RUNNER_RECOVERY action=$action service=$service state=$state workers=${workers[*]:-none} listeners=${listeners[*]:-none}"
+
+      - name: Prove LightUp canonical queue resumes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+
+          repo=os.environ["LIGHTUP_REPO"]
+          root_id=int(os.environ["LIGHTUP_ROOT_RUN_ID"])
+
+          def get(path):
+              req=urllib.request.Request(
+                  "https://api.github.com"+path,
+                  headers={"Accept":"application/vnd.github+json","User-Agent":"lightup-evidence-runner-recovery/1"},
+              )
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  return json.load(response)
+
+          for _ in range(60):
+              active=get(f"/repos/{repo}/actions/runs?status=in_progress&per_page=100").get("workflow_runs") or []
+              ci=[run for run in active if run.get("name") == "LightUp CI"]
+              root=get(f"/repos/{repo}/actions/runs/{root_id}")
+              print("LIGHTUP_QUEUE_PROGRESS", json.dumps({
+                  "active_ci_ids":[run.get("id") for run in ci],
+                  "root_status":root.get("status"),
+                  "root_conclusion":root.get("conclusion"),
+              },sort_keys=True))
+              if ci or root.get("status") in {"in_progress","completed"}:
+                  raise SystemExit(0)
+              time.sleep(2)
+          raise SystemExit("LightUp canonical queue did not resume within the bounded proof window")
+          PY
