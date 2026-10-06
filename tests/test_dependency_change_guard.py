@@ -118,6 +118,17 @@ class DependencyChangeGuardTests(unittest.TestCase):
         for forbidden in ("curl ", "ssh ", "sudo ", "systemctl ", "sqlite3 "):
             self.assertNotIn(forbidden, text)
 
+    def test_vps_proof_is_exact_head_and_read_only(self):
+        text = VPS_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\\n  contents: read", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("github.event.pull_request.head.sha", text)
+        self.assertIn("python3 -m unittest -v tests.test_dependency_change_guard", text)
+        self.assertIn("persist-credentials: false", text)
+        for forbidden in ("curl ", "ssh ", "sudo ", "systemctl ", "sqlite3 ", "server.py"):
+            self.assertNotIn(forbidden, text)
+
 
 if __name__ == "__main__":
     unittest.main()
