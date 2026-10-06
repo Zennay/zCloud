@@ -13,6 +13,8 @@ on:
       - ".github/workflows/zcloud-live-debug.yml"
       - ".github/workflows/zcloud-vps-deploy.yml"
       - "scripts/zcloud_transactional_promote.py"
+      - "scripts/zcloud_vps_runner_guard.py"
+      - "tests/test_live_debug_workflow.py"
       - "server.py"
 
 permissions:
@@ -24,13 +26,26 @@ concurrency:
 
 jobs:
   inspect:
+    if: github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
           clean: true
           fetch-depth: 512
+
+      - name: Verify permanent zCloud VPS runner and exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Read live canary and worker state
         shell: bash
@@ -197,7 +212,11 @@ jobs:
           live=json.loads((root/"resource-policy.json").read_text())
           projects=sorted(set(baseline)|set(live))
           delta=[]
-          with sqlite3.connect(root/"history.db",timeout=4) as conn:
+          db_path=root/"history.db"
+          if db_path.is_symlink() or not db_path.is_file():
+              raise SystemExit("live history.db must be a regular non-symlink file")
+          with sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=4) as conn:
+              conn.execute("PRAGMA query_only=ON")
               for project in projects:
                   before=baseline.get(project) or {}
                   after=live.get(project) or {}
