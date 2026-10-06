@@ -190,6 +190,33 @@ class ThroughputTrackingBaselineTests(unittest.TestCase):
                 source=SOURCE,
             )
 
+    def test_future_started_at_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "future"):
+            module.plan_baseline(
+                self.db,
+                self.projects,
+                started_at="2999-01-01T00:00:00+00:00",
+                production_sha=SHA,
+                source=SOURCE,
+            )
+
+    def test_existing_table_requires_project_primary_key(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            f"""CREATE TABLE {module.TABLE}(
+                project_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                source TEXT NOT NULL,
+                production_sha TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        connection.commit()
+        connection.close()
+
+        with self.assertRaisesRegex(ValueError, "primary key"):
+            self.plan()
+
     def test_symlink_database_and_projects_are_rejected(self):
         db_link = Path(self.tmp.name) / "history-link.db"
         projects_link = Path(self.tmp.name) / "projects-link.json"
