@@ -4,20 +4,69 @@
 name: Reactivate zCloud workers now
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/reactivate-workers-now.yml"
+      - "tests/test_reactivate_workers_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
-      - .github/workflows/reactivate-workers-now.yml
+      - ".github/workflows/reactivate-workers-now.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-reactivate-workers-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
+
 jobs:
-  reactivate:
-    runs-on: self-hosted
-    timeout-minutes: 8
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate worker-reactivation trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_reactivate_workers_workflow
+
+  reactivate:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact recovery source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Recover browser runtime and start allocated workers
         shell: bash
         run: |
@@ -36,17 +85,16 @@ jobs:
           echo "=== CLEAN ORPHAN FIREFOX MAINS ==="
           mapfile -t orphan_firefox < <(
             ps -eo pid=,ppid=,args= |
-              awk '$2 == 1 && $0 ~ /\/snap\/firefox\/.*\/usr\/lib\/firefox\/firefox/ && $0 !~ /-contentproc/ {print $1}'
+              awk '$2 == 1 && $0 ~ //snap/firefox/.*/usr/lib/firefox/firefox/ && $0 !~ /-contentproc/ {print $1}'
           )
+          echo "ORPHAN_FIREFOX_COUNT=${#orphan_firefox[@]}"
           for pid in "${orphan_firefox[@]}"; do
-            echo "ORPHAN_FIREFOX_TERMINATE pid=$pid"
             kill -TERM "$pid" 2>/dev/null || true
           done
           if [[ "${#orphan_firefox[@]}" -gt 0 ]]; then
             sleep 3
             for pid in "${orphan_firefox[@]}"; do
               if kill -0 "$pid" 2>/dev/null; then
-                echo "ORPHAN_FIREFOX_KILL pid=$pid"
                 kill -KILL "$pid" 2>/dev/null || true
               fi
             done
@@ -64,11 +112,8 @@ jobs:
             echo "FIREFOX_RUNTIME=managed_service"
           elif pgrep -f '/snap/firefox/.*/firefox.*zcloud_worker=' >/dev/null; then
             echo "FIREFOX_RUNTIME=existing_zcloud_process"
-          elif pgrep -af 'firefox' | grep -q 'zcloud_worker='; then
-            echo "FIREFOX_RUNTIME=existing_zcloud_process"
           else
-            systemctl --user --no-pager --full status chatgpt-firefox.service || true
-            journalctl --user -u chatgpt-firefox.service -n 60 --no-pager || true
+            systemctl --user show chatgpt-firefox.service               -p ActiveState -p SubState -p Result --no-pager || true
             echo "FIREFOX_RUNTIME=missing"
             exit 1
           fi
@@ -84,78 +129,107 @@ jobs:
             done
           fi
           if ! curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null 2>&1; then
-            echo "=== ZENNAY-CLOUD SERVICE STATUS ==="
-            sudo -n systemctl --no-pager --full status zennay-cloud.service || true
-            echo "=== ZENNAY-CLOUD JOURNAL ==="
-            sudo -n journalctl -u zennay-cloud.service -n 120 --no-pager || true
-            echo "=== LISTENERS ==="
-            ss -ltnp | grep ':8765' || true
+            sudo -n systemctl show zennay-cloud.service               -p ActiveState -p SubState -p Result --no-pager || true
+            ss -ltn | grep ':8765' || true
             exit 1
           fi
 
           python3 - <<'PY'
-          import json, time, urllib.request, urllib.error
-          BASE="http://127.0.0.1:8765"
+          import json
+          import time
+          import urllib.request
 
-          def call(method,path,payload=None):
-              body=None
-              headers={"User-Agent":"zcloud-reactivate-workers-now/1"}
+          BASE = "http://127.0.0.1:8765"
+
+          def call(method, path, payload=None):
+              body = None
+              headers = {"User-Agent": "zcloud-reactivate-workers-now/2"}
               if payload is not None:
-                  body=json.dumps(payload).encode()
-                  headers["Content-Type"]="application/json"
-              req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
-              with urllib.request.urlopen(req,timeout=15) as r:
-                  return json.load(r)
+                  body = json.dumps(payload).encode()
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(
+                  BASE + path,
+                  data=body,
+                  headers=headers,
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=15) as response:
+                  return json.load(response)
 
-          settings=call("GET","/api/dynamic-workers").get("dynamic_workers") or {}
-          chat=int(settings.get("chatgpt_count") or 0)
-          claude=int(settings.get("claude_count") or 0)
-          if chat+claude == 0:
-              updated=call("POST","/api/dynamic-workers",{"chatgpt_count":2,"claude_count":1})
-              settings=updated.get("dynamic_workers") or {}
-              print("WORKER_POOL_ENABLED",json.dumps(settings,sort_keys=True))
+          def worker_key(item):
+              key = str(item.get("worker_key") or "").strip()
+              if key:
+                  return key
+              project = str(item.get("project_id") or "").strip()
+              slot = int(item.get("worker_slot") or 1)
+              return f"{project}::w{slot}"
+
+          def settings_summary(settings):
+              return {
+                  "chatgpt_count": int(settings.get("chatgpt_count") or 0),
+                  "claude_count": int(settings.get("claude_count") or 0),
+              }
+
+          settings = call("GET", "/api/dynamic-workers").get("dynamic_workers") or {}
+          chat = int(settings.get("chatgpt_count") or 0)
+          claude = int(settings.get("claude_count") or 0)
+          if chat + claude == 0:
+              updated = call("POST", "/api/dynamic-workers", {
+                  "chatgpt_count": 2,
+                  "claude_count": 1,
+              })
+              settings = updated.get("dynamic_workers") or {}
+              print("WORKER_POOL_ENABLED=" + json.dumps(
+                  settings_summary(settings),
+                  sort_keys=True,
+              ))
           else:
-              print("WORKER_POOL_ALREADY_CONFIGURED",json.dumps(settings,sort_keys=True))
+              print("WORKER_POOL_ALREADY_CONFIGURED=" + json.dumps(
+                  settings_summary(settings),
+                  sort_keys=True,
+              ))
 
-          targets=call("GET","/api/runner-targets")
-          allocation=(targets.get("global_allocation") or {}).get("workers") or []
+          targets = call("GET", "/api/runner-targets")
+          allocation = (targets.get("global_allocation") or {}).get("workers") or []
           if not allocation:
               raise SystemExit("no allocated queue workers after enabling pool")
 
-          starts=[]
+          selected = [worker_key(item) for item in allocation]
+          starts = []
           for item in allocation:
-              key=str(item.get("worker_key") or "").strip()
-              if not key:
-                  project=str(item.get("project_id") or "").strip()
-                  slot=int(item.get("worker_slot") or 1)
-                  key=f"{project}::w{slot}"
-              result=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
-              starts.append({"worker":key,"result":result})
-              if not result.get("ok"):
-                  raise SystemExit(f"start rejected for {key}: {result}")
-          print("WORKER_STARTS",json.dumps(starts,sort_keys=True))
+              key = worker_key(item)
+              result = call("POST", "/api/runner-control", {
+                  "project_id": key,
+                  "action": "start",
+              })
+              summary = {
+                  "worker": key,
+                  "ok": bool(result.get("ok")),
+                  "command_id": int(result.get("command_id") or 0),
+              }
+              starts.append(summary)
+              if not summary["ok"]:
+                  raise SystemExit(f"start rejected for {key}")
+          print("WORKER_STARTS=" + json.dumps(starts, sort_keys=True))
 
-          final=None
+          final = None
           for _ in range(12):
               time.sleep(5)
-              final=call("GET","/api/runner-targets")
-              projects=final.get("projects") or {}
-              active=[]
+              final = call("GET", "/api/runner-targets")
+              projects = final.get("projects") or {}
+              active = []
               for item in allocation:
-                  key=str(item.get("worker_key") or "").strip()
-                  if not key:
-                      project=str(item.get("project_id") or "").strip()
-                      slot=int(item.get("worker_slot") or 1)
-                      key=f"{project}::w{slot}"
-                  base=key.split("::w",1)[0]
+                  key = worker_key(item)
+                  base = key.split("::w", 1)[0]
                   if bool((projects.get(base) or {}).get("active")):
                       active.append(key)
               if len(active) == len(allocation):
-                  print("WORKERS_ACTIVE",json.dumps({
-                      "active_workers":active,
-                      "allocation":allocation,
-                      "dynamic_workers":final.get("dynamic_workers"),
-                  },sort_keys=True))
+                  print("WORKERS_ACTIVE=" + json.dumps({
+                      "active_workers": active,
+                      "selected_workers": selected,
+                      "worker_count": len(active),
+                  }, sort_keys=True))
+                  print("ZCLOUD_WORKER_REACTIVATION_GREEN=1")
                   break
           else:
               raise SystemExit("allocated workers did not all become active")
