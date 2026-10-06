@@ -5,9 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 RETIRED_FTMO_JSON_PROOF_WORKFLOWS = {
-    ".github/workflows/ftmo-pr500-json-constants-proof.yml": "FTMO PR #500 closed",
     ".github/workflows/ftmo-pr500-autonomous-json-proof.yml": "FTMO PR #500 closed",
-    ".github/workflows/ftmo-pr501-autonomous-json-proof.yml": "FTMO PR #501 closed",
     ".github/workflows/ftmo-pr510-permission-hardening-proof.yml": "FTMO PR #510 closed",
 }
 
