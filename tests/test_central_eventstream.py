@@ -105,6 +105,29 @@ class CentralEventStreamTests(unittest.TestCase):
         self.assertTrue(all(item["project_id"] == "cloud" for item in snapshot["events"]))
         self.assertNotIn("ftmo", json.dumps(snapshot))
 
+    def test_project_filter_does_not_starve_older_matching_config_audit(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO config_audit(ts,config_key,target,result) VALUES(?,?,?,?)",
+                ("2026-10-06T20:00:00+00:00", "runner.worker_count", "cloud", "succeeded"),
+            )
+            conn.executemany(
+                "INSERT INTO config_audit(ts,config_key,target,result) VALUES(?,?,?,?)",
+                [
+                    (
+                        f"2026-10-06T21:{minute:02d}:00+00:00",
+                        "runner.worker_count",
+                        "ftmo",
+                        "succeeded",
+                    )
+                    for minute in range(20)
+                ],
+            )
+        snapshot = eventstream.build_snapshot(self.db, limit=3, project="cloud")
+        audits = [item for item in snapshot["events"] if item["source"] == "config_audit"]
+        self.assertEqual(1, len(audits))
+        self.assertEqual("cloud", audits[0]["project_id"])
+
     def test_limit_is_bounded(self):
         with self.assertRaises(ValueError):
             eventstream.build_snapshot(self.db, limit=0)
