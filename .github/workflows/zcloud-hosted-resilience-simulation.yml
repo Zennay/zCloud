@@ -11,8 +11,11 @@ on:
       - tests/test_project_runtime.py
       - tests/test_firefox_recovery.js
       - tests/test_firefox_recovery_contract.js
+      - server.py
+      - project_runtime.py
       - firefox-extension/recovery.js
       - firefox-extension/background.js
+      - public/zcloud-worker.user.js
   push:
     branches: [main]
     paths:
@@ -23,8 +26,11 @@ on:
       - tests/test_project_runtime.py
       - tests/test_firefox_recovery.js
       - tests/test_firefox_recovery_contract.js
+      - server.py
+      - project_runtime.py
       - firefox-extension/recovery.js
       - firefox-extension/background.js
+      - public/zcloud-worker.user.js
   workflow_dispatch:
 
 permissions:
