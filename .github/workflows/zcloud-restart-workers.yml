@@ -489,4 +489,4 @@ jobs:
               raise SystemExit("restart commands failed: " + ", ".join(failed_workers))
           PY
 
-# manual push-all recovery trigger
+# manual restore trigger 2026-10-06T05:58Z: recover allocated workers after zCloud API/SQLite repair
