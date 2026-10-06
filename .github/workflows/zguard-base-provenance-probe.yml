@@ -41,7 +41,7 @@ jobs:
       - name: Validate exact zGuard provenance head
         shell: bash
         env:
-          ZGUARD_SHA: a65c6b1862e1c08a86c55de2809f7b35f85b618f
+          ZGUARD_SHA: 7c1f0ade440db60b0d147cd638a624aff4682f78
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
@@ -59,7 +59,7 @@ jobs:
       - name: Build and report exact image provenance
         shell: bash
         env:
-          ZGUARD_SHA: a65c6b1862e1c08a86c55de2809f7b35f85b618f
+          ZGUARD_SHA: 7c1f0ade440db60b0d147cd638a624aff4682f78
         run: |
           set -euo pipefail
           command -v docker >/dev/null
