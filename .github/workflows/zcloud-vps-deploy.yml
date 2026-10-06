@@ -82,6 +82,9 @@ jobs:
   deploy:
     needs: preflight
     if: needs.preflight.result == 'success' && needs.preflight.outputs.deploy == 'true'
+    outputs:
+      deploy_sha: ${{ steps.freshness.outputs.deploy_sha }}
+      pending_marked: ${{ steps.production_pending.outputs.marked }}
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
     steps:
@@ -272,6 +275,7 @@ jobs:
           fi
 
       - name: Mark production deploy pending
+        id: production_pending
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
         env:
@@ -311,6 +315,7 @@ jobs:
                   raise RuntimeError(f"unexpected GitHub status response: {response.status}")
           print(f"PRODUCTION_DEPLOY_STATUS=pending sha={sha}")
           PY
+          echo "marked=true" >> "$GITHUB_OUTPUT"
 
       - name: Suspend external self-heal during guarded deploy
         id: self_heal_guard
@@ -928,13 +933,58 @@ jobs:
           )
           PY
 
+      - name: Write deploy operator summary
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
+          DEPLOY_DECISION: ${{ steps.freshness.outputs.deploy }}
+          PREWRITE_DECISION: ${{ steps.prewrite.outputs.deploy }}
+          DEPLOY_RESULT: ${{ job.status }}
+          REGRESSION_RUN_ID: ${{ steps.freshness.outputs.regression_run_id }}
+          REGRESSION_MODE: ${{ steps.freshness.outputs.regression_mode }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARTIFACT_NAME: zcloud-production-deploy-evidence-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deploy_summary.py \
+            --output "$GITHUB_STEP_SUMMARY" \
+            --evidence "$ZCLOUD_RUN_STATE_DIR/zcloud-production-deploy-evidence.json" \
+            --deploy-sha "$DEPLOY_SHA" \
+            --deploy-decision "$DEPLOY_DECISION" \
+            --prewrite-decision "$PREWRITE_DECISION" \
+            --job-status "$DEPLOY_RESULT" \
+            --regression-run-id "$REGRESSION_RUN_ID" \
+            --regression-mode "$REGRESSION_MODE" \
+            --run-url "$RUN_URL" \
+            --artifact-name "$ARTIFACT_NAME"
+
+      - name: Cleanup stable deploy state
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "$ZCLOUD_RUN_STATE_DIR" in
+            /home/ubuntu/.local/state/zcloud/actions/*) ;;
+            *) echo "Refusing unsafe cleanup path: $ZCLOUD_RUN_STATE_DIR" >&2; exit 2 ;;
+          esac
+          rm -rf -- "$ZCLOUD_RUN_STATE_DIR"
+          echo "ZCLOUD_STABLE_STATE_CLEANED"
+
+
+  finalize-production-status:
+    needs: deploy
+    if: always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
       - name: Publish production deploy result
-        if: always() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          DEPLOY_SHA: ${{ steps.freshness.outputs.deploy_sha }}
-          DEPLOY_RESULT: ${{ job.status }}
+          DEPLOY_SHA: ${{ needs.deploy.outputs.deploy_sha }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -968,7 +1018,7 @@ jobs:
                   "Accept": "application/vnd.github+json",
                   "X-GitHub-Api-Version": "2022-11-28",
                   "Content-Type": "application/json",
-                  "User-Agent": "zcloud-vps-deploy",
+                  "User-Agent": "zcloud-vps-deploy-finalizer",
               },
           )
           with urllib.request.urlopen(request, timeout=15) as response:
@@ -976,15 +1026,3 @@ jobs:
                   raise RuntimeError(f"unexpected GitHub status response: {response.status}")
           print(f"PRODUCTION_DEPLOY_STATUS={state} sha={sha}")
           PY
-
-      - name: Cleanup stable deploy state
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          case "$ZCLOUD_RUN_STATE_DIR" in
-            /home/ubuntu/.local/state/zcloud/actions/*) ;;
-            *) echo "Refusing unsafe cleanup path: $ZCLOUD_RUN_STATE_DIR" >&2; exit 2 ;;
-          esac
-          rm -rf -- "$ZCLOUD_RUN_STATE_DIR"
-          echo "ZCLOUD_STABLE_STATE_CLEANED"
