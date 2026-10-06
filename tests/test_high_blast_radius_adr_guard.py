@@ -20,6 +20,9 @@ A change touches a control-plane surface whose failure could affect multiple wor
 ## Decision
 Require an explicit architecture decision record in the same pull request before integration.
 
+## Affected Paths
+This decision covers the exact changed high-risk path `server.py`.
+
 ## Blast Radius
 The affected runtime or operational path can influence multiple projects, workers, or recovery lanes.
 
@@ -110,6 +113,40 @@ class HighBlastRadiusAdrGuardTests(unittest.TestCase):
         self.assertEqual(result["decision"], "ADR_PRESENT")
         self.assertEqual(result["risk_count"], 1)
         self.assertEqual(result["adr_count"], 1)
+
+    def test_unrelated_adr_does_not_cover_risky_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "docs" / "adr" / "20261006-unrelated-decision.md"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                VALID_ADR.replace("`server.py`", "`resource-policy.json`"),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(guard.AdrGuardError, "adr_missing_risk_coverage"):
+                guard.evaluate(
+                    root=root,
+                    changed_files=[
+                        "server.py",
+                        "docs/adr/20261006-unrelated-decision.md",
+                    ],
+                )
+
+    def test_every_high_blast_path_requires_adr_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "docs" / "adr" / "20261006-partial-decision.md"
+            path.parent.mkdir(parents=True)
+            path.write_text(VALID_ADR, encoding="utf-8")
+            with self.assertRaisesRegex(guard.AdrGuardError, "adr_missing_risk_coverage"):
+                guard.evaluate(
+                    root=root,
+                    changed_files=[
+                        "server.py",
+                        "resource-policy.json",
+                        "docs/adr/20261006-partial-decision.md",
+                    ],
+                )
 
     def test_adr_requires_all_substantive_sections(self):
         with tempfile.TemporaryDirectory() as tmp:
