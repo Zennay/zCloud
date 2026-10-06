@@ -35,7 +35,7 @@ def semantic_fingerprint(event: dict) -> str:
         if key in event and event[key] is not None
     }
     encoded = json.dumps(semantic, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:20]
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def group_events(events: list[dict], group_seconds: int = 60) -> list[dict]:
