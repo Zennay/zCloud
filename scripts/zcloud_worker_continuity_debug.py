@@ -178,12 +178,12 @@ def firefox_systemd_policy() -> dict[str, Any]:
     }
 
 
-def sqlite_snapshot(db_path: Path) -> dict[str, Any]:
+def sqlite_snapshot(db_path: Path, *, quick_check: bool = False) -> dict[str, Any]:
     result: dict[str, Any] = {"ok": False}
     try:
         with sqlite3.connect(db_path, timeout=3) as conn:
             conn.row_factory = sqlite3.Row
-            quick = conn.execute("PRAGMA quick_check").fetchone()[0]
+            quick = conn.execute("PRAGMA quick_check").fetchone()[0] if quick_check else "skipped"
             slots = [
                 dict(row)
                 for row in conn.execute(
@@ -204,7 +204,7 @@ def sqlite_snapshot(db_path: Path) -> dict[str, Any]:
                     "WHERE status='pending' ORDER BY id DESC LIMIT 20"
                 ).fetchall()
             ]
-        result.update({"ok": quick == "ok", "quick_check": quick, "slots": slots, "workers": workers, "pending": pending})
+        result.update({"ok": quick in {"ok", "skipped"}, "quick_check": quick, "slots": slots, "workers": workers, "pending": pending})
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
     return result
@@ -322,11 +322,19 @@ def classify(snapshot: dict[str, Any], min_workers: int) -> list[str]:
     return reasons
 
 
-def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
+def sample(base_url: str, db_path: Path, min_workers: int, *, heavy: bool = False) -> dict[str, Any]:
     dynamic = api_call(base_url, "GET", "/api/dynamic-workers")
     targets = api_call(base_url, "GET", "/api/runner-targets")
-    status = api_call(base_url, "GET", "/api/status")
     runner_live = api_call(base_url, "GET", "/api/runner-live")
+    # /api/status is the expensive aggregate read-model. Polling it every few
+    # seconds can make the debugger itself part of the incident under CPU/DB
+    # pressure. Use the narrow runner-live path continuously and take a full
+    # status sample only periodically or as a fallback when runner-live fails.
+    status = (
+        api_call(base_url, "GET", "/api/status")
+        if heavy or not runner_live["ok"]
+        else {"status": 0, "ok": False, "elapsed_ms": 0, "body": {"skipped": True}}
+    )
 
     settings = (dynamic["body"].get("dynamic_workers") or {}) if dynamic["ok"] else {}
     chatgpt, claude, desired = desired_counts(settings)
@@ -336,7 +344,7 @@ def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
         allocation = ((targets["body"].get("global_allocation") or {}).get("workers") or [])
     allocated_keys = {worker_key(item) for item in allocation if isinstance(item, dict) and worker_key(item)}
 
-    runtime_payload = status["body"] if status["ok"] else runner_live["body"]
+    runtime_payload = runner_live["body"] if runner_live["ok"] else status["body"]
     live_keys, busy_keys, ghost_generating_keys, runtime_details = extract_runtime(runtime_payload)
 
     snap = {
@@ -345,11 +353,11 @@ def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
         "targets": targets,
         "status": status,
         "runner_live": runner_live,
-        "sqlite": sqlite_snapshot(db_path),
+        "sqlite": sqlite_snapshot(db_path, quick_check=heavy),
         "memory": meminfo(),
         "load": host_load(),
         "firefox": firefox_processes(),
-        "firefox_systemd": firefox_systemd_policy(),
+        "firefox_systemd": firefox_systemd_policy() if heavy else {"ok": True, "fields": {}, "skipped": True},
         "desired_chatgpt": chatgpt,
         "desired_claude": claude,
         "desired_total": desired,
@@ -361,10 +369,46 @@ def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
         "busy_keys": sorted(busy_keys & allocated_keys),
         "ghost_generating_keys": sorted(ghost_generating_keys & allocated_keys),
         "runtime_details": {key: runtime_details[key] for key in sorted(allocated_keys & set(runtime_details))},
-        "api_ok": all(item["ok"] for item in (dynamic, targets)),
+        "api_ok": bool(dynamic["ok"] and targets["ok"] and (runner_live["ok"] or status["ok"])),
     }
     snap["diagnosis"] = classify(snap, min_workers)
     return snap
+
+
+def compact_sample(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Keep long-run evidence useful without retaining multi-megabyte API bodies."""
+    return {
+        "ts": snapshot.get("ts"),
+        "desired_total": snapshot.get("desired_total"),
+        "desired_chatgpt": snapshot.get("desired_chatgpt"),
+        "desired_claude": snapshot.get("desired_claude"),
+        "allocated_count": snapshot.get("allocated_count"),
+        "allocated_keys": snapshot.get("allocated_keys"),
+        "live_count": snapshot.get("live_count"),
+        "live_keys": snapshot.get("live_keys"),
+        "missing_live_keys": snapshot.get("missing_live_keys"),
+        "busy_keys": snapshot.get("busy_keys"),
+        "ghost_generating_keys": snapshot.get("ghost_generating_keys"),
+        "runtime_details": snapshot.get("runtime_details"),
+        "diagnosis": snapshot.get("diagnosis"),
+        "memory": snapshot.get("memory"),
+        "load": snapshot.get("load"),
+        "firefox": snapshot.get("firefox"),
+        "firefox_systemd": snapshot.get("firefox_systemd"),
+        "api_latency_ms": {
+            "dynamic": (snapshot.get("dynamic") or {}).get("elapsed_ms"),
+            "targets": (snapshot.get("targets") or {}).get("elapsed_ms"),
+            "runner_live": (snapshot.get("runner_live") or {}).get("elapsed_ms"),
+            "status": (snapshot.get("status") or {}).get("elapsed_ms"),
+        },
+        "sqlite": {
+            "ok": (snapshot.get("sqlite") or {}).get("ok"),
+            "quick_check": (snapshot.get("sqlite") or {}).get("quick_check"),
+            "slot_count": len((snapshot.get("sqlite") or {}).get("slots") or []),
+            "pending_count": len((snapshot.get("sqlite") or {}).get("pending") or []),
+        },
+        "remediation": snapshot.get("remediation") or [],
+    }
 
 
 def reconcile(base_url: str, dynamic_body: dict[str, Any]) -> dict[str, Any]:
@@ -477,13 +521,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     deadline = time.monotonic() + max(1, args.duration_seconds)
+    started_at = utc_now()
     streaks: dict[str, int] = {}
     worker_streaks: dict[str, int] = {}
     last_actions: dict[str, float] = {}
     history: list[dict[str, Any]] = []
+    diagnoses_seen: set[str] = set()
+    action_log: list[dict[str, Any]] = []
+    sample_count = 0
 
     while True:
-        snap = sample(args.base_url, args.db, args.min_workers)
+        sample_count += 1
+        # One heavier integrity/status sample at startup and then every ~5 min
+        # with the production 15s cadence. Everything else uses narrow reads.
+        heavy = sample_count == 1 or sample_count % 20 == 0
+        snap = sample(args.base_url, args.db, args.min_workers, heavy=heavy)
         actions: list[dict[str, Any]] = []
         if args.remediate:
             actions = maybe_remediate(
@@ -494,21 +546,29 @@ def main(argv: list[str] | None = None) -> int:
                 last_actions=last_actions,
             )
         snap["remediation"] = actions
-        history.append(snap)
-        print(json.dumps(snap, ensure_ascii=False, sort_keys=True), flush=True)
+        compact = compact_sample(snap)
+        diagnoses_seen.update(compact["diagnosis"] or [])
+        action_log.extend(actions)
+        history.append(compact)
+        # Bounded in-memory/evidence tail: enough for ~1h at 15s cadence, while
+        # aggregate diagnoses/actions cover the complete run.
+        if len(history) > 240:
+            history = history[-240:]
+
+        print(json.dumps(compact, ensure_ascii=False, sort_keys=True), flush=True)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             live_summary = {
                 "ok": True,
                 "running": True,
-                "started_at": history[0]["ts"],
-                "last_sample_at": snap["ts"],
-                "samples": len(history),
+                "started_at": started_at,
+                "last_sample_at": compact["ts"],
+                "samples": sample_count,
                 "min_workers": args.min_workers,
                 "remediate": args.remediate,
-                "latest": snap,
-                "diagnoses": sorted({reason for item in history for reason in item["diagnosis"]}),
-                "actions": [action for item in history for action in item["remediation"]],
+                "latest": compact,
+                "diagnoses": sorted(diagnoses_seen),
+                "actions": action_log[-100:],
             }
             temp = args.output.with_suffix(args.output.suffix + ".tmp")
             temp.write_text(json.dumps(live_summary, indent=2, ensure_ascii=False))
@@ -520,16 +580,17 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = {
         "ok": True,
-        "started_at": history[0]["ts"] if history else utc_now(),
+        "started_at": started_at,
         "finished_at": utc_now(),
-        "samples": len(history),
+        "samples": sample_count,
+        "retained_samples": len(history),
         "min_workers": args.min_workers,
         "remediate": args.remediate,
-        "desired_counts": [item["desired_total"] for item in history],
-        "allocated_counts": [item["allocated_count"] for item in history],
-        "live_counts": [item["live_count"] for item in history],
-        "diagnoses": sorted({reason for item in history for reason in item["diagnosis"]}),
-        "actions": [action for item in history for action in item["remediation"]],
+        "desired_counts_tail": [item["desired_total"] for item in history],
+        "allocated_counts_tail": [item["allocated_count"] for item in history],
+        "live_counts_tail": [item["live_count"] for item in history],
+        "diagnoses": sorted(diagnoses_seen),
+        "actions": action_log,
     }
     print("ZCLOUD_CONTINUITY_SUMMARY=" + json.dumps(summary, ensure_ascii=False, sort_keys=True), flush=True)
 
