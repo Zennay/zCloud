@@ -1,0 +1,47 @@
+name: zCloud diagnostic evidence policy
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_diagnostic_evidence_policy.py"
+      - "tests/test_diagnostic_evidence_policy.py"
+      - "tests/test_diagnostic_evidence_policy_workflow.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate with base history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Run policy regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v             tests.test_diagnostic_evidence_policy             tests.test_diagnostic_evidence_policy_workflow
+
+      - name: Guard new ungated heavy diagnostics
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          python3 scripts/zcloud_diagnostic_evidence_policy.py             --base-ref "$BASE_SHA"             --head-ref "$HEAD_SHA"             --fail-on-new-ungated             --json
+
+      - name: Report current manual audit
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_diagnostic_evidence_policy.py --json
