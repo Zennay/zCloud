@@ -9,7 +9,7 @@ on:
       ref:
         description: zGuard git ref to verify
         required: false
-        default: a9364bec5beb0e3dca64ae0ae27f917a5d6f345e
+        default: main
         type: string
 
 permissions:
@@ -18,7 +18,7 @@ permissions:
 jobs:
   verify:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out zCloud runner guard
         uses: actions/checkout@v4
@@ -28,38 +28,53 @@ jobs:
       - name: Verify permanent zCloud VPS runner
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Check out exact zGuard revision
+      - name: Check out zGuard history
         uses: actions/checkout@v4
         with:
           repository: Zennay/zGuard
-          ref: ${{ inputs.ref || 'a9364bec5beb0e3dca64ae0ae27f917a5d6f345e' }}
+          ref: main
+          fetch-depth: 0
           path: zguard-source
           persist-credentials: false
 
-      - name: Prove exact zGuard target
-        working-directory: zguard-source
+      - name: Verify requested or stacked zGuard refs
         shell: bash
         env:
-          EXPECTED_REF: ${{ inputs.ref || 'a9364bec5beb0e3dca64ae0ae27f917a5d6f345e' }}
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
         run: |
           set -euo pipefail
-          expected_sha="$(git rev-parse "${EXPECTED_REF}^{commit}")"
-          actual_sha="$(git rev-parse HEAD)"
-          test "$actual_sha" = "$expected_sha"
-          printf 'ZGUARD_VPS_TARGET sha=%s host=%s runner=%s\n' "$actual_sha" "$(hostname)" "${RUNNER_NAME:-unknown}"
 
-      - name: Validate zGuard extension packages
-        working-directory: zguard-source
-        run: node tests/smoke.test.js
+          if [[ -n "${REQUESTED_REF}" ]]; then
+            refs=("${REQUESTED_REF}")
+          else
+            refs=(
+              "011dd124169faa44eadad190b6079daa2f603620"
+              "3e60b2399daa1d82d9b537a17b7690225b4f4651"
+              "a9364bec5beb0e3dca64ae0ae27f917a5d6f345e"
+            )
+          fi
 
-      - name: Validate zBrowse runtime contracts
-        working-directory: zguard-source
-        run: bash zbrowse/scripts/validate.sh
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "${tmp_root}"' EXIT
 
-      - name: Verify locked zBrowse production install
-        working-directory: zguard-source/zbrowse/gateway
-        run: npm ci --omit=dev --ignore-scripts --no-audit
+          for target_ref in "${refs[@]}"; do
+            if ! target_sha="$(git -C zguard-source rev-parse "${target_ref}^{commit}" 2>/dev/null)"; then
+              git -C zguard-source fetch --no-tags origin "${target_ref}"
+              target_sha="$(git -C zguard-source rev-parse FETCH_HEAD)"
+            fi
 
-      - name: Audit zBrowse production dependencies
-        working-directory: zguard-source/zbrowse/gateway
-        run: npm audit --omit=dev --audit-level=high
+            snapshot="${tmp_root}/${target_sha}"
+            mkdir -p "${snapshot}"
+            git -C zguard-source archive "${target_sha}" | tar -x -C "${snapshot}"
+
+            printf 'ZGUARD_VPS_TARGET sha=%s host=%s runner=%s\n'               "${target_sha}" "$(hostname)" "${RUNNER_NAME:-unknown}"
+
+            (
+              cd "${snapshot}"
+              node tests/smoke.test.js
+              bash zbrowse/scripts/validate.sh
+              cd zbrowse/gateway
+              npm ci --omit=dev --ignore-scripts --no-audit
+              npm audit --omit=dev --audit-level=high
+            )
+          done
