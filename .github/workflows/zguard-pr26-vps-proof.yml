@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: Zennay/zGuard
-          ref: 1280d9a13b237bfdf8fb8bc49f0acf30ceb8249e
+          ref: cf7b0bec0953e94c16cd0bef4163d194317232b1
           path: zguard-source
           persist-credentials: false
 
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           cd zguard-source
-          test "$(git rev-parse HEAD)" = "1280d9a13b237bfdf8fb8bc49f0acf30ceb8249e"
+          test "$(git rev-parse HEAD)" = "cf7b0bec0953e94c16cd0bef4163d194317232b1"
           node tests/dedicated-workflow-checkout-integrity.test.mjs
           node tests/smoke.test.js
           bash zbrowse/scripts/validate.sh
