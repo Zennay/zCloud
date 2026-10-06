@@ -43,6 +43,9 @@ def _has_pr_trigger(lines: list[str]) -> bool:
         if not stripped or stripped.startswith("#"):
             continue
         indent = len(line) - len(line.lstrip())
+        if stripped.startswith("on:") and stripped != "on:":
+            if re.search(r"\bpull_request(?:_target)?\b", stripped):
+                return True
         if stripped == "on:":
             in_on = True
             on_indent = indent
