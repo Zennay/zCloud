@@ -193,6 +193,14 @@ class GithubReader:
             raise RuntimeError("open PR pagination exceeded bounded 1000-item limit")
         return result
 
+    def branch_sha(self, branch: str) -> str:
+        encoded = urllib.parse.quote(branch, safe="")
+        result = self.get(f"/repos/{self.repo}/branches/{encoded}")
+        sha = str(((result or {}).get("commit") or {}).get("sha") or "")
+        if not SHA40.fullmatch(sha):
+            raise RuntimeError(f"branch {branch!r} did not resolve to an exact commit SHA")
+        return sha
+
     def compare(self, base: str, head_sha: str) -> dict[str, Any]:
         encoded_base = urllib.parse.quote(base, safe="")
         encoded_head = urllib.parse.quote(head_sha, safe="")
@@ -212,7 +220,8 @@ class GithubReader:
         return runs
 
 
-def inventory(reader: GithubReader, base: str) -> list[Readiness]:
+def inventory(reader: GithubReader, base: str) -> tuple[str, list[Readiness]]:
+    base_sha = reader.branch_sha(base)
     rows: list[Readiness] = []
     for pr in reader.open_pulls():
         if not is_deploy_ops_pr(pr):
@@ -221,13 +230,13 @@ def inventory(reader: GithubReader, base: str) -> list[Readiness]:
         if not SHA40.fullmatch(head_sha):
             rows.append(classify(pr, None, []))
             continue
-        compare = reader.compare(base, head_sha)
+        compare = reader.compare(base_sha, head_sha)
         runs = reader.workflow_runs(head_sha)
         rows.append(classify(pr, compare, runs))
-    return sorted(rows, key=lambda row: row.number)
+    return base_sha, sorted(rows, key=lambda row: row.number)
 
 
-def render_markdown(rows: list[Readiness], repo: str, base: str) -> str:
+def render_markdown(rows: list[Readiness], repo: str, base: str, base_sha: str) -> str:
     counts: dict[str, int] = {}
     for row in rows:
         counts[row.decision] = counts.get(row.decision, 0) + 1
@@ -235,7 +244,7 @@ def render_markdown(rows: list[Readiness], repo: str, base: str) -> str:
     lines = [
         "# zCloud deploy-ops integration readiness",
         "",
-        f"Repository: `{repo}` · base: `{base}` · deploy-ops PRs: **{len(rows)}**",
+        f"Repository: `{repo}` · base: `{base}` @ `{base_sha}` · deploy-ops PRs: **{len(rows)}**",
         "",
         "> Technical read-only readiness only. **ready never authorizes merge or deploy**; serialized ownership and current handoff gates still apply.",
         "",
@@ -280,19 +289,20 @@ def main() -> int:
     args = build_parser().parse_args()
     token = os.environ.get(args.token_env, "")
     try:
-        rows = inventory(GithubReader(args.repo, token), args.base)
+        base_sha, rows = inventory(GithubReader(args.repo, token), args.base)
     except (RuntimeError, ValueError) as exc:
         print(f"ZCLOUD_DEPLOY_OPS_READINESS_ERROR: {exc}", file=sys.stderr)
         return 2
 
     if args.format == "markdown":
-        print(render_markdown(rows, args.repo, args.base), end="")
+        print(render_markdown(rows, args.repo, args.base, base_sha), end="")
     else:
         print(
             json.dumps(
                 {
                     "repository": args.repo,
                     "base": args.base,
+                    "base_sha": base_sha,
                     "count": len(rows),
                     "results": [row.as_dict() for row in rows],
                 },
