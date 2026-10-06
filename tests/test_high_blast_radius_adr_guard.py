@@ -53,6 +53,9 @@ class HighBlastRadiusAdrGuardTests(unittest.TestCase):
             ".github/workflows/reactivate-workers.yml": "mutating_workflow",
             ".github/workflows/zcloud-safe-idle-retry.yml": "mutating_workflow",
             ".github/workflows/zcloud-queue-sweep.yml": "mutating_workflow",
+            ".github/workflows/zssh-cloudflare-vps-dns-apply.yml": "mutating_workflow",
+            ".github/workflows/zssh-main-protection-vps-apply.yml": "mutating_workflow",
+            ".github/workflows/zssh-public-ingress-bootstrap.yml": "mutating_workflow",
             "scripts/zcloud_scheduler_reconcile.py": "mutating_script",
             "scripts/rollback_release.py": "mutating_script",
         }
