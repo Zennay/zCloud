@@ -89,6 +89,9 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertIn("ExecCondition=/bin/false", text)
         self.assertIn('if [[ "${service}" == "chatgpt-firefox.service" ]] && legacy_violentmonkey_only; then', text)
         self.assertIn("heal_worker_progress", text)
+        self.assertIn('runuser -u "${RUNTIME_USER}" -- env', text)
+        self.assertIn('ZCLOUD_WORKER_WATCHDOG_STATE="${watchdog_state}"', text)
+        self.assertIn('worker-progress-watchdog.json', text)
         self.assertLess(
             text.index('if [[ "${service}" == "chatgpt-firefox.service" ]] && legacy_violentmonkey_only; then'),
             text.index("heal_worker_progress()"),
