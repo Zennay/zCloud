@@ -1,25 +1,25 @@
-name: LightUp durable asset exactness VPS proof
+name: LightUp durable asset contract pack VPS proof
 
 on:
   push:
-    branches: [ops/lightup-durable-asset-exactness-vps-proof-20261006]
+    branches: [ops/lightup-durable-asset-contract-pack-vps-proof-20261006]
     paths:
-      - .github/workflows/lightup-durable-asset-exactness-vps-proof.yml
+      - .github/workflows/lightup-durable-asset-contract-pack-vps-proof.yml
   pull_request:
     branches: [main]
     paths:
-      - .github/workflows/lightup-durable-asset-exactness-vps-proof.yml
+      - .github/workflows/lightup-durable-asset-contract-pack-vps-proof.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: lightup-durable-asset-exactness-proof
+  group: lightup-durable-asset-contract-pack-proof
   cancel-in-progress: true
 
 env:
-  LIGHTUP_EXPECTED_SHA: f9f27c82564c17ae80527436e8d0644a5b48b915
+  LIGHTUP_EXPECTED_SHA: 172cc401b54b5b0c450c38969703dde7d71e3372
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/Lightup
-          ref: f9f27c82564c17ae80527436e8d0644a5b48b915
+          ref: 172cc401b54b5b0c450c38969703dde7d71e3372
           path: lightup
           persist-credentials: false
 
@@ -51,9 +51,9 @@ jobs:
           PYTHONPATH: src:tests
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f9f27c82564c17ae80527436e8d0644a5b48b915"
+          test "$(git rev-parse HEAD)" = "172cc401b54b5b0c450c38969703dde7d71e3372"
           python -m compileall -q src tests
-          python -m unittest tests.test_scope_definition_exact_asset_semantics -v
+          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics -v
           python -m unittest discover -s tests -v
           python -m unittest discover -s tests/integration -v
           python scripts/check_safety_canaries.py
@@ -82,10 +82,10 @@ jobs:
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --prune origin \
-            refs/heads/chatgpt/scope-authorization-durable-asset-exactness-20261006:refs/remotes/origin/lightup-durable-asset-exactness-proof
-          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-durable-asset-exactness-proof^{commit})"
+            refs/heads/chatgpt/scope-authorization-durable-asset-contract-pack-20261006:refs/remotes/origin/lightup-durable-asset-contract-pack-proof
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-durable-asset-contract-pack-proof^{commit})"
           test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
-          SNAPSHOT="${RUNNER_TEMP}/lightup-durable-asset-exactness-${GITHUB_RUN_ID}"
+          SNAPSHOT="${RUNNER_TEMP}/lightup-durable-asset-contract-pack-${GITHUB_RUN_ID}"
           rm -rf "${SNAPSHOT}"
           mkdir -p "${SNAPSHOT}"
           git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
@@ -105,7 +105,7 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           python -m compileall -q src tests
-          python -m unittest tests.test_scope_definition_exact_asset_semantics -v
+          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics -v
           python -m unittest discover -s tests -v
           python -m unittest discover -s tests/integration -v
           python scripts/check_safety_canaries.py
@@ -123,7 +123,7 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           python -m compileall -q src tests
-          python -m unittest tests.test_scope_definition_exact_asset_semantics -v
+          python -m unittest tests.test_scope_definition_exact_asset_semantics tests.test_scope_definition_asset_set_semantics -v
           python -m unittest discover -s tests -v
           python -m unittest discover -s tests/integration -v
           python scripts/check_safety_canaries.py
@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/lightup-durable-asset-exactness-receipt"
+          mkdir -p "${RUNNER_TEMP}/lightup-durable-asset-contract-pack-receipt"
           python - <<'PY'
           import json
           import os
@@ -141,8 +141,8 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issues": [369],
-              "source_branch": "chatgpt/scope-authorization-durable-asset-exactness-20261006",
+              "issues": [369, 370],
+              "source_branch": "chatgpt/scope-authorization-durable-asset-contract-pack-20261006",
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
               "host": os.uname().nodename,
@@ -150,7 +150,7 @@ jobs:
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "proof": "dedicated+compile+unit+integration+safety-canaries",
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-durable-asset-exactness-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-durable-asset-contract-pack-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -159,8 +159,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-durable-asset-exactness-vps-proof
-          path: ${{ runner.temp }}/lightup-durable-asset-exactness-receipt/receipt.json
+          name: lightup-durable-asset-contract-pack-vps-proof
+          path: ${{ runner.temp }}/lightup-durable-asset-contract-pack-receipt/receipt.json
           if-no-files-found: error
 
       - name: Cleanup snapshot
