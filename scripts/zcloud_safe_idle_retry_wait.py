@@ -33,6 +33,16 @@ def connect_read_only(db: Path) -> sqlite3.Connection:
     return conn
 
 
+def allocated_worker_ids(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot"
+    ).fetchall()
+    return [
+        f"{str(row['project_id'])}::w{int(row['worker_slot'] or 1)}"
+        for row in rows
+    ]
+
+
 def blocker_state(conn: sqlite3.Connection, worker_id: str) -> dict:
     project_id, worker_slot = parse_worker_key(worker_id)
     allocated = conn.execute(
@@ -97,7 +107,13 @@ def wait_until_ready(
     with connect_read_only(db) as conn:
         while time.monotonic() < deadline:
             last_states = [blocker_state(conn, worker_id) for worker_id in unique]
-            all_ready = all(item["ready"] for item in last_states)
+            allocation_states = [
+                blocker_state(conn, worker_id)
+                for worker_id in allocated_worker_ids(conn)
+            ]
+            blockers_ready = all(item["ready"] for item in last_states)
+            allocation_ready = all(item["ready"] for item in allocation_states)
+            all_ready = blockers_ready and allocation_ready
             if all_ready:
                 if stable_since is None:
                     stable_since = time.monotonic()
@@ -105,14 +121,24 @@ def wait_until_ready(
                     return {
                         "ready": True,
                         "blockers": last_states,
+                        "current_allocation": allocation_states,
                         "stable_seconds": max(0.0, float(stable_seconds)),
                     }
             else:
                 stable_since = None
-            summary = ",".join(
+            blocker_summary = ",".join(
                 f"{item['worker_id']}:{item['reason']}" for item in last_states
             )
-            print(f"ZCLOUD_SAFE_IDLE_RETRY_WAIT blockers={summary}", flush=True)
+            active_allocation = ",".join(
+                item["worker_id"]
+                for item in allocation_states
+                if not item["ready"]
+            )
+            print(
+                "ZCLOUD_SAFE_IDLE_RETRY_WAIT "
+                f"blockers={blocker_summary} active_allocation={active_allocation or 'none'}",
+                flush=True,
+            )
             time.sleep(max(0.1, float(poll_seconds)))
 
     raise RetryWaitError(
