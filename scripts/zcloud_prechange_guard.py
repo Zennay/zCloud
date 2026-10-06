@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -175,12 +176,29 @@ def legacy_violentmonkey_only(path: Path = DEFAULT_FIREFOX_LEGACY_DISABLE) -> bo
     return "violentmonkey only" in lowered and "execcondition=/bin/false" in lowered
 
 
-def http_healthy(url: str, timeout: float = 8.0) -> bool:
+def http_healthy(url: str, timeout: float = 2.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status == 200
     except Exception:
         return False
+
+
+def wait_http_healthy(
+    url: str,
+    *,
+    retry_window: float = 10.0,
+    interval: float = 0.5,
+) -> bool:
+    """Tolerate only a short transient liveness gap; fail closed afterwards."""
+    deadline = time.monotonic() + max(0.0, float(retry_window))
+    while True:
+        if http_healthy(url):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(max(0.01, float(interval)), remaining))
 
 
 def evaluate(
@@ -267,7 +285,7 @@ def evaluate(
             },
             {
                 "name": "zcloud_http",
-                "ok": http_healthy(health_url),
+                "ok": wait_http_healthy(health_url),
                 "detail": health_url,
             },
         ])
