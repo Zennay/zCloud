@@ -158,6 +158,26 @@ def audit(
     else:
         checks.append("resource:priority-aligned")
 
+    if not isinstance(layout, dict):
+        errors.append("project-layout.json: top-level object required")
+    else:
+        order = layout.get("order")
+        archived = layout.get("archived")
+        if not isinstance(order, list) or not all(isinstance(item, str) for item in order):
+            errors.append("project-layout.json: order must be a string array")
+        else:
+            cloud_count = order.count("cloud")
+            if cloud_count != 1:
+                errors.append(f"project-layout.json: cloud must appear exactly once in order, found {cloud_count}")
+            else:
+                checks.append("layout:cloud-visible")
+        if not isinstance(archived, list) or not all(isinstance(item, str) for item in archived):
+            errors.append("project-layout.json: archived must be a string array")
+        elif "cloud" in archived:
+            errors.append("project-layout.json: cloud control-plane must not be archived")
+        else:
+            checks.append("layout:cloud-not-archived")
+
     legacy_projects = legacy_autonomy.get("projects") if isinstance(legacy_autonomy, dict) else None
     if not isinstance(legacy_projects, dict):
         errors.append("autonomy-policy.json: projects object required")
@@ -178,7 +198,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    result = audit(args.projects, args.contracts, args.resources, args.legacy_autonomy)
+    result = audit(args.projects, args.contracts, args.resources, args.layout, args.legacy_autonomy)
     if args.json:
         print(json.dumps(result, sort_keys=True))
     elif result["ok"]:
