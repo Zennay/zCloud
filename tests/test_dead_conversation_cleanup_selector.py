@@ -11,6 +11,12 @@ from scripts import zcloud_dead_conversation_cleanup_selector as selector
 NOW = datetime(2026, 10, 6, 22, 35, tzinfo=timezone.utc)
 
 
+def fingerprint(provider, conversation_id):
+    return hashlib.sha256(
+        f"{provider}\\0{conversation_id}".encode("utf-8")
+    ).hexdigest()
+
+
 def record(**overrides):
     value = {
         "project_id": "cloud",
@@ -109,6 +115,16 @@ class DeadConversationCleanupSelectorTests(unittest.TestCase):
         )
         self.assertEqual(1, valid_removed["candidate_count"])
 
+    def test_output_redacts_raw_conversation_id(self):
+        source = record()
+        result = selector.select([source], now=NOW)
+        serialized = json.dumps(result, sort_keys=True)
+        self.assertNotIn(source["conversation_id"], serialized)
+        self.assertEqual(
+            fingerprint(source["provider"], source["conversation_id"]),
+            result["candidates"][0]["binding_fingerprint"],
+        )
+
     def test_duplicate_binding_is_blocked_fail_closed(self):
         result = selector.select(
             [
@@ -187,11 +203,11 @@ class DeadConversationCleanupSelectorTests(unittest.TestCase):
         )
         self.assertEqual(
             [
-                "conversation-supa-old",
-                "conversation-cloud-a",
-                "conversation-cloud-b",
+                fingerprint("chatgpt", "conversation-supa-old"),
+                fingerprint("chatgpt", "conversation-cloud-a"),
+                fingerprint("chatgpt", "conversation-cloud-b"),
             ],
-            [item["conversation_id"] for item in result["candidates"]],
+            [item["binding_fingerprint"] for item in result["candidates"]],
         )
 
 
