@@ -21,6 +21,13 @@ class CentralEventStreamWorkflowTests(unittest.TestCase):
         self.assertIn('test "$(id -un)" = "ubuntu"', self.text)
         self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", self.text)
 
+    def test_live_smoke_is_read_only_bounded_and_fail_closed(self):
+        self.assertIn("/home/ubuntu/zennay-cloud/history.db", self.text)
+        self.assertIn("--project cloud --limit 20 --require-complete", self.text)
+        self.assertIn("ZCLOUD_CENTRAL_EVENTSTREAM_LIVE_READ_GREEN", self.text)
+        self.assertNotIn("cat $out", self.text)
+        self.assertNotIn('cat "$out"', self.text)
+
     def test_workflow_has_no_live_mutation_commands(self):
         lowered = self.text.lower()
         for token in ("sudo ", "systemctl ", "sqlite3 ", "curl -x post", "git push"):
