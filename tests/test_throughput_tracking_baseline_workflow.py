@@ -21,6 +21,7 @@ class ThroughputTrackingBaselineWorkflowTests(unittest.TestCase):
         self.assertIn("ZCLOUD_THROUGHPUT_BASELINE_DRY_RUN_GREEN", text)
         self.assertIn("before_fingerprint=", text)
         self.assertIn("after_fingerprint=", text)
+        self.assertIn('--started-at "now"', text)
         self.assertIn('receipt=payload["production_receipt"]', text)
         self.assertIn('"workflow_run_id"] == "37448947435"', text)
         self.assertIn(
