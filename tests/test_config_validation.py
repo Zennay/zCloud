@@ -99,6 +99,10 @@ class ConfigValidationTests(unittest.TestCase):
             "auto_start": False,
         }
         self.project_contracts.write_text(json.dumps(contracts))
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM runner_targets WHERE project_id='cloud'")
+            conn.execute("DELETE FROM runner_workers WHERE project_id='cloud'")
+            conn.commit()
         result = self.validate()
         self.assertTrue(result["ok"], result)
 
