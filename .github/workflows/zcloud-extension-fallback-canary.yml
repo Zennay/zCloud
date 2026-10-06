@@ -272,7 +272,7 @@ jobs:
               with sqlite3.connect(DB_URI,uri=True,timeout=5) as con:
                   con.row_factory=sqlite3.Row
                   cmd=con.execute(
-                      "SELECT id,status,updated_at FROM runner_commands WHERE id=?",
+                      "SELECT id,status,result,updated_at FROM runner_commands WHERE id=?",
                       (command_id,),
                   ).fetchone()
                   events=con.execute(
@@ -281,7 +281,14 @@ jobs:
                       "ORDER BY id DESC LIMIT 12",
                       (before,),
                   ).fetchall()
-              last={"command":dict(cmd) if cmd else None,"events":[dict(e) for e in events]}
+              safe_command = None
+              if cmd:
+                  safe_command = {
+                      "id": cmd["id"],
+                      "status": cmd["status"],
+                      "updated_at": cmd["updated_at"],
+                  }
+              last={"command":safe_command,"events":[dict(e) for e in events]}
               for e in events:
                   if e["event"]=="send-blocked":
                       raise SystemExit("CANARY_SEND_BLOCKED "+json.dumps(last,ensure_ascii=False,sort_keys=True))
@@ -292,12 +299,14 @@ jobs:
               if cmd and cmd["status"]=="failed":
                   raise SystemExit("CANARY_COMMAND_FAILED "+json.dumps(last,ensure_ascii=False,sort_keys=True))
               if cmd and cmd["status"]=="completed":
+                  result=str(cmd["result"] or "")
+                  busy_noop=result=="Runner is al bezig; extra prompt was niet nodig"
                   fresh_bound=any(
                       e["event"] in {"runner-config-updated","injection-success","heartbeat"}
                       for e in events
                   )
-                  if fresh_bound:
-                      print("CANARY_PUSH_COMPLETED_GREEN=1")
+                  if busy_noop and fresh_bound:
+                      print("CANARY_PUSH_BUSY_GREEN=1")
                       print(json.dumps(last,ensure_ascii=False,sort_keys=True))
                       raise SystemExit(0)
               time.sleep(3)
