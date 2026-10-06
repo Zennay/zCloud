@@ -564,7 +564,7 @@ def _ftmo_quality():
     return {
         "available": bool(headline),
         "headline": headline,
-        "items": [x for x in items if x.get("value") is not None],
+        "items": [x for x in items if x and x.get("value") is not None],
         "stage": stage,
         "meta": meta,
         "comparison": _comparison_view(latest=latest_point, current=current_point),
