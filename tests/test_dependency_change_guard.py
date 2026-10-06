@@ -82,6 +82,20 @@ class DependencyChangeGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("large_dependency_diff", result["reason_codes"])
 
+    def test_rename_folding_is_disabled_for_numstat(self):
+        with mock.patch.object(guard, "_git", side_effect=[
+            "R90\\tpackage-lock.json\\tvendor/package-lock.json\\nM\\tserver.py\\n",
+            "0\\t12\\tpackage-lock.json\\n300\\t0\\tvendor/package-lock.json\\n1\\t0\\tserver.py\\n",
+        ]) as git:
+            changes = guard.collect_changes("base", "head")
+        self.assertEqual(
+            ("diff", "--numstat", "--no-renames", "base...head"),
+            git.call_args_list[1].args,
+        )
+        result = guard.evaluate_change(changes)
+        self.assertFalse(result["ok"])
+        self.assertIn("large_dependency_diff", result["reason_codes"])
+
     def test_cli_guard_error_is_fail_closed(self):
         with mock.patch.object(guard, "collect_changes", side_effect=RuntimeError("bad ref")):
             with mock.patch("builtins.print") as out:
