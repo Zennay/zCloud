@@ -32,6 +32,7 @@ class TempArtifactSelectorTests(unittest.TestCase):
     def test_old_safe_durable_idle_file_is_candidate(self):
         result = selector.select([artifact()], now=NOW)
         self.assertEqual(1, result["candidate_count"])
+        self.assertEqual(4096, result["candidate_bytes"])
         self.assertEqual(0, result["blocked_count"])
         self.assertFalse(result["mutation_performed"])
 
@@ -78,6 +79,27 @@ class TempArtifactSelectorTests(unittest.TestCase):
                 [artifact(name=f"zcloud-{i}.json") for i in range(selector.MAX_RECORDS + 1)],
                 now=NOW,
             )
+
+    def test_candidate_count_budget_is_fail_closed(self):
+        records = [
+            artifact(name=f"zcloud-{i:03d}.json", size_bytes=0)
+            for i in range(selector.MAX_CANDIDATES + 1)
+        ]
+        result = selector.select(records, now=NOW)
+        self.assertEqual(selector.MAX_CANDIDATES, result["candidate_count"])
+        self.assertEqual(1, result["blocked_count"])
+        self.assertIn("CANDIDATE_COUNT_BUDGET", result["blocked"][0]["reasons"])
+
+    def test_candidate_byte_budget_is_fail_closed(self):
+        records = [
+            artifact(name=f"zcloud-{i}.json", size_bytes=selector.MAX_SIZE_BYTES)
+            for i in range(5)
+        ]
+        result = selector.select(records, now=NOW)
+        self.assertEqual(4, result["candidate_count"])
+        self.assertEqual(selector.MAX_CANDIDATE_BYTES, result["candidate_bytes"])
+        self.assertEqual(1, result["blocked_count"])
+        self.assertIn("CANDIDATE_BYTE_BUDGET", result["blocked"][0]["reasons"])
 
     def test_load_payload_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
