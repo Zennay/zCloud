@@ -24,6 +24,7 @@ class SelfProjectContractTests(unittest.TestCase):
             "projects.json",
             "project-contracts.json",
             "resource-policy.json",
+            "project-layout.json",
             "autonomy-policy.json",
         ):
             (self.root / name).write_text((ROOT / name).read_text(encoding="utf-8"), encoding="utf-8")
@@ -42,6 +43,7 @@ class SelfProjectContractTests(unittest.TestCase):
             self.root / "projects.json",
             self.root / "project-contracts.json",
             self.root / "resource-policy.json",
+            self.root / "project-layout.json",
             self.root / "autonomy-policy.json",
         )
 
@@ -88,6 +90,24 @@ class SelfProjectContractTests(unittest.TestCase):
         result = self.audit()
         self.assertFalse(result["ok"])
         self.assertTrue(any("priority must match" in error for error in result["errors"]))
+
+    def test_project_layout_keeps_cloud_visible_and_unarchived(self):
+        layout = self.load("project-layout.json")
+        layout["order"] = [item for item in layout["order"] if item != "cloud"]
+        layout["archived"] = ["cloud"]
+        self.save("project-layout.json", layout)
+        result = self.audit()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("cloud must appear exactly once" in error for error in result["errors"]))
+        self.assertTrue(any("cloud control-plane must not be archived" in error for error in result["errors"]))
+
+    def test_duplicate_cloud_layout_entry_fails_closed(self):
+        layout = self.load("project-layout.json")
+        layout["order"].append("cloud")
+        self.save("project-layout.json", layout)
+        result = self.audit()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("cloud must appear exactly once" in error for error in result["errors"]))
 
     def test_legacy_autonomy_must_not_reclaim_cloud_truth(self):
         legacy = self.load("autonomy-policy.json")
