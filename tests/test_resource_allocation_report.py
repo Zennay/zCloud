@@ -61,7 +61,7 @@ class ResourceAllocationReportTests(unittest.TestCase):
         )
 
     def init_db(self):
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn:
             conn.execute(
                 """CREATE TABLE resource_leases(
                     project_id TEXT NOT NULL,
@@ -90,7 +90,7 @@ class ResourceAllocationReportTests(unittest.TestCase):
         metadata='{"secret":"never-report-me"}',
     ):
         until = lease_until or (self.now + timedelta(minutes=30)).isoformat()
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn:
             conn.execute(
                 """INSERT INTO resource_leases(
                     project_id,owner_id,pool,workload_class,cpu_soft_cores,
