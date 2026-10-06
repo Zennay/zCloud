@@ -124,8 +124,10 @@ class WorkerLogViewTests(unittest.TestCase):
 
     def test_raw_payload_fields_are_never_exposed(self):
         secret = "SUPER_SECRET_PAYLOAD_7421"
-        self.add_event(minutes=2, event="send-blocked", secret=secret)
-        self.add_command(minutes=1, secret=secret)
+        self.add_event(minutes=4, event="send-blocked", secret=secret)
+        self.add_command(minutes=3, secret=secret)
+        self.add_event(minutes=2, event=f"event {secret}")
+        self.add_command(minutes=1, action=f"action {secret}", status=f"status {secret}")
         payload = viewer.report(
             self.db,
             project="cloud",
@@ -136,6 +138,16 @@ class WorkerLogViewTests(unittest.TestCase):
         )
         serialized = json.dumps(payload, sort_keys=True)
         self.assertNotIn(secret, serialized)
+        self.assertGreaterEqual(
+            sum(
+                1
+                for item in payload["entries"]
+                if item.get("event") == "unclassified"
+                or item.get("action") == "unclassified"
+                or item.get("status") == "unclassified"
+            ),
+            2,
+        )
         for forbidden in ("target", "title", "reason", "error", "result", "conversation_id"):
             self.assertNotIn(f'"{forbidden}"', serialized)
 
