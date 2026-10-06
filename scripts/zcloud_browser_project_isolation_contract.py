@@ -89,7 +89,8 @@ def audit(root: Path) -> dict:
     refresh = _extract_function(userscript, "async function refreshTarget()")
     poll = _extract_function(background, "async function pollCommands()")
     new_chat = _extract_function(background, "async function newProjectChat(projectId, reason, commandId)")
-    tab_listener = _extract_function(background, "browser.runtime.onMessage.addListener(message =>")\n    replacement = _extract_function(background, "browser.runtime.onMessage.addListener((message, sender) =>")
+    tab_listener = _extract_function(background, "browser.runtime.onMessage.addListener(message =>")
+    replacement = _extract_function(background, "browser.runtime.onMessage.addListener((message, sender) =>")
 
     checks = [
         _contains(handle, "const sameWorker = command.project_id === target.project_id;", "userscript_same_worker_only"),
