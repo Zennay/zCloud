@@ -12,11 +12,12 @@ Each ADR must start with `# ADR` and contain all of these sections with substant
 
 - `## Context` — what problem or constraint makes the decision necessary.
 - `## Decision` — the chosen approach and relevant boundaries.
+- `## Affected Paths` — list every high-blast changed repository path covered by this decision as an exact backticked path, for example `server.py`.
 - `## Blast Radius` — what projects, workers, state, runtime or operators could be affected.
 - `## Rollback` — the concrete path back to a known-good state.
 - `## Validation` — the exact tests, canary, smoke or evidence required before acceptance.
 
-Placeholders such as TBD/TODO are rejected by the guard.
+Placeholders such as TBD/TODO are rejected by the guard. A changed high-blast path is accepted only when at least one ADR in the same pull request names that exact path under `Affected Paths`; an unrelated ADR does not satisfy the gate.
 
 ## Current high-blast-radius surfaces
 
