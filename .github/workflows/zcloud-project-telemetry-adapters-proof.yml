@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - enhancements.py
+      - server.py
       - public/enhancements.js
       - tests/test_evidence_progress.py
       - .github/workflows/zcloud-project-telemetry-adapters-proof.yml
