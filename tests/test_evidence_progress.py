@@ -1,5 +1,7 @@
 import unittest
 import json
+import tempfile
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 import enhancements
@@ -32,13 +34,56 @@ class EvidenceProgressTests(unittest.TestCase):
             {"result": {"total_pnl": 0.0018, "cost_1_5x_pnl": 0.0010, "win_rate": 0.52}},
         )
         with patch.object(enhancements, "_ftmo_candidate", return_value=cand),              patch.object(enhancements, "_ftmo_release", return_value=release),              patch.object(enhancements, "_ftmo_readiness", return_value={"available": True}):
-            quality = enhancements._ftmo_quality()
+            quality = enhancements.quality_for("ftmo")
         cmp = quality["comparison"]
         self.assertEqual("Generation 18", cmp["latest"]["value"])
         self.assertFalse(cmp["latest"]["validated"])
         self.assertEqual("Generation 17", cmp["current"]["value"])
         self.assertTrue(cmp["current"]["validated"])
         self.assertIsNone(cmp["best"], "Do not invent a best release without a comparable validated criterion")
+
+    def test_registered_project_adapters_are_explicit(self):
+        self.assertEqual(("ftmo", "haxlab"), enhancements.telemetry_adapter_projects())
+        self.assertIsInstance(
+            enhancements._TELEMETRY_ADAPTERS["ftmo"],
+            enhancements.ProjectTelemetryAdapter,
+        )
+
+    def test_ftmo_adapter_exposes_timestamped_source_provenance(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trial_path = root / "trial.json"
+            release_path = root / "paper-release.json"
+            holdout_path = root / "holdout-run.json"
+            for path in (trial_path, release_path, holdout_path):
+                path.write_text("{}", encoding="utf-8")
+            cand = (
+                18,
+                trial_path,
+                {"trial_hash": "candidate-18"},
+                {"total_pnl": 0.0023, "cost_1_5x_pnl": 0.0014, "closed_trades": 80, "win_rate": 0.55},
+                {},
+            )
+            release = (
+                17,
+                {"paper_release_hash": "release-17", "_zcloud_source_path": str(release_path)},
+                {"trial_hash": "validated-17"},
+                {
+                    "_zcloud_source_path": str(holdout_path),
+                    "result": {"total_pnl": 0.0018, "cost_1_5x_pnl": 0.0010, "win_rate": 0.52},
+                },
+            )
+            with patch.object(enhancements, "_ftmo_candidate", return_value=cand), \
+                 patch.object(enhancements, "_ftmo_release", return_value=release), \
+                 patch.object(enhancements, "_ftmo_readiness", return_value={"available": True}):
+                comparison = enhancements.quality_for("ftmo")["comparison"]
+
+        self.assertEqual(str(trial_path), comparison["latest"]["source"])
+        self.assertEqual(str(holdout_path), comparison["current"]["source"])
+        for key in ("latest", "current"):
+            observed_at = comparison[key].get("observed_at")
+            self.assertTrue(observed_at, key)
+            self.assertIsNotNone(datetime.fromisoformat(observed_at).tzinfo)
 
     def test_all_project_progress_has_documented_checkpoint_basis(self):
         projects = json.loads(Path("projects.json").read_text(encoding="utf-8"))
@@ -72,6 +117,7 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertIn("current", renderer)
         self.assertIn("best", renderer)
         self.assertIn("Current bottleneck", renderer)
+        self.assertIn("observed_at", renderer)
 
 
 if __name__ == "__main__":
