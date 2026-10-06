@@ -91,10 +91,13 @@ jobs:
   probe:
     name: Probe persistent VPS Cloudflare auth for zSSH
     if: >-
-      github.event_name != 'pull_request' &&
-      github.repository == 'Zennay/zCloud' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name != 'workflow_dispatch' || github.actor == 'Zennay')
+      ((github.event_name == 'push' &&
+        github.repository == 'Zennay/zCloud' &&
+        github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.repository == 'Zennay/zCloud' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay'))
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     env:
