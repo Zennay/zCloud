@@ -1,0 +1,99 @@
+name: zCloud worker status lines proof
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_worker_status_lines.py"
+      - "tests/test_worker_status_lines.py"
+      - "tests/test_worker_status_lines_workflow.py"
+      - ".github/workflows/zcloud-worker-status-lines-proof.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_worker_status_lines.py"
+      - "tests/test_worker_status_lines.py"
+      - "tests/test_worker_status_lines_workflow.py"
+      - ".github/workflows/zcloud-worker-status-lines-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-status-lines-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+      - name: Run worker status line contract
+        run: python3 -m unittest -v tests.test_worker_status_lines tests.test_worker_status_lines_workflow
+
+  permanent-vps-proof:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.owner.login == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact checkout and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Prove live compact status lines read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/runner-live.json"
+          python3 - "$live" <<'PY'
+          import json
+          import sys
+          import urllib.request
+          from pathlib import Path
+          with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=10) as response:
+              if response.status != 200:
+                  raise SystemExit(f"runner-live HTTP {response.status}")
+              data = json.load(response)
+          Path(sys.argv[1]).write_text(json.dumps(data), encoding="utf-8")
+          PY
+          out="$RUNNER_TEMP/worker-status-lines.json"
+          python3 scripts/zcloud_worker_status_lines.py --runner-live "$live" --require-complete > "$out"
+          python3 - "$out" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data["schema_version"] == "zcloud-worker-status-lines-v1"
+          assert data["coverage_complete"] is True
+          required = {"project_id", "worker_slot", "lane", "task", "status", "last_action"}
+          forbidden = {"conversation_id", "error", "reason", "target", "command", "current_task", "last_event"}
+          assert all(required == set(item) for item in data["workers"])
+          assert all(not (forbidden & set(item)) for item in data["workers"])
+          print("ZCLOUD_WORKER_STATUS_LINES_LIVE_READ_GREEN", f"workers={data['worker_count']}")
+          PY
