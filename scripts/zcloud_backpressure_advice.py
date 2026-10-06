@@ -12,8 +12,12 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts import worker_scaling_report as scaling
-from scripts import zcloud_host_pressure_report as pressure
+if __package__:
+    from scripts import worker_scaling_report as scaling
+    from scripts import zcloud_host_pressure_report as pressure
+else:
+    import worker_scaling_report as scaling
+    import zcloud_host_pressure_report as pressure
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 VALID_DECISIONS = (
