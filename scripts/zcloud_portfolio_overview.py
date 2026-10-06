@@ -101,9 +101,10 @@ def build_overview(
         try:
             active_workers = max(0, int(runner.get("active_worker_count") or 0))
             desired_workers = max(0, int(runner.get("desired_worker_count") or 0))
+            attention_workers = max(0, int(runner.get("attention_worker_count") or 0))
         except (TypeError, ValueError):
             malformed["runner_live"] += 1
-            active_workers = desired_workers = 0
+            active_workers = desired_workers = attention_workers = 0
 
         q_counts = {state: 0 for state in QUEUE_STATES}
         other_queue = 0
@@ -156,13 +157,19 @@ def build_overview(
             or (memory is not None and memory > 0)
         )
         blocked = q_counts["blocked"] > 0
-        needs_attention = blocked or bool(open_attention) or q_counts["failed"] > 0
+        needs_attention = (
+            blocked
+            or bool(open_attention)
+            or q_counts["failed"] > 0
+            or attention_workers > 0
+        )
         projects.append(
             {
                 "project_id": pid,
                 "running": active_workers > 0,
                 "active_workers": active_workers,
                 "desired_workers": desired_workers,
+                "attention_workers": attention_workers,
                 "uses_resources": uses_resources,
                 "resource": {
                     "managed": bool(resource.get("managed")),
