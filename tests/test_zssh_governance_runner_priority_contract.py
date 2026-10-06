@@ -26,7 +26,7 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         self.assertNotIn("-f per_page=1000", text)
 
     def test_only_three_read_only_audits_are_cancellation_candidates(self):
-        match = re.search(r"allow = \\{(?P<body>.*?)\\n\\s*\\}", self.text, re.DOTALL)
+        match = re.search(r"allow = \{(?P<body>.*?)\n\s*\}", self.text, re.DOTALL)
         self.assertIsNotNone(match)
         names = set(re.findall(r'"([^"]+)"', match.group("body")))
         self.assertEqual(
