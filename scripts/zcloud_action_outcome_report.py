@@ -58,14 +58,23 @@ def build_report(db_path: str | os.PathLike[str], hours: int = 24) -> dict[str, 
         raise ReportError("hours must be between 1 and 720")
 
     path = Path(db_path)
+    timestamp_expr = "COALESCE(NULLIF(updated_at,''), created_at)"
     with _connect(path) as conn:
         _validate_schema(conn)
+        malformed_timestamps = int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM runner_commands
+                WHERE unixepoch({timestamp_expr}) IS NULL
+                """
+            ).fetchone()[0]
+        )
         rows = conn.execute(
-            """
+            f"""
             SELECT action, status, COUNT(*) AS count
             FROM runner_commands
-            WHERE unixepoch(COALESCE(NULLIF(updated_at,''), created_at))
-                  >= unixepoch('now', ?)
+            WHERE unixepoch({timestamp_expr}) >= unixepoch('now', ?)
             GROUP BY action, status
             ORDER BY action, status
             """,
@@ -139,6 +148,10 @@ def build_report(db_path: str | os.PathLike[str], hours: int = 24) -> dict[str, 
             "failure": "status=failed",
             "excluded_from_ratio": ["pending", "unknown_status"],
             "payload_fields_read": ["action", "status", "created_at", "updated_at"],
+        },
+        "data_quality": {
+            "timestamp_coverage_complete": malformed_timestamps == 0,
+            "unparseable_timestamp_rows": malformed_timestamps,
         },
         "totals": totals,
         "actions": actions,
