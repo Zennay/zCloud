@@ -10,6 +10,8 @@ RESOURCE_FILE = ROOT / "resource-policy.json"
 ALERT_STATE_FILE = ROOT / "alert-state.json"
 SIGNALS_DIR = ROOT / "signals"
 RECOVERY_DIR = Path(os.environ.get("ZCLOUD_RECOVERY_DIR", str(Path.home() / ".local/state/zcloud/recovery")))
+FTMO_RESEARCH_ROOT = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes")
+FTMO_RUNTIME_STATUS_FILE = Path("/opt/ftmo-autonomous/.scratch/autonomy/status.json")
 
 PRIORITY_WEIGHTS = {"background": 100, "normal": 400, "high": 800, "turbo": 3000}
 PROJECT_UNITS = {
@@ -386,7 +388,7 @@ def _gen_number(text):
     return int(m.group(1)) if m else -1
 
 def _ftmo_candidate():
-    root = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes")
+    root = FTMO_RESEARCH_ROOT
     choices = []
     for path in root.glob("*/development-review-summary.json"):
         data = _json(path)
@@ -405,7 +407,7 @@ def _ftmo_candidate():
     return max(choices, key=lambda x: x[0]) if choices else None
 
 def _ftmo_release():
-    root = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes")
+    root = FTMO_RESEARCH_ROOT
     releases = []
     for release_path in root.glob("*/paper-release.json"):
         release = _json(release_path) or {}
@@ -435,6 +437,60 @@ def _as_pct(value):
         return round(value, 1)
     except Exception:
         return None
+
+def _ftmo_lifecycle():
+    """Read bounded FTMO lifecycle evidence without inventing validation rank."""
+    status = _json(FTMO_RUNTIME_STATUS_FILE) or {}
+    research = status.get("research") if isinstance(status, dict) else {}
+    research = research if isinstance(research, dict) else {}
+    controller = status.get("research_controller") if isinstance(status, dict) else {}
+    controller = controller if isinstance(controller, dict) else {}
+    generation_loop = controller.get("generation_loop") if isinstance(controller, dict) else {}
+    generation_loop = generation_loop if isinstance(generation_loop, dict) else {}
+
+    generations = set()
+    review_count = 0
+    candidate_count = 0
+    for summary_path in FTMO_RESEARCH_ROOT.glob("*/development-review-summary.json"):
+        data = _json(summary_path) or {}
+        generation = _gen_number(str(data.get("generation_id") or summary_path.parent.name))
+        if generation >= 0:
+            generations.add(generation)
+        reviews = data.get("reviews") if isinstance(data, dict) else []
+        reviews = reviews if isinstance(reviews, list) else []
+        review_count += len([row for row in reviews if isinstance(row, dict)])
+        candidate_count += sum(
+            1
+            for row in reviews
+            if isinstance(row, dict)
+            and row.get("outcome") == "candidate"
+            and row.get("selected_variant")
+        )
+
+    for release_path in FTMO_RESEARCH_ROOT.glob("*/paper-release.json"):
+        release = _json(release_path) or {}
+        generation = _gen_number(str(release.get("generation_id") or release_path.parent.name))
+        if generation >= 0:
+            generations.add(generation)
+
+    recent = sorted(generations, reverse=True)[:5]
+    generation_number = research.get("generation_number")
+    if generation_number is None and recent:
+        generation_number = recent[0]
+    next_stage = str(research.get("next_stage") or generation_loop.get("stage") or "").strip()
+    action = str(generation_loop.get("action") or controller.get("action") or "").strip()
+
+    return {
+        "generation_number": generation_number,
+        "generation_id": research.get("generation_id"),
+        "recent_generations": recent,
+        "next_stage": next_stage or None,
+        "controller_action": action or None,
+        "reviewed_experiments": review_count,
+        "selected_candidates": candidate_count,
+        "runtime_ok": status.get("ok") if isinstance(status, dict) else None,
+        "source": str(FTMO_RUNTIME_STATUS_FILE),
+    }
 
 def _ftmo_readiness():
     root = Path("/opt/ftmo-runner/_work/Ftmo/Ftmo")
@@ -489,6 +545,7 @@ def _ftmo_readiness():
 def _ftmo_quality():
     cand = _ftmo_candidate()
     rel = _ftmo_release()
+    lifecycle = _ftmo_lifecycle()
     items = []
     headline = None
     meta = {}
@@ -561,6 +618,50 @@ def _ftmo_quality():
             source=release_source,
             validated=True,
         )
+
+    lifecycle_source = lifecycle.get("source") or str(FTMO_RUNTIME_STATUS_FILE)
+    if lifecycle.get("generation_number") is not None:
+        items.append(_metric_point(
+            "Runtime generation",
+            lifecycle.get("generation_number"),
+            source=lifecycle_source,
+        ))
+    if lifecycle.get("recent_generations"):
+        items.append(_metric_point(
+            "Recent generations",
+            " · ".join(str(value) for value in lifecycle["recent_generations"]),
+            note="Nieuwste evidence-backed generations in research outcomes.",
+            source=str(FTMO_RESEARCH_ROOT),
+        ))
+    if lifecycle.get("next_stage"):
+        items.append(_metric_point(
+            "Lifecycle stage",
+            lifecycle.get("next_stage"),
+            note=lifecycle.get("controller_action") or "",
+            source=lifecycle_source,
+        ))
+    items.extend([
+        _metric_point(
+            "Reviewed experiments",
+            lifecycle.get("reviewed_experiments"),
+            source=str(FTMO_RESEARCH_ROOT),
+        ),
+        _metric_point(
+            "Selected candidates",
+            lifecycle.get("selected_candidates"),
+            source=str(FTMO_RESEARCH_ROOT),
+        ),
+    ])
+    if lifecycle.get("generation_number") is not None and stage == "research":
+        stage = "generation %s · %s" % (
+            lifecycle.get("generation_number"),
+            lifecycle.get("next_stage") or "research",
+        )
+    meta["runtime_generation"] = lifecycle.get("generation_number")
+    meta["runtime_generation_id"] = lifecycle.get("generation_id")
+    meta["runtime_stage"] = lifecycle.get("next_stage")
+    meta["runtime_ok"] = lifecycle.get("runtime_ok")
+    meta["best_validated_policy"] = "not_available_without_comparable_validated_rank"
     return {
         "available": bool(headline),
         "headline": headline,
