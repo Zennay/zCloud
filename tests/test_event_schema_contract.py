@@ -222,6 +222,15 @@ class EventSchemaValidatorTests(unittest.TestCase):
         self.assertNotIn("secret-reason", proc.stdout)
         self.assertNotIn("secret-error", proc.stdout)
 
+    def test_contract_rejects_non_object_privacy_without_crashing(self):
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        schema["privacy"] = "invalid"
+
+        errors = VALIDATOR.validate_contract(schema)
+
+        self.assertIn("privacy must be an object", errors)
+        self.assertIn("canonical_projection_classes must be non-empty", errors)
+
     def test_contract_rejects_forbidden_projection_privacy(self):
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         schema["canonical_projection"]["fields"]["unsafe"] = {"source": "reason"}
