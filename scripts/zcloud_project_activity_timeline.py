@@ -132,6 +132,19 @@ def _command_entry(row: sqlite3.Row) -> dict:
     }
 
 
+def _generic_event_entry(row: sqlite3.Row) -> dict:
+    kind = _safe_reason(row["kind"])
+    code = f"project:{kind}" if kind else "project:event"
+    return {
+        "ts": str(row["ts"]),
+        "project_id": str(row["project"]),
+        "source": "project_event",
+        "category": "project",
+        "code": code,
+        "summary": f"Projectevent: {kind}" if kind else "Projectevent",
+    }
+
+
 def report(
     db: Path,
     hours: float = 24.0,
@@ -172,6 +185,21 @@ def report(
         ).fetchall()
         timeline.extend(_event_entry(row) for row in rows)
 
+        generic_cols = _columns(connection, "events")
+        required_events = {"ts", "project", "kind"}
+        if required_events.issubset(generic_cols):
+            params = [cutoff.isoformat()]
+            where = "ts>=? AND project IS NOT NULL AND project<>''"
+            if project:
+                where += " AND project=?"
+                params.append(project)
+            generic_rows = connection.execute(
+                "SELECT ts,project,kind FROM events "
+                f"WHERE {where} ORDER BY ts DESC LIMIT ?",
+                [*params, max(limit * 4, 100)],
+            ).fetchall()
+            timeline.extend(_generic_event_entry(row) for row in generic_rows)
+
         command_cols = _columns(connection, "runner_commands")
         required_commands = {"project_id", "action", "status", "created_at", "updated_at"}
         if required_commands.issubset(command_cols):
@@ -197,7 +225,7 @@ def report(
         "cutoff": cutoff.isoformat(),
         "project_id": project,
         "limit": limit,
-        "method": "curated read-only runner lifecycle + control-action outcomes; raw payloads excluded",
+        "method": "curated read-only runner lifecycle + project events + control-action outcomes; raw payloads excluded",
         "counts": dict(sorted(counts.items())),
         "timeline": timeline,
     }
