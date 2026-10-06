@@ -121,6 +121,13 @@ class SinceVisitReportTests(unittest.TestCase):
         self.assertEqual(["cloud"], [p["project_id"] for p in payload["projects"]])
         with self.assertRaises(ValueError):
             delta.report(self.db, self.since, project="../cloud", now=self.now)
+        with self.assertRaises(ValueError):
+            delta.report(self.db, self.since, project="Cloud", now=self.now)
+
+    def test_noncanonical_runtime_project_ids_are_ignored(self):
+        self.add_receipt("Cloud", 60)
+        payload = delta.report(self.db, self.since, now=self.now)
+        self.assertEqual([], payload["projects"])
 
     def test_raw_sensitive_values_and_keys_never_appear(self):
         marker = "SUPER_SECRET_TOKEN_123"
@@ -152,7 +159,7 @@ class SinceVisitReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             delta.report(self.db, "2026-10-06T18:00:00", now=self.now)
         with self.assertRaises(ValueError):
-            delta.report(self.db, (self.now + timedelta(minutes=2)).isoformat(), now=self.now)
+            delta.report(self.db, (self.now + timedelta(seconds=1)).isoformat(), now=self.now)
         with self.assertRaises(ValueError):
             delta.report(self.db, (self.now - timedelta(days=32)).isoformat(), now=self.now)
         with self.assertRaises(ValueError):
