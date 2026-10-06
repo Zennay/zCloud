@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zcloud-state-receipt-coverage-audit.yml
+      - tests/test_state_receipt_coverage_audit_workflow.py
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
@@ -12,27 +13,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-state-receipt-coverage-audit
+  group: zcloud-state-receipt-coverage-audit-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   audit:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.actor == 'Zennay' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ env.EXPECTED_SHA }}
           persist-credentials: false
+          fetch-depth: 1
 
-      - name: Verify permanent zCloud VPS runner
+      - name: Verify permanent zCloud VPS runner and exact head
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           test "$(id -un)" = ubuntu
           python3 scripts/zcloud_vps_runner_guard.py --json
 
@@ -51,6 +58,9 @@ jobs:
           projects_path = runtime_root / "projects.json"
           db_path = runtime_root / "history.db"
 
+          if db_path.is_symlink() or not db_path.is_file():
+              raise SystemExit("live history.db must be a regular non-symlink file")
+
           projects = json.loads(projects_path.read_text(encoding="utf-8"))
           if not isinstance(projects, list):
               raise SystemExit("runtime-owned projects.json must be a list")
@@ -63,11 +73,18 @@ jobs:
           if not active:
               raise SystemExit("no active runtime projects found")
 
-          connection = sqlite3.connect(db_path, timeout=15)
+          before = db_path.stat()
+          before_fingerprint = (before.st_size, before.st_mtime_ns)
+
+          connection = sqlite3.connect(
+              f"file:{db_path}?mode=ro",
+              uri=True,
+              timeout=15,
+          )
           connection.row_factory = sqlite3.Row
+          connection.execute("PRAGMA query_only=ON")
           connection.execute("PRAGMA busy_timeout=15000")
           try:
-              project_runtime.init_tables(connection)
               coverage = project_runtime.receipt_coverage(
                   connection,
                   active,
@@ -76,6 +93,13 @@ jobs:
               latest = project_runtime.latest_receipts(connection)
           finally:
               connection.close()
+
+          after = db_path.stat()
+          after_fingerprint = (after.st_size, after.st_mtime_ns)
+          if after_fingerprint != before_fingerprint:
+              raise SystemExit(
+                  "read-only receipt audit changed live history.db fingerprint"
+              )
 
           receipts = {}
           for project_id in active:
@@ -104,4 +128,5 @@ jobs:
               "ZCLOUD_RECEIPT_COVERAGE_READY="
               + str(bool(coverage.get("ready"))).lower()
           )
+          print("ZCLOUD_RECEIPT_COVERAGE_DB_IMMUTABLE=1")
           PY
