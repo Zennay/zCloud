@@ -84,7 +84,7 @@ jobs:
           assert payload["schema_version"] == "since-visit-v1", payload
           assert payload["project_count"] <= 50, payload
           assert payload["privacy_contract"] == "compact categorical output only", payload
-          forbidden={"action","blocker","reason","error","evidence_json","next_gate","prompt"}
+          forbidden={"action","blocker","phase","reason","error","evidence_json","next_gate","prompt"}
           assert forbidden.isdisjoint(payload), payload
           for project in payload["projects"]:
               assert forbidden.isdisjoint(project), project
