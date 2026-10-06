@@ -1,0 +1,78 @@
+name: zCloud project telemetry freshness proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_project_telemetry_freshness.py
+      - tests/test_project_telemetry_freshness.py
+      - tests/test_project_telemetry_freshness_workflow.py
+      - .github/workflows/zcloud-project-telemetry-freshness-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-telemetry-freshness-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_project_telemetry_freshness.py tests/test_project_telemetry_freshness.py tests/test_project_telemetry_freshness_workflow.py
+          python3 -m unittest -v tests.test_project_telemetry_freshness tests.test_project_telemetry_freshness_workflow
+
+      - name: Prove live adapter freshness read is bounded and sanitized
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(
+            python3 scripts/zcloud_project_telemetry_freshness.py               --projects projects.json               --project ftmo               --project haxlab               --project ulab               --stale-minutes 240
+          )"
+          python3 - "$output" <<'PY'
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          projects = payload.get("projects")
+          if not isinstance(projects, list) or len(projects) != 3:
+              raise SystemExit("expected exactly three adapter-backed project results")
+          allowed = {"fresh", "stale", "missing", "incomplete"}
+          for item in projects:
+              if item.get("project_id") not in {"ftmo", "haxlab", "ulab"}:
+                  raise SystemExit("unexpected project in live freshness proof")
+              if item.get("status") not in allowed:
+                  raise SystemExit("invalid adapter freshness state")
+              forbidden = {"value", "source", "headline", "items", "comparison"}
+              if forbidden.intersection(item):
+                  raise SystemExit("live freshness proof exposed raw telemetry payload")
+          print("ZCLOUD_PROJECT_TELEMETRY_FRESHNESS_PROOF=" + json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          PY
