@@ -39,9 +39,11 @@ fallback.
 
 ## Safety
 
-The input is capped at 64 KiB and 100 candidates. Numeric and boolean types are
-strict: Python/JSON booleans cannot masquerade as integers, floats/strings are
-rejected for scores, unknown fields are rejected, and IDs must be unique.
+The input is capped at 64 KiB and 100 candidates. File input must be a regular,
+non-symlink file and is size-checked before and during the bounded read.
+Numeric and boolean types are strict: Python/JSON booleans cannot masquerade as
+integers, floats/strings are rejected for scores, unknown fields are rejected
+without echoing their names, and IDs must be unique.
 
 Output contains only the selected machine id, bounded score metadata, counts and
 exclusion reason counts. Runtime integration must later obtain impact/risk and
