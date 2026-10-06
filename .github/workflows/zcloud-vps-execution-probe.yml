@@ -54,6 +54,7 @@ jobs:
       - name: Check out exact pushed revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           clean: true
 
@@ -61,6 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Verify runtime project-schema migration
@@ -72,9 +74,16 @@ jobs:
             tests.test_vps_deploy_workflow
 
   probe:
-    if: github.event_name != 'push' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    if: >-
+      github.event_name != 'push' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (github.event_name != 'pull_request' ||
+       (github.actor == 'Zennay' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}
     steps:
       - name: Check out the zCloud control plane
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -82,7 +91,7 @@ jobs:
           persist-credentials: false
           clean: true
           fetch-depth: 513
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
 
       - name: Prepare stable probe state
         shell: bash
@@ -95,6 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json \
             | tee "$ZCLOUD_RUN_STATE_DIR/zcloud-vps-runner-guard.json"
 
@@ -163,8 +173,8 @@ jobs:
             echo "HOST=$(hostname)"
             echo "=== ACTIONS RUNNER UNITS ==="
             systemctl --no-pager --all --type=service | grep -F 'actions.runner.' || true
-            echo "=== RUNNER PROCESSES ==="
-            ps -eo pid=,ppid=,user=,lstart=,cmd= | grep -E 'Runner\.(Listener|Worker)|runsvc\.sh' | grep -v grep || true
+            echo "=== RUNNER PROCESS NAMES ==="
+            ps -eo pid=,ppid=,user=,lstart=,comm= | grep -E 'Runner\.(Listener|Worker)|runsvc\.sh' | grep -v grep || true
             echo "=== RUNNER CWD ==="
             for pid in $(pgrep -f 'Runner\.(Listener|Worker)|runsvc\.sh' || true); do
               printf 'pid=%s cwd=' "$pid"
@@ -177,7 +187,7 @@ jobs:
 
       - name: Upload sanitized deploylane evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zcloud-vps-deploylane-evidence-${{ github.run_id }}
           if-no-files-found: warn
