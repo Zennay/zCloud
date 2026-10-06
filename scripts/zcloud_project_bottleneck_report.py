@@ -239,8 +239,12 @@ def _project_snapshot(
 
     cap = int(contract.get("ai_worker_cap") or 0)
     queue_mode = str(contract.get("queue_mode") or "").strip().lower()
+    autonomy = contract.get("autonomy") if isinstance(contract.get("autonomy"), dict) else {}
+    autonomy_mode = str(autonomy.get("mode") or "").strip().lower()
 
-    if queue_mode == "human-gated":
+    if queue_mode == "human-gated" or (
+        cap == 0 and autonomy_mode in {"external_gate", "manual"}
+    ):
         code = "external_or_human_gate"
         state = "blocked"
     elif open_attention:
