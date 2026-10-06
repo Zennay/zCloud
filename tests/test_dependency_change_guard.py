@@ -1,7 +1,5 @@
 import importlib.util
 import json
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,6 +7,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "zcloud_dependency_change_guard.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-dependency-change-guard.yml"
+VPS_WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-dependency-change-guard-vps-proof.yml"
 
 spec = importlib.util.spec_from_file_location("dependency_guard", SCRIPT)
 guard = importlib.util.module_from_spec(spec)
@@ -84,8 +83,8 @@ class DependencyChangeGuardTests(unittest.TestCase):
 
     def test_rename_folding_is_disabled_for_numstat(self):
         with mock.patch.object(guard, "_git", side_effect=[
-            "R90\\tpackage-lock.json\\tvendor/package-lock.json\\nM\\tserver.py\\n",
-            "0\\t12\\tpackage-lock.json\\n300\\t0\\tvendor/package-lock.json\\n1\\t0\\tserver.py\\n",
+            "R90\tpackage-lock.json\tvendor/package-lock.json\nM\tserver.py\n",
+            "0\t12\tpackage-lock.json\n300\t0\tvendor/package-lock.json\n1\t0\tserver.py\n",
         ]) as git:
             changes = guard.collect_changes("base", "head")
         self.assertEqual(
@@ -120,7 +119,7 @@ class DependencyChangeGuardTests(unittest.TestCase):
 
     def test_vps_proof_is_exact_head_and_read_only(self):
         text = VPS_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("permissions:\\n  contents: read", text)
+        self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("github.event.pull_request.head.sha", text)
