@@ -51,7 +51,7 @@ jobs:
                 [
                     {
                         "workflow": "sample.yml",
-                        "line": 7,
+                        "line": 6,
                         "action": "actions/setup-python",
                         "kind": "floating",
                         "ref": "v5",
@@ -84,16 +84,8 @@ jobs:
     def test_output_order_is_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self._write(
-                root,
-                "z.yml",
-                "- uses: z/action@v1\n",
-            )
-            self._write(
-                root,
-                "a.yaml",
-                "- uses: a/action@main\n",
-            )
+            self._write(root, "z.yml", "- uses: z/action@v1\n")
+            self._write(root, "a.yaml", "- uses: a/action@main\n")
 
             report = inventory(root)
 
