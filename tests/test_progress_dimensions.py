@@ -1,6 +1,4 @@
-import copy
 import json
-import math
 import subprocess
 import sys
 import tempfile
@@ -48,6 +46,7 @@ class ProgressDimensionTests(unittest.TestCase):
             ],
         }
         report = project_dimensions(project)
+        self.assertEqual("explicit-or-keyword-v1", report["classification_version"])
         self.assertEqual(50.0, report["dimensions"]["build"]["progress"])
         self.assertEqual(10.0, report["dimensions"]["validation"]["progress"])
         self.assertNotIn("research", report["dimensions"])
@@ -83,6 +82,24 @@ class ProgressDimensionTests(unittest.TestCase):
         self.assertEqual({}, report["dimensions"])
         self.assertEqual("unavailable", report["status"])
         self.assertEqual(4, report["counts"]["invalid_milestones"])
+        self.assertEqual(1, report["counts"]["progress_evidence_milestones"])
+
+    def test_missing_traceability_fails_closed(self):
+        base = {
+            "id": "demo",
+            "milestone_revision": "v1",
+            "progress_basis": "evidence",
+            "milestones": [{"title": "API", "dimension": "build", "progress": 50}],
+        }
+        no_revision = dict(base)
+        no_revision["milestone_revision"] = ""
+        with self.assertRaisesRegex(ProgressDimensionError, "milestone_revision_missing"):
+            project_dimensions(no_revision)
+
+        no_basis = dict(base)
+        del no_basis["progress_basis"]
+        with self.assertRaisesRegex(ProgressDimensionError, "progress_basis_missing"):
+            project_dimensions(no_basis)
 
     def test_current_ftmo_registry_has_all_four_evidence_dimensions(self):
         ftmo = next(project for project in PROJECTS if project["id"] == "ftmo")
@@ -111,6 +128,7 @@ class ProgressDimensionTests(unittest.TestCase):
             report = registry_dimensions(path)
         serialized = json.dumps(report, sort_keys=True)
         self.assertNotIn(secret_title, serialized)
+        self.assertEqual("explicit-or-keyword-v1", report["classification_version"])
         self.assertEqual(50.0, report["projects"][0]["dimensions"]["build"]["progress"])
         self.assertRegex(report["source_sha256"], r"^[0-9a-f]{64}$")
 
@@ -151,6 +169,7 @@ class ProgressDimensionTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
         self.assertEqual("ftmo", payload["report"]["project"]["project_id"])
+        self.assertEqual("explicit-or-keyword-v1", payload["report"]["classification_version"])
         self.assertNotIn("milestones", payload["report"]["project"])
 
     def test_unknown_project_and_invalid_registry_fail_closed(self):
