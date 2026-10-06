@@ -159,6 +159,12 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertIsNone(quality["comparison"]["current"])
         self.assertIsNone(quality["comparison"]["best"])
 
+    def test_server_quality_hook_is_project_agnostic(self):
+        server = Path("server.py").read_text(encoding="utf-8")
+        self.assertIn("enhancements.quality_for(p['id'])", server)
+        self.assertNotIn("enhancements.quality_for('haxlab')", server)
+        self.assertNotIn("enhancements.quality_for('ftmo')", server)
+
     def test_renderer_is_project_agnostic(self):
         js = Path("public/enhancements.js").read_text(encoding="utf-8")
         start = js.index("function evidencePanel")
