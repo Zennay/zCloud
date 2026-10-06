@@ -12,7 +12,9 @@ percentage from time, message count, branch count, done=true, or a project phase
 string.
 
 Milestones with missing, boolean, non-finite, negative, or greater-than-100
-progress values are not used.
+progress values are not used. A project is also rejected for this derived read model
+when milestone_revision or progress_basis is absent, because derived percentages
+without a named checkpoint and evidence basis are not traceable enough to publish.
 
 ## Classification
 
@@ -20,8 +22,12 @@ An explicit milestone dimension field is canonical. Supported values are researc
 build, validation, and operations.
 
 For the current registry, where older milestones do not yet carry that field,
-scripts/zcloud_progress_dimensions.py has a conservative versioned keyword
-fallback. It assigns a milestone only when exactly one dimension matches.
+scripts/zcloud_progress_dimensions.py has a conservative fallback. It assigns a
+milestone only when exactly one dimension matches.
+
+The output records classification_version=explicit-or-keyword-v1. Any later
+classifier-rule change must advance that version so a consumer can distinguish old
+and new interpretations.
 
 Zero matches become unclassified. Multiple matches become ambiguous. Neither
 contributes to a dimension percentage. For example, “Beta deployment & real-user
@@ -30,8 +36,8 @@ validation” is both Operations and Validation, so the fallback must not choose
 ## Output boundary
 
 The reporter emits project ID, available dimensions with evidence-derived
-percentage and milestone count, aggregate classification counts, milestone
-revision, progress basis, source filename, and source SHA-256.
+percentage and milestone count, aggregate classification counts, classification
+version, milestone revision, progress basis, source filename, and source SHA-256.
 
 It does not emit milestone titles. This keeps the read model bounded and avoids
 turning internal milestone text into telemetry/log output.
@@ -50,4 +56,5 @@ rules:
 2. label dimension progress as derived from milestone evidence, not a new canonical total;
 3. retain the existing overall evidence-progress metric as the project-level checkpoint;
 4. surface ambiguous/unclassified coverage rather than silently forcing it into a category;
-5. keep project-specific explicit dimension tags optional, so projects that do not support meaningful decomposition can remain unsplit.
+5. keep project-specific explicit dimension tags optional, so projects that do not support meaningful decomposition can remain unsplit;
+6. preserve and expose the classifier version plus source milestone revision so changes remain auditable.
