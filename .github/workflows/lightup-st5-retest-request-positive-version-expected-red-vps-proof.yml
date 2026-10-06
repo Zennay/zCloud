@@ -1,5 +1,5 @@
 # #389 composition refresh: pin exact combined LightUp acceptance head
-name: LightUp ST5 retest-request persisted acceptance expected-RED VPS proof
+name: LightUp ST5 retest-request full integrity acceptance expected-RED VPS proof
 
 on:
   pull_request:
@@ -17,8 +17,8 @@ concurrency:
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/st5-retest-request-persisted-acceptance-red-20261006
-  LIGHTUP_EXPECTED_SHA: fe2833b61774cd21892fce0c917f6e916170e31c
+  LIGHTUP_BRANCH: chatgpt/st5-retest-request-full-integrity-acceptance-red-20261006
+  LIGHTUP_EXPECTED_SHA: 693d7fd1fa8eb98514fa9ea9b5f3fcc73f75fa2d
 
 jobs:
   prove-red:
@@ -44,8 +44,8 @@ jobs:
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
           git -C "${LIGHTUP_REPO}" fetch --prune origin \
-            "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-retest-request-persisted-acceptance-red"
-          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-st5-retest-request-persisted-acceptance-red^{commit})"
+            "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-st5-retest-request-full-integrity-acceptance-red"
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-st5-retest-request-full-integrity-acceptance-red^{commit})"
           test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
           SNAPSHOT="${RUNNER_TEMP}/lightup-st5-retest-request-persisted-acceptance-${GITHUB_RUN_ID}"
           rm -rf "${SNAPSHOT}"
@@ -70,7 +70,10 @@ jobs:
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_exact_schema_strict_primitives_and_stop_line_fail_closed \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified \
-            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage \
+            test_future_security_retest_request_builder_input_atomicity \
+            test_future_security_retest_request_parser_input_purity \
+            test_future_security_retest_request_snapshot_isolation
           LOG="${RUNNER_TEMP}/lightup-387-388-389-red-py311.log"
           set +e
           PYTHONPATH=src:tests python -m unittest -v \
@@ -102,7 +105,10 @@ jobs:
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_exact_schema_strict_primitives_and_stop_line_fail_closed \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_item_semantics_and_aggregate_lineage_fail_closed \
             test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_digest_sha_and_duplicate_json_keys_are_verified \
-            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage
+            test_future_security_retest_request_handoff.FutureSecurityRetestRequestHandoffTest.test_parsed_request_requires_exact_live_rebuilt_lineage \
+            test_future_security_retest_request_builder_input_atomicity \
+            test_future_security_retest_request_parser_input_purity \
+            test_future_security_retest_request_snapshot_isolation
           LOG="${RUNNER_TEMP}/lightup-387-388-389-red-py314.log"
           set +e
           PYTHONPATH=src:tests python -m unittest -v \
@@ -138,7 +144,7 @@ jobs:
               "host": os.uname().nodename,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "python": ["3.11", "3.14"],
-              "parent_selected_smoke_tests": 5,
+              "parent_selected_smoke_tests": 12,
               "known_parent_test_excluded": "test_canonical_identifiers_lineage_and_path_shape_fail_closed",
               "acceptance_contract": "expected_red",
               "expected_failures_per_python": 4,
