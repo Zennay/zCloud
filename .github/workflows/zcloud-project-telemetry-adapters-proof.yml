@@ -52,3 +52,56 @@ jobs:
           node --check public/enhancements.js
           python3 -m unittest -v tests.test_evidence_progress
           echo "ZCLOUD_PROJECT_TELEMETRY_ADAPTERS_GREEN=1"
+
+      - name: Prove live FTMO lifecycle telemetry is read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          import enhancements
+
+          status_path = enhancements.FTMO_RUNTIME_STATUS_FILE
+          if not status_path.is_file() or status_path.is_symlink():
+              raise SystemExit("live FTMO status source missing or unsafe")
+          before = (status_path.stat().st_size, status_path.stat().st_mtime_ns)
+
+          quality = enhancements.quality_for("ftmo")
+          items = {
+              str(item.get("label") or ""): item.get("value")
+              for item in (quality.get("items") or [])
+              if isinstance(item, dict)
+          }
+          meta = quality.get("meta") or {}
+          required = (
+              "Runtime generation",
+              "Recent generations",
+              "Lifecycle stage",
+              "Reviewed experiments",
+              "Selected candidates",
+          )
+          missing = [label for label in required if label not in items]
+          if missing:
+              raise SystemExit("missing live FTMO lifecycle telemetry: " + ",".join(missing))
+          if meta.get("runtime_generation") is None or not meta.get("runtime_stage"):
+              raise SystemExit("FTMO runtime generation/stage metadata incomplete")
+          if meta.get("best_validated_policy") != "not_available_without_comparable_validated_rank":
+              raise SystemExit("FTMO best-validated policy changed unexpectedly")
+
+          after = (status_path.stat().st_size, status_path.stat().st_mtime_ns)
+          if before != after:
+              raise SystemExit("FTMO status file changed during telemetry read")
+
+          evidence = {
+              "runtime_generation": meta.get("runtime_generation"),
+              "runtime_stage": meta.get("runtime_stage"),
+              "recent_generations": items["Recent generations"],
+              "reviewed_experiments": items["Reviewed experiments"],
+              "selected_candidates": items["Selected candidates"],
+              "status_source_unchanged": True,
+          }
+          print("ZCLOUD_FTMO_LIFECYCLE_TELEMETRY=" + json.dumps(evidence, sort_keys=True))
+          print("ZCLOUD_FTMO_LIFECYCLE_TELEMETRY_READONLY_GREEN=1")
+          PY
