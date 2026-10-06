@@ -22,6 +22,68 @@ env:
   SNAPSHOT_SHA: 8b188cbd66bc11ae7d38ebd9dd3cdb35c1dd8a9f
 
 jobs:
+  hosted:
+    name: Hosted preflight Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+
+    steps:
+      - name: Checkout atomicity exact head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/Lightup
+          ref: ${{ env.ATOMICITY_BRANCH }}
+          path: atomicity
+          persist-credentials: false
+          clean: true
+
+      - name: Checkout snapshot exact head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/Lightup
+          ref: ${{ env.SNAPSHOT_BRANCH }}
+          path: snapshot
+          persist-credentials: false
+          clean: true
+
+      - name: Guard exact heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C atomicity rev-parse HEAD)" = "${ATOMICITY_SHA}"
+          test "$(git -C snapshot rev-parse HEAD)" = "${SNAPSHOT_SHA}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Prove exact heads hosted
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          prove_tree() {
+            tree="$1"
+            module="$2"
+            (
+              cd "${tree}"
+              export PYTHONPATH=src:tests
+              python -m compileall -q src tests
+              python -m unittest -v "${module}" test_future_security_retest_request
+              python -m unittest discover -s tests -v
+              python -m unittest discover -s tests/integration -v
+              PYTHONPATH=src python scripts/check_safety_canaries.py
+            )
+          }
+
+          prove_tree atomicity test_future_security_retest_request_builder_input_atomicity
+          prove_tree snapshot test_future_security_retest_request_snapshot_isolation
+
   prove:
     name: Retest request integrity exact-head proof
     if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner)
