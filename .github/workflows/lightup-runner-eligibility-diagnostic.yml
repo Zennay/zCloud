@@ -1,0 +1,88 @@
+name: LightUp runner eligibility diagnostic
+
+on:
+  push:
+    branches:
+      - ops/lightup-runner-eligibility-diagnostic-20261006
+    paths:
+      - .github/workflows/lightup-runner-eligibility-diagnostic.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-runner-eligibility-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    name: Diagnose LightUp runner eligibility
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Report safe runner registration metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          runner_root="$(dirname "$(dirname "${RUNNER_TEMP}")")"
+          python3 - "${runner_root}/.runner" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          data = json.loads(path.read_text())
+          safe = {
+              key: data.get(key)
+              for key in (
+                  "agentId",
+                  "agentName",
+                  "poolId",
+                  "poolName",
+                  "serverUrl",
+                  "gitHubUrl",
+                  "workFolder",
+              )
+          }
+          print(json.dumps(safe, sort_keys=True))
+          PY
+
+      - name: Check whether local gh auth can administer LightUp runners
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "gh_available=false"
+            exit 0
+          fi
+          echo "gh_available=true"
+          if gh api repos/Zennay/Lightup --jq '.permissions.admin' >/tmp/lightup-admin 2>/dev/null; then
+            admin="$(cat /tmp/lightup-admin)"
+            echo "lightup_admin=${admin}"
+          else
+            echo "lightup_admin=unavailable"
+          fi
+          rm -f /tmp/lightup-admin
+
+          token=""
+          if token="$(gh api -X POST repos/Zennay/Lightup/actions/runners/registration-token --jq '.token' 2>/dev/null)"; then
+            if test -n "${token}"; then
+              echo "lightup_runner_registration_token_available=true"
+            else
+              echo "lightup_runner_registration_token_available=false"
+            fi
+          else
+            echo "lightup_runner_registration_token_available=false"
+          fi
+          unset token
