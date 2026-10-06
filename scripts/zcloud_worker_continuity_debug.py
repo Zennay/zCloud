@@ -375,6 +375,19 @@ def maybe_remediate(
             actions.append(runner_action(base_url, key, "new_chat"))
             last_actions[f"new_chat:{key}"] = now
 
+    # If a ghost-generating worker could not consume the per-worker new_chat
+    # request, recycle Firefox only after a further grace window and only when
+    # every *other* allocated worker is idle. This recreates the simple 1-Oct
+    # standalone-browser recovery without interrupting useful parallel work.
+    ghost_restart_ready = False
+    other_busy = busy - ghost_generating
+    if ghost_generating and not other_busy:
+        for key in sorted(ghost_generating):
+            requested_at = last_actions.get(f"new_chat:{key}")
+            if requested_at is not None and now - requested_at >= 120:
+                ghost_restart_ready = True
+                break
+
     mem_pct = snapshot["memory"].get("available_pct")
     firefox_missing = snapshot["firefox"]["count"] == 0
     streaks["firefox_missing"] = streaks.get("firefox_missing", 0) + 1 if firefox_missing else 0
@@ -383,7 +396,7 @@ def maybe_remediate(
 
     # Firefox recycle is deliberately a last resort: process missing, or the
     # whole allocated runtime disappeared while the host is under severe pressure.
-    if ((streaks["firefox_missing"] >= 2) or (all_runtime_missing and pressure)) and action_due(last_actions, "restart_firefox", now, 300):
+    if ((streaks["firefox_missing"] >= 2) or (all_runtime_missing and pressure) or ghost_restart_ready) and action_due(last_actions, "restart_firefox", now, 300):
         actions.append(runner_action(base_url, "", "restart_firefox"))
         last_actions["restart_firefox"] = now
 
