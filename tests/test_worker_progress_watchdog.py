@@ -12,6 +12,46 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(watchdog)
 
 
+class WorkerWatchdogIdentityTests(unittest.TestCase):
+    def test_worker_key_prefers_explicit_allocation_identity(self):
+        self.assertEqual(
+            "cloud::w2",
+            watchdog.worker_key({
+                "worker_key": "cloud::w2",
+                "project_id": "cloud",
+                "worker_slot": 2,
+            }),
+        )
+
+    def test_worker_key_uses_base_project_for_runner_target_payload(self):
+        self.assertEqual(
+            "cloud::w2",
+            watchdog.worker_key({
+                "project_id": "cloud::w2",
+                "base_project_id": "cloud",
+                "worker_slot": 2,
+            }),
+        )
+
+    def test_worker_key_preserves_canonical_project_id_without_double_suffix(self):
+        self.assertEqual(
+            "cloud::w2",
+            watchdog.worker_key({
+                "project_id": "cloud::w2",
+                "worker_slot": 2,
+            }),
+        )
+
+    def test_worker_key_fails_closed_on_canonical_slot_mismatch(self):
+        self.assertEqual(
+            "",
+            watchdog.worker_key({
+                "project_id": "cloud::w2",
+                "worker_slot": 1,
+            }),
+        )
+
+
 class WorkerWatchdogDecisionTests(unittest.TestCase):
     def decision(self, **overrides):
         values = {
