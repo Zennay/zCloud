@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest tests.test_project_visit_delta
+          python3 -m unittest tests.test_project_visit_delta tests.test_project_visit_delta_workflow
 
       - name: Prove live read-only delta against VPS state
         shell: bash
