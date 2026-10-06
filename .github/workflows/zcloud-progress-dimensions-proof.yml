@@ -58,18 +58,26 @@ jobs:
           import sys
           from pathlib import Path
 
-          ftmo = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["report"]["project"]
+          ftmo_report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["report"]
           all_projects = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))["report"]
+          assert ftmo_report["classification_version"] == "explicit-or-keyword-v1", ftmo_report
+          ftmo = ftmo_report["project"]
+          assert ftmo["classification_version"] == "explicit-or-keyword-v1", ftmo
+          assert ftmo["source_revision"], ftmo
+          assert ftmo["progress_basis"], ftmo
           assert set(ftmo["dimensions"]) == {"research", "build", "validation", "operations"}, ftmo
           assert ftmo["dimensions"]["research"]["progress"] == 100.0, ftmo
           assert ftmo["dimensions"]["build"]["progress"] == 100.0, ftmo
           assert ftmo["dimensions"]["validation"]["progress"] == 82.0, ftmo
           assert ftmo["dimensions"]["operations"]["progress"] == 67.5, ftmo
+          assert all_projects["classification_version"] == "explicit-or-keyword-v1", all_projects
           assert all_projects["project_count"] >= 1, all_projects
           assert all_projects["available_count"] >= 1, all_projects
           serialized = json.dumps(all_projects, sort_keys=True)
           assert '"title"' not in serialized, serialized
           for project in all_projects["projects"]:
+              assert project["source_revision"], project
+              assert project["progress_basis"], project
               for value in project["dimensions"].values():
                   assert 0 <= value["progress"] <= 100, project
           print("ZCLOUD_PROGRESS_DIMENSIONS_VPS_GREEN=1")
