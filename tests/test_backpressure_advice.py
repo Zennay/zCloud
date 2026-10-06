@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -8,6 +10,18 @@ from scripts import zcloud_backpressure_advice as advice
 
 
 class BackpressureAdviceTests(unittest.TestCase):
+    def test_direct_cli_entrypoint_imports_successfully(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, str(root / "scripts" / "zcloud_backpressure_advice.py"), "--help"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("backpressure", result.stdout.lower())
+
     def test_memory_or_io_pressure_has_priority_over_useful_scaling(self):
         result = advice.decide(
             {"state": "useful_scaling"},
