@@ -32,6 +32,52 @@ jobs:
           curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null || true
           curl -fsS --max-time 12 "$status_url" >/dev/null || true
 
+          echo '=== sqlite writeability repair ==='
+          root='/home/ubuntu/zennay-cloud'
+          db="$root/history.db"
+          service_user="$(systemctl show "$service" -p User --value)"
+          if [[ -z "$service_user" ]]; then service_user='root'; fi
+          service_group="$(systemctl show "$service" -p Group --value)"
+          if [[ -z "$service_group" ]]; then service_group="$(id -gn "$service_user")"; fi
+          echo "service_identity=$service_user:$service_group"
+          sudo -n systemctl stop "$service" || true
+          stat -c 'before %U:%G %a %n' "$root" "$db" 2>/dev/null || true
+          findmnt -no TARGET,SOURCE,FSTYPE,OPTIONS -T "$db" || true
+          lsattr -d "$db" "$db-wal" "$db-shm" 2>/dev/null || true
+
+          sudo -n chown "$service_user:$service_group" "$root" "$db"
+          sudo -n chmod u+rwx "$root"
+          sudo -n chmod u+rw "$db"
+          for sidecar in "$db-wal" "$db-shm"; do
+            if [[ -e "$sidecar" ]]; then
+              sudo -n chown "$service_user:$service_group" "$sidecar"
+              sudo -n chmod u+rw "$sidecar"
+            fi
+          done
+
+          # Clear an accidental immutable bit only on the zCloud SQLite files.
+          for candidate in "$db" "$db-wal" "$db-shm"; do
+            [[ -e "$candidate" ]] || continue
+            attrs="$(lsattr -d "$candidate" 2>/dev/null | awk '{print $1}' || true)"
+            if [[ "$attrs" == *i* ]]; then
+              echo "clearing_accidental_immutable=$candidate"
+              sudo -n chattr -i "$candidate"
+            fi
+          done
+
+          sudo -n -u "$service_user" python3 - <<'PY'
+import sqlite3
+db="/home/ubuntu/zennay-cloud/history.db"
+conn=sqlite3.connect(db, timeout=10)
+try:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.rollback()
+finally:
+    conn.close()
+print("ZCLOUD_SQLITE_WRITE_PROBE_GREEN")
+PY
+          stat -c 'after %U:%G %a %n' "$root" "$db" 2>/dev/null || true
+
           sudo -n systemctl reset-failed "$service" || true
           sudo -n systemctl restart "$service"
           for _ in $(seq 1 30); do
