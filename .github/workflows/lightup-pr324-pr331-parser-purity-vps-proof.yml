@@ -1,0 +1,177 @@
+name: LightUp PR324 PR331 parser purity VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-pr324-pr331-parser-purity-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-pr324-pr331-parser-purity-vps-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr324-pr331-parser-purity-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  PR324_EXPECTED_SHA: 773076a0e66cbb88166786ddd523fd6070eaf542
+  PR331_EXPECTED_SHA: 2b29769e37b78b6b643da7e7dd46b4789904def4
+
+jobs:
+  prove:
+    name: Parser purity exact-head proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp heads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          snapshot_pr() {
+            local pr="$1"
+            local expected="$2"
+            local remote_ref="refs/remotes/origin/lightup-pr${pr}-parser-purity-proof"
+            local snapshot="${RUNNER_TEMP}/lightup-pr${pr}-${GITHUB_RUN_ID}"
+            git -C "${LIGHTUP_REPO}" fetch --prune origin \
+              "refs/pull/${pr}/head:${remote_ref}"
+            local actual
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+            echo "PR${pr}_SNAPSHOT=${snapshot}" >> "${GITHUB_ENV}"
+            echo "PR${pr}_ACTUAL_SHA=${actual}" >> "${GITHUB_ENV}"
+          }
+
+          snapshot_pr 324 "${PR324_EXPECTED_SHA}"
+          snapshot_pr 331 "${PR331_EXPECTED_SHA}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove both heads on Python 3.11
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          prove() {
+            local pr="$1"
+            local snapshot="$2"
+            local child_test="$3"
+            cd "${snapshot}"
+            export PYTHONPATH=src:tests
+            python -m compileall -q src tests
+            python -m unittest -v \
+              "${child_test}" \
+              test_future_security_evidence_collection_handoff \
+              test_future_security_evidence_freshness_handoff \
+              test_future_security_evidence_freshness_admission_handoff \
+              test_future_security_evidence_sufficiency_attestation_handoff \
+              test_future_security_classification_review_request_handoff
+            python -m unittest discover -s tests/integration -v
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+            echo "LIGHTUP_PARSER_PURITY_HEAD_GREEN PR=${pr} SHA=$(git --git-dir=/dev/null rev-parse 2>/dev/null || true)"
+          }
+
+          prove 324 "${PR324_SNAPSHOT}" test_future_security_evidence_remediation_parser_input_purity
+          prove 331 "${PR331_SNAPSHOT}" test_future_security_evidence_remediation_parser_rejection_input_purity
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove both heads on Python 3.14
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          prove() {
+            local snapshot="$1"
+            local child_test="$2"
+            cd "${snapshot}"
+            export PYTHONPATH=src:tests
+            python -m compileall -q src tests
+            python -m unittest -v \
+              "${child_test}" \
+              test_future_security_evidence_collection_handoff \
+              test_future_security_evidence_freshness_handoff \
+              test_future_security_evidence_freshness_admission_handoff \
+              test_future_security_evidence_sufficiency_attestation_handoff \
+              test_future_security_classification_review_request_handoff
+            python -m unittest discover -s tests/integration -v
+          }
+
+          prove "${PR324_SNAPSHOT}" test_future_security_evidence_remediation_parser_input_purity
+          prove "${PR331_SNAPSHOT}" test_future_security_evidence_remediation_parser_rejection_input_purity
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-pr324-pr331-parser-purity-vps-proof.json
+          import json
+          import os
+          import socket
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "LightUp",
+              "result": "success",
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "heads": {
+                  "324": {
+                      "expected_sha": os.environ["PR324_EXPECTED_SHA"],
+                      "actual_sha": os.environ["PR324_ACTUAL_SHA"],
+                  },
+                  "331": {
+                      "expected_sha": os.environ["PR331_EXPECTED_SHA"],
+                      "actual_sha": os.environ["PR331_ACTUAL_SHA"],
+                  },
+              },
+              "proof": [
+                  "compile-py311-py314",
+                  "child-parser-purity-regression-py311-py314",
+                  "five-strict-parent-handoffs-py311-py314",
+                  "real-producer-integration-py311-py314",
+                  "safety-canary-py311",
+              ],
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-pr324-pr331-parser-purity-vps-proof.json
+
+      - name: Upload receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr324-pr331-parser-purity-vps-proof-${{ github.run_id }}
+          path: artifacts/lightup-pr324-pr331-parser-purity-vps-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${PR324_SNAPSHOT:-}" "${PR331_SNAPSHOT:-}"
