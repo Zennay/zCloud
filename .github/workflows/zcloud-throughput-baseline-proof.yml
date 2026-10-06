@@ -61,6 +61,10 @@ jobs:
           assert payload["dry_run"] is True
           assert payload["project_count"] > 0
           assert not payload["conflicts"], payload
+          receipt=payload["production_receipt"]
+          assert receipt["workflow_run_id"] == "37448947435"
+          assert receipt["commit_sha"] == "55aef90793cbc6236a37d90f623c48f569be96e3"
+          assert receipt["observed_at"] == "2026-10-06T10:29:27.005194+00:00"
           print("ZCLOUD_THROUGHPUT_BASELINE_PLAN=" + json.dumps({
               "table_exists": payload["table_exists"],
               "project_count": payload["project_count"],
@@ -68,6 +72,7 @@ jobs:
               "unchanged": payload["unchanged"],
               "started_at": payload["started_at"],
               "production_sha": payload["production_sha"],
+              "production_receipt": receipt,
           }, sort_keys=True, separators=(",", ":")))
           PY
           after_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
