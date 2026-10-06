@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  LIGHTUP_EXPECTED_SHA: 092a461a141c881d8300d1401f2a0491fc7603dc
+  LIGHTUP_EXPECTED_SHA: 425ac245b995e7b6126ea08fa534595ac69906ef
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Zennay/Lightup
-          ref: 092a461a141c881d8300d1401f2a0491fc7603dc
+          ref: 425ac245b995e7b6126ea08fa534595ac69906ef
           path: lightup
           persist-credentials: false
 
@@ -51,7 +51,7 @@ jobs:
           PYTHONPATH: src:tests
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "092a461a141c881d8300d1401f2a0491fc7603dc"
+          test "$(git rev-parse HEAD)" = "425ac245b995e7b6126ea08fa534595ac69906ef"
           python -m compileall -q src tests
           python -m unittest tests.test_scope_authorization_membership_non_authority -v
           python -m unittest discover -s tests -v
