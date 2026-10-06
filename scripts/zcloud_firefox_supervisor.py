@@ -47,17 +47,43 @@ def save_state(value: dict[str, Any]) -> None:
     temp.replace(STATE)
 
 
-def allocated_workers(db_path: Path = DB) -> int:
+def allocated_workers_from_db(db_path: Path = DB) -> tuple[int | None, str | None]:
     if not db_path.exists():
-        return 0
+        return None, "history.db missing"
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
         try:
-            return int(conn.execute("SELECT COUNT(*) FROM ai_global_slots").fetchone()[0])
+            return int(conn.execute("SELECT COUNT(*) FROM ai_global_slots").fetchone()[0]), None
         finally:
             conn.close()
-    except Exception:
-        return 0
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"[:300]
+
+
+def allocated_workers_from_api(base_url: str = BASE_URL) -> tuple[int | None, str | None]:
+    request = urllib.request.Request(
+        base_url.rstrip("/") + "/api/runner-targets",
+        headers={"User-Agent": "zcloud-firefox-supervisor/1"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = json.load(response)
+        workers = ((body.get("global_allocation") or {}).get("workers") or [])
+        return len(workers), None
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"[:300]
+
+
+def allocation_state() -> tuple[int | None, str, str | None]:
+    count, error = allocated_workers_from_db()
+    if count is not None:
+        return count, "sqlite", None
+    api_count, api_error = allocated_workers_from_api()
+    if api_count is not None:
+        return api_count, "api", error
+    combined = "; ".join(part for part in (error, api_error) if part)
+    return None, "unavailable", combined[:600] or "allocation state unavailable"
 
 
 def firefox_pids(uid: int = FIREFOX_UID) -> list[int]:
@@ -111,17 +137,24 @@ def restart_firefox(base_url: str = BASE_URL) -> dict[str, Any]:
 def run_once(*, now: float | None = None) -> dict[str, Any]:
     now = time.time() if now is None else float(now)
     state = load_state()
-    allocated = allocated_workers()
+    allocated, allocation_source, allocation_error = allocation_state()
     pids = firefox_pids()
 
     result: dict[str, Any] = {
-        "ok": True,
+        "ok": allocated is not None,
         "allocated_workers": allocated,
+        "allocation_source": allocation_source,
+        "allocation_error": allocation_error,
         "firefox_pids": pids,
         "missing_confirmations": int(state.get("missing_confirmations") or 0),
         "priority": None,
         "restart": None,
     }
+
+    if allocated is None:
+        result["state"] = "allocation-state-unavailable"
+        save_state(state)
+        return result
 
     if allocated <= 0:
         state["missing_confirmations"] = 0
