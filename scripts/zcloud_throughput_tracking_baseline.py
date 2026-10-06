@@ -72,6 +72,7 @@ def _validate_existing_table(connection: sqlite3.Connection) -> None:
     table_info = connection.execute(f"PRAGMA table_info({TABLE})").fetchall()
     columns = {str(row["name"]) for row in table_info}
     required = {
+        "id",
         "project_id",
         "started_at",
         "source",
