@@ -1,0 +1,97 @@
+name: zCloud backpressure advice proof
+
+on:
+  pull_request:
+    paths:
+      - scripts/zcloud_backpressure_advice.py
+      - tests/test_backpressure_advice.py
+      - tests/test_backpressure_advice_workflow.py
+      - .github/workflows/zcloud-backpressure-advice-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-backpressure-advice-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused advice regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_backpressure_advice tests.test_backpressure_advice_workflow
+
+      - name: Run full Python regression on exact stacked head
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+
+      - name: Prove live read-only advice
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB=/home/ubuntu/zennay-cloud/history.db
+          BEFORE="$(python3 - "$DB" <<'PY'
+          import sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          s=p.stat()
+          print(f"{s.st_size}:{s.st_mtime_ns}")
+          PY
+          )"
+          python3 scripts/zcloud_backpressure_advice.py             --db "$DB"             --project cloud             --hours 12             --pretty             > "$RUNNER_TEMP/zcloud-backpressure-advice.json"
+          AFTER="$(python3 - "$DB" <<'PY'
+          import sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          s=p.stat()
+          print(f"{s.st_size}:{s.st_mtime_ns}")
+          PY
+          )"
+          test "$BEFORE" = "$AFTER"
+          python3 - "$RUNNER_TEMP/zcloud-backpressure-advice.json" <<'PY'
+          import json
+          import sys
+          payload=json.load(open(sys.argv[1],encoding="utf-8"))
+          decision=payload["assessment"]["decision"]
+          assert decision in {"no_backpressure","backpressure_recommended","insufficient_data"}
+          if payload["assessment"]["host_pressure_state"] == "compute_busy":
+              if payload["assessment"]["scaling_state"] != "diminishing_returns":
+                  assert payload["assessment"]["apply_backpressure"] is False
+          serialized=json.dumps(payload,sort_keys=True).lower()
+          for forbidden in ('"target"', '"title"', '"reason"', '"error"', '"result"', '"argv"', '"cmdline"'):
+              assert forbidden not in serialized
+          print("ZCLOUD_BACKPRESSURE_ADVICE_READONLY_GREEN="+decision)
+          PY
