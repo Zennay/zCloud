@@ -1,45 +1,136 @@
 # FTMO verify72 zSSH consumer diagnostic trigger 2026-10-02T09:22Z
 name: Debug zCloud worker consumer now
+
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/debug-worker-consumer-now.yml"
+      - "tests/test_worker_consumer_debug_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
       - ".github/workflows/debug-worker-consumer-now.yml"
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: zcloud-worker-consumer-debug-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate worker consumer diagnostic contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_worker_consumer_debug_workflow
+
   debug:
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 2
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - name: Capture live worker consumer state
+      - name: Check out exact diagnostic source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Capture sanitized live worker consumer state
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, sqlite3, urllib.request
-          BASE="http://127.0.0.1:8765"
+          import json
+          import os
+          import sqlite3
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+
           def get(path):
-              with urllib.request.urlopen(BASE+path, timeout=10) as r:
-                  return json.load(r)
-          print("WORKER_DEBUG="+json.dumps(get("/api/worker-debug"),sort_keys=True))
-          status=get("/api/status")
-          print("STATUS="+json.dumps({
-              "dynamic_workers":status.get("dynamic_workers"),
-              "chatgpt_firefox":status.get("chatgpt_firefox"),
-              "chatgpt_runners":status.get("chatgpt_runners"),
-              "errors":status.get("errors"),
-          },sort_keys=True))
-          with sqlite3.connect("/home/ubuntu/zennay-cloud/history.db",timeout=5) as c:
-              c.row_factory=sqlite3.Row
-              events=[dict(r) for r in c.execute(
-                  "SELECT id,ts,event,project_id,worker_slot,target,reason,error,generating,sending "
+              with urllib.request.urlopen(BASE + path, timeout=10) as response:
+                  return json.load(response)
+
+          debug = get("/api/worker-debug")
+          workers = debug.get("workers") or []
+          worker_summary = []
+          for worker in workers:
+              command = worker.get("command") or {}
+              last_event = worker.get("last_event") or {}
+              worker_summary.append({
+                  "worker_id": worker.get("worker_id"),
+                  "project_id": worker.get("project_id"),
+                  "worker_slot": worker.get("worker_slot"),
+                  "state": worker.get("state"),
+                  "age_seconds": worker.get("age_seconds"),
+                  "generating": bool(worker.get("generating")),
+                  "sending": bool(worker.get("sending")),
+                  "command_id": command.get("id"),
+                  "command_action": command.get("action"),
+                  "command_status": command.get("status"),
+                  "last_event": last_event.get("event"),
+              })
+          print("WORKER_DEBUG_SUMMARY=" + json.dumps(worker_summary, sort_keys=True))
+
+          status = get("/api/status")
+          dynamic = status.get("dynamic_workers") or {}
+          firefox = status.get("chatgpt_firefox") or {}
+          print("STATUS_SUMMARY=" + json.dumps({
+              "chatgpt_count": dynamic.get("chatgpt_count"),
+              "claude_count": dynamic.get("claude_count"),
+              "firefox_state": firefox.get("state"),
+              "error_count": len(status.get("errors") or []),
+          }, sort_keys=True))
+
+          before = os.stat(DB)
+          uri = "file:" + DB + "?mode=ro"
+          with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+              connection.row_factory = sqlite3.Row
+              connection.execute("PRAGMA query_only=ON")
+              events = [dict(row) for row in connection.execute(
+                  "SELECT id,ts,event,project_id,worker_slot,generating,sending "
                   "FROM runner_events ORDER BY id DESC LIMIT 120"
               ).fetchall()]
-              commands=[dict(r) for r in c.execute(
-                  "SELECT id,project_id,action,status,created_at,updated_at,result "
+              commands = [dict(row) for row in connection.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at "
                   "FROM runner_commands ORDER BY id DESC LIMIT 80"
               ).fetchall()]
-          print("RECENT_EVENTS="+json.dumps(events,sort_keys=True))
-          print("RECENT_COMMANDS="+json.dumps(commands,sort_keys=True))
+          after = os.stat(DB)
+          if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+              raise SystemExit("history.db changed during read-only diagnostic")
+
+          print("RECENT_EVENT_METADATA=" + json.dumps(events, sort_keys=True))
+          print("RECENT_COMMAND_METADATA=" + json.dumps(commands, sort_keys=True))
+          print("ZCLOUD_WORKER_CONSUMER_DEBUG_READONLY_GREEN=1")
           PY
