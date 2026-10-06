@@ -46,13 +46,7 @@ def _candidate(raw: object) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("candidate must be an object")
     if set(raw) != REQUIRED_KEYS:
-        missing = sorted(REQUIRED_KEYS - set(raw))
-        extra = sorted(set(raw) - REQUIRED_KEYS)
-        raise ValueError(
-            "candidate fields must match contract"
-            + (f"; missing={','.join(missing)}" if missing else "")
-            + (f"; extra={','.join(extra)}" if extra else "")
-        )
+        raise ValueError("candidate fields must exactly match contract")
     candidate_id = raw["id"]
     if not isinstance(candidate_id, str) or not ID_RE.fullmatch(candidate_id):
         raise ValueError("candidate id must be canonical")
