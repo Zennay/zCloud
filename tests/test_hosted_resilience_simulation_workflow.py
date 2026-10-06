@@ -42,6 +42,22 @@ class HostedResilienceSimulationWorkflowTests(unittest.TestCase):
         self.assertIn("node tests/test_firefox_recovery_contract.js", text)
         self.assertIn("ZCLOUD_HOSTED_RESILIENCE_SIMULATION_GREEN=1", text)
 
+    def test_gate_reacts_to_each_underlying_implementation_surface(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        for path in (
+            "server.py",
+            "project_runtime.py",
+            "firefox-extension/recovery.js",
+            "firefox-extension/background.js",
+            "public/zcloud-worker.user.js",
+        ):
+            self.assertGreaterEqual(
+                text.count(f"      - {path}"),
+                2,
+                f"{path} must trigger both pull_request and push resilience gates",
+            )
+
     def test_gate_cannot_mutate_live_vps_or_browser_state(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 
