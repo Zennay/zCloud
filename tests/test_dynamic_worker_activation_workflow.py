@@ -77,7 +77,7 @@ class DynamicWorkerActivationWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_cannot_cancel_live_activation(self):
         self.assertIn(
-            "group: zcloud-dynamic-worker-pool-activation-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || 'live' }}",
+            "group: zcloud-dynamic-worker-pool-activation-${{ github.event_name }}-${{ github.ref }}",
             self.text,
         )
         self.assertIn("ZCLOUD_DYNAMIC_WORKER_ACTIVATION_GREEN=disabled", self.text)
