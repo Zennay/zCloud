@@ -21,6 +21,11 @@ class ProjectThroughputWorkflowTests(unittest.TestCase):
         self.assertIn("ZCLOUD_PROJECT_THROUGHPUT_READONLY_GREEN", text)
         self.assertIn("before_fingerprint=", text)
         self.assertIn("after_fingerprint=", text)
+        self.assertIn(
+            "group: zcloud-project-throughput-${{ github.event.pull_request.head.ref || github.ref_name }}",
+            text,
+        )
+        self.assertIn("cancel-in-progress: true", text)
 
     def test_workflow_never_mutates_live_queue_or_receipts(self):
         text = WORKFLOW.read_text(encoding="utf-8")
