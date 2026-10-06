@@ -1,0 +1,180 @@
+name: LightUp consumer integrity VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-consumer-integrity-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-consumer-integrity-vps-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-consumer-integrity-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  ISSUE332_BRANCH: chatgpt/st5-classification-review-consumer-rejection-purity-20261006
+  ISSUE332_EXPECTED_SHA: 38d1d015685889c745c323a4fd05e0a56f0ed567
+  ISSUE334_BRANCH: chatgpt/st5-classification-review-consumer-readonly-20261006
+  ISSUE334_EXPECTED_SHA: 5d452bd39aca11a6971aee68a73a3d5ccc903ac2
+
+jobs:
+  prove:
+    name: Consumer integrity exact-head proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp branch heads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          snapshot_branch() {
+            local label="$1"
+            local branch="$2"
+            local expected="$3"
+            local remote_ref="refs/remotes/origin/lightup-${label}-consumer-integrity-proof"
+            local snapshot="${RUNNER_TEMP}/lightup-${label}-${GITHUB_RUN_ID}"
+            git -C "${LIGHTUP_REPO}" fetch --prune origin \
+              "+refs/heads/${branch}:${remote_ref}"
+            local actual
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+            echo "${label}_SNAPSHOT=${snapshot}" >> "${GITHUB_ENV}"
+            echo "${label}_ACTUAL_SHA=${actual}" >> "${GITHUB_ENV}"
+          }
+
+          snapshot_branch ISSUE332 "${ISSUE332_BRANCH}" "${ISSUE332_EXPECTED_SHA}"
+          snapshot_branch ISSUE334 "${ISSUE334_BRANCH}" "${ISSUE334_EXPECTED_SHA}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove exact heads on Python 3.11
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          prove() {
+            local label="$1"
+            local snapshot="$2"
+            local child_test="$3"
+            cd "${snapshot}"
+            export PYTHONPATH=src:tests
+            python -m compileall -q src tests
+            python -m unittest -v "${child_test}"
+            python -m unittest discover -s tests -v
+            python -m unittest discover -s tests/integration -v
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+            echo "LIGHTUP_CONSUMER_INTEGRITY_GREEN label=${label}"
+          }
+
+          prove ISSUE332 "${ISSUE332_SNAPSHOT}" \
+            test_future_security_classification_review_request_consumer_rejection_purity
+          prove ISSUE334 "${ISSUE334_SNAPSHOT}" \
+            test_future_security_classification_review_request_consumer_readonly
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove exact heads on Python 3.14
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          prove() {
+            local label="$1"
+            local snapshot="$2"
+            local child_test="$3"
+            cd "${snapshot}"
+            export PYTHONPATH=src:tests
+            python -m compileall -q src tests
+            python -m unittest -v "${child_test}"
+            python -m unittest discover -s tests -v
+            python -m unittest discover -s tests/integration -v
+            echo "LIGHTUP_CONSUMER_INTEGRITY_GREEN label=${label}"
+          }
+
+          prove ISSUE332 "${ISSUE332_SNAPSHOT}" \
+            test_future_security_classification_review_request_consumer_rejection_purity
+          prove ISSUE334 "${ISSUE334_SNAPSHOT}" \
+            test_future_security_classification_review_request_consumer_readonly
+
+      - name: Write exact-head receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-consumer-integrity-vps-proof.json
+          import json
+          import os
+          import socket
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "LightUp",
+              "result": "success",
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "heads": {
+                  "332": {
+                      "branch": os.environ["ISSUE332_BRANCH"],
+                      "expected_sha": os.environ["ISSUE332_EXPECTED_SHA"],
+                      "actual_sha": os.environ["ISSUE332_ACTUAL_SHA"],
+                  },
+                  "334": {
+                      "branch": os.environ["ISSUE334_BRANCH"],
+                      "expected_sha": os.environ["ISSUE334_EXPECTED_SHA"],
+                      "actual_sha": os.environ["ISSUE334_ACTUAL_SHA"],
+                  },
+              },
+              "proof": [
+                  "compile-py311-py314",
+                  "dedicated-consumer-integrity-regressions-py311-py314",
+                  "full-unit-suite-py311-py314",
+                  "real-producer-integration-py311-py314",
+                  "safety-canary-py311",
+              ],
+          }, sort_keys=True, indent=2))
+          PY
+          cat artifacts/lightup-consumer-integrity-vps-proof.json
+
+      - name: Upload receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-consumer-integrity-vps-proof-${{ github.run_id }}
+          path: artifacts/lightup-consumer-integrity-vps-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${ISSUE332_SNAPSHOT:-}" "${ISSUE334_SNAPSHOT:-}"
