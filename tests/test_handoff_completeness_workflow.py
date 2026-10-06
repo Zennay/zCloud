@@ -39,6 +39,8 @@ class HandoffCompletenessWorkflowTests(unittest.TestCase):
         self.assertIn('allowed={"project_id","state","receipt_id","observed_at","missing"}', text)
         self.assertIn("ZCLOUD_HANDOFF_COMPLETENESS_VPS_GREEN=1", text)
         self.assertIn("ZCLOUD_HANDOFF_COMPLETENESS_READY=", text)
+        self.assertIn("ZCLOUD_HANDOFF_COMPLETENESS_PROJECTS=", text)
+        self.assertIn('{"project_id":p["project_id"],"state":p["state"],"missing":p["missing"]}', text)
 
 
 if __name__ == "__main__":
