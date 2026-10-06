@@ -39,12 +39,22 @@ class PostdeployCanaryLiveProofWorkflowTests(unittest.TestCase):
         self.assertIn("--db /home/ubuntu/zennay-cloud/history.db", text)
         self.assertIn("--base-url http://127.0.0.1:8765", text)
         self.assertIn("ZCLOUD_POSTDEPLOY_CANARY_LIVE_PROOF_GREEN", text)
+        self.assertIn("CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", text)
+        self.assertIn('"candidate_sha": candidate_sha', text)
+        self.assertIn('"workflow_run_id": os.environ["GITHUB_RUN_ID"]', text)
+        self.assertIn('"workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"]', text)
+        self.assertIn('"runner_name": os.environ.get("RUNNER_NAME")', text)
+        self.assertIn('"machine": socket.gethostname()', text)
+        self.assertIn('"canary": canary', text)
 
     def test_evidence_upload_is_bounded(self):
         text = self.text()
         self.assertIn("actions/upload-artifact@v4", text)
         self.assertIn("if-no-files-found: error", text)
         self.assertIn("retention-days: 14", text)
+        self.assertIn("zcloud-postdeploy-canary-live-proof.raw.json", text)
+        self.assertIn("zcloud-postdeploy-canary-live-proof.json", text)
+        self.assertIn("if len(candidate_sha) != 40", text)
         self.assertIn("timeout-minutes: 5", text)
 
 
