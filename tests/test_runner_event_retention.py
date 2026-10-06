@@ -72,8 +72,11 @@ class RunnerEventRetentionTests(unittest.TestCase):
 
         self.assertEqual("dry-run", result["mode"])
         # The 193h heartbeat is old enough, but it is not the latest heartbeat.
+        self.assertEqual(1, result["eligible"]["count"])
+        self.assertEqual({"heartbeat": 1}, result["eligible"]["by_event"])
         self.assertEqual(1, result["planned"]["count"])
         self.assertEqual({"heartbeat": 1}, result["planned"]["by_event"])
+        self.assertFalse(result["planned"]["has_more"])
         self.assertEqual(old_heartbeat, result["planned"]["oldest_id"])
         self.assertEqual(before, self.rows())
         self.assertNotIn(old_targets, {
@@ -164,7 +167,10 @@ class RunnerEventRetentionTests(unittest.TestCase):
             batch_limit=2,
             observed_at=observed,
         )
+        self.assertEqual(5, result["eligible"]["count"])
+        self.assertEqual({"heartbeat": 5}, result["eligible"]["by_event"])
         self.assertEqual(2, result["planned"]["count"])
+        self.assertTrue(result["planned"]["has_more"])
 
     def test_non_allowlisted_semantic_events_and_sensitive_payload_are_preserved(self):
         observed = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
