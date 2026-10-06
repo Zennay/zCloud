@@ -143,7 +143,12 @@ def classify(record: dict[str, Any], *, now: datetime) -> tuple[str, list[str], 
 
 
 def select(payload: Any, *, now: datetime) -> dict[str, Any]:
-    records = payload.get("branches") if isinstance(payload, dict) else payload
+    if isinstance(payload, dict):
+        if set(payload) != {"branches"}:
+            raise InputError("top-level object must contain only branches")
+        records = payload["branches"]
+    else:
+        records = payload
     if not isinstance(records, list):
         raise InputError("input must be a list or object with a branches list")
     if len(records) > MAX_BRANCHES:
