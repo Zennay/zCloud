@@ -20,15 +20,19 @@ on:
       - scripts/zcloud_vps_deploylane_coordination.py
       - scripts/zcloud_transactional_promote.py
       - scripts/zcloud_recovery.py
+      - scripts/zcloud_safe_idle_retry_wait.py
       - scripts/zcloud_deploy_safe_idle.py
       - scripts/zcloud_runtime_project_schema_repair.py
       - tests/test_deploy_safe_idle.py
       - tests/test_runtime_project_schema_repair.py
       - tests/test_transactional_promote.py
       - tests/test_zcloud_recovery.py
+      - tests/test_safe_idle_retry_wait.py
+      - tests/test_safe_idle_retry_workflow.py
       - tests/test_vps_runner_guard.py
       - server.py
       - .github/workflows/zcloud-vps-deploy.yml
+      - .github/workflows/zcloud-safe-idle-retry.yml
       - .github/workflows/zcloud-vps-execution-probe.yml
 
 permissions:
