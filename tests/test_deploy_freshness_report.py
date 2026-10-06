@@ -179,5 +179,39 @@ class DeployFreshnessReportTests(unittest.TestCase):
             self.build(self.deployed_sha, "f" * 40)
 
 
+    def test_malformed_manifest_format_is_rejected_cleanly(self):
+        snapshot_id = "20261006T220000Z-test"
+        manifest_path = self.state / "snapshots" / snapshot_id / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["format_version"] = "not-an-int"
+        manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            report.DeployFreshnessError,
+            "manifest format",
+        ):
+            self.build(self.deployed_sha)
+
+    def test_unbounded_or_naive_lkg_timestamp_is_rejected(self):
+        pointer_path = self.state / "last-known-good.json"
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        pointer["updated_at"] = "2026-10-06T22:00:00"
+        pointer_path.write_text(json.dumps(pointer) + "\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            report.DeployFreshnessError,
+            "timezone information",
+        ):
+            self.build(self.deployed_sha)
+
+        pointer["updated_at"] = "x" * 81
+        pointer_path.write_text(json.dumps(pointer) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            report.DeployFreshnessError,
+            "bounded ISO-8601",
+        ):
+            self.build(self.deployed_sha)
+
+
 if __name__ == "__main__":
     unittest.main()
