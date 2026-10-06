@@ -347,7 +347,6 @@ class RunnerSmokeTests(unittest.TestCase):
                 "VALUES(?,?,?,?,?)",
                 ("cloud::w1", "new_chat", "pending", long_stale, long_stale),
             ).lastrowid
-            conn.execute("BEGIN IMMEDIATE")
             reconciled = server._reconcile_stale_runner_commands_locked(
                 conn,
                 at=observed_at,
