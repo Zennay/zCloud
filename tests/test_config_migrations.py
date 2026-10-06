@@ -115,6 +115,38 @@ class ConfigMigrationTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("refusing in-place", payload["error"])
 
+    def test_migration_refuses_existing_output_and_symlink_input(self):
+        source = FIXTURES / "project-contracts-v0.json"
+        with tempfile.TemporaryDirectory() as td:
+            output = Path(td) / "existing.json"
+            output.write_text('{"keep": true}\n', encoding="utf-8")
+            with self.assertRaisesRegex(
+                migrate.ConfigMigrationError,
+                "refusing to overwrite migration output",
+            ):
+                migrate.write_migrated(
+                    input_path=source,
+                    output_path=output,
+                    name="project-contracts.json",
+                    from_version=0,
+                    to_version=1,
+                )
+            self.assertEqual('{"keep": true}\n', output.read_text(encoding="utf-8"))
+
+            linked = Path(td) / "input-link.json"
+            linked.symlink_to(source)
+            with self.assertRaisesRegex(
+                migrate.ConfigMigrationError,
+                "refusing symlink migration input",
+            ):
+                migrate.write_migrated(
+                    input_path=linked,
+                    output_path=Path(td) / "from-link.json",
+                    name="project-contracts.json",
+                    from_version=0,
+                    to_version=1,
+                )
+
     def test_cli_writes_deterministic_non_destructive_migration(self):
         source = FIXTURES / "project-contracts-v0.json"
         expected = json.loads(
@@ -146,6 +178,7 @@ class ConfigMigrationTests(unittest.TestCase):
             )
             self.assertEqual(0, proc.returncode, proc.stderr)
             self.assertEqual(expected, json.loads(output.read_text(encoding="utf-8")))
+            self.assertFalse(any(output.parent.glob(".project-contracts-v1.json.zcloud-migrate-*")))
             self.assertNotIn(
                 "schema_version",
                 json.loads(source.read_text(encoding="utf-8")),
