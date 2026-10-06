@@ -1,6 +1,12 @@
 name: LightUp VPS verification
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-vps-verification.yml
+      - tests/test_lightup_vps_verification_workflow.py
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
@@ -16,15 +22,26 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: lightup-vps-verification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Check out exact zCloud workflow revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           clean: true
           fetch-depth: 1
@@ -34,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
-          test "$actual" = "$GITHUB_SHA"
+          test "$actual" = "$EXPECTED_ZCLOUD_SHA"
           printf 'ZCLOUD_EXACT_CHECKOUT_GREEN sha=%s\n' "$actual"
 
       - name: Verify permanent zCloud VPS runner
