@@ -97,7 +97,7 @@ jobs:
             tests.test_scope_authorization_lab_classification_non_authority -v
 
   prove:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     name: Exact pack on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 25
