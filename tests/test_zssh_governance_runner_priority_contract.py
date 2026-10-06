@@ -96,6 +96,12 @@ class ZsshGovernanceRunnerPriorityContractTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", text)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', text)
 
+    def test_proof_workflow_runs_hosted_validation_before_vps(self):
+        text = self.proof_text
+        self.assertIn("  validate:\n", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("needs: validate", text)
+        self.assertIn("Run focused contract suite", text)
     def test_proof_workflow_requires_permanent_vps_before_contract_test(self):
         text = self.proof_text
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
