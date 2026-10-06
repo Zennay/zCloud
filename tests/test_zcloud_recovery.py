@@ -219,6 +219,64 @@ class RecoveryTests(unittest.TestCase):
             "rollback_failed_revert_failed",
             transaction_id="tx-revert-failed",
         )
+        terminal_then_restarted = transactions / "tx-terminal-then-restarted"
+        terminal_then_restarted.mkdir()
+        recovery.append_log(
+            self.state,
+            "rollback_succeeded",
+            transaction_id="tx-terminal-then-restarted",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-01T12:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+        recovery.append_log(
+            self.state,
+            "rollback_started",
+            transaction_id="tx-terminal-then-restarted",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-05T12:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+
+        terminal_then_revert_failed = transactions / "tx-terminal-then-revert-failed"
+        terminal_then_revert_failed.mkdir()
+        recovery.append_log(
+            self.state,
+            "rollback_succeeded",
+            transaction_id="tx-terminal-then-revert-failed",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-01T13:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+        recovery.append_log(
+            self.state,
+            "rollback_failed_revert_failed",
+            transaction_id="tx-terminal-then-revert-failed",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-05T13:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+
         unknown = transactions / "manual-operator-evidence"
         unknown.mkdir()
         (unknown / "notes.txt").write_text("keep me\n")
@@ -244,6 +302,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue((transactions / "tx-reverted-new").exists())
         self.assertTrue(in_progress.exists())
         self.assertTrue(failed_revert.exists())
+        self.assertTrue(terminal_then_restarted.exists())
+        self.assertTrue(terminal_then_revert_failed.exists())
         self.assertTrue(unknown.exists())
         self.assertTrue(symlink.is_symlink())
         self.assertTrue(target.exists())
