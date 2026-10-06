@@ -171,16 +171,17 @@ def build_snapshot(db_path: Path, *, limit: int = 100, project: str | None = Non
             "config_audit",
             {"id", "ts", "config_key", "target", "result"},
         ):
+            where = " WHERE target=?" if project else ""
+            args = (project, fetch_limit) if project else (fetch_limit,)
             rows = conn.execute(
-                "SELECT id,ts,config_key,target,result FROM config_audit "
-                "ORDER BY id DESC LIMIT ?",
-                (fetch_limit,),
+                "SELECT id,ts,config_key,target,result FROM config_audit"
+                + where
+                + " ORDER BY id DESC LIMIT ?",
+                args,
             )
             for row in rows:
                 target = str(row["target"] or "").strip()
                 target_project = target if PROJECT_RE.fullmatch(target) else None
-                if project and target_project != project:
-                    continue
                 _append_event(
                     events,
                     malformed,
