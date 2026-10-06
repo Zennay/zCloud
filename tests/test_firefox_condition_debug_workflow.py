@@ -61,7 +61,7 @@ class FirefoxConditionDebugWorkflowTests(unittest.TestCase):
         self.assertIn("ZCLOUD_FIREFOX_CONDITION_DEBUG_GREEN=1", text)
 
         self.assertNotIn("systemctl --user cat", text)
-        self.assertNotIn("cat "$1"", text)
+        self.assertNotIn('cat "$1"', text)
         self.assertNotIn("sed -n '1,220p'", text)
 
         for forbidden in (
