@@ -133,12 +133,11 @@ def http_json_ready(
             if remaining <= 0:
                 raise last_error
             sleep_for = min(max(0.05, float(retry_interval)), remaining)
-            if sleep_for >= remaining:
-                sleep_fn(remaining)
-                raise last_error
             sleep_fn(sleep_for)
-            retry_budget = remaining - sleep_for
-            request_timeout = max(0.001, min(float(timeout), retry_budget))
+            remaining = deadline - monotonic_fn()
+            if remaining <= 0:
+                raise last_error
+            request_timeout = max(0.001, min(float(timeout), remaining))
 
 
 def http_ok(url: str, timeout: float = 8.0) -> bool:
