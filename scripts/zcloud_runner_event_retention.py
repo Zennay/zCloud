@@ -191,15 +191,17 @@ def run_retention(
         deleted_by_event: Counter[str] = Counter()
         if apply:
             for item in candidates:
+                # BEGIN IMMEDIATE makes the candidate plan stable: no writer can
+                # insert a newer event between selection and deletion. The plan
+                # already excludes MAX(id) for every allowlisted event, so recheck
+                # only the exact row identity, event and age here. Avoid thousands
+                # of repeated MAX(event) scans on the large live telemetry table.
                 cur = conn.execute(
                     """DELETE FROM runner_events
                        WHERE id=? AND event=?
                          AND unixepoch(ts) IS NOT NULL
-                         AND unixepoch(ts) < unixepoch(?)
-                         AND id <> (
-                             SELECT MAX(id) FROM runner_events WHERE event=?
-                         )""",
-                    (item["id"], item["event"], cutoff, item["event"]),
+                         AND unixepoch(ts) < unixepoch(?)""",
+                    (item["id"], item["event"], cutoff),
                 )
                 if cur.rowcount:
                     deleted += int(cur.rowcount)
