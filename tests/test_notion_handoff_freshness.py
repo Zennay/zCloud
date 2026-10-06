@@ -126,7 +126,7 @@ class NotionHandoffFreshnessTests(unittest.TestCase):
         serialized = json.dumps(payload, sort_keys=True)
         self.assertNotIn("handoff_at", serialized)
         self.assertNotIn("recorded_at", serialized)
-        self.assertNotIn("captured_at\":", serialized)
+        self.assertNotIn('"captured_at":', serialized)
         self.assertNotIn("source_kind\":", serialized)
 
     def test_symlink_inputs_and_unsupported_fields_are_rejected(self):
