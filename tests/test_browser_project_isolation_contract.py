@@ -93,6 +93,19 @@ class BrowserProjectIsolationContractTests(unittest.TestCase):
         self.assertEqual("failed", payload["state"])
         self.assertIn("handoff_rejects_cross_project_sender", payload["failed_checks"])
 
+    def test_tab_listener_must_reject_foreign_project_messages(self):
+        path = self.root / "firefox-extension" / "background.js"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace(
+            'if (!message || message.projectId !== cfg.projectId) return;',
+            'if (!message) return;',
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+        payload = isolation.audit(self.root)
+        self.assertEqual("failed", payload["state"])
+        self.assertIn("tab_listener_rejects_foreign_project_messages", payload["failed_checks"])
+
     def test_symlinked_browser_source_is_rejected(self):
         path = self.root / "public" / "zcloud-worker.user.js"
         real = self.root / "public" / "real.user.js"
