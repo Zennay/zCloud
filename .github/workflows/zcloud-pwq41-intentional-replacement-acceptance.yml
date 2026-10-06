@@ -1,0 +1,664 @@
+name: zCloud PWQ-41 intentional replacement live acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-pwq41-intentional-replacement-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  statuses: read
+
+concurrency:
+  group: zcloud-pwq41-intentional-replacement-live-acceptance
+  cancel-in-progress: false
+
+jobs:
+  wait-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      main_sha: ${{ steps.production.outputs.main_sha }}
+    steps:
+      - name: Wait for exact current main to be production green
+        id: production
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          deadline = time.time() + 780
+          last = None
+
+          def get(path):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}{path}",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "zcloud-pwq41-acceptance",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
+
+          while time.time() < deadline:
+              main = get("/commits/main")
+              sha = str(main.get("sha") or "")
+              status = get(f"/commits/{sha}/status")
+              matching = [
+                  item for item in status.get("statuses", [])
+                  if str(item.get("context") or "") == "zcloud/vps-production"
+              ]
+              latest = max(
+                  matching,
+                  key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)),
+                  default=None,
+              )
+              state = str((latest or {}).get("state") or "missing")
+              marker = (sha, state)
+              if marker != last:
+                  print(f"PWQ41_PRODUCTION_WAIT sha={sha} state={state}")
+                  last = marker
+              if state == "success":
+                  with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                      handle.write(f"main_sha={sha}\n")
+                  print(f"PWQ41_PRODUCTION_GREEN sha={sha}")
+                  raise SystemExit(0)
+              if state == "failure":
+                  raise SystemExit(f"current main production status is failure: {sha}")
+              time.sleep(15)
+
+          raise SystemExit("timed out waiting for current main production green")
+          PY
+
+  accept:
+    needs: wait-production
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 14
+    env:
+      EXPECTED_MAIN_SHA: ${{ needs.wait-production.outputs.main_sha }}
+      IMPLEMENTATION_SHA: a0db382819e777584c6dd8c0c051bbc0689a94bc
+      PRODUCT_DRAIN_FIX_SHA: f01722db29fe809d4864495d6d8e167596fb0a4c
+      RECOVERY_COLLISION_FIX_SHA: cbd34079e6fdc6c4e74a555e66ddb6c30ad3c0bb
+      LEGACY_DRAIN_RETRY_FIX_SHA: b7f1d0c878715245db38c97ed13e64d24b6398f6
+      STALE_LEGACY_MARKER_FIX_SHA: 25852ae475086f1f015baf7fe556ab7332a62c5c
+      LEGACY_DRAIN_ACK_FIX_SHA: ba4f58df77b137948a102284cd740902a7d2aec0
+      ZCLOUD_BASE: http://127.0.0.1:8765
+      ZCLOUD_DB: /home/ubuntu/zennay-cloud/history.db
+      EVIDENCE: /tmp/zcloud-pwq41-intentional-replacement-evidence-${{ github.run_id }}.json
+    steps:
+      - name: Check out exact production revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.wait-production.outputs.main_sha }}
+          fetch-depth: 128
+
+      - name: Prove intentional worker replacement handoff live
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sqlite3
+          import subprocess
+          import time
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          BASE = os.environ["ZCLOUD_BASE"]
+          DB = os.environ["ZCLOUD_DB"]
+          EXPECTED = os.environ["EXPECTED_MAIN_SHA"]
+          IMPLEMENTATION = os.environ["IMPLEMENTATION_SHA"]
+          LEGACY_DRAIN_RETRY_FIX = os.environ["LEGACY_DRAIN_RETRY_FIX_SHA"]
+          STALE_LEGACY_MARKER_FIX = os.environ["STALE_LEGACY_MARKER_FIX_SHA"]
+          LEGACY_DRAIN_ACK_FIX = os.environ["LEGACY_DRAIN_ACK_FIX_SHA"]
+          EVIDENCE = Path(os.environ["EVIDENCE"])
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
+
+          def now():
+              return datetime.now(timezone.utc).isoformat()
+
+          def call(method, path, payload=None, timeout=45):
+              body = None
+              headers = {"User-Agent": "zcloud-pwq41-live-acceptance/1"}
+              if payload is not None:
+                  body = json.dumps(payload).encode()
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  return json.load(response)
+
+          def github_repo_get(repo, path):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}{path}",
+                  headers={
+                      "Authorization": f"Bearer {GITHUB_TOKEN}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "zcloud-pwq41-live-acceptance",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return json.load(response)
+
+          def github_get(path):
+              return github_repo_get(REPO, path)
+
+          def assert_current_main(stage):
+              current = str(github_get("/commits/main").get("sha") or "")
+              if current != EXPECTED:
+                  raise SystemExit(
+                      f"repository main moved during PWQ-41 acceptance stage={stage} "
+                      f"expected={EXPECTED} actual={current}"
+                  )
+              print(f"PWQ41_CURRENT_MAIN_OK stage={stage} sha={current}", flush=True)
+
+          def call_with_warmup_retry(method, path, payload=None, timeout=45, window_seconds=45):
+              deadline = time.time() + window_seconds
+              attempt = 0
+              last_error = None
+              while True:
+                  attempt += 1
+                  try:
+                      return call(method, path, payload=payload, timeout=timeout)
+                  except Exception as exc:
+                      last_error = exc
+                      if method != "GET" or time.time() >= deadline:
+                          raise
+                      print(
+                          "PWQ41_WARMUP_RETRY "
+                          + json.dumps(
+                              {
+                                  "attempt": attempt,
+                                  "path": path,
+                                  "error": str(exc)[:300],
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      time.sleep(min(5, attempt))
+
+          def claims(base_project):
+              data = call("GET", "/api/task-claims?project=" + urllib.parse.quote(base_project))
+              return list(data.get("claims") or [])
+
+          def compact_claim(claim):
+              metadata = claim.get("metadata")
+              if metadata is None:
+                  metadata = claim.get("metadata_json")
+              return {
+                  "claim_key": str(claim.get("claim_key") or ""),
+                  "owner_id": str(claim.get("owner_id") or ""),
+                  "worker_id": str(claim.get("worker_id") or ""),
+                  "metadata": metadata,
+              }
+
+          def compact_queue(target):
+              item = target.get("queue_item") or {}
+              lane = item.get("execution_lane") or {}
+              return {
+                  "queue_id": str(item.get("queue_id") or ""),
+                  "title": str(item.get("title") or ""),
+                  "lane_id": str(lane.get("lane_id") or ""),
+              }
+
+          def health():
+              proc = subprocess.run(
+                  ["python3", "/home/ubuntu/zennay-cloud/scripts/zcloud_healthcheck.py", "--json"],
+                  text=True,
+                  capture_output=True,
+                  timeout=90,
+              )
+              payload = None
+              try:
+                  payload = json.loads(proc.stdout)
+              except Exception:
+                  payload = {"stdout_tail": proc.stdout[-2000:], "stderr_tail": proc.stderr[-2000:]}
+              if proc.returncode != 0:
+                  raise SystemExit("zCloud healthcheck is not green: " + json.dumps(payload, sort_keys=True))
+              return payload
+
+          for required_sha, label in (
+              (IMPLEMENTATION, "PWQ-41 implementation"),
+              (LEGACY_DRAIN_RETRY_FIX, "PWQ-41 legacy drain retry fix"),
+              (STALE_LEGACY_MARKER_FIX, "PWQ-41 stale legacy marker recovery fix"),
+              (LEGACY_DRAIN_ACK_FIX, "PWQ-41 legacy drain async acknowledgement fix"),
+          ):
+              ancestor = subprocess.run(
+                  ["git", "merge-base", "--is-ancestor", required_sha, EXPECTED],
+                  check=False,
+              )
+              if ancestor.returncode != 0:
+                  raise SystemExit(
+                      f"production revision {EXPECTED} does not contain {label} {required_sha}"
+                  )
+
+          assert_current_main("pre-baseline")
+          status = call_with_warmup_retry("GET", "/api/status", window_seconds=45)
+          cloud = next((p for p in status.get("projects", []) if p.get("id") == "cloud"), None)
+          if not cloud:
+              raise SystemExit("cloud project missing from live /api/status")
+          live_state = cloud.get("execution_state") or {}
+          live_sha = str(live_state.get("commit_sha") or "")
+          if live_sha != EXPECTED:
+              raise SystemExit(f"live receipt is not exact production sha expected={EXPECTED} actual={live_sha}")
+          baseline_health = health()
+
+          fixture_owner = "pwq41-acceptance-" + os.environ["GITHUB_RUN_ID"]
+          fixture_claim_key = "acceptance:pwq41:" + os.environ["GITHUB_RUN_ID"]
+          fixture_claim_created = False
+          fixture_project = ""
+          registry = json.loads(Path("projects.json").read_text(encoding="utf-8"))
+          preflight_repos = {}
+          for project in registry:
+              project_id = str(project.get("id") or "").strip()
+              repo_url = str(project.get("repo_url") or "").strip()
+              match = re.search(r"github\.com[/:]([^/]+/[^/#]+)", repo_url, re.I)
+              if project_id and match:
+                  preflight_repos[project_id] = match.group(1).removesuffix(".git")
+
+          def live_github_evidence(base_project):
+              repo = preflight_repos.get(base_project)
+              if not repo:
+                  raise SystemExit(f"no canonical GitHub repo configured for acceptance project {base_project}")
+              main = github_repo_get(repo, "/commits/main")
+              pulls = github_repo_get(repo, "/pulls?state=open&per_page=100")
+              branches = github_repo_get(repo, "/branches?per_page=100")
+              return {
+                  "checked": True,
+                  "repo": repo,
+                  "main_sha": str(main.get("sha") or ""),
+                  "open_prs": [
+                      str(item.get("number") or "")
+                      for item in pulls
+                      if item.get("number") is not None
+                  ],
+                  "branches": [
+                      str(item.get("name") or "")
+                      for item in branches
+                      if str(item.get("name") or "").strip()
+                  ],
+              }
+
+          candidate_deadline = time.time() + 180
+          candidate_attempt = 0
+          candidates = []
+          claimless_candidates = []
+          last_diagnostics = []
+          while time.time() < candidate_deadline:
+              candidate_attempt += 1
+              target_data = call("GET", "/api/runner-targets")
+              projects = target_data.get("projects") or {}
+              candidates = []
+              claimless_candidates = []
+              diagnostics = []
+              for worker_key, target in projects.items():
+                  if str(target.get("provider") or "chatgpt") != "chatgpt":
+                      continue
+                  base = str(target.get("base_project_id") or worker_key.split("::w", 1)[0])
+                  queue = compact_queue(target)
+                  owned = [c for c in claims(base) if str(c.get("worker_id") or "") == worker_key]
+                  diagnostics.append(
+                      {
+                          "worker_key": worker_key,
+                          "base_project": base,
+                          "active": target.get("active") is True,
+                          "assignment_ready": target.get("assignment_ready") is True,
+                          "desired_state": str(target.get("desired_state") or "running"),
+                          "global_worker_slot": target.get("global_worker_slot"),
+                          "queue": queue,
+                          "claim_count": len(owned),
+                          "claim_keys": [str(item.get("claim_key") or "") for item in owned],
+                      }
+                  )
+                  if target.get("active") is not True:
+                      continue
+                  if target.get("assignment_ready") is not True:
+                      continue
+                  if str(target.get("desired_state") or "running") in {"paused", "draining"}:
+                      continue
+                  if not queue["queue_id"]:
+                      continue
+                  priority = 0 if base == "cloud" else 1
+                  if len(owned) == 1:
+                      candidates.append((priority, worker_key, target, base, compact_claim(owned[0]), queue))
+                  elif len(owned) == 0 and base in preflight_repos:
+                      claimless_candidates.append((priority, worker_key, target, base, queue))
+
+              last_diagnostics = diagnostics
+              if candidates:
+                  print(
+                      "PWQ41_CANDIDATE_READY "
+                      + json.dumps(
+                          {
+                              "attempt": candidate_attempt,
+                              "candidate_count": len(candidates),
+                              "workers": [item[1] for item in candidates],
+                              "fixture": False,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+                  break
+
+              if claimless_candidates and candidate_attempt >= 3:
+                  claimless_candidates.sort(key=lambda item: (item[0], item[1]))
+                  _, worker_key, target, base_project, before_queue = claimless_candidates[0]
+                  source = live_github_evidence(base_project)
+                  preflight = call(
+                      "POST",
+                      "/api/worker-preflight",
+                      {
+                          "project_id": base_project,
+                          "worker_id": worker_key,
+                          "owner_id": fixture_owner,
+                          "notion": {"checked": False},
+                          "github": source,
+                      },
+                  )
+                  if not preflight.get("ok"):
+                      raise SystemExit(
+                          "acceptance fixture preflight failed: "
+                          + json.dumps(preflight, sort_keys=True)
+                      )
+                  acquired = call(
+                      "POST",
+                      "/api/task-claims",
+                      {
+                          "action": "acquire",
+                          "project_id": base_project,
+                          "claim_key": fixture_claim_key,
+                          "owner_id": fixture_owner,
+                          "worker_id": worker_key,
+                          "lease_seconds": 900,
+                          "metadata": {
+                              "task": "PWQ-41 intentional replacement live acceptance fixture",
+                              "acceptance_fixture": True,
+                              "conflict_scope": {
+                                  "capabilities": ["pwq41-live-acceptance"],
+                                  "files": [
+                                      ".github/workflows/zcloud-pwq41-intentional-replacement-acceptance.yml"
+                                  ],
+                              },
+                          },
+                      },
+                  )
+                  if not acquired.get("acquired"):
+                      raise SystemExit(
+                          "acceptance fixture claim was not acquired: "
+                          + json.dumps(acquired, sort_keys=True)
+                      )
+                  fixture_claim_created = True
+                  fixture_project = base_project
+                  before_claim = compact_claim(acquired["claim"])
+                  candidates = [
+                      (0 if base_project == "cloud" else 1, worker_key, target, base_project, before_claim, before_queue)
+                  ]
+                  print(
+                      "PWQ41_FIXTURE_CLAIM_READY "
+                      + json.dumps(
+                          {
+                              "attempt": candidate_attempt,
+                              "worker_key": worker_key,
+                              "base_project": base_project,
+                              "queue_id": before_queue["queue_id"],
+                              "claim_key": fixture_claim_key,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+                  break
+
+              if candidate_attempt == 1 or candidate_attempt % 3 == 0:
+                  print(
+                      "PWQ41_CANDIDATE_WAIT "
+                      + json.dumps(
+                          {
+                              "attempt": candidate_attempt,
+                              "workers": diagnostics,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+              time.sleep(5)
+
+          if not candidates:
+              evidence = {
+                  "ok": False,
+                  "tested_at": now(),
+                  "production_sha": EXPECTED,
+                  "implementation_sha": IMPLEMENTATION,
+              "legacy_drain_retry_fix_sha": LEGACY_DRAIN_RETRY_FIX,
+              "stale_legacy_marker_fix_sha": STALE_LEGACY_MARKER_FIX,
+                  "legacy_drain_ack_fix_sha": LEGACY_DRAIN_ACK_FIX,
+                  "reason": "no-safe-live-candidate",
+                  "candidate_attempts": candidate_attempt,
+                  "workers": last_diagnostics,
+                  "baseline_health_summary": baseline_health.get("summary"),
+              }
+              EVIDENCE.write_text(
+                  json.dumps(evidence, indent=2, sort_keys=True, default=str) + "\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(
+                  "no active assignment-ready ChatGPT worker available for native or "
+                  "isolated acceptance claim; diagnostic evidence written; refusing replacement"
+              )
+
+          candidates.sort(key=lambda item: (item[0], item[1]))
+          _, worker_key, target, base_project, before_claim, before_queue = candidates[0]
+          old_conversation = str(target.get("conversation_id") or "")
+          slot = int(target.get("worker_slot") or (worker_key.rsplit("::w", 1)[1] if "::w" in worker_key else 1))
+          started = now()
+
+          assert_current_main("pre-mutation")
+          command = call("POST", "/api/runner-control", {
+              "project_id": worker_key,
+              "action": "new_chat",
+          })
+          if not command.get("ok"):
+              raise SystemExit("new_chat was rejected: " + json.dumps(command, sort_keys=True))
+          command_id = int(command.get("command_id") or 0)
+          if not command_id:
+              raise SystemExit("new_chat response is missing command_id")
+
+          terminal = None
+          deadline = time.time() + 660
+          while time.time() < deadline:
+              with sqlite3.connect(DB, timeout=10) as conn:
+                  conn.row_factory = sqlite3.Row
+                  row = conn.execute(
+                      "SELECT id,project_id,action,status,result,created_at,updated_at "
+                      "FROM runner_commands WHERE id=?",
+                      (command_id,),
+                  ).fetchone()
+              if row:
+                  terminal = dict(row)
+                  if terminal["status"] in {"completed", "failed", "cancelled", "superseded"}:
+                      break
+              time.sleep(2)
+
+          if not terminal or terminal.get("status") != "completed":
+              raise SystemExit("replacement command did not complete: " + json.dumps(terminal, sort_keys=True))
+
+          event_deadline = time.time() + 180
+          events = []
+          after_target = None
+          after_claim = None
+          while time.time() < event_deadline:
+              fresh_targets = call("GET", "/api/runner-targets")
+              after_target = (fresh_targets.get("projects") or {}).get(worker_key)
+              if after_target:
+                  owned = [c for c in claims(base_project) if str(c.get("worker_id") or "") == worker_key]
+                  after_claim = compact_claim(owned[0]) if len(owned) == 1 else None
+
+              with sqlite3.connect(DB, timeout=10) as conn:
+                  conn.row_factory = sqlite3.Row
+                  rows = conn.execute(
+                      "SELECT id,ts,event,reason,error FROM runner_events "
+                      "WHERE project_id=? AND worker_slot=? AND ts>=? ORDER BY id",
+                      (base_project, slot, started),
+                  ).fetchall()
+                  events = [dict(row) for row in rows]
+
+              names = [str(event.get("event") or "") for event in events]
+              if (
+                  after_target
+                  and after_claim
+                  and "worker-replacement-handoff-consumed" in names
+                  and "prompt-sent" in names
+              ):
+                  break
+              time.sleep(3)
+
+          if not after_target:
+              raise SystemExit("replacement worker target disappeared")
+          after_queue = compact_queue(after_target)
+          if after_queue != before_queue:
+              raise SystemExit(
+                  "queue handoff changed across replacement: "
+                  + json.dumps({"before": before_queue, "after": after_queue}, sort_keys=True)
+              )
+          if after_claim != before_claim:
+              raise SystemExit(
+                  "claim handoff changed across replacement: "
+                  + json.dumps({"before": before_claim, "after": after_claim}, sort_keys=True, default=str)
+              )
+
+          names = [str(event.get("event") or "") for event in events]
+          prompt_count = names.count("prompt-sent")
+          handoff_count = names.count("worker-replacement-handoff-consumed")
+          blocked = [e for e in events if str(e.get("event") or "") in {"send-blocked", "recovery-failed"}]
+          if prompt_count != 1:
+              raise SystemExit(f"expected exactly one replacement prompt-sent event, got {prompt_count}")
+          if handoff_count != 1:
+              raise SystemExit(f"expected exactly one handoff-consumed event, got {handoff_count}")
+          if blocked:
+              raise SystemExit("replacement emitted blocked/failure event: " + json.dumps(blocked, sort_keys=True))
+
+          new_conversation = str(after_target.get("conversation_id") or "")
+          if old_conversation and new_conversation and new_conversation == old_conversation:
+              raise SystemExit("intentional replacement did not bind a new conversation")
+
+          final_health = health()
+          assert_current_main("post-proof")
+          evidence = {
+              "ok": True,
+              "tested_at": now(),
+              "production_sha": EXPECTED,
+              "implementation_sha": IMPLEMENTATION,
+              "fixture_claim_created": fixture_claim_created,
+              "fixture_project": fixture_project,
+              "fixture_claim_key": fixture_claim_key if fixture_claim_created else "",
+              "worker_key": worker_key,
+              "base_project": base_project,
+              "worker_slot": slot,
+              "queue_before": before_queue,
+              "queue_after": after_queue,
+              "claim_before": before_claim,
+              "claim_after": after_claim,
+              "old_conversation_id": old_conversation,
+              "new_conversation_id": new_conversation,
+              "command": terminal,
+              "events": events,
+              "prompt_sent_count": prompt_count,
+              "handoff_consumed_count": handoff_count,
+              "baseline_health_summary": baseline_health.get("summary"),
+              "final_health_summary": final_health.get("summary"),
+          }
+          EVIDENCE.write_text(json.dumps(evidence, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+          print("PWQ41_LIVE_ACCEPTANCE_GREEN " + json.dumps({
+              "production_sha": EXPECTED,
+              "worker_key": worker_key,
+              "queue_id": before_queue["queue_id"],
+              "claim_key": before_claim["claim_key"],
+              "command_id": command_id,
+          }, sort_keys=True))
+          PY
+
+      - name: Release PWQ-41 acceptance fixture claim
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          base = os.environ["ZCLOUD_BASE"]
+          owner = "pwq41-acceptance-" + os.environ["GITHUB_RUN_ID"]
+          claim_key = "acceptance:pwq41:" + os.environ["GITHUB_RUN_ID"]
+          project_ids = ["cloud", "lightup"]
+          try:
+              registry = json.loads(Path("projects.json").read_text(encoding="utf-8"))
+              project_ids = sorted({
+                  str(item.get("id") or "").strip()
+                  for item in registry
+                  if str(item.get("id") or "").strip()
+              } | set(project_ids))
+          except Exception as exc:
+              print(f"PWQ41_FIXTURE_CLEANUP_REGISTRY_WARNING error={exc}")
+
+          for project_id in project_ids:
+              body = json.dumps({
+                  "action": "release",
+                  "project_id": project_id,
+                  "claim_key": claim_key,
+                  "owner_id": owner,
+              }).encode()
+              req = urllib.request.Request(
+                  base + "/api/task-claims",
+                  data=body,
+                  headers={
+                      "Content-Type": "application/json",
+                      "User-Agent": "zcloud-pwq41-live-acceptance-cleanup/1",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as response:
+                      result = json.load(response)
+                  if result.get("released"):
+                      print("PWQ41_FIXTURE_CLAIM_RELEASED " + project_id)
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 409:
+                      detail = exc.read().decode("utf-8", "replace")
+                      print(f"PWQ41_FIXTURE_CLEANUP_WARNING project={project_id} http={exc.code} detail={detail[:500]}")
+              except Exception as exc:
+                  print(f"PWQ41_FIXTURE_CLEANUP_WARNING project={project_id} error={exc}")
+          PY
+
+      - name: Upload PWQ-41 live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-pwq41-intentional-replacement-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: ${{ env.EVIDENCE }}
