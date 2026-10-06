@@ -325,6 +325,11 @@ def runner_action(base_url: str, project_id: str, action: str) -> dict[str, Any]
     return {"action": action, "project_id": project_id, **response}
 
 
+def action_due(last_actions: dict[str, float], key: str, now: float, cooldown: float) -> bool:
+    previous = last_actions.get(key)
+    return previous is None or now - previous >= cooldown
+
+
 def maybe_remediate(
     snapshot: dict[str, Any],
     *,
@@ -342,7 +347,7 @@ def maybe_remediate(
     # Re-submit the already persisted settings after two consecutive underfilled
     # samples. This asks the existing allocator to reconcile without inventing or
     # writing allocation state in this debugger.
-    if streaks["underfilled"] >= 2 and now - last_actions.get("reconcile", 0) >= 60:
+    if streaks["underfilled"] >= 2 and action_due(last_actions, "reconcile", now, 60):
         actions.append(reconcile(base_url, snapshot["dynamic"]["body"]))
         last_actions["reconcile"] = now
 
@@ -355,7 +360,7 @@ def maybe_remediate(
     # A persistently allocated-but-missing worker gets a fresh conversation only
     # after three samples, and never while the runtime says it is generating.
     for key in sorted(missing - busy):
-        if worker_streaks.get(key, 0) >= 3 and now - last_actions.get(f"new_chat:{key}", 0) >= 180:
+        if worker_streaks.get(key, 0) >= 3 and action_due(last_actions, f"new_chat:{key}", now, 180):
             actions.append(runner_action(base_url, key, "new_chat"))
             last_actions[f"new_chat:{key}"] = now
 
@@ -366,7 +371,7 @@ def maybe_remediate(
     for key in sorted(ghost_generating):
         ghost_key = f"ghost:{key}"
         streaks[ghost_key] = streaks.get(ghost_key, 0) + 1
-        if streaks[ghost_key] >= 2 and now - last_actions.get(f"new_chat:{key}", 0) >= 300:
+        if streaks[ghost_key] >= 2 and action_due(last_actions, f"new_chat:{key}", now, 300):
             actions.append(runner_action(base_url, key, "new_chat"))
             last_actions[f"new_chat:{key}"] = now
 
@@ -378,7 +383,7 @@ def maybe_remediate(
 
     # Firefox recycle is deliberately a last resort: process missing, or the
     # whole allocated runtime disappeared while the host is under severe pressure.
-    if ((streaks["firefox_missing"] >= 2) or (all_runtime_missing and pressure)) and now - last_actions.get("restart_firefox", 0) >= 300:
+    if ((streaks["firefox_missing"] >= 2) or (all_runtime_missing and pressure)) and action_due(last_actions, "restart_firefox", now, 300):
         actions.append(runner_action(base_url, "", "restart_firefox"))
         last_actions["restart_firefox"] = now
 
