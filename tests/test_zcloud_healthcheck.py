@@ -191,6 +191,36 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(1, len(result["stale_pending_commands"]))
 
+    def test_store_preserves_replacement_command_inside_long_stale_lease(self):
+        created = (self.now - timedelta(seconds=301)).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", created, created),
+            )
+            conn.commit()
+        result = self.store()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([], result["stale_pending_commands"])
+
+    def test_store_fails_closed_after_replacement_long_stale_lease(self):
+        created = (self.now - timedelta(seconds=901)).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", created, created),
+            )
+            conn.commit()
+        result = self.store()
+        self.assertFalse(result["ok"])
+        self.assertEqual(1, len(result["stale_pending_commands"]))
+        self.assertEqual(
+            health.LONG_PENDING_COMMAND_SECONDS,
+            result["stale_pending_commands"][0]["stale_after_seconds"],
+        )
+
     def test_scheduler_detects_count_mismatch(self):
         status, targets = self.sample()
         status["chatgpt_runners"]["cloud"]["desired_worker_count"] = 1
