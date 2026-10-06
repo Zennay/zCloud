@@ -260,6 +260,40 @@ def evaluate(
         max_workers_int = 0
         scheduler_problems.append("invalid max_workers")
 
+    store_target_ids = {
+        str(target["project_id"]) for target in (store.get("targets") or [])
+    }
+    for worker_key, item in projects.items():
+        key = str(worker_key)
+        if not isinstance(item, dict):
+            scheduler_problems.append(f"{key}: invalid runner-target payload")
+            continue
+        base_project_id = str(item.get("base_project_id") or "").strip()
+        project_id = str(item.get("project_id") or "").strip()
+        try:
+            worker_slot = int(item.get("worker_slot") or 0)
+        except (TypeError, ValueError):
+            worker_slot = 0
+        if not base_project_id:
+            scheduler_problems.append(f"{key}: missing base_project_id")
+        elif base_project_id not in store_target_ids:
+            scheduler_problems.append(
+                f"{key}: runner-target references unknown base project "
+                f"{base_project_id}"
+            )
+        if worker_slot < 1:
+            scheduler_problems.append(f"{key}: invalid worker_slot {worker_slot}")
+        elif base_project_id:
+            expected_key = f"{base_project_id}::w{worker_slot}"
+            if key != expected_key:
+                scheduler_problems.append(
+                    f"{key}: runner-target key mismatch, expected {expected_key}"
+                )
+        if project_id != key:
+            scheduler_problems.append(
+                f"{key}: project_id identity mismatch {project_id!r}"
+            )
+
     for target in store.get("targets") or []:
         pid = str(target["project_id"])
         count = int(target["worker_count"] or 0)
