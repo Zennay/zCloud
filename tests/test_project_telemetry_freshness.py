@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 
 from scripts import zcloud_project_telemetry_freshness as freshness
@@ -210,6 +211,25 @@ class ProjectTelemetryFreshnessTests(unittest.TestCase):
                 quality_reader=lambda project_id: {},
                 adapter_projects_reader=lambda: (),
             )
+
+    def test_real_adapter_contract_ignores_preloaded_enhancements_stub(self) -> None:
+        previous = sys.modules.get("enhancements")
+        stub = types.ModuleType("enhancements")
+        stub.init_db = lambda conn: None
+        sys.modules["enhancements"] = stub
+        try:
+            payload = freshness.build_report(
+                self.projects,
+                project_ids=["supa"],
+                now=NOW,
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("enhancements", None)
+            else:
+                sys.modules["enhancements"] = previous
+
+        self.assertEqual("generic_only", payload["projects"][0]["status"])
 
     def test_cli_entrypoint_imports_repo_modules_from_repo_root(self) -> None:
         completed = subprocess.run(
