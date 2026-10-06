@@ -1,0 +1,65 @@
+name: zGuard VPS verification
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zguard-vps-verification.yml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: zGuard git ref to verify
+        required: false
+        default: a9364bec5beb0e3dca64ae0ae27f917a5d6f345e
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Check out zCloud runner guard
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Check out exact zGuard revision
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zGuard
+          ref: ${{ inputs.ref || 'a9364bec5beb0e3dca64ae0ae27f917a5d6f345e' }}
+          path: zguard-source
+          persist-credentials: false
+
+      - name: Prove exact zGuard target
+        working-directory: zguard-source
+        shell: bash
+        env:
+          EXPECTED_REF: ${{ inputs.ref || 'a9364bec5beb0e3dca64ae0ae27f917a5d6f345e' }}
+        run: |
+          set -euo pipefail
+          expected_sha="$(git rev-parse "${EXPECTED_REF}^{commit}")"
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$expected_sha"
+          printf 'ZGUARD_VPS_TARGET sha=%s host=%s runner=%s\n' "$actual_sha" "$(hostname)" "${RUNNER_NAME:-unknown}"
+
+      - name: Validate zGuard extension packages
+        working-directory: zguard-source
+        run: node tests/smoke.test.js
+
+      - name: Validate zBrowse runtime contracts
+        working-directory: zguard-source
+        run: bash zbrowse/scripts/validate.sh
+
+      - name: Verify locked zBrowse production install
+        working-directory: zguard-source/zbrowse/gateway
+        run: npm ci --omit=dev --ignore-scripts --no-audit
+
+      - name: Audit zBrowse production dependencies
+        working-directory: zguard-source/zbrowse/gateway
+        run: npm audit --omit=dev --audit-level=high
