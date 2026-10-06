@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -176,7 +176,7 @@ def build_delta(
         "project_id": project,
         "since": since_iso,
         "change_count": len(changes),
-        "truncated": len(rows) >= limit,
+        "truncated": truncated,
         "baseline": baseline,
         "current": current,
         "changes": changes,
