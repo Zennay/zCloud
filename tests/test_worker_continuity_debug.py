@@ -154,6 +154,52 @@ class ContinuityDebugTests(unittest.TestCase):
         self.assertEqual([("cloud::w1", "new_chat")], calls)
         self.assertEqual("new_chat", second[0]["action"])
 
+    def test_persistent_ghost_recycles_firefox_only_when_other_workers_idle(self):
+        snapshot = {
+            "allocated_count": 2,
+            "desired_total": 2,
+            "allocated_keys": ["cloud::w1", "supa::w1"],
+            "missing_live_keys": [],
+            "busy_keys": ["cloud::w1"],
+            "ghost_generating_keys": ["cloud::w1"],
+            "live_count": 2,
+            "memory": {"available_pct": 50},
+            "load": {"load1_per_core": 0.1},
+            "firefox": {"count": 1},
+            "dynamic": {"body": {"dynamic_workers": {"chatgpt_count": 2, "claude_count": 0}}},
+        }
+        calls = []
+        def fake_action(base, project, action):
+            calls.append((project, action))
+            return {"ok": True, "project_id": project, "action": action}
+
+        with mock.patch.object(continuity.time, "monotonic", return_value=1000.0), \
+             mock.patch.object(continuity, "runner_action", side_effect=fake_action):
+            actions = continuity.maybe_remediate(
+                snapshot,
+                base_url="http://127.0.0.1:8765",
+                streaks={"ghost:cloud::w1": 3},
+                worker_streaks={},
+                last_actions={"new_chat:cloud::w1": 800.0},
+            )
+
+        self.assertEqual([("", "restart_firefox")], calls)
+        self.assertEqual("restart_firefox", actions[0]["action"])
+
+        snapshot["busy_keys"] = ["cloud::w1", "supa::w1"]
+        calls.clear()
+        with mock.patch.object(continuity.time, "monotonic", return_value=1000.0), \
+             mock.patch.object(continuity, "runner_action", side_effect=fake_action):
+            actions = continuity.maybe_remediate(
+                snapshot,
+                base_url="http://127.0.0.1:8765",
+                streaks={"ghost:cloud::w1": 3},
+                worker_streaks={},
+                last_actions={"new_chat:cloud::w1": 800.0},
+            )
+        self.assertEqual([], calls)
+        self.assertEqual([], actions)
+
 
 if __name__ == "__main__":
     unittest.main()
