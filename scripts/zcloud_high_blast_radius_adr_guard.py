@@ -40,6 +40,7 @@ _MUTATING_TOKENS = {
     "heal",
     "migration",
     "promotion",
+    "reactivate",
     "reactivation",
     "reconcile",
     "recover",
@@ -164,7 +165,7 @@ def validate_adr(root: Path, relative_path: str) -> set[str]:
         raise AdrGuardError("adr_title_required")
     sections = {heading: _section_body(text, heading) for heading in _REQUIRED_SECTIONS}
     affected = set()
-    for raw in re.findall(r"`([^`\\n]{1,320})`", sections["Affected Paths"]):
+    for raw in re.findall(r"`([^`\n]{1,320})`", sections["Affected Paths"]):
         try:
             affected.add(_safe_repo_path(raw))
         except AdrGuardError:
