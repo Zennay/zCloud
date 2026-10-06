@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed on newly added high-confidence secrets and unpinned workflow actions."""
+"""Fail closed on newly added high-confidence secrets and unsafe dependency changes."""
 
 from __future__ import annotations
 
@@ -15,6 +15,22 @@ from typing import Iterable
 
 PINNED_ACTION_REF = re.compile(r"^[0-9a-fA-F]{40}$")
 USES_LINE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)")
+DEPENDENCY_MANIFEST_NAMES = frozenset(
+    {
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "pyproject.toml",
+        "poetry.lock",
+        "Pipfile",
+        "Pipfile.lock",
+        "Cargo.toml",
+        "Cargo.lock",
+        "go.mod",
+        "go.sum",
+    }
+)
 SECRET_PATTERNS = (
     ("private-key", re.compile(r"-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----")),
     ("github-token", re.compile(r"\bgh" + r"[pousr]_[A-Za-z0-9]{32,}\b")),
@@ -64,6 +80,20 @@ class Finding:
         }
 
 
+def changed_paths(patch: str) -> list[str]:
+    paths: list[str] = []
+    for raw in patch.splitlines():
+        if not raw.startswith("+++ "):
+            continue
+        target = raw[4:].strip()
+        if target == "/dev/null":
+            continue
+        path = target.removeprefix("b/")
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
 def parse_added_lines(patch: str) -> list[AddedLine]:
     current_path: str | None = None
     new_line = 0
@@ -97,6 +127,13 @@ def parse_added_lines(patch: str) -> list[AddedLine]:
 def _looks_like_placeholder(text: str) -> bool:
     lowered = text.lower()
     return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
+
+
+def _is_dependency_manifest(path: str) -> bool:
+    name = PurePosixPath(path).name
+    if name in DEPENDENCY_MANIFEST_NAMES:
+        return True
+    return name.startswith("requirements") and name.endswith(".txt")
 
 
 def _scan_secret(line: AddedLine) -> Iterable[Finding]:
@@ -137,6 +174,16 @@ def _scan_workflow_action(line: AddedLine) -> Iterable[Finding]:
 
 def scan_patch(patch: str) -> list[Finding]:
     findings: list[Finding] = []
+    for path in changed_paths(patch):
+        if _is_dependency_manifest(path):
+            findings.append(
+                Finding(
+                    path,
+                    1,
+                    "dependency:manifest-review-required",
+                    "dependency manifest/lockfile changes require an explicit vulnerability-scanner integration before merge",
+                )
+            )
     for line in parse_added_lines(patch):
         findings.extend(_scan_secret(line))
         findings.extend(_scan_workflow_action(line))
@@ -172,6 +219,7 @@ def main() -> int:
     payload = {
         "ok": not findings,
         "added_lines_scanned": len(parse_added_lines(patch)),
+        "changed_paths_scanned": len(changed_paths(patch)),
         "finding_count": len(findings),
         "findings": [finding.as_dict() for finding in findings],
     }
