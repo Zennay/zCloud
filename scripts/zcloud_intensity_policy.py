@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,15 @@ def _load_contracts(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _effective_worker_cap(project: dict[str, Any], contracts: dict[str, Any]) -> int:
+    defaults = contracts.get("defaults")
+    default_cap = defaults.get("ai_worker_cap") if isinstance(defaults, dict) else None
+    cap = project.get("ai_worker_cap", default_cap)
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 0:
+        raise PolicyError("ai_worker_cap_invalid")
+    return cap
+
+
 def policy_for(
     project_id: str,
     intensity: int,
@@ -73,22 +83,33 @@ def policy_for(
         raise PolicyError("project_unknown")
 
     project = projects[project_id]
-    compute = project.get("compute") if isinstance(project, dict) else None
+    if not isinstance(project, dict):
+        raise PolicyError("project_contract_invalid")
+
+    compute = project.get("compute")
     if not isinstance(compute, dict):
         raise PolicyError("compute_contract_missing")
 
     pool = str(compute.get("pool") or "").strip()
     if not pool:
         raise PolicyError("compute_pool_missing")
+    resource_pools = contracts.get("resource_pools")
+    if not isinstance(resource_pools, dict) or pool not in resource_pools:
+        raise PolicyError("compute_pool_unknown")
 
-    try:
-        cpu_soft_cores = float(compute.get("cpu_soft_cores"))
-    except (TypeError, ValueError) as exc:
-        raise PolicyError("cpu_soft_cores_invalid") from exc
-    if cpu_soft_cores < 0:
+    cpu_raw = compute.get("cpu_soft_cores")
+    if isinstance(cpu_raw, bool) or not isinstance(cpu_raw, (int, float)):
+        raise PolicyError("cpu_soft_cores_invalid")
+    cpu_soft_cores = float(cpu_raw)
+    if not math.isfinite(cpu_soft_cores) or cpu_soft_cores < 0:
         raise PolicyError("cpu_soft_cores_invalid")
 
-    protected = bool(compute.get("protected", False))
+    protected_raw = compute.get("protected", False)
+    if not isinstance(protected_raw, bool):
+        raise PolicyError("protected_invalid")
+    protected = protected_raw
+
+    ai_worker_cap = _effective_worker_cap(project, contracts)
     disabled = pool == "disabled" or cpu_soft_cores == 0
     tier = _tier_for(intensity)
 
@@ -119,7 +140,7 @@ def policy_for(
             "pool": pool,
             "cpu_soft_cores_max": cpu_soft_cores,
             "protected": protected,
-            "ai_worker_cap": int(project.get("ai_worker_cap", 0)),
+            "ai_worker_cap": ai_worker_cap,
             "slider_may_override_worker_cap": False,
             "slider_may_override_pool_admission": False,
             "slider_may_override_memory_guard": False,
