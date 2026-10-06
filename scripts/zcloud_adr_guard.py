@@ -93,7 +93,7 @@ def changed_paths(base_sha: str, head_sha: str, root: Path = ROOT) -> list[str]:
             "git",
             "diff",
             "--name-only",
-            "--diff-filter=ACMR",
+            "--diff-filter=ACMRD",
             str(base_sha).strip(),
             str(head_sha).strip(),
             "--",
