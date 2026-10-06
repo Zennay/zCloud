@@ -173,6 +173,66 @@ class ProjectThroughputReportTests(unittest.TestCase):
             report["projects"]["cloud"]["last_completed_at"],
         )
 
+    def test_project_filter_ignores_malformed_other_project_receipt(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            """INSERT INTO project_state_receipts(
+                project_id,ci_status,source,observed_at,evidence_json,created_at
+            ) VALUES(?,?,?,?,?,?)""",
+            (
+                "ftmo",
+                "success",
+                "portfolio_queue:bad",
+                "not-a-time",
+                "{broken",
+                "2026-10-06T09:00:00+00:00",
+            ),
+        )
+        connection.commit()
+        connection.close()
+        self.add_receipt(
+            "cloud",
+            "portfolio_queue:q1",
+            "2026-10-06T09:00:00+00:00",
+            evidence={"queue_id": "q1", "result": "DONE"},
+        )
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            projects=["cloud"],
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        self.assertTrue(report["coverage_complete"])
+        self.assertEqual(0, report["malformed_receipts"])
+        self.assertEqual(1, report["total_completed"])
+
+    def test_same_queue_id_in_different_projects_is_not_deduplicated(self):
+        self.add_receipt(
+            "cloud",
+            "portfolio_queue:shared",
+            "2026-10-06T08:00:00+00:00",
+            evidence={"queue_id": "shared", "result": "DONE"},
+        )
+        self.add_receipt(
+            "ftmo",
+            "portfolio_queue:shared",
+            "2026-10-06T09:00:00+00:00",
+            evidence={"queue_id": "shared", "result": "DONE"},
+        )
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        self.assertEqual(2, report["total_completed"])
+        self.assertEqual(0, report["duplicate_done_receipts"])
+        self.assertEqual(1, report["projects"]["cloud"]["completed"])
+        self.assertEqual(1, report["projects"]["ftmo"]["completed"])
+
     def test_malformed_receipt_is_visible_and_not_counted(self):
         connection = sqlite3.connect(self.db)
         connection.execute(
