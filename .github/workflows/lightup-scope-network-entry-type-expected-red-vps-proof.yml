@@ -17,11 +17,11 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/scope-authorization-network-config-acceptance-red-20261006
-  LIGHTUP_EXPECTED_SHA: 8a25fa481c3ec049df165c87203ee2e8e2193ed6
+  LIGHTUP_EXPECTED_SHA: e31b769e8ccad57196b36318f2036021c782b31c
 
 jobs:
   prove-red:
-    name: Exact #292 + #296 expected-RED contract on vps-bb300bba
+    name: Exact #292 + #296 + #297 expected-RED contract on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
 
@@ -69,13 +69,14 @@ jobs:
           set +e
           PYTHONPATH=src:tests python -m unittest -v \
             test_scope_explicit_network_entry_type_acceptance \
-            test_scope_canonical_cidr_acceptance >"${LOG}" 2>&1
+            test_scope_canonical_cidr_acceptance \
+            test_scope_policy_atomic_validation_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 6
-          grep -Fq 'FAILED (failures=6)' "${LOG}"
+          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 8
+          grep -Fq 'FAILED (failures=8)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -95,13 +96,14 @@ jobs:
           set +e
           PYTHONPATH=src:tests python -m unittest -v \
             test_scope_explicit_network_entry_type_acceptance \
-            test_scope_canonical_cidr_acceptance >"${LOG}" 2>&1
+            test_scope_canonical_cidr_acceptance \
+            test_scope_policy_atomic_validation_acceptance >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 6
-          grep -Fq 'FAILED (failures=6)' "${LOG}"
+          test "$(grep -c 'did not raise' "${LOG}" || true)" -eq 8
+          grep -Fq 'FAILED (failures=8)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -118,7 +120,7 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issues": [292, 296],
+              "issues": [292, 296, 297],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
@@ -127,7 +129,7 @@ jobs:
               "python": ["3.11", "3.14"],
               "scope_smoke": "green",
               "acceptance_contract": "expected_red",
-              "expected_failures_per_python": 6,
+              "expected_failures_per_python": 8,
               "production_source_changes": 0,
               "safety_canaries": "green",
           }
