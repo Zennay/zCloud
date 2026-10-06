@@ -68,6 +68,6 @@ jobs:
 
           verify_candidate             "chatgpt/st5-remediation-retest-plan-snapshot-isolation-20261006"             "e6caab71871ae1d4d88cfbdd306236ad74dbeb97"             "test_future_security_remediation_retest_plan_snapshot_isolation.py"             "test_future_security_remediation_retest_plan_handoff.py"             "test_future_security_remediation_retest_plan.py"
 
-          verify_candidate             "chatgpt/st5-remediation-retest-plan-direct-construction-20261006"             "e14f005b23582982972099b7acb9d0e56f8109bf"             "test_future_security_remediation_retest_plan_direct_construction.py"             "test_future_security_remediation_retest_plan_handoff.py"             "test_future_security_remediation_retest_plan.py"
+          verify_candidate             "chatgpt/st5-remediation-retest-plan-direct-construction-20261006"             "cf2725755487071fe72ee28318e5a83f8979fee6"             "test_future_security_remediation_retest_plan_direct_construction.py"             "test_future_security_remediation_retest_plan_handoff.py"             "test_future_security_remediation_retest_plan.py"
 
           verify_candidate             "chatgpt/st4-security-delta-direct-construction-20261006"             "baa39ce561201c6f8be27f66c718581f5de7e78a"             "test_future_attack_path_security_delta_report_direct_construction.py"             "test_future_attack_path_security_delta_report.py"             "test_future_security_remediation_retest_plan.py"
