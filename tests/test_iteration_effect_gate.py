@@ -16,14 +16,14 @@ def measurement(
     *,
     before=10,
     after=12,
-    effect_outcome="improved",
+    desired_direction="increase",
     validation_outcome="passed",
 ):
     return {
         "metric_id": "throughput",
         "before": before,
         "after": after,
-        "effect_outcome": effect_outcome,
+        "desired_direction": desired_direction,
         "validation_outcome": validation_outcome,
     }
 
@@ -60,7 +60,7 @@ class IterationEffectGateTests(unittest.TestCase):
             "iteration_id": "iter-1",
             "revision": REV_A,
             "state": "completed",
-            "measurement": measurement(after=10, effect_outcome="neutral"),
+            "measurement": measurement(after=10),
         }])
         self.assertEqual("NEXT_ITERATION_ALLOWED", result["decision"])
 
@@ -69,10 +69,32 @@ class IterationEffectGateTests(unittest.TestCase):
             "iteration_id": "iter-1",
             "revision": REV_A,
             "state": "completed",
-            "measurement": measurement(after=8, effect_outcome="regressed"),
+            "measurement": measurement(after=8),
         }])
         self.assertEqual("REMEDIATE_OR_ROLLBACK_REQUIRED", result["decision"])
         self.assertEqual("measured_regression", result["reason"])
+
+    def test_decrease_direction_derives_improvement(self):
+        result = self.evaluate([{
+            "iteration_id": "iter-1",
+            "revision": REV_A,
+            "state": "completed",
+            "measurement": measurement(before=10, after=8, desired_direction="decrease"),
+        }])
+        self.assertEqual("NEXT_ITERATION_ALLOWED", result["decision"])
+        self.assertEqual("improved", result["effect_outcome"])
+
+    def test_caller_cannot_self_declare_effect_outcome(self):
+        with self.assertRaises(policy.EffectGateError):
+            self.evaluate([{
+                "iteration_id": "iter-1",
+                "revision": REV_A,
+                "state": "completed",
+                "measurement": {
+                    **measurement(before=10, after=8),
+                    "effect_outcome": "improved",
+                },
+            }])
 
     def test_failed_validation_blocks_even_if_metric_improved(self):
         result = self.evaluate([{
@@ -89,7 +111,7 @@ class IterationEffectGateTests(unittest.TestCase):
             "iteration_id": "iter-1",
             "revision": REV_A,
             "state": "rolled_back",
-            "measurement": measurement(after=8, effect_outcome="regressed"),
+            "measurement": measurement(after=8),
         }])
         self.assertEqual("NEXT_ITERATION_ALLOWED", result["decision"])
         self.assertEqual("prior_iteration_rolled_back", result["reason"])
