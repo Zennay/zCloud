@@ -43,11 +43,52 @@ class EvidenceProgressTests(unittest.TestCase):
         self.assertIsNone(cmp["best"], "Do not invent a best release without a comparable validated criterion")
 
     def test_registered_project_adapters_are_explicit(self):
-        self.assertEqual(("ftmo", "haxlab"), enhancements.telemetry_adapter_projects())
+        self.assertEqual(("ftmo", "haxlab", "ulab"), enhancements.telemetry_adapter_projects())
         self.assertIsInstance(
             enhancements._TELEMETRY_ADAPTERS["ftmo"],
             enhancements.ProjectTelemetryAdapter,
         )
+
+    def test_ulab_adapter_uses_scorecard_backed_metrics(self):
+        with tempfile.TemporaryDirectory() as td:
+            projects_path = Path(td) / "projects.json"
+            projects_path.write_text(json.dumps([{
+                "id": "ulab",
+                "phase": "V2 proof gate",
+                "milestone_revision": "ulab-score-v2",
+                "progress_basis": "Weighted V0–V3 score",
+                "progress_override": 38,
+                "scorecard_url": "https://example.invalid/ulab-scorecard",
+                "milestones": [
+                    {"title": "V0 · Core", "progress": 100, "done": True},
+                    {"title": "V1 · CLI", "progress": 75, "done": False},
+                ],
+            }]), encoding="utf-8")
+            with patch.object(enhancements, "PROJECTS_FILE", projects_path):
+                quality = enhancements.quality_for("ulab")
+
+        self.assertTrue(quality["available"])
+        self.assertEqual(38, quality["headline"]["value"])
+        self.assertEqual("ulab-score-v2", quality["comparison"]["latest"]["value"])
+        self.assertEqual(38, quality["comparison"]["current"]["value"])
+        self.assertIsNone(quality["comparison"]["best"])
+
+    def test_all_registered_adapter_metrics_have_source_and_timestamp(self):
+        snapshot = {
+            "available": True,
+            "headline": {"label": "Headline", "value": 1},
+            "items": [{"label": "Metric", "value": 2}],
+            "comparison": enhancements._comparison_view(
+                latest=enhancements._comparison_point("Latest", "v1")
+            ),
+        }
+        stamped = enhancements._stamp_snapshot_provenance(snapshot, "synthetic-source")
+        metrics = [stamped["headline"], *stamped["items"], stamped["comparison"]["latest"]]
+        for metric in metrics:
+            self.assertTrue(metric.get("source"))
+            observed_at = metric.get("observed_at")
+            self.assertTrue(observed_at)
+            self.assertIsNotNone(datetime.fromisoformat(observed_at).tzinfo)
 
     def test_ftmo_adapter_exposes_timestamped_source_provenance(self):
         with tempfile.TemporaryDirectory() as td:
