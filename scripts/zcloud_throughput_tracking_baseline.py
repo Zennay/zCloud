@@ -12,6 +12,7 @@ from pathlib import Path
 
 CONFIRM_TOKEN = "INITIALIZE_THROUGHPUT_TRACKING_BASELINES"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+PRODUCTION_SOURCE_RE = re.compile(r"^github-actions:zcloud-vps-deploy:([0-9]+)$")
 TABLE = "throughput_tracking_baselines"
 
 
@@ -141,6 +142,75 @@ def _normalized_inputs(
     return projects, started, sha, source_value
 
 
+def _verify_production_receipt(
+    connection: sqlite3.Connection,
+    *,
+    started_at: str,
+    production_sha: str,
+    source: str,
+) -> dict:
+    match = PRODUCTION_SOURCE_RE.fullmatch(source)
+    if not match:
+        raise ValueError(
+            "source must be github-actions:zcloud-vps-deploy:<workflow_run_id>"
+        )
+    run_id = match.group(1)
+    table = connection.execute(
+        """SELECT 1 FROM sqlite_master
+           WHERE type='table' AND name='project_state_receipts'"""
+    ).fetchone()
+    if not table:
+        raise ValueError("project_state_receipts table is required for baseline evidence")
+    columns = {
+        str(row["name"])
+        for row in connection.execute(
+            "PRAGMA table_info(project_state_receipts)"
+        ).fetchall()
+    }
+    required = {
+        "project_id",
+        "commit_sha",
+        "ci_status",
+        "source",
+        "observed_at",
+        "evidence_json",
+    }
+    missing = sorted(required - columns)
+    if missing:
+        raise ValueError(
+            "project_state_receipts missing required evidence columns: "
+            + ",".join(missing)
+        )
+    rows = connection.execute(
+        """SELECT observed_at,evidence_json
+           FROM project_state_receipts
+           WHERE project_id='cloud'
+             AND commit_sha=?
+             AND ci_status='success'
+             AND source='github-actions:zcloud-vps-deploy'
+           ORDER BY id DESC""",
+        (production_sha,),
+    ).fetchall()
+    for row in rows:
+        try:
+            observed = _parse_utc(row["observed_at"])
+            evidence = json.loads(str(row["evidence_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if observed != started_at or not isinstance(evidence, dict):
+            continue
+        if str(evidence.get("workflow_run_id") or "") != run_id:
+            continue
+        return {
+            "workflow_run_id": run_id,
+            "observed_at": observed,
+            "commit_sha": production_sha,
+        }
+    raise ValueError(
+        "no exact successful zCloud production receipt matches the requested baseline"
+    )
+
+
 def _plan(
     existing: dict[str, dict],
     projects: list[str],
@@ -200,6 +270,12 @@ def plan_baseline(
     )
     connection = _open_read_only(db_path)
     try:
+        production_receipt = _verify_production_receipt(
+            connection,
+            started_at=started,
+            production_sha=sha,
+            source=source_value,
+        )
         table_exists = _table_exists(connection)
         existing = _existing_rows(connection)
     finally:
@@ -218,6 +294,7 @@ def plan_baseline(
         "started_at": started,
         "production_sha": sha,
         "source": source_value,
+        "production_receipt": production_receipt,
         "project_count": len(projects),
         "projects": projects,
         "existing_count": len(existing),
@@ -245,6 +322,12 @@ def apply_baseline(
     connection = _open_write(db_path)
     try:
         connection.execute("BEGIN IMMEDIATE")
+        production_receipt = _verify_production_receipt(
+            connection,
+            started_at=started,
+            production_sha=sha,
+            source=source_value,
+        )
         connection.execute(
             f"""CREATE TABLE IF NOT EXISTS {TABLE}(
                 project_id TEXT PRIMARY KEY,
@@ -289,6 +372,7 @@ def apply_baseline(
         "started_at": started,
         "production_sha": sha,
         "source": source_value,
+        "production_receipt": production_receipt,
         "project_count": len(projects),
         "created_count": len(plan["planned"]),
         "created": plan["planned"],
