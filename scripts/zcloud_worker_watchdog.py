@@ -75,11 +75,29 @@ def worker_key(item: dict[str, Any]) -> str:
     key = str(item.get("worker_key") or "").strip()
     if key:
         return key
+
+    base_project = str(item.get("base_project_id") or "").strip()
     project = str(item.get("project_id") or "").strip()
+    raw_slot = item.get("worker_slot")
     try:
-        slot = max(1, int(item.get("worker_slot") or 1))
+        slot = max(1, int(raw_slot or 1))
     except Exception:
         slot = 1
+
+    if base_project:
+        return f"{base_project}::w{slot}"
+
+    # Some runner-target payloads identify the worker directly in project_id.
+    # Preserve that canonical key instead of accidentally producing
+    # "cloud::w2::w2" when worker_key is absent during degraded recovery.
+    if "::w" in project:
+        base, suffix = project.rsplit("::w", 1)
+        if base and suffix.isdigit() and int(suffix) >= 1:
+            encoded_slot = int(suffix)
+            if raw_slot not in (None, "") and slot != encoded_slot:
+                return ""
+            return project
+
     return f"{project}::w{slot}" if project else ""
 
 
