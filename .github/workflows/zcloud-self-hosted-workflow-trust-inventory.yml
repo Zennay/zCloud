@@ -1,0 +1,92 @@
+name: zCloud self-hosted workflow trust inventory
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_self_hosted_workflow_trust_inventory.py"
+      - "tests/test_self_hosted_workflow_trust_inventory.py"
+  workflow_dispatch:
+  schedule:
+    - cron: "43 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-self-hosted-workflow-trust-inventory-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused trust inventory regressions
+        run: python3 -m unittest tests.test_self_hosted_workflow_trust_inventory
+
+      - name: Build self-hosted workflow trust inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_self_hosted_workflow_trust_inventory.py --json > "$RUNNER_TEMP/zcloud-self-hosted-workflow-trust-inventory.json"
+
+      - name: Publish bounded trust-debt summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("zcloud-self-hosted-workflow-trust-inventory.json")
+              .read_text(encoding="utf-8")
+          )
+          counts = report["counts"]
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          lines = [
+              "## zCloud self-hosted workflow trust inventory",
+              "",
+              f"- Workflows scanned: {counts['workflows_scanned']}",
+              f"- Self-hosted jobs: {counts['self_hosted_jobs']}",
+              f"- Generic self-hosted jobs: {counts['generic_self_hosted_jobs']}",
+              f"- Labeled self-hosted jobs: {counts['labeled_self_hosted_jobs']}",
+              f"- PR-triggered self-hosted jobs: {counts['pr_triggered_self_hosted_jobs']}",
+              f"- Jobs with findings: {counts['jobs_with_findings']}",
+              "",
+              "This workflow is observability-only; findings do not authorize mutation or merge.",
+          ]
+          if report["finding_counts"]:
+              lines += ["", "### Finding counts"]
+              for finding, count in report["finding_counts"].items():
+                  lines.append(f"- `{finding}`: {count}")
+
+          debt = [item for item in report["jobs"] if item["findings"]][:25]
+          if debt:
+              lines += ["", "### First 25 jobs with findings"]
+              for item in debt:
+                  joined = ", ".join(item["findings"])
+                  lines.append(
+                      f"- `{item['workflow']}::{item['job']}` — {joined}"
+                  )
+
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
