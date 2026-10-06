@@ -1,0 +1,96 @@
+name: Bootstrap isolated LightUp proof runner
+
+on:
+  push:
+    branches:
+      - ops/lightup-proof-runner-bootstrap-20261006
+    paths:
+      - .github/workflows/lightup-proof-runner-bootstrap.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-proof-runner-bootstrap
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: Bootstrap isolated LightUp proof runner
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Register isolated LightUp proof runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          source_root="$(dirname "$(dirname "${RUNNER_TEMP}")")"
+          target_root="/home/ubuntu/actions-runner-lightup-proof"
+          expected_url="https://github.com/Zennay/Lightup"
+          runner_name="lightup-vps-proof-1"
+
+          if test -f "${target_root}/.runner"; then
+            existing_url="$(python3 - "${target_root}/.runner" <<'PY'
+          import json
+          import pathlib
+          import sys
+          data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+          print(data.get("gitHubUrl") or "")
+          PY
+          )"
+            test "${existing_url}" = "${expected_url}"
+            echo "lightup_runner_already_registered=true"
+          else
+            mkdir -p "${target_root}"
+            tar -C "${source_root}"               --exclude='./.runner'               --exclude='./.credentials'               --exclude='./.credentials_rsaparams'               --exclude='./.service'               --exclude='./.env'               --exclude='./.path'               --exclude='./_work'               --exclude='./_diag'               -cf - . | tar -C "${target_root}" -xf -
+
+            token="$(gh api -X POST repos/Zennay/Lightup/actions/runners/registration-token --jq '.token')"
+            test -n "${token}"
+            (
+              cd "${target_root}"
+              ./config.sh                 --url "${expected_url}"                 --token "${token}"                 --name "${runner_name}"                 --labels lightup-vps-proof                 --work _work                 --unattended                 --replace
+            )
+            unset token
+
+            (
+              cd "${target_root}"
+              sudo ./svc.sh install ubuntu
+              sudo ./svc.sh start
+            )
+            echo "lightup_runner_registered=true"
+          fi
+
+          (
+            cd "${target_root}"
+            sudo ./svc.sh start || true
+            sudo ./svc.sh status
+          )
+
+      - name: Verify isolated runner registration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for attempt in 1 2 3 4 5; do
+            record="$(gh api repos/Zennay/Lightup/actions/runners               --jq '.runners[] | select(.name=="lightup-vps-proof-1") | [.name,.status,(.busy|tostring),([.labels[].name]|join(","))] | @tsv'               2>/dev/null || true)"
+            if test -n "${record}"; then
+              echo "lightup_runner_record=${record}"
+              echo "${record}" | grep -q $'lightup-vps-proof-1\tonline\t'
+              echo "${record}" | grep -q 'lightup-vps-proof'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "isolated LightUp runner did not become visible" >&2
+          exit 1
