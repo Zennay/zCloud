@@ -1,0 +1,82 @@
+name: zCloud active branch freshness proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_active_branch_freshness.py
+      - tests/test_active_branch_freshness.py
+      - tests/test_active_branch_freshness_workflow.py
+      - .github/workflows/zcloud-active-branch-freshness-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-active-branch-freshness-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          gh auth status --hostname github.com >/dev/null
+
+      - name: Run focused regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_active_branch_freshness.py tests/test_active_branch_freshness.py tests/test_active_branch_freshness_workflow.py
+          python3 -m unittest -v tests.test_active_branch_freshness tests.test_active_branch_freshness_workflow
+
+      - name: Prove live branch audit stays read-only and bounded
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(
+            python3 scripts/zcloud_active_branch_freshness.py               --db /home/ubuntu/zennay-cloud/history.db               --projects projects.json
+          )"
+          python3 - "$output" <<'PY'
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          if payload.get("schema_version") != 1:
+              raise SystemExit("unexpected branch freshness schema")
+          branches = payload.get("branches")
+          if not isinstance(branches, list):
+              raise SystemExit("branch freshness output must contain a list")
+          allowed = {"current", "stale", "missing", "untracked", "unknown"}
+          forbidden = {"owner_id", "metadata_json", "claim_key", "heartbeat_at", "lease_until"}
+          for item in branches:
+              if item.get("status") not in allowed:
+                  raise SystemExit("invalid branch freshness state")
+              if forbidden.intersection(item):
+                  raise SystemExit("branch freshness proof exposed claim internals")
+          print("ZCLOUD_ACTIVE_BRANCH_FRESHNESS_PROOF=" + json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          PY
