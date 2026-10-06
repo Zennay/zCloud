@@ -1,0 +1,147 @@
+name: LightUp PR327 focused VPS proof
+
+on:
+  push:
+    branches:
+      - ops/lightup-pr327-focused-vps-proof-20261006
+    paths:
+      - .github/workflows/lightup-pr327-focused-vps-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr327-focused-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_EXPECTED_SHA: 11d6583e24cccfd6393d24d59f00521f090b3e94
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    name: PR327 focused exact-head proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp PR #327 head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin \
+            refs/pull/327/head:refs/remotes/origin/lightup-pr327-focused-proof
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse \
+            refs/remotes/origin/lightup-pr327-focused-proof^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+
+          SNAPSHOT="${RUNNER_TEMP}/lightup-pr327-${GITHUB_RUN_ID}"
+          rm -rf "${SNAPSHOT}"
+          mkdir -p "${SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Focused provenance proof on Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest -v \
+            test_future_remediation_implementation_plan_reviewer_provenance_bounds \
+            test_future_remediation_implementation_plan_review \
+            test_future_remediation_implementation_plan_review_handoff.FutureRemediationImplementationPlanReviewHandoffTest.test_approved_review_round_trips_without_action_authority
+          python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Focused provenance proof on Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -Eeuo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest -v \
+            test_future_remediation_implementation_plan_reviewer_provenance_bounds \
+            test_future_remediation_implementation_plan_review \
+            test_future_remediation_implementation_plan_review_handoff.FutureRemediationImplementationPlanReviewHandoffTest.test_approved_review_round_trips_without_action_authority
+          python -m unittest discover -s tests/integration -v
+
+      - name: Write focused proof receipt
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY' > artifacts/lightup-pr327-focused-vps-proof.json
+          import json
+          import os
+          import socket
+
+          print(json.dumps({
+              "schema_version": 1,
+              "project": "LightUp",
+              "pull_request": 327,
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": socket.gethostname(),
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "proof": [
+                  "compile",
+                  "pr327-provenance-regressions-py311-py314",
+                  "implementation-plan-review-producer-py311-py314",
+                  "strict-live-handoff-roundtrip-py311-py314",
+                  "real-producer-integration-py311-py314",
+                  "safety-canaries-py311",
+              ],
+              "known_upstream_exclusion": {
+                  "owner": "#283",
+                  "test": "test_nested_check_schema_order_and_duplicate_keys_fail_closed",
+                  "reason": "existing tuple-backed fixture mutation error; child #327 does not modify #283-owned test",
+              },
+          }, indent=2, sort_keys=True))
+          PY
+          cat artifacts/lightup-pr327-focused-vps-proof.json
+
+      - name: Upload focused proof receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr327-focused-vps-proof-${{ github.run_id }}
+          path: artifacts/lightup-pr327-focused-vps-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
