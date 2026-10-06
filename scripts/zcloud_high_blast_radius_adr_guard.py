@@ -13,9 +13,8 @@ import argparse
 import json
 import re
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _ADR_NAME_RE = re.compile(r"^(?:\d{4,8}|[a-z0-9][a-z0-9-]{2,63})-[a-z0-9][a-z0-9-]{2,80}\.md$")
@@ -58,8 +57,7 @@ class AdrGuardError(ValueError):
         self.code = code
 
 
-@dataclass(frozen=True)
-class Risk:
+class Risk(NamedTuple):
     path: str
     category: str
 
