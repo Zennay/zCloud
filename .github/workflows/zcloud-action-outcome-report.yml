@@ -51,7 +51,9 @@ jobs:
               "ZCLOUD_ACTION_OUTCOME_REPORT_GREEN "
               f"commands={payload['totals']['commands']} "
               f"terminal={payload['totals']['terminal']} "
-              f"success_rate_pct={payload['totals']['success_rate_pct']}"
+              f"success_rate_pct={payload['totals']['success_rate_pct']} "
+              f"timestamp_coverage_complete={payload['data_quality']['timestamp_coverage_complete']} "
+              f"unparseable_timestamp_rows={payload['data_quality']['unparseable_timestamp_rows']}"
           )
           PY
 
