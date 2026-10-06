@@ -68,8 +68,10 @@ class ConfigValidationTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             conn.execute("CREATE TABLE runner_targets(project_id TEXT, worker_count INTEGER)")
             conn.execute("CREATE TABLE runner_workers(project_id TEXT, worker_slot INTEGER, desired_state TEXT)")
+            conn.execute("CREATE TABLE ai_global_slots(slot INTEGER PRIMARY KEY, project_id TEXT, worker_slot INTEGER)")
             conn.execute("INSERT INTO runner_targets VALUES('cloud',1)")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'running')")
+            conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
             conn.commit()
 
     def tearDown(self):
@@ -102,6 +104,7 @@ class ConfigValidationTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             conn.execute("DELETE FROM runner_targets WHERE project_id='cloud'")
             conn.execute("DELETE FROM runner_workers WHERE project_id='cloud'")
+            conn.execute("DELETE FROM ai_global_slots WHERE project_id='cloud'")
             conn.commit()
         result = self.validate()
         self.assertTrue(result["ok"], result)
@@ -200,14 +203,24 @@ class ConfigValidationTests(unittest.TestCase):
         result = self.validate()
         self.assertTrue(result["ok"], result)
 
-    def test_blocks_worker_count_over_project_runtime_cap(self):
+    def test_allows_preprovisioned_runner_target_above_project_runtime_cap(self):
         with sqlite3.connect(self.db) as conn:
-            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id=\'cloud\'")
-            conn.execute("INSERT INTO runner_workers VALUES(\'cloud\',2,\'running\')")
+            conn.execute("UPDATE runner_targets SET worker_count=2 WHERE project_id='cloud'")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running')")
+            conn.commit()
+        result = self.validate()
+        self.assertTrue(result["ok"], result)
+
+    def test_blocks_active_ai_allocation_over_project_runtime_cap(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2)")
             conn.commit()
         result = self.validate()
         self.assertFalse(result["ok"])
-        self.assertTrue(any("worker_count exceeds project runtime cap for cloud: 2>1" in x for x in result["errors"]))
+        self.assertTrue(any(
+            "active AI allocation exceeds project runtime cap for cloud: 2>1" in x
+            for x in result["errors"]
+        ))
 
     def test_blocks_worker_count_over_runtime_max(self):
         with sqlite3.connect(self.db) as conn:
