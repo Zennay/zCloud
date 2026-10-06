@@ -50,14 +50,19 @@ class FirefoxConditionDebugWorkflowTests(unittest.TestCase):
         self.assertLess(text.index(exact), text.index(guard))
         self.assertLess(text.index(guard), text.index(inspect))
 
-    def test_existing_read_only_diagnostics_are_preserved(self):
+    def test_diagnostics_preserve_state_evidence_without_raw_config_dumps(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("systemctl --user cat chatgpt-firefox.service", text)
         self.assertIn("systemctl --user show chatgpt-firefox.service", text)
-        self.assertIn("chatgpt-firefox.service.d", text)
-        self.assertIn("chatgpt-firefox-prestart.sh", text)
+        self.assertIn("-p ExecCondition -p DropInPaths -p FragmentPath", text)
+        self.assertIn("stat -c '%n mode=%a size=%s mtime=%Y'", text)
+        self.assertIn('sha256sum "$file"', text)
+        self.assertIn('sha256sum "$prestart"', text)
         self.assertIn("ZCLOUD_FIREFOX_CONDITION_DEBUG_GREEN=1", text)
+
+        self.assertNotIn("systemctl --user cat", text)
+        self.assertNotIn("cat "$1"", text)
+        self.assertNotIn("sed -n '1,220p'", text)
 
         for forbidden in (
             "systemctl --user restart",
