@@ -1,0 +1,70 @@
+name: zCloud project throughput proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_project_throughput_report.py"
+      - "tests/test_project_throughput_report.py"
+      - "tests/test_project_throughput_workflow.py"
+      - ".github/workflows/zcloud-project-throughput.yml"
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-throughput-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-vps-readonly:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Zennay')
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Prove permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        run: python3 -m unittest -v tests.test_project_throughput_report tests.test_project_throughput_workflow
+
+      - name: Read-only live throughput proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_DB=/home/ubuntu/zennay-cloud/history.db
+          test -f "$LIVE_DB"
+          before_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
+          python3 scripts/zcloud_project_throughput_report.py             --db "$LIVE_DB"             --hours 24             --project cloud             > /tmp/zcloud-project-throughput.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload=json.loads(Path("/tmp/zcloud-project-throughput.json").read_text())
+          assert payload["schema_version"] == 1
+          assert payload["window"]["hours"] == 24
+          assert "cloud" in payload["projects"]
+          assert payload["projects"]["cloud"]["completed"] >= 0
+          assert payload["total_completed"] >= 0
+          forbidden=("evidence","title","action","blocker","next_gate","commit_sha")
+          rendered=json.dumps(payload,sort_keys=True)
+          assert not any(f'"{key}"' in rendered for key in forbidden), rendered
+          print(json.dumps({
+              "coverage_complete": payload["coverage_complete"],
+              "malformed_receipts": payload["malformed_receipts"],
+              "duplicate_done_receipts": payload["duplicate_done_receipts"],
+              "cloud_completed_24h": payload["projects"]["cloud"]["completed"],
+              "cloud_per_day": payload["projects"]["cloud"]["completed_per_day"],
+          },sort_keys=True))
+          PY
+          after_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
+          test "$before_fingerprint" = "$after_fingerprint"
+          echo "ZCLOUD_PROJECT_THROUGHPUT_READONLY_GREEN"
