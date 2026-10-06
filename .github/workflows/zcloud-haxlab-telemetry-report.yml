@@ -1,0 +1,92 @@
+name: zCloud HaxLab telemetry report proof
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/zcloud_haxlab_telemetry_report.py'
+      - 'tests/test_haxlab_telemetry_report.py'
+      - 'tests/test_haxlab_telemetry_report_workflow.py'
+      - '.github/workflows/zcloud-haxlab-telemetry-report.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-haxlab-telemetry-report-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hosted:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact candidate
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Run HaxLab telemetry report tests
+        run: python3 -m unittest -v tests.test_haxlab_telemetry_report tests.test_haxlab_telemetry_report_workflow
+
+  permanent-vps-proof:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact candidate and permanent runner
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Prove live HaxLab telemetry projection read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths=(
+            /var/lib/haxlab/state/autonomy-status.json
+            /var/lib/haxlab/derived/champions/elite-player/current.json
+            /var/lib/haxlab/derived/champions/elite-player/live.json
+            /var/lib/haxlab/derived/training/elite-player-champion-candidate/pipeline-summary.json
+            /var/lib/haxlab/state/haxlab.sqlite3
+          )
+          before="$(for p in "${paths[@]}"; do stat -Lc '%n|%s|%Y' "$p"; done)"
+          python3 -m unittest -v tests.test_haxlab_telemetry_report tests.test_haxlab_telemetry_report_workflow
+          report="$(python3 scripts/zcloud_haxlab_telemetry_report.py --json --require-core)"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          payload=json.loads(os.environ["REPORT"])
+          assert payload["schema"] == "zcloud-haxlab-telemetry-v1"
+          for key in ("autonomy","candidate","champion","evaluation","training","replay"):
+              assert payload[key]["available"] is True, (key,payload[key])
+          assert payload["meta"]["arena_v2_integrated"] is False
+          print("HAXLAB_TELEMETRY_SUMMARY=" + json.dumps({
+              "autonomy_state": payload["autonomy"]["state"],
+              "autonomy_action": payload["autonomy"]["action"],
+              "generation": payload["autonomy"]["generation"],
+              "candidate_version": payload["candidate"]["version_id"],
+              "champion_version": payload["champion"]["version_id"],
+              "champion_healthy": payload["champion"]["healthy"],
+              "offline_live_test_eligible": payload["evaluation"]["eligible"],
+              "selected_replays": payload["training"]["selected_replays"],
+              "processing_status_counts": payload["replay"]["processing_status_counts"],
+              "analysis_status_counts": payload["replay"]["analysis_status_counts"],
+              "processed_duration_seconds": payload["replay"]["processed_duration_seconds"],
+              "sampled_states": payload["replay"]["sampled_states"],
+              "raw_events": payload["replay"]["raw_events"],
+              "analyzed_ticks": payload["replay"]["analyzed_ticks"],
+          }, sort_keys=True))
+          PY
+          after="$(for p in "${paths[@]}"; do stat -Lc '%n|%s|%Y' "$p"; done)"
+          test "$before" = "$after"
+          echo "ZCLOUD_HAXLAB_TELEMETRY_VPS_GREEN=1"
