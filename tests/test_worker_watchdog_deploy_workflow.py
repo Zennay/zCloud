@@ -13,6 +13,7 @@ class WorkerWatchdogDeployWorkflowTests(unittest.TestCase):
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
     def test_pr_validation_is_hosted_only_and_non_mutating(self):
+        self.assertIn("permissions:\n  contents: read", self.text)
         self.assertIn("pull_request:", self.text)
         self.assertIn("types: [opened, synchronize, reopened]", self.text)
         self.assertIn("validate:\n    if: github.event_name == 'pull_request'", self.text)
@@ -87,6 +88,7 @@ class WorkerWatchdogDeployWorkflowTests(unittest.TestCase):
 
     def test_remote_actions_are_immutable_and_logs_are_bounded(self):
         self.assertIn(UPLOAD_V7, self.text)
+        self.assertIn("path: ${{ runner.temp }}/zcloud-worker-watchdog-dry-run.json", self.text)
         self.assertNotIn("actions/upload-artifact@v4", self.text)
         self.assertNotIn("journalctl -u zcloud-self-heal.service", self.text)
         self.assertIn(
