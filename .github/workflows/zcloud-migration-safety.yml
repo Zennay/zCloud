@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-migration-safety-\${{ github.event.pull_request.number }}
+  group: zcloud-migration-safety-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -31,19 +31,19 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: \${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify exact candidate
         env:
-          EXPECTED_SHA: \${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Run migration safety regressions
         run: python3 -m unittest -v tests.test_migration_safety_guard tests.test_migration_safety_guard_workflow
       - name: Evaluate PR migration contract
         env:
-          BASE_SHA: \${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/zcloud_migration_safety_guard.py --base "$BASE_SHA" --head "$HEAD_SHA"
 
   permanent-vps-proof:
@@ -53,12 +53,12 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: \${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify exact candidate and permanent runner
         env:
-          EXPECTED_SHA: \${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
@@ -66,8 +66,8 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Prove migration safety guard
         env:
-          BASE_SHA: \${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           python3 -m unittest -v tests.test_migration_safety_guard tests.test_migration_safety_guard_workflow
