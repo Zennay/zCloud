@@ -35,7 +35,13 @@ class RegressionWorkflowSupplyChainTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", text)
         self.assertIn("clean: true", text)
         self.assertNotIn("contents: write", text)
-        self.assertNotIn("pull_request_target:", text)\n
+        self.assertNotIn("pull_request_target:", text)
+        self.assertIn(
+            "group: zcloud-regression-${{ github.event.pull_request.head.sha || github.sha }}",
+            text,
+        )
+        self.assertIn("cancel-in-progress: true", text)
+
     def test_regression_suite_contract_remains_intact(self):
         text = self.text()
         required = (
