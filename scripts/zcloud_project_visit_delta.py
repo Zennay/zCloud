@@ -47,7 +47,7 @@ def _parse_timestamp(value: str) -> datetime:
         raise ValueError("since must be an ISO-8601 timestamp") from exc
     if parsed.tzinfo is None:
         raise ValueError("since timestamp must include a timezone")
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _clean(value: object) -> str:
@@ -124,8 +124,8 @@ def build_delta(
             SELECT id,project_id,phase,action,commit_sha,ci_status,blocker,next_gate,
                    source,observed_at,created_at
             FROM project_state_receipts
-            WHERE project_id=? AND observed_at<=?
-            ORDER BY observed_at DESC,id DESC
+            WHERE project_id=? AND julianday(observed_at)<=julianday(?)
+            ORDER BY julianday(observed_at) DESC,id DESC
             LIMIT 1
             """,
             (project, since_iso),
@@ -135,12 +135,14 @@ def build_delta(
             SELECT id,project_id,phase,action,commit_sha,ci_status,blocker,next_gate,
                    source,observed_at,created_at
             FROM project_state_receipts
-            WHERE project_id=? AND observed_at>?
-            ORDER BY observed_at ASC,id ASC
+            WHERE project_id=? AND julianday(observed_at)>julianday(?)
+            ORDER BY julianday(observed_at) ASC,id ASC
             LIMIT ?
             """,
-            (project, since_iso, limit),
+            (project, since_iso, limit + 1),
         ).fetchall()
+        truncated = len(rows) > limit
+        rows = rows[:limit]
         total_changes = int(connection.total_changes)
     finally:
         connection.close()
