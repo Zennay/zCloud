@@ -316,7 +316,12 @@ function workerScalingPanel(){
       const a=scaling.assessment||{},copy=scalingStateCopy(a.state);
       const ratio=Number.isFinite(Number(a.extra_vs_primary_throughput_ratio))?' · extra/primary '+num(Number(a.extra_vs_primary_throughput_ratio))+'×':'';
       const nonwork=Number.isFinite(Number(a.extra_idle_blocked_pct))?' · idle/blocked '+num(Number(a.extra_idle_blocked_pct))+'%':'';
-      return '<div class="worker-scaling-row '+copy[1]+'"><div><strong>'+esc(project.name)+'</strong><span>'+esc(copy[0])+'</span></div><p>'+esc(a.reason||'No assessment yet')+'</p><small>'+Number(scaling.desired_workers||1)+' desired workers'+esc(ratio+nonwork)+'</small></div>';
+      const workerTime=(scaling.workers||[]).map(w=>{
+        const m=w.metrics||{},mins=s=>Math.round(Math.max(0,Number(s||0))/60);
+        return 'w'+esc(w.worker_slot)+' · work '+mins(m.working_seconds)+'m · idle '+mins(m.idle_seconds)+'m · blocked '+mins(m.blocked_seconds)+'m · observed '+mins(m.observed_seconds)+'m';
+      }).join('<br>');
+      const workerBreakdown=workerTime?'<small class="worker-time-breakdown">'+workerTime+'</small>':'';
+      return '<div class="worker-scaling-row '+copy[1]+'"><div><strong>'+esc(project.name)+'</strong><span>'+esc(copy[0])+'</span></div><p>'+esc(a.reason||'No assessment yet')+'</p><small>'+Number(scaling.desired_workers||1)+' desired workers'+esc(ratio+nonwork)+'</small>'+workerBreakdown+'</div>';
     }).join('')+'</div>':'<div class="wd-empty">No multi-worker projects are currently configured.</div>';
   }
   const method=WORKER_SCALING?.method?' · '+esc(WORKER_SCALING.method):'';
