@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "schema_id": "zcloud.control-plane.event.v1",
+  "storage": {
+    "table": "runner_events",
+    "allow_unclassified_columns": false,
+    "columns": {
+      "id": {"type": "INTEGER", "privacy": "internal_key", "required": true},
+      "ts": {"type": "TEXT", "privacy": "safe_structured", "required": true},
+      "event": {"type": "TEXT", "privacy": "safe_structured", "required": true},
+      "target": {"type": "TEXT", "privacy": "never_export", "required": true},
+      "title": {"type": "TEXT", "privacy": "never_export", "required": true},
+      "generating": {"type": "INTEGER", "privacy": "safe_structured", "required": true},
+      "sending": {"type": "INTEGER", "privacy": "safe_structured", "required": true},
+      "reason": {"type": "TEXT", "privacy": "restricted_text", "required": true},
+      "tab_id": {"type": "INTEGER", "privacy": "never_export", "required": true},
+      "error": {"type": "TEXT", "privacy": "never_export", "required": true},
+      "project_id": {"type": "TEXT", "privacy": "safe_structured", "required": true},
+      "progress_at": {"type": "TEXT", "privacy": "safe_structured", "required": true},
+      "assistant_chars": {"type": "INTEGER", "privacy": "safe_structured", "required": true},
+      "worker_slot": {"type": "INTEGER", "privacy": "safe_structured", "required": true}
+    }
+  },
+  "canonical_projection": {
+    "version": 1,
+    "fields": {
+      "event_id": {"source": "id", "required": true},
+      "observed_at": {"source": "ts", "required": true, "format": "rfc3339"},
+      "event_type": {"source": "event", "required": true, "format": "kebab-case"},
+      "project_id": {"source": "project_id", "required": false},
+      "worker_slot": {"source": "worker_slot", "required": true, "minimum": 1},
+      "generating": {"source": "generating", "required": true, "values": [0, 1]},
+      "sending": {"source": "sending", "required": true, "values": [0, 1]},
+      "progress_at": {"source": "progress_at", "required": false, "format": "rfc3339"},
+      "assistant_chars": {"source": "assistant_chars", "required": false, "minimum": 0}
+    }
+  },
+  "privacy": {
+    "public_projection_classes": ["safe_structured"],
+    "restricted_classes": ["internal_key", "restricted_text", "never_export"],
+    "never_export_fields": ["target", "title", "tab_id", "error"],
+    "free_text_fields": ["target", "title", "reason", "error"]
+  },
+  "event_type_contract": {
+    "allow_unclassified_types": true,
+    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "families": {
+      "worker_lifecycle": [
+        "heartbeat",
+        "conversation-adopted",
+        "conversation-reset-requested",
+        "runner-drained",
+        "runner-paused"
+      ],
+      "generation_lifecycle": [
+        "prompt-sent",
+        "generation-started",
+        "generation-progress",
+        "generation-finished"
+      ],
+      "quality_recovery": [
+        "quality-recovery-requested",
+        "startup-blocked",
+        "send-blocked",
+        "auto-continue-blocked"
+      ],
+      "queue_coordination": [
+        "awaiting-vps-dispatch",
+        "portfolio-queue-result"
+      ]
+    }
+  },
+  "semantic_target_types": [
+    "worker_started",
+    "task_claimed",
+    "task_completed",
+    "validation_failed",
+    "rollback",
+    "paused",
+    "resumed",
+    "resource_changed"
+  ],
+  "notes": [
+    "Version 1 contracts the existing runner_events row shape without changing writers.",
+    "Unclassified event types remain readable and are reported so migration can be incremental.",
+    "Free-text fields are never included in the canonical public projection.",
+    "Correlation IDs and immutable queue completion receipts require future writer/schema work."
+  ]
+}
