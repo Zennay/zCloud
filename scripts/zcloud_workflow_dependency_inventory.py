@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-USES_RE = re.compile(r"^\s*uses:\s*['\"]?([^'\"\s#]+)")
+USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*['\"]?([^'\"\s#]+)")
 SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
