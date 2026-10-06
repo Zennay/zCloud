@@ -122,13 +122,20 @@ def report(
         raise ValueError(f"row_limit must be an integer between 1 and {MAX_ROWS}")
 
     since_iso = since_dt.isoformat()
+    now_iso = now.isoformat()
     with closing(_open_ro(db)) as connection:
         _require_schema(connection)
 
-        receipt_where = "unixepoch(observed_at)>=unixepoch(?) AND project_id IS NOT NULL AND project_id<>''"
-        receipt_params: list[object] = [since_iso]
-        event_where = "unixepoch(ts)>=unixepoch(?) AND project_id IS NOT NULL AND project_id<>''"
-        event_params: list[object] = [since_iso]
+        receipt_where = (
+            "unixepoch(observed_at)>=unixepoch(?) AND unixepoch(observed_at)<=unixepoch(?) "
+            "AND project_id IS NOT NULL AND project_id<>''"
+        )
+        receipt_params: list[object] = [since_iso, now_iso]
+        event_where = (
+            "unixepoch(ts)>=unixepoch(?) AND unixepoch(ts)<=unixepoch(?) "
+            "AND project_id IS NOT NULL AND project_id<>''"
+        )
+        event_params: list[object] = [since_iso, now_iso]
         if project_id:
             receipt_where += " AND project_id=?"
             event_where += " AND project_id=?"
@@ -219,7 +226,7 @@ def report(
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": now.isoformat(),
+        "generated_at": now_iso,
         "since": since_iso,
         "project_filter": project_id,
         "project_count": len(projects),
