@@ -146,7 +146,17 @@ def select(payload: object) -> dict:
 
 
 def _load_bytes(path: Path | None) -> bytes:
-    data = path.read_bytes() if path else __import__("sys").stdin.buffer.read(MAX_INPUT_BYTES + 1)
+    if path is None:
+        data = __import__("sys").stdin.buffer.read(MAX_INPUT_BYTES + 1)
+    else:
+        if path.is_symlink():
+            raise ValueError("input path must not be a symlink")
+        if not path.is_file():
+            raise ValueError("input path must be a regular file")
+        if path.stat().st_size > MAX_INPUT_BYTES:
+            raise ValueError(f"input exceeds {MAX_INPUT_BYTES} bytes")
+        with path.open("rb") as handle:
+            data = handle.read(MAX_INPUT_BYTES + 1)
     if len(data) > MAX_INPUT_BYTES:
         raise ValueError(f"input exceeds {MAX_INPUT_BYTES} bytes")
     return data
