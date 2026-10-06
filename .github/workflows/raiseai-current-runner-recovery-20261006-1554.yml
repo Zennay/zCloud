@@ -1,0 +1,104 @@
+name: Recover current RaiseAI runner safely
+
+on:
+  push:
+    branches:
+      - ops/raiseai-current-runner-recovery-20261006-1554
+    paths:
+      - ".github/workflows/raiseai-current-runner-recovery-20261006-1554.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-current-runner-recovery-20261006-1554
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      RAISE_REPO: Zennay/RaiseAI
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+      WATCH_RUNS: "37469669430 37470133625 37490639494 37491138070"
+    steps:
+      - name: Recover only an idle RaiseAI listener
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          gh auth status >/dev/null 2>&1
+
+          already_scheduled=0
+          for run in $WATCH_RUNS; do
+            name="$(gh api "repos/$RAISE_REPO/actions/runs/$run" --jq .name)"
+            status="$(gh api "repos/$RAISE_REPO/actions/runs/$run" --jq .status)"
+            echo "RAISEAI_TARGET run=$run status=$status name=$name"
+            test "$name" = "Raise Watch app CI"
+            if [[ "$status" == "in_progress" || "$status" == "completed" ]]; then
+              already_scheduled=1
+            fi
+          done
+
+          if [[ "$already_scheduled" -eq 1 ]]; then
+            echo "RAISEAI_RECOVERY_ACTION=preserve-already-scheduled"
+            exit 0
+          fi
+
+          pre_state="$(systemctl is-active "$RAISE_SERVICE" || true)"
+          pre_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value || true)"
+          control_group="$(systemctl show "$RAISE_SERVICE" -p ControlGroup --value || true)"
+          worker_before=0
+
+          if [[ -n "$control_group" && "$control_group" != "/" ]]; then
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cgroup" || continue
+              grep -Fq "$control_group" "$proc/cgroup" || continue
+              test -r "$proc/cmdline" || continue
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              if [[ "$cmdline" == *"Runner.Worker"* ]]; then
+                worker_before=1
+                break
+              fi
+            done
+          fi
+
+          echo "RAISEAI_RUNNER_PRE state=$pre_state pid=$pre_pid worker=$worker_before"
+          if [[ "$worker_before" -eq 1 ]]; then
+            echo "RAISEAI_RECOVERY_ACTION=preserve-active-worker"
+          else
+            sudo -n systemctl reset-failed "$RAISE_SERVICE" || true
+            sudo -n systemctl restart "$RAISE_SERVICE"
+            echo "RAISEAI_RECOVERY_ACTION=restart-idle-or-unhealthy-listener"
+          fi
+
+          for _ in $(seq 1 30); do
+            post_state="$(systemctl is-active "$RAISE_SERVICE" || true)"
+            post_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value || true)"
+            if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+              if [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$post_state" = "active"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          echo "RAISEAI_RUNNER_POST state=$post_state pid=$post_pid"
+
+          scheduled=0
+          for _ in $(seq 1 36); do
+            for run in $WATCH_RUNS; do
+              status="$(gh api "repos/$RAISE_REPO/actions/runs/$run" --jq .status)"
+              echo "RAISEAI_WATCH run=$run status=$status"
+              if [[ "$status" == "in_progress" || "$status" == "completed" ]]; then
+                scheduled=1
+              fi
+            done
+            [[ "$scheduled" -eq 1 ]] && break
+            sleep 5
+          done
+          test "$scheduled" -eq 1
+          echo "RAISEAI_CURRENT_RUNNER_RECOVERY_GREEN=1"
