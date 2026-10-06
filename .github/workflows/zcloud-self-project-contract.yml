@@ -6,6 +6,7 @@ on:
       - 'projects.json'
       - 'project-contracts.json'
       - 'resource-policy.json'
+      - 'project-layout.json'
       - 'autonomy-policy.json'
       - 'scripts/zcloud_self_project_contract.py'
       - 'tests/test_self_project_contract.py'
