@@ -287,8 +287,21 @@ def validate_worker_state(
         workers = [dict(row) for row in conn.execute(
             "SELECT project_id,worker_slot,desired_state FROM runner_workers ORDER BY project_id,worker_slot"
         )]
+        allocations = (
+            [dict(row) for row in conn.execute(
+                "SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot"
+            )]
+            if "ai_global_slots" in tables
+            else []
+        )
         conn.close()
-        summary = {"checked": True, "targets": len(targets), "workers": len(workers)}
+        summary = {
+            "checked": True,
+            "targets": len(targets),
+            "workers": len(workers),
+            "allocations": len(allocations),
+            "allocation_caps_checked": "ai_global_slots" in tables,
+        }
         desired = {"running", "paused", "draining"}
         by_project: dict[str, set[int]] = {}
         for worker in workers:
@@ -311,21 +324,29 @@ def validate_worker_state(
             count = int(target["worker_count"])
             add(errors, pid in project_ids or pid == "portfolio-review", f"history.db: unknown runner target {pid!r}")
             add(errors, 1 <= count <= max_workers, f"history.db: worker_count out of range for {pid}: {count}")
-            if pid != "portfolio-review" and pid in project_ids:
-                project_cap = project_worker_caps.get(pid)
-                add(
-                    errors,
-                    project_cap is not None,
-                    f"history.db: missing runtime worker cap for {pid}",
-                )
-                if project_cap is not None:
-                    add(
-                        errors,
-                        count <= project_cap,
-                        f"history.db: worker_count exceeds project runtime cap for {pid}: {count}>{project_cap}",
-                    )
             missing = [slot for slot in range(1, count + 1) if slot not in by_project.get(pid, set())]
             add(errors, not missing, f"history.db: missing configured worker slots for {pid}: {missing}")
+
+        allocation_counts: dict[str, int] = {}
+        for allocation in allocations:
+            pid = str(allocation["project_id"])
+            if pid == "portfolio-review":
+                continue
+            add(errors, pid in project_ids, f"history.db: unknown AI allocation project {pid!r}")
+            if pid not in project_ids:
+                continue
+            project_cap = project_worker_caps.get(pid)
+            add(errors, project_cap is not None, f"history.db: missing runtime worker cap for {pid}")
+            if project_cap is None:
+                continue
+            allocation_counts[pid] = allocation_counts.get(pid, 0) + 1
+        for pid, count in sorted(allocation_counts.items()):
+            project_cap = project_worker_caps[pid]
+            add(
+                errors,
+                count <= project_cap,
+                f"history.db: active AI allocation exceeds project runtime cap for {pid}: {count}>{project_cap}",
+            )
     except Exception as exc:
         errors.append(f"history.db: worker-state validation failed: {exc}")
     return summary
