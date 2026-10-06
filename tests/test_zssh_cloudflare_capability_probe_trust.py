@@ -82,7 +82,7 @@ class ZsshCloudflareCapabilityProbeTrustTests(unittest.TestCase):
         self.assertIn("zssh-cloudflare-capability-probe-${{", text)
         self.assertIn("format('pr-{0}', github.event.pull_request.number)", text)
         self.assertIn("|| 'live'", text)
-        self.assertIn("cancel-in-progress: false", text)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", text)
 
     def test_probe_preserves_read_only_cloudflare_semantics(self) -> None:
         text = self.text
