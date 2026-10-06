@@ -43,7 +43,8 @@ class ProjectThroughputReportTests(unittest.TestCase):
                 queue_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"""
         )
         for project_id in ("cloud", "ftmo"):
@@ -295,12 +296,13 @@ class ProjectThroughputReportTests(unittest.TestCase):
     def test_done_queue_item_after_tracking_without_receipt_is_fail_visible(self):
         connection = sqlite3.connect(self.db)
         connection.execute(
-            """INSERT INTO portfolio_queue(queue_id,project_id,status,created_at)
-               VALUES(?,?,?,?)""",
+            """INSERT INTO portfolio_queue(queue_id,project_id,status,created_at,updated_at)
+               VALUES(?,?,?,?,?)""",
             (
                 "missing-receipt",
                 "cloud",
                 "done",
+                "2026-10-05T08:00:00+00:00",
                 "2026-10-05T12:00:00+00:00",
             ),
         )
@@ -318,6 +320,37 @@ class ProjectThroughputReportTests(unittest.TestCase):
         self.assertFalse(report["coverage_complete"])
         self.assertEqual(1, coverage["missing_done_receipts_after_tracking"])
         self.assertEqual(["missing-receipt"], coverage["missing_done_queue_ids"])
+
+    def test_pretracking_created_item_updated_after_tracking_is_missing(self):
+        connection = sqlite3.connect(self.db)
+        connection.execute(
+            """INSERT INTO portfolio_queue(queue_id,project_id,status,created_at,updated_at)
+               VALUES(?,?,?,?,?)""",
+            (
+                "created-before-tracking",
+                "cloud",
+                "done",
+                "2026-10-05T08:00:00+00:00",
+                "2026-10-05T12:00:00+00:00",
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+        report = module.build_report(
+            self.db,
+            hours=24,
+            projects=["cloud"],
+            now_value="2026-10-06T10:00:00+00:00",
+        )
+
+        coverage = report["projects"]["cloud"]["coverage"]
+        self.assertFalse(coverage["complete"])
+        self.assertEqual(1, coverage["missing_done_receipts_after_tracking"])
+        self.assertEqual(
+            ["created-before-tracking"],
+            coverage["missing_done_queue_ids"],
+        )
 
     def test_malformed_receipt_is_visible_and_not_counted(self):
         connection = sqlite3.connect(self.db)
