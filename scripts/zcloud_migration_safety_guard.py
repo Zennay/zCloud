@@ -25,16 +25,16 @@ CANONICAL_CONFIGS = {
     "resource-policy.json",
 }
 DDL_PATTERNS = {
-    "alter_table": re.compile(r"\\bALTER\\s+TABLE\\b", re.IGNORECASE),
-    "create_table": re.compile(r"\\bCREATE\\s+TABLE\\b", re.IGNORECASE),
-    "drop_table": re.compile(r"\\bDROP\\s+TABLE\\b", re.IGNORECASE),
-    "rename_table": re.compile(r"\\bRENAME\\s+TABLE\\b", re.IGNORECASE),
-    "pragma_user_version": re.compile(r"\\bPRAGMA\\s+USER_VERSION\\b", re.IGNORECASE),
+    "alter_table": re.compile(r"\bALTER\s+TABLE\b", re.IGNORECASE),
+    "create_table": re.compile(r"\bCREATE\s+TABLE\b", re.IGNORECASE),
+    "drop_table": re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE),
+    "rename_table": re.compile(r"\bRENAME\s+TABLE\b", re.IGNORECASE),
+    "pragma_user_version": re.compile(r"\bPRAGMA\s+USER_VERSION\b", re.IGNORECASE),
 }
 MIGRATION_PATH_RE = re.compile(r"(?:^|[._/-])migrat(?:e|ion|ions)(?:[._/-]|$)", re.IGNORECASE)
-SCHEMA_VERSION_RE = re.compile(r'["\\\']schema_version["\\\']\\s*[:=]', re.IGNORECASE)
+SCHEMA_VERSION_RE = re.compile(r"""["']schema_version["']\s*[:=]""", re.IGNORECASE)
 PLACEHOLDER_RE = re.compile(
-    r"^\\s*(?:n/?a|none|not applicable|tbd|todo|same as forward|automatic)\\s*[.!]?\\s*$",
+    r"^\s*(?:n/?a|none|not applicable|tbd|todo|same as forward|automatic)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 
@@ -70,7 +70,7 @@ def _changed_paths(base: str, head: str) -> list[tuple[str, str]]:
     for line in raw.splitlines():
         if not line.strip():
             continue
-        parts = line.split("\\t", 1)
+        parts = line.split("\t", 1)
         if len(parts) != 2:
             raise GuardError("unexpected git name-status output")
         status, path = parts
@@ -96,7 +96,7 @@ def _changed_payload_lines(patch: str) -> str:
             continue
         if line.startswith(("+", "-")):
             lines.append(line[1:])
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def migration_signals(change: Change) -> list[str]:
@@ -126,7 +126,7 @@ def migration_signals(change: Change) -> list[str]:
 
 def _section_body(text: str, heading: str) -> str | None:
     match = re.search(
-        rf"(?ms)^##\\s+{re.escape(heading)}\\s*$\\n(.*?)(?=^##\\s+|\\Z)",
+        rf"(?ms)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
         text,
     )
     return match.group(1).strip() if match else None
