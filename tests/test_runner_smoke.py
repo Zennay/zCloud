@@ -327,6 +327,42 @@ class RunnerSmokeTests(unittest.TestCase):
         self.assertIn("scheduler superseded stale pending command", stale_row["result"])
         self.assertEqual("pending", fresh_row["status"])
 
+    def test_background_reconcile_preserves_long_running_replacement_commands(self):
+        observed_at = server.datetime.fromisoformat("2026-10-06T08:00:00+00:00")
+        short_stale = "2026-10-06T07:54:59+00:00"
+        long_stale = "2026-10-06T07:44:59+00:00"
+        with server.connect() as conn:
+            ordinary = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "push", "pending", short_stale, short_stale),
+            ).lastrowid
+            protected = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", short_stale, short_stale),
+            ).lastrowid
+            expired_replacement = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", long_stale, long_stale),
+            ).lastrowid
+            conn.execute("BEGIN IMMEDIATE")
+            reconciled = server._reconcile_stale_runner_commands_locked(
+                conn,
+                at=observed_at,
+            )
+
+        self.assertIn(ordinary, reconciled)
+        self.assertNotIn(protected, reconciled)
+        self.assertIn(expired_replacement, reconciled)
+        with server.connect() as conn:
+            protected_status = conn.execute(
+                "SELECT status FROM runner_commands WHERE id=?",
+                (protected,),
+            ).fetchone()["status"]
+        self.assertEqual("pending", protected_status)
+
     def test_concurrent_duplicate_push_creates_one_pending_command(self):
         self.request(
             "/api/runner-control", {"project_id": "cloud", "action": "start"}
