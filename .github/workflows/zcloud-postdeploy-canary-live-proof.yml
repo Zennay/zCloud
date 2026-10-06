@@ -49,7 +49,9 @@ jobs:
         id: canary
         shell: bash
         env:
-          REPORT: ${{ runner.temp }}/zcloud-postdeploy-canary-live-proof.json
+          RAW_REPORT: ${{ runner.temp }}/zcloud-postdeploy-canary-live-proof.raw.json
+          EVIDENCE: ${{ runner.temp }}/zcloud-postdeploy-canary-live-proof.json
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           python3 scripts/zcloud_postdeploy_canary.py \
@@ -58,16 +60,44 @@ jobs:
             --base-url http://127.0.0.1:8765 \
             --runtime-extension "$HOME/snap/firefox/common/chatgpt-project-extension/background.js" \
             --json \
-            | tee "$REPORT"
-          python3 - "$REPORT" <<'PY'
+            | tee "$RAW_REPORT"
+          python3 - "$RAW_REPORT" "$EVIDENCE" <<'PY'
           import json
+          import os
+          import socket
           import sys
           from pathlib import Path
 
-          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          if payload.get("ok") is not True:
+          raw_path = Path(sys.argv[1])
+          evidence_path = Path(sys.argv[2])
+          canary = json.loads(raw_path.read_text(encoding="utf-8"))
+          if canary.get("ok") is not True:
               raise SystemExit("live postdeploy canary is not green")
-          print("ZCLOUD_POSTDEPLOY_CANARY_LIVE_PROOF_GREEN")
+
+          candidate_sha = os.environ["CANDIDATE_SHA"].strip().lower()
+          if len(candidate_sha) != 40 or any(c not in "0123456789abcdef" for c in candidate_sha):
+              raise SystemExit(f"invalid candidate sha: {candidate_sha!r}")
+
+          evidence = {
+              "ok": True,
+              "candidate_sha": candidate_sha,
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_name": os.environ.get("RUNNER_NAME"),
+              "machine": socket.gethostname(),
+              "canary": canary,
+          }
+          evidence_path.write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "ZCLOUD_POSTDEPLOY_CANARY_LIVE_PROOF_GREEN "
+              f"sha={candidate_sha} "
+              f"run_id={evidence['workflow_run_id']} "
+              f"runner={evidence['runner_name']}"
+          )
           PY
 
       - name: Upload read-only canary evidence
