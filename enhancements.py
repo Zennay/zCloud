@@ -5,6 +5,7 @@ import hashlib, json, os, re, sqlite3, subprocess, time
 import project_runtime
 
 ROOT = Path("/home/ubuntu/zennay-cloud")
+PROJECTS_FILE = ROOT / "projects.json"
 RESOURCE_FILE = ROOT / "resource-policy.json"
 ALERT_STATE_FILE = ROOT / "alert-state.json"
 SIGNALS_DIR = ROOT / "signals"
@@ -525,17 +526,120 @@ def _ftmo_quality():
         "readiness": _ftmo_readiness(),
     }
 
+def _ulab_quality():
+    projects = _json(PROJECTS_FILE) or []
+    project = next(
+        (row for row in projects if isinstance(row, dict) and row.get("id") == "ulab"),
+        None,
+    )
+    if not project:
+        return _empty_quality_snapshot()
+
+    source = project.get("scorecard_url") or str(PROJECTS_FILE)
+    observed_at = _source_observed_at(PROJECTS_FILE) or _now()
+    milestones = [row for row in (project.get("milestones") or []) if isinstance(row, dict)]
+    progress = project.get("progress_override")
+    if progress is None and milestones:
+        progress = round(
+            sum(float(row.get("progress", 100 if row.get("done") else 0)) for row in milestones)
+            / len(milestones),
+            1,
+        )
+
+    items = []
+    for row in milestones:
+        value = row.get("progress", 100 if row.get("done") else 0)
+        items.append({
+            "label": str(row.get("title") or "Milestone"),
+            "value": value,
+            "unit": "%",
+            "source": source,
+            "observed_at": observed_at,
+        })
+
+    revision = project.get("milestone_revision")
+    latest = _comparison_point(
+        "Latest scorecard checkpoint",
+        revision,
+        note=str(project.get("phase") or ""),
+        source=source,
+        observed_at=observed_at,
+        validated=True,
+    )
+    current = _comparison_point(
+        "Current evidence score",
+        progress,
+        unit="%",
+        note=str(project.get("progress_basis") or ""),
+        source=source,
+        observed_at=observed_at,
+        validated=True,
+    )
+    headline = None
+    if progress is not None:
+        headline = {
+            "label": "Weighted V0–V3 score",
+            "value": progress,
+            "unit": "%",
+            "note": str(project.get("phase") or ""),
+            "source": source,
+            "observed_at": observed_at,
+        }
+    return {
+        "available": headline is not None,
+        "headline": headline,
+        "items": items,
+        "stage": project.get("phase"),
+        "meta": {
+            "milestone_revision": revision,
+            "scorecard_url": project.get("scorecard_url"),
+        },
+        "comparison": _comparison_view(latest=latest, current=current),
+    }
+
+
+def _stamp_snapshot_provenance(snapshot, default_source):
+    """Ensure every rendered adapter metric carries an evidence source and observation time."""
+    if not isinstance(snapshot, dict):
+        return _empty_quality_snapshot()
+    observed_at = _source_observed_at(default_source) or _now()
+
+    points = []
+    headline = snapshot.get("headline")
+    if isinstance(headline, dict):
+        points.append(headline)
+    points.extend(row for row in (snapshot.get("items") or []) if isinstance(row, dict))
+    comparison = snapshot.get("comparison") or {}
+    if isinstance(comparison, dict):
+        points.extend(
+            point for point in (comparison.get("latest"), comparison.get("current"), comparison.get("best"))
+            if isinstance(point, dict)
+        )
+
+    for point in points:
+        if point.get("value") is None or point.get("value") == "":
+            continue
+        point.setdefault("source", str(default_source))
+        point.setdefault("observed_at", _source_observed_at(point.get("source")) or observed_at)
+    return snapshot
+
+
 class ProjectTelemetryAdapter:
     """Project-specific evidence adapter contract used by the generic dashboard renderer."""
 
     project_id = None
+    default_source = None
 
     def snapshot(self):
         raise NotImplementedError
 
+    def read(self):
+        return _stamp_snapshot_provenance(self.snapshot(), self.default_source)
+
 
 class HaxLabTelemetryAdapter(ProjectTelemetryAdapter):
     project_id = "haxlab"
+    default_source = "/var/lib/haxlab/derived"
 
     def snapshot(self):
         return _hax_quality()
@@ -543,14 +647,26 @@ class HaxLabTelemetryAdapter(ProjectTelemetryAdapter):
 
 class FTMOTelemetryAdapter(ProjectTelemetryAdapter):
     project_id = "ftmo"
+    default_source = "/opt/ftmo-runner/_work/Ftmo/Ftmo/artifacts/research_outcomes"
 
     def snapshot(self):
         return _ftmo_quality()
 
 
+class ULabTelemetryAdapter(ProjectTelemetryAdapter):
+    project_id = "ulab"
+
+    @property
+    def default_source(self):
+        return str(PROJECTS_FILE)
+
+    def snapshot(self):
+        return _ulab_quality()
+
+
 _TELEMETRY_ADAPTERS = {
     adapter.project_id: adapter
-    for adapter in (HaxLabTelemetryAdapter(), FTMOTelemetryAdapter())
+    for adapter in (HaxLabTelemetryAdapter(), FTMOTelemetryAdapter(), ULabTelemetryAdapter())
 }
 
 
@@ -571,7 +687,7 @@ def _empty_quality_snapshot():
 
 def quality_for(project):
     adapter = _TELEMETRY_ADAPTERS.get(project)
-    return adapter.snapshot() if adapter else _empty_quality_snapshot()
+    return adapter.read() if adapter else _empty_quality_snapshot()
 
 def init_db(c):
     c.execute("""CREATE TABLE IF NOT EXISTS alerts(
