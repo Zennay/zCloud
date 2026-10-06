@@ -5,12 +5,14 @@ on:
     paths:
       - "scripts/zcloud_dead_conversation_cleanup_selector.py"
       - "tests/test_dead_conversation_cleanup_selector.py"
+      - "tests/test_dead_conversation_cleanup_selector_workflow.py"
       - ".github/workflows/zcloud-dead-conversation-cleanup-selector-proof.yml"
   push:
     branches: [main]
     paths:
       - "scripts/zcloud_dead_conversation_cleanup_selector.py"
       - "tests/test_dead_conversation_cleanup_selector.py"
+      - "tests/test_dead_conversation_cleanup_selector_workflow.py"
       - ".github/workflows/zcloud-dead-conversation-cleanup-selector-proof.yml"
   workflow_dispatch:
 
