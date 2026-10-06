@@ -35,6 +35,10 @@ class ResourceProtectionWorkflowTests(unittest.TestCase):
         self.assertIn(
             "scripts/zcloud_control_plane_resource_protection.py --json", live
         )
+        self.assertIn("export XDG_RUNTIME_DIR=/run/user/1000", live)
+        self.assertIn(
+            "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", live
+        )
         self.assertNotIn("--require-protected", live)
         for forbidden in (
             "sudo ",
