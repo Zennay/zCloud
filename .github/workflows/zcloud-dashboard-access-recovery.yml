@@ -1,3 +1,4 @@
+# Emergency API recovery retrigger 2026-10-06T05:55Z: restore 127.0.0.1:8765 before worker restart.
 name: zCloud dashboard access recovery
 
 # Manual recovery retrigger 2026-10-05T08:48Z: recover the real /api/status dependency, not only static HTML.
