@@ -32,18 +32,22 @@ _EXACT_HIGH_BLAST = {
 
 _MUTATING_TOKENS = {
     "activate",
+    "activation",
     "allocator",
     "deploy",
     "emergency",
     "heal",
     "migration",
     "promotion",
+    "reactivation",
     "reconcile",
     "recover",
     "recovery",
     "restart",
+    "retry",
     "rollback",
     "scheduler",
+    "sweep",
     "watchdog",
 }
 
