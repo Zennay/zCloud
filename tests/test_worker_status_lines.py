@@ -90,6 +90,13 @@ class WorkerStatusLineTests(unittest.TestCase):
         )
         self.assertEqual("quality-validation", result["workers"][0]["lane"])
 
+    def test_missing_lane_is_fail_visible(self):
+        result = status_lines.build_lines(
+            {"chatgpt_runners": {"cloud": {"workers": [{"worker_slot": 1, "state": "live"}]}}}
+        )
+        self.assertFalse(result["coverage_complete"])
+        self.assertIsNone(result["workers"][0]["lane"])
+
     def test_unknown_state_is_fail_visible(self):
         result = status_lines.build_lines(
             {"chatgpt_runners": {"cloud": {"workers": [{"worker_slot": 1, "state": "mystery"}]}}}
