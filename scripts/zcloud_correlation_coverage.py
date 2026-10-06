@@ -13,6 +13,7 @@ import argparse
 import json
 import sqlite3
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -99,7 +100,7 @@ def audit_correlation_coverage(db_path: str | Path) -> dict[str, Any]:
     path = Path(db_path)
     before = _fingerprint(path)
 
-    with _connect_readonly(path) as connection:
+    with closing(_connect_readonly(path)) as connection:
         tables = {
             str(row["name"])
             for row in connection.execute(
