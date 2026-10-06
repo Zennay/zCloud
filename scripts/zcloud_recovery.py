@@ -34,6 +34,7 @@ SERVICE_HEALTH_TIMEOUT_SECONDS = float(
 LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS = float(
     os.environ.get("ZCLOUD_LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS", "30")
 )
+RECOVERY_SNAPSHOT_RETENTION = 8
 
 MANAGED_PATHS = (
     "server.py",
@@ -248,6 +249,84 @@ def append_log(state: Path, event: str, **fields) -> None:
         f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def previously_used_snapshot_ids(state: Path) -> set[str]:
+    """Return snapshot ids already recorded in the durable recovery log."""
+    log = state / "recovery.log"
+    if not log.is_file():
+        return set()
+    used: set[str] = set()
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return used
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        snapshot_id = str(row.get("snapshot_id") or "")
+        if snapshot_id:
+            used.add(snapshot_id)
+    return used
+
+
+def prune_recovery_snapshots(
+    state: Path,
+    *,
+    retain: int = RECOVERY_SNAPSHOT_RETENTION,
+) -> list[str]:
+    """Bound valid recovery snapshots while always preserving the active LKG.
+
+    Malformed/unrecognized directories are deliberately preserved instead of
+    being guessed safe to delete.
+    """
+    if retain < 1:
+        raise RecoveryError("recovery snapshot retention must be at least 1")
+
+    pointer_path = state / "last-known-good.json"
+    snapshots = state / "snapshots"
+    if not pointer_path.is_file() or not snapshots.is_dir():
+        return []
+
+    try:
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        current_id = str(pointer["snapshot_id"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RecoveryError(f"cannot prune recovery snapshots without valid LKG pointer: {exc}") from exc
+
+    valid: list[tuple[str, str, Path]] = []
+    for path in snapshots.iterdir():
+        if not path.is_dir() or path.name.startswith("."):
+            continue
+        manifest_path = path / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            snapshot_id = str(manifest.get("snapshot_id") or "")
+            created_at = str(manifest.get("created_at") or "")
+            if snapshot_id != path.name or not created_at:
+                continue
+            datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            # Unknown directories are not retention candidates.
+            continue
+        valid.append((created_at, path.name, path))
+
+    valid.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    keep = {current_id}
+    for _, snapshot_id, _ in (item for item in valid if item[1] != current_id):
+        if len(keep) >= retain:
+            break
+        keep.add(snapshot_id)
+
+    removed: list[str] = []
+    for _, snapshot_id, path in valid:
+        if snapshot_id in keep:
+            continue
+        shutil.rmtree(path)
+        removed.append(snapshot_id)
+    return removed
+
+
 def load_lkg(state: Path) -> tuple[Path, dict]:
     pointer = state / "last-known-good.json"
     if not pointer.exists():
@@ -281,7 +360,12 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
     snapshots = state / "snapshots"
     snap_id = base_snap_id
     collision = 1
-    while (snapshots / snap_id).exists() or (snapshots / ("." + snap_id + ".tmp")).exists():
+    used_snapshot_ids = previously_used_snapshot_ids(state)
+    while (
+        snap_id in used_snapshot_ids
+        or (snapshots / snap_id).exists()
+        or (snapshots / ("." + snap_id + ".tmp")).exists()
+    ):
         collision += 1
         snap_id = base_snap_id + "-" + str(collision)
     final = snapshots / snap_id
@@ -310,6 +394,25 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
     os.replace(tmp, final)
     write_json_atomic(state / "last-known-good.json", {"snapshot_id": snap_id, "manifest": str(final / "manifest.json"), "updated_at": utc_now()})
     append_log(state, "lkg_captured", snapshot_id=snap_id, git_head=git.get("head"), evidence=evidence.strip())
+    try:
+        removed = prune_recovery_snapshots(state)
+        if removed:
+            append_log(
+                state,
+                "recovery_snapshots_pruned",
+                snapshot_id=snap_id,
+                retained=RECOVERY_SNAPSHOT_RETENTION,
+                removed_snapshot_ids=removed,
+            )
+    except Exception as exc:
+        # Snapshot capture is the safety primitive. Retention housekeeping must
+        # never invalidate an otherwise healthy, evidence-backed LKG.
+        append_log(
+            state,
+            "recovery_snapshot_prune_failed",
+            snapshot_id=snap_id,
+            error=str(exc)[:300],
+        )
     return manifest
 
 
