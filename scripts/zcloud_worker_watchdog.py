@@ -43,6 +43,10 @@ FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_F
 GENERATION_PROTECT_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_GENERATION_PROTECT_SECONDS", "1200"))
 PROMPT_STALE_REFRESH_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_PROMPT_STALE_REFRESH_SECONDS", "300"))
 STALE_PENDING_COMMAND_SECONDS = int(os.environ.get("ZCLOUD_WATCHDOG_STALE_PENDING_COMMAND_SECONDS", "300"))
+LONG_STALE_PENDING_COMMAND_SECONDS = max(
+    STALE_PENDING_COMMAND_SECONDS,
+    int(os.environ.get("ZCLOUD_WATCHDOG_LONG_STALE_PENDING_COMMAND_SECONDS", "900")),
+)
 WORKER_MEMORY_WARN_MB = max(1024, int(os.environ.get("ZCLOUD_WORKER_MEMORY_WARN_MB", "2048")))
 WORKER_MEMORY_CRITICAL_MB = max(512, int(os.environ.get("ZCLOUD_WORKER_MEMORY_CRITICAL_MB", "1024")))
 WORKER_SWAP_MIN_TOTAL_MB = max(0, int(os.environ.get("ZCLOUD_WORKER_SWAP_MIN_TOTAL_MB", "1024")))
@@ -75,11 +79,29 @@ def worker_key(item: dict[str, Any]) -> str:
     key = str(item.get("worker_key") or "").strip()
     if key:
         return key
+
+    base_project = str(item.get("base_project_id") or "").strip()
     project = str(item.get("project_id") or "").strip()
+    raw_slot = item.get("worker_slot")
     try:
-        slot = max(1, int(item.get("worker_slot") or 1))
+        slot = max(1, int(raw_slot or 1))
     except Exception:
         slot = 1
+
+    if base_project:
+        return f"{base_project}::w{slot}"
+
+    # Some runner-target payloads identify the worker directly in project_id.
+    # Preserve that canonical key instead of accidentally producing
+    # "cloud::w2::w2" when worker_key is absent during degraded recovery.
+    if "::w" in project:
+        base, suffix = project.rsplit("::w", 1)
+        if base and suffix.isdigit() and int(suffix) >= 1:
+            encoded_slot = int(suffix)
+            if raw_slot not in (None, "") and slot != encoded_slot:
+                return ""
+            return project
+
     return f"{project}::w{slot}" if project else ""
 
 
@@ -299,16 +321,22 @@ def clear_stale_pending_commands(
             conn.execute("PRAGMA busy_timeout=5000")
             if project_id:
                 rows = conn.execute(
-                    "SELECT id,created_at FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id",
+                    "SELECT id,action,created_at FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id",
                     (project_id,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id,created_at FROM runner_commands WHERE status='pending' ORDER BY id"
+                    "SELECT id,action,created_at FROM runner_commands WHERE status='pending' ORDER BY id"
                 ).fetchall()
             for row in rows:
+                action = str(row["action"] or "").strip().lower()
+                stale_after = (
+                    max(min_age_seconds, LONG_STALE_PENDING_COMMAND_SECONDS)
+                    if action in {"new_chat", "drain"}
+                    else min_age_seconds
+                )
                 created = parse_time(row["created_at"])
-                if created is None or (now - created).total_seconds() >= min_age_seconds:
+                if created is None or (now - created).total_seconds() >= stale_after:
                     cleared.append(int(row["id"]))
             if cleared:
                 placeholders = ",".join("?" for _ in cleared)

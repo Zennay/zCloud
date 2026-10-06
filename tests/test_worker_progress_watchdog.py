@@ -12,6 +12,46 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(watchdog)
 
 
+class WorkerWatchdogIdentityTests(unittest.TestCase):
+    def test_worker_key_prefers_explicit_allocation_identity(self):
+        self.assertEqual(
+            "cloud::w2",
+            watchdog.worker_key({
+                "worker_key": "cloud::w2",
+                "project_id": "cloud",
+                "worker_slot": 2,
+            }),
+        )
+
+    def test_worker_key_uses_base_project_for_runner_target_payload(self):
+        self.assertEqual(
+            "cloud::w2",
+            watchdog.worker_key({
+                "project_id": "cloud::w2",
+                "base_project_id": "cloud",
+                "worker_slot": 2,
+            }),
+        )
+
+    def test_worker_key_preserves_canonical_project_id_without_double_suffix(self):
+        self.assertEqual(
+            "cloud::w2",
+            watchdog.worker_key({
+                "project_id": "cloud::w2",
+                "worker_slot": 2,
+            }),
+        )
+
+    def test_worker_key_fails_closed_on_canonical_slot_mismatch(self):
+        self.assertEqual(
+            "",
+            watchdog.worker_key({
+                "project_id": "cloud::w2",
+                "worker_slot": 1,
+            }),
+        )
+
+
 class WorkerWatchdogDecisionTests(unittest.TestCase):
     def decision(self, **overrides):
         values = {
@@ -148,6 +188,57 @@ class WorkerWatchdogStaleCommandTests(unittest.TestCase):
             self.assertEqual("failed", rows[0][1])
             self.assertIn("superseded stale pending command", rows[0][2])
             self.assertEqual("pending", rows[1][1])
+
+
+class WorkerWatchdogLongCommandLeaseTests(unittest.TestCase):
+    def test_stale_cleanup_preserves_replacement_until_long_window(self):
+        now = datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "history.db"
+            conn = sqlite3.connect(db)
+            conn.execute("""CREATE TABLE runner_commands(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT,
+                action TEXT,
+                status TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                result TEXT
+            )""")
+            short_stale = (now - timedelta(seconds=301)).isoformat()
+            long_stale = (now - timedelta(seconds=901)).isoformat()
+            ordinary = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                ("cloud::w1", "push", "pending", short_stale, short_stale),
+            ).lastrowid
+            protected = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", short_stale, short_stale),
+            ).lastrowid
+            expired = conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", long_stale, long_stale),
+            ).lastrowid
+            conn.commit()
+            conn.close()
+
+            cleared = watchdog.clear_stale_pending_commands(
+                db,
+                project_id=None,
+                now=now,
+                min_age_seconds=300,
+            )
+
+            self.assertIn(ordinary, cleared)
+            self.assertNotIn(protected, cleared)
+            self.assertIn(expired, cleared)
+            conn = sqlite3.connect(db)
+            protected_status = conn.execute(
+                "SELECT status FROM runner_commands WHERE id=?",
+                (protected,),
+            ).fetchone()[0]
+            conn.close()
+            self.assertEqual("pending", protected_status)
 
 
 class WorkerWatchdogApiDegradedMemoryRecoveryTests(unittest.TestCase):

@@ -27,9 +27,12 @@ jobs:
           import sqlite3
           import time
           import urllib.request
+          from datetime import datetime, timezone
 
           BASE = "http://127.0.0.1:8765"
           DB = "/home/ubuntu/zennay-cloud/history.db"
+          ORDINARY_COMMAND_STALE_SECONDS = 300
+          LONG_COMMAND_STALE_SECONDS = 900
 
           def call(method, path, payload=None):
               data = None
@@ -86,30 +89,57 @@ jobs:
               raise SystemExit("no allocated active workers to push")
 
           print("ACTIVE_WORKERS=" + json.dumps(active, sort_keys=True))
-          # Supersede recovery-era pending commands first. They are stale control
-          # intents from the browser restart and must not interrupt a worker after
-          # this scheduled/manual push-all request.
+          # Clear only genuinely stale control intents. Replacement/drain commands
+          # may legitimately need more than five minutes while the browser consumer
+          # moves to a fresh conversation or finishes a drain. Preserve those until
+          # the same bounded long lease used by scheduler/watchdog health recovery.
           with sqlite3.connect(DB, timeout=10) as conn:
               conn.row_factory = sqlite3.Row
               conn.execute("PRAGMA busy_timeout=10000")
               conn.execute("BEGIN IMMEDIATE")
-              ts = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+              observed_at = datetime.now(timezone.utc)
+              ts = observed_at.isoformat()
               superseded = []
+              preserved = []
               for item in active:
                   worker = item["worker"]
                   rows = conn.execute(
-                      "SELECT id,action FROM runner_commands "
+                      "SELECT id,action,created_at FROM runner_commands "
                       "WHERE project_id=? AND status='pending' ORDER BY id",
                       (worker,),
                   ).fetchall()
                   for row in rows:
-                      superseded.append({"worker": worker, "id": int(row["id"]), "action": str(row["action"])})
+                      action = str(row["action"] or "").strip().lower()
+                      stale_after = (
+                          LONG_COMMAND_STALE_SECONDS
+                          if action in {"new_chat", "drain"}
+                          else ORDINARY_COMMAND_STALE_SECONDS
+                      )
+                      try:
+                          created = datetime.fromisoformat(
+                              str(row["created_at"]).replace("Z", "+00:00")
+                          ).astimezone(timezone.utc)
+                          age = max(0.0, (observed_at - created).total_seconds())
+                      except Exception:
+                          age = stale_after + 1
+                      record = {
+                          "worker": worker,
+                          "id": int(row["id"]),
+                          "action": action,
+                          "age_seconds": round(age),
+                          "stale_after_seconds": stale_after,
+                      }
+                      if age < stale_after:
+                          preserved.append(record)
+                          continue
+                      superseded.append(record)
                       conn.execute(
                           "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
                           "WHERE id=? AND status='pending'",
                           (ts, "scheduled/manual push-all superseded stale pending control command", int(row["id"])),
                       )
           print("SUPERSEDED_PENDING=" + json.dumps(superseded, sort_keys=True))
+          print("PRESERVED_PENDING=" + json.dumps(preserved, sort_keys=True))
 
           pushed = call("POST", "/api/dynamic-workers/force-push", {})
           print("FORCE_PUSH=" + json.dumps(pushed, sort_keys=True))

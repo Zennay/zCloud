@@ -104,11 +104,13 @@ class ZCloudHealthcheckTests(unittest.TestCase):
                     "project_id": "cloud::w1",
                     "base_project_id": "cloud",
                     "worker_slot": 1,
+                    "worker_count": 2,
                 },
                 "cloud::w2": {
                     "project_id": "cloud::w2",
                     "base_project_id": "cloud",
                     "worker_slot": 2,
+                    "worker_count": 2,
                 },
             },
         }
@@ -189,6 +191,36 @@ class ZCloudHealthcheckTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(1, len(result["stale_pending_commands"]))
 
+    def test_store_preserves_replacement_command_inside_long_stale_lease(self):
+        created = (self.now - timedelta(seconds=301)).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", created, created),
+            )
+            conn.commit()
+        result = self.store()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([], result["stale_pending_commands"])
+
+    def test_store_fails_closed_after_replacement_long_stale_lease(self):
+        created = (self.now - timedelta(seconds=901)).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                ("cloud::w1", "new_chat", "pending", created, created),
+            )
+            conn.commit()
+        result = self.store()
+        self.assertFalse(result["ok"])
+        self.assertEqual(1, len(result["stale_pending_commands"]))
+        self.assertEqual(
+            health.LONG_PENDING_COMMAND_SECONDS,
+            result["stale_pending_commands"][0]["stale_after_seconds"],
+        )
+
     def test_scheduler_detects_count_mismatch(self):
         status, targets = self.sample()
         status["chatgpt_runners"]["cloud"]["desired_worker_count"] = 1
@@ -266,6 +298,62 @@ class ZCloudHealthcheckTests(unittest.TestCase):
             source_runtime_match=True,
         )
         self.assertFalse(result["ok"])
+
+    def test_scheduler_detects_ghost_api_project(self):
+        status, targets = self.sample()
+        targets["projects"]["ghost::w1"] = {
+            "project_id": "ghost::w1",
+            "base_project_id": "ghost",
+            "worker_slot": 1,
+        }
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("unknown base project ghost" in x for x in scheduler["detail"])
+        )
+
+    def test_scheduler_detects_runner_target_identity_mismatch(self):
+        status, targets = self.sample()
+        targets["projects"]["cloud::w2"]["project_id"] = "cloud::w1"
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("project_id identity mismatch" in x for x in scheduler["detail"])
+        )
+
+    def test_scheduler_detects_runner_target_key_slot_mismatch(self):
+        status, targets = self.sample()
+        targets["projects"]["cloud::w3"] = targets["projects"].pop("cloud::w2")
+        targets["projects"]["cloud::w3"]["project_id"] = "cloud::w3"
+        result = health.evaluate(
+            status,
+            targets,
+            self.store(),
+            zcloud_service=True,
+            firefox_service=True,
+            source_runtime_match=True,
+        )
+        self.assertFalse(result["ok"])
+        scheduler = next(x for x in result["checks"] if x["name"] == "worker_scheduler")
+        self.assertTrue(
+            any("runner-target key mismatch" in x for x in scheduler["detail"])
+        )
 
     def test_violentmonkey_only_requires_live_standalone_firefox(self):
         status, targets = self.sample()

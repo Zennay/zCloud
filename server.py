@@ -43,6 +43,10 @@ RUNNER_COMMAND_STALE_SECONDS = max(
     30,
     int(os.environ.get('ZCLOUD_RUNNER_COMMAND_STALE_SECONDS', '300')),
 )
+RUNNER_COMMAND_LONG_STALE_SECONDS = max(
+    RUNNER_COMMAND_STALE_SECONDS,
+    int(os.environ.get('ZCLOUD_RUNNER_COMMAND_LONG_STALE_SECONDS', '900')),
+)
 # Browser workers are memory-heavy (Firefox content processes can exceed multiple GiB).
 # Keep real RAM headroom before claiming *new* worker slots; existing work is left intact.
 WORKER_MEMORY_HEADROOM_MB = max(1536, int(os.environ.get('ZCLOUD_WORKER_MEMORY_HEADROOM_MB', '2048')))
@@ -3408,20 +3412,26 @@ def _reconcile_stale_runner_commands_locked(
     result='scheduler superseded stale pending command',
 ):
     pending_rows=connection.execute(
-        "SELECT id,created_at FROM runner_commands "
+        "SELECT id,action,created_at FROM runner_commands "
         "WHERE status='pending' ORDER BY id"
     ).fetchall()
     stale_ids=[]
     observed_at=at or datetime.now(timezone.utc)
     for pending in pending_rows:
+        action=str(pending['action'] or '').strip().lower()
+        stale_after=(
+            RUNNER_COMMAND_LONG_STALE_SECONDS
+            if action in {'new_chat','drain'}
+            else RUNNER_COMMAND_STALE_SECONDS
+        )
         try:
             created=datetime.fromisoformat(
                 str(pending['created_at']).replace('Z','+00:00')
             ).astimezone(timezone.utc)
             age=(observed_at-created).total_seconds()
         except Exception:
-            age=RUNNER_COMMAND_STALE_SECONDS
-        if age >= RUNNER_COMMAND_STALE_SECONDS:
+            age=stale_after
+        if age >= stale_after:
             stale_ids.append(int(pending['id']))
     if stale_ids:
         placeholders=','.join('?' for _ in stale_ids)
