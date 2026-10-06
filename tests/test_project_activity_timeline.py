@@ -32,6 +32,14 @@ class ProjectActivityTimelineTests(unittest.TestCase):
                     assistant_chars INTEGER,
                     worker_slot INTEGER NOT NULL DEFAULT 1
                 );
+                CREATE TABLE events(
+                    id TEXT PRIMARY KEY,
+                    ts TEXT,
+                    project TEXT,
+                    kind TEXT,
+                    title TEXT,
+                    detail TEXT
+                );
                 CREATE TABLE runner_commands(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL,
@@ -96,6 +104,27 @@ class ProjectActivityTimelineTests(unittest.TestCase):
         )
         self.assertEqual(2, payload["timeline"][0]["worker_slot"])
         self.assertEqual("generation-active", payload["timeline"][0]["reason_code"])
+
+    def test_generic_project_event_is_included_without_title_or_detail(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute(
+                "INSERT INTO events VALUES(?,?,?,?,?,?)",
+                (
+                    "e1",
+                    (self.now - timedelta(minutes=1)).isoformat(),
+                    "cloud",
+                    "deploy-green",
+                    "sensitive human title",
+                    "SECRET_DETAIL=abc",
+                ),
+            )
+            connection.commit()
+        payload = timeline.report(self.db, 24, "cloud", 20, self.now)
+        entry = payload["timeline"][0]
+        self.assertEqual("project:deploy-green", entry["code"])
+        serialized = json.dumps(payload)
+        self.assertNotIn("sensitive human title", serialized)
+        self.assertNotIn("SECRET_DETAIL", serialized)
 
     def test_control_outcome_is_included_without_result_payload(self):
         self.add_command(2, "pause", "completed", result="SECRET_TOKEN=abc")
