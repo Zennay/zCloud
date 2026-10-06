@@ -32,6 +32,7 @@ DDL_PATTERNS = {
     "pragma_user_version": re.compile(r"\bPRAGMA\s+USER_VERSION\b", re.IGNORECASE),
 }
 MIGRATION_PATH_RE = re.compile(r"(?:^|[._/-])migrat(?:e|ion|ions)(?:[._/-]|$)", re.IGNORECASE)
+NON_MIGRATION_PATHS = {"scripts/zcloud_migration_safety_guard.py"}
 SCHEMA_VERSION_RE = re.compile(r"""["']schema_version["']\s*[:=]""", re.IGNORECASE)
 PLACEHOLDER_RE = re.compile(
     r"^\s*(?:n/?a|none|not applicable|tbd|todo|same as forward|automatic)\s*[.!]?\s*$",
@@ -101,6 +102,8 @@ def _changed_payload_lines(patch: str) -> str:
 
 def migration_signals(change: Change) -> list[str]:
     path = Path(change.path)
+    if change.path in NON_MIGRATION_PATHS:
+        return []
     if path.parts and path.parts[0] in {"tests", "docs", ".github"}:
         return []
 
