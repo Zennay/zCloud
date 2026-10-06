@@ -78,7 +78,6 @@ class SinceVisitReportTests(unittest.TestCase):
         )
         self.assertEqual(3, project["change_count"])
         self.assertEqual("task_result", project["latest_change"])
-        self.assertEqual("validation", project["latest_receipt"]["phase"])
         self.assertEqual("success", project["latest_receipt"]["ci_status"])
         self.assertEqual("a"*12, project["latest_receipt"]["commit"])
 
@@ -86,6 +85,18 @@ class SinceVisitReportTests(unittest.TestCase):
         self.add_receipt("cloud", 300)
         self.add_event("cloud", 250, "generation-finished")
         self.add_event("cloud", 30, "heartbeat")
+        payload = delta.report(self.db, self.since, now=self.now)
+        self.assertEqual([], payload["projects"])
+
+    def test_absolute_time_filter_handles_non_utc_offsets(self):
+        before = "2026-10-06T16:00:00+02:00"
+        with closing(sqlite3.connect(self.db)) as c:
+            c.execute("""INSERT INTO project_state_receipts(
+                project_id,phase,action,commit_sha,ci_status,blocker,next_gate,source,
+                observed_at,evidence_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("cloud", "validation", "", "a"*40, "success", "", "", "test", before, "{}", before))
+            c.commit()
         payload = delta.report(self.db, self.since, now=self.now)
         self.assertEqual([], payload["projects"])
 
@@ -101,19 +112,18 @@ class SinceVisitReportTests(unittest.TestCase):
         marker = "SUPER_SECRET_TOKEN_123"
         self.add_receipt(
             "cloud", 60, action=marker, blocker=marker,
-            phase="unsafe phase with spaces " + marker, ci=marker, sha=marker,
+            phase=marker, ci=marker, sha=marker,
         )
         self.add_event("cloud", 30, "startup-blocked", reason=marker, error=marker)
         payload = delta.report(self.db, self.since, now=self.now)
         serialized = json.dumps(payload, sort_keys=True)
         self.assertNotIn(marker, serialized)
-        forbidden = {"action", "blocker", "reason", "error", "evidence_json", "next_gate", "prompt"}
+        forbidden = {"action", "blocker", "phase", "reason", "error", "evidence_json", "next_gate", "prompt"}
         self.assertTrue(forbidden.isdisjoint(payload.keys()))
         for project in payload["projects"]:
             self.assertTrue(forbidden.isdisjoint(project.keys()))
             self.assertTrue(forbidden.isdisjoint(project["latest_receipt"].keys()))
         project = payload["projects"][0]
-        self.assertEqual("other", project["latest_receipt"]["phase"])
         self.assertEqual("other", project["latest_receipt"]["ci_status"])
         self.assertIsNone(project["latest_receipt"]["commit"])
 
@@ -124,13 +134,15 @@ class SinceVisitReportTests(unittest.TestCase):
         after = self.db.stat().st_mtime_ns
         self.assertEqual(before, after)
 
-    def test_since_must_be_timezone_aware_not_future_and_bounded(self):
+    def test_since_and_now_must_be_timezone_aware_not_future_and_bounded(self):
         with self.assertRaises(ValueError):
             delta.report(self.db, "2026-10-06T18:00:00", now=self.now)
         with self.assertRaises(ValueError):
             delta.report(self.db, (self.now + timedelta(minutes=2)).isoformat(), now=self.now)
         with self.assertRaises(ValueError):
             delta.report(self.db, (self.now - timedelta(days=32)).isoformat(), now=self.now)
+        with self.assertRaises(ValueError):
+            delta.report(self.db, self.since, now=datetime(2026, 10, 6, 19, 0))
 
     def test_missing_required_schema_fails_closed(self):
         bad = Path(self.tmp.name) / "bad.db"
