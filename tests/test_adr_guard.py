@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -43,6 +44,15 @@ Remove the candidate change and restore the previous implementation.
 
 
 class AdrGuardTests(unittest.TestCase):
+    def test_changed_path_discovery_includes_deletions(self):
+        completed = mock.Mock(returncode=0, stdout="server.py\n", stderr="")
+        with mock.patch.object(guard.subprocess, "run", return_value=completed) as run:
+            paths = guard.changed_paths("base-sha", "head-sha", ROOT)
+        self.assertEqual(["server.py"], paths)
+        command = run.call_args.args[0]
+        self.assertIn("--diff-filter=ACMRD", command)
+        self.assertLess(command.index("--diff-filter=ACMRD"), command.index("base-sha"))
+
     def test_low_blast_change_does_not_require_adr(self):
         result = guard.evaluate(["scripts/one_helper.py"])
         self.assertTrue(result["ok"])
