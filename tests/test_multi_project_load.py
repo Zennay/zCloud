@@ -49,16 +49,63 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
             conn.execute("DELETE FROM runner_workers")
 
         self.projects = {
-            "lightup": ("P1", 1),
-            "zguard": ("P1", 1),
-            "cloud": ("P1", 1),
-            "ftmo": ("P0", 2),
-            "supa": ("P2", 2),
-            "raiseai": ("P2", 1),
-            "haxlab": ("P2", 1),
+            "lightup": {
+                "priority": "P1",
+                "cap": 1,
+                "tasks": [
+                    ("Implement scope authorization guard", "Implement authorization scope permission guardrails."),
+                ],
+            },
+            "zguard": {
+                "priority": "P1",
+                "cap": 1,
+                "tasks": [
+                    ("Implement product UI state", "Implement product UI state flow with tests."),
+                ],
+            },
+            "cloud": {
+                "priority": "P1",
+                "cap": 1,
+                "tasks": [
+                    ("Implement queue allocator state", "Implement control-plane queue allocator state with tests."),
+                ],
+            },
+            "ftmo": {
+                "priority": "P0",
+                "cap": 2,
+                "tasks": [
+                    ("Implement strategy generation candidate", "Implement research critical-path candidate generation."),
+                    ("Implement walk-forward validation gate", "Implement QA validation walk-forward tests."),
+                    ("Implement provider data provenance", "Implement data provider provenance checks."),
+                ],
+            },
+            "supa": {
+                "priority": "P2",
+                "cap": 2,
+                "tasks": [
+                    ("Implement planner product UI", "Implement product planner UI flow."),
+                    ("Implement supermarket API integration", "Implement API integration runtime backend."),
+                    ("Implement regression quality tests", "Implement quality validation regression tests."),
+                ],
+            },
+            "raiseai": {
+                "priority": "P2",
+                "cap": 1,
+                "tasks": [
+                    ("Implement device microphone integration", "Implement watch device microphone integration."),
+                ],
+            },
+            "haxlab": {
+                "priority": "P2",
+                "cap": 1,
+                "tasks": [
+                    ("Implement model training rollout", "Implement model training rollout policy."),
+                ],
+            },
         }
         with server.connect() as conn:
-            for project_id, (_, cap) in self.projects.items():
+            for project_id, spec in self.projects.items():
+                cap = spec["cap"]
                 conn.execute(
                     "UPDATE runner_targets SET worker_count=? WHERE project_id=?",
                     (cap, project_id),
@@ -76,13 +123,13 @@ class MultiProjectControlPlaneLoadTests(unittest.TestCase):
                         ),
                     )
 
-        for project_id, (priority, cap) in self.projects.items():
-            for ordinal in range(1, cap + 2):
+        for project_id, spec in self.projects.items():
+            for ordinal, (title, criteria) in enumerate(spec["tasks"], 1):
                 server.portfolio_queue_enqueue(
                     project_id,
-                    f"Implement load fixture {project_id} {ordinal}",
-                    priority,
-                    "Implement a deterministic multi-project load-test fixture with automated tests.",
+                    title,
+                    spec["priority"],
+                    criteria,
                     queue_id=f"load-{project_id}-{ordinal:02d}",
                 )
 
