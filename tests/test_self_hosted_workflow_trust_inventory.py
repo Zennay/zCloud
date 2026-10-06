@@ -67,6 +67,34 @@ jobs:
             self.assertTrue(hardened["owner_same_repo_guard"])
             self.assertTrue(hardened["runner_guard"])
 
+    def test_multiple_checkouts_fail_closed_if_any_checkout_is_weak(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write(
+                root,
+                "multi.yml",
+                """
+name: multi
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - uses: actions/checkout@0123456789012345678901234567890123456789
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+      - run: python3 scripts/zcloud_vps_runner_guard.py --json
+""",
+            )
+            report = inventory(root)
+            findings = report["jobs"][0]["findings"]
+            self.assertIn("floating_checkout_action", findings)
+            self.assertIn("checkout_credentials_not_explicitly_disabled", findings)
+            self.assertIn("checkout_exact_ref_not_evident", findings)
+
     def test_zcloud_vps_without_runner_guard_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
