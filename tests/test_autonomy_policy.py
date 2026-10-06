@@ -27,10 +27,27 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.original_db = server.DB
         self.original_policy = server.AUTONOMY_POLICY_FILE
         self.original_queue_seed = server.PORTFOLIO_QUEUE_SEED_FILE
+        self.original_worker_memory_status = server.worker_memory_status
         server.DB = self.root / "history.db"
         server.AUTONOMY_POLICY_FILE = self.root / "autonomy-policy.json"
         server.PORTFOLIO_QUEUE_SEED_FILE = self.root / "portfolio-queue.seed.json"
         server.PORTFOLIO_QUEUE_SEED_FILE.write_text("[]", encoding="utf-8")
+        # Autonomy scheduling tests verify policy/dispatch semantics, not host memory.
+        # Keep them deterministic on self-hosted runners even when the real VPS is
+        # under memory pressure; memory admission has dedicated tests elsewhere.
+        server.worker_memory_status = lambda *args, **kwargs: {
+            "available_mb": 8192,
+            "total_mb": 12288,
+            "swap_total_mb": 2048,
+            "swap_free_mb": 2048,
+            "headroom_mb": 2048,
+            "effective_headroom_mb": 2048,
+            "per_new_slot_mb": 1536,
+            "new_worker_capacity": 4,
+            "pressure": "ok",
+            "healthy_for_new_worker": True,
+            "swap_healthy": True,
+        }
         self.hax_status = self.root / "haxlab-status.json"
         self.ftmo_status = self.root / "ftmo-status.json"
         self.write_policy()
@@ -48,6 +65,7 @@ class AutonomyPolicyTests(unittest.TestCase):
         server.DB = self.original_db
         server.AUTONOMY_POLICY_FILE = self.original_policy
         server.PORTFOLIO_QUEUE_SEED_FILE = self.original_queue_seed
+        server.worker_memory_status = self.original_worker_memory_status
         self.tmp.cleanup()
 
     def write_policy(self):
