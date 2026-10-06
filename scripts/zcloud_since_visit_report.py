@@ -50,7 +50,7 @@ def _normalize_now(value: datetime | None) -> datetime:
 
 def _normalize_since(value: str, now: datetime) -> datetime:
     since = _dt(value)
-    if since > now + timedelta(minutes=1):
+    if since > now:
         raise ValueError("since timestamp cannot be in the future")
     if now - since > MAX_LOOKBACK:
         raise ValueError("since timestamp exceeds the 31-day bounded lookback")
@@ -60,7 +60,7 @@ def _normalize_since(value: str, now: datetime) -> datetime:
 def _project(value: str | None) -> str | None:
     if value is None:
         return None
-    value = str(value).strip().lower()
+    value = str(value).strip()
     if not PROJECT_RE.fullmatch(value):
         raise ValueError("project must be a bounded lowercase project id")
     return value
@@ -184,7 +184,7 @@ def report(
             entry["latest_source"] = source
 
     for row in receipts:
-        pid = str(row["project_id"]).strip().lower()
+        pid = str(row["project_id"]).strip()
         if not PROJECT_RE.fullmatch(pid):
             continue
         entry = state[pid]
