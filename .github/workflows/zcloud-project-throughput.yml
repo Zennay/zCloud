@@ -2,6 +2,12 @@ name: zCloud project throughput proof
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "scripts/zcloud_project_throughput_report.py"
+      - "tests/test_project_throughput_report.py"
+      - "tests/test_project_throughput_workflow.py"
+      - ".github/workflows/zcloud-project-throughput.yml"
   pull_request:
     branches: [main]
     paths:
@@ -20,7 +26,7 @@ concurrency:
 
 jobs:
   exact-head-vps-readonly:
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Zennay')
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Zennay')
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     steps:
