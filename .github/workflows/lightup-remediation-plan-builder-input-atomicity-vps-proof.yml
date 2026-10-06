@@ -18,7 +18,7 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/st5-remediation-plan-builder-input-atomicity-20261006
-  EXPECTED_SHA: 952e75276308665407b4a4f0f7b889d2488ecbc1
+  EXPECTED_SHA: ee891ab7e4779f540afc4bb7d7423dc28d805e29
 
 jobs:
   prove:
