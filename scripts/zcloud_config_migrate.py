@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -144,15 +145,30 @@ def validate_current(root: Path, registry_path: Path) -> dict:
 
 
 def write_migrated(*, input_path: Path, output_path: Path, name: str, from_version: int, to_version: int) -> dict:
+    if input_path.is_symlink():
+        raise ConfigMigrationError("refusing symlink migration input")
     if input_path.resolve() == output_path.resolve():
         raise ConfigMigrationError("refusing in-place config migration")
+    if output_path.exists() or output_path.is_symlink():
+        raise ConfigMigrationError("refusing to overwrite migration output")
+
     source = load_json(input_path)
     migrated = migrate_document(name, source, from_version, to_version)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(migrated, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    staged = output_path.with_name(f".{output_path.name}.zcloud-migrate-{os.getpid()}")
+    if staged.exists() or staged.is_symlink():
+        raise ConfigMigrationError("migration staging path already exists")
+    try:
+        staged.write_text(
+            json.dumps(migrated, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(staged, output_path)
+    finally:
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
     return {
         "ok": True,
         "config": name,
