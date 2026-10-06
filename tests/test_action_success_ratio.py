@@ -67,12 +67,14 @@ class ActionSuccessRatioTests(unittest.TestCase):
         self.assertEqual(1, report["summary"]["attempts"])
         self.assertEqual(1.0, report["summary"]["success_ratio"])
 
-    def test_project_filter_is_sql_scoped(self):
+    def test_project_filter_is_sql_scoped_and_includes_worker_keys(self):
         self.insert("cloud", "push", "completed", "2026-10-06T22:00:00+00:00")
+        self.insert("cloud::w1", "drain", "failed", "2026-10-06T22:10:00+00:00")
         self.insert("ftmo", "push", "failed", "2026-10-06T22:00:00+00:00")
         report = ratio.build_report(self.db, hours=24, project="cloud", now=self.now())
-        self.assertEqual(1, report["summary"]["attempts"])
-        self.assertEqual(0, report["summary"]["failed"])
+        self.assertEqual(2, report["summary"]["attempts"])
+        self.assertEqual(1, report["summary"]["failed"])
+        self.assertEqual({"drain", "push"}, {item["action"] for item in report["actions"]})
 
     def test_result_text_is_never_emitted(self):
         self.insert("cloud", "push", "failed", "2026-10-06T22:00:00+00:00", result="SUPER_SECRET")
