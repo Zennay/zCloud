@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -13,7 +14,7 @@ NOW = datetime(2026, 10, 6, 22, 35, tzinfo=timezone.utc)
 
 def fingerprint(provider, conversation_id):
     return hashlib.sha256(
-        f"{provider}\\0{conversation_id}".encode("utf-8")
+        f"{provider}:{conversation_id}".encode("utf-8")
     ).hexdigest()
 
 
