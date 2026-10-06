@@ -164,29 +164,65 @@ def worker_key(item: dict[str, Any]) -> str:
     return f"{project}::w{slot}" if project else ""
 
 
-def extract_runtime_keys(payload: dict[str, Any]) -> tuple[set[str], set[str]]:
+def extract_runtime(payload: dict[str, Any], *, ghost_after_seconds: int = 600) -> tuple[set[str], set[str], set[str], dict[str, dict[str, Any]]]:
     live: set[str] = set()
     busy: set[str] = set()
-    candidates = []
+    ghost_generating: set[str] = set()
+    details: dict[str, dict[str, Any]] = {}
+    candidates: list[dict[str, Any]] = []
+
+    # /api/status and /api/runner-live expose workers inside
+    # chatgpt_runners[base_project].workers. Keep the older generic shapes too so
+    # the debugger remains useful against older deployments.
+    runners = payload.get("chatgpt_runners")
+    if isinstance(runners, dict):
+        for project in runners.values():
+            if isinstance(project, dict) and isinstance(project.get("workers"), list):
+                candidates.extend(item for item in project["workers"] if isinstance(item, dict))
     if isinstance(payload.get("workers"), list):
-        candidates.extend(payload["workers"])
+        candidates.extend(item for item in payload["workers"] if isinstance(item, dict))
     projects = payload.get("projects")
     if isinstance(projects, list):
         for project in projects:
             if isinstance(project, dict) and isinstance(project.get("workers"), list):
-                candidates.extend(project["workers"])
+                candidates.extend(item for item in project["workers"] if isinstance(item, dict))
+
     for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        key = worker_key(item)
+        key = str(item.get("worker_id") or worker_key(item)).strip()
         if not key:
             continue
         state = str(item.get("state") or "").lower()
+        generating = bool(item.get("generating"))
+        sending = bool(item.get("sending"))
+        try:
+            progress_age = int(item.get("progress_age_seconds")) if item.get("progress_age_seconds") is not None else None
+        except Exception:
+            progress_age = None
+        try:
+            event_age = int(item.get("age_seconds")) if item.get("age_seconds") is not None else None
+        except Exception:
+            event_age = None
+
+        details[key] = {
+            "state": state,
+            "generating": generating,
+            "sending": sending,
+            "progress_age_seconds": progress_age,
+            "event_age_seconds": event_age,
+            "last_event": item.get("last_event"),
+            "conversation_id": item.get("conversation_id"),
+        }
         if state not in {"offline", "missing", "stale", "dead"}:
             live.add(key)
-        if bool(item.get("generating")) or bool(item.get("sending")):
+        if generating or sending:
             busy.add(key)
-    return live, busy
+        # A live heartbeat with a generation flag but no output progress for ten
+        # minutes is exactly the "stuck generating" false-liveness case this
+        # session is meant to catch. Do not infer it from one stale API read.
+        if generating and progress_age is not None and progress_age >= ghost_after_seconds and (event_age is None or event_age <= 120):
+            ghost_generating.add(key)
+
+    return live, busy, ghost_generating, details
 
 
 def desired_counts(dynamic: dict[str, Any]) -> tuple[int, int, int]:
@@ -218,6 +254,8 @@ def classify(snapshot: dict[str, Any], min_workers: int) -> list[str]:
         reasons.append("cpu-load-pressure")
     if snapshot["firefox"]["count"] == 0:
         reasons.append("firefox-process-missing")
+    if snapshot.get("ghost_generating_keys"):
+        reasons.append("ghost-generating")
     if not reasons:
         reasons.append("healthy")
     return reasons
@@ -238,7 +276,7 @@ def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
     allocated_keys = {worker_key(item) for item in allocation if isinstance(item, dict) and worker_key(item)}
 
     runtime_payload = status["body"] if status["ok"] else runner_live["body"]
-    live_keys, busy_keys = extract_runtime_keys(runtime_payload)
+    live_keys, busy_keys, ghost_generating_keys, runtime_details = extract_runtime(runtime_payload)
 
     snap = {
         "ts": utc_now(),
@@ -259,6 +297,8 @@ def sample(base_url: str, db_path: Path, min_workers: int) -> dict[str, Any]:
         "live_keys": sorted(live_keys & allocated_keys),
         "missing_live_keys": sorted(allocated_keys - live_keys),
         "busy_keys": sorted(busy_keys & allocated_keys),
+        "ghost_generating_keys": sorted(ghost_generating_keys & allocated_keys),
+        "runtime_details": {key: runtime_details[key] for key in sorted(allocated_keys & set(runtime_details))},
         "api_ok": all(item["ok"] for item in (dynamic, targets)),
     }
     snap["diagnosis"] = classify(snap, min_workers)
@@ -308,6 +348,7 @@ def maybe_remediate(
 
     missing = set(snapshot["missing_live_keys"])
     busy = set(snapshot["busy_keys"])
+    ghost_generating = set(snapshot.get("ghost_generating_keys") or [])
     for key in snapshot["allocated_keys"]:
         worker_streaks[key] = worker_streaks.get(key, 0) + 1 if key in missing else 0
 
@@ -318,14 +359,26 @@ def maybe_remediate(
             actions.append(runner_action(base_url, key, "new_chat"))
             last_actions[f"new_chat:{key}"] = now
 
+    # A worker that has kept "generating" true while progress stays unchanged for
+    # ten minutes gets a per-worker new-chat request first. The userscript may
+    # legitimately defer it if ChatGPT is truly still generating; the evidence
+    # then tells us whether the DOM liveness detector itself is the problem.
+    for key in sorted(ghost_generating):
+        ghost_key = f"ghost:{key}"
+        streaks[ghost_key] = streaks.get(ghost_key, 0) + 1
+        if streaks[ghost_key] >= 2 and now - last_actions.get(f"new_chat:{key}", 0) >= 300:
+            actions.append(runner_action(base_url, key, "new_chat"))
+            last_actions[f"new_chat:{key}"] = now
+
     mem_pct = snapshot["memory"].get("available_pct")
     firefox_missing = snapshot["firefox"]["count"] == 0
+    streaks["firefox_missing"] = streaks.get("firefox_missing", 0) + 1 if firefox_missing else 0
     all_runtime_missing = bool(snapshot["allocated_keys"]) and snapshot["live_count"] == 0
     pressure = (mem_pct is not None and mem_pct < 8) or snapshot["load"].get("load1_per_core", 0) >= 2.0
 
     # Firefox recycle is deliberately a last resort: process missing, or the
     # whole allocated runtime disappeared while the host is under severe pressure.
-    if (firefox_missing or (all_runtime_missing and pressure)) and now - last_actions.get("restart_firefox", 0) >= 300:
+    if ((streaks["firefox_missing"] >= 2) or (all_runtime_missing and pressure)) and now - last_actions.get("restart_firefox", 0) >= 300:
         actions.append(runner_action(base_url, "", "restart_firefox"))
         last_actions["restart_firefox"] = now
 
