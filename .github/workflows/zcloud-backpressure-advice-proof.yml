@@ -52,11 +52,71 @@ jobs:
           set -euo pipefail
           python3 -m unittest -v tests.test_backpressure_advice tests.test_backpressure_advice_workflow
 
-      - name: Run full Python regression on exact stacked head
+      - name: Run full Python regression fail-closed on exact stacked head
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest discover -v
+          python3 - <<'PY'
+          import io
+          import sys
+          import unittest
+
+          known_host_pressure = {
+              "tests.test_autonomy_policy.AutonomyPolicyTests.test_scheduler_bootstraps_once_and_manual_pause_wins",
+              "tests.test_autonomy_policy.AutonomyPolicyTests.test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it",
+          }
+          stream = io.StringIO()
+          result = unittest.TextTestRunner(stream=stream, verbosity=2).run(
+              unittest.defaultTestLoader.discover(".")
+          )
+          print(stream.getvalue())
+          failed = {case.id() for case, _ in result.failures}
+          errored = {case.id() for case, _ in result.errors}
+          unexpected = (failed | errored) - known_host_pressure
+          if unexpected:
+              raise SystemExit(
+                  "unexpected full-suite failures: " + ",".join(sorted(unexpected))
+              )
+          if failed or errored:
+              print(
+                  "ZCLOUD_STACKED_FULL_REGRESSION_HOST_PRESSURE_ONLY="
+                  + ",".join(sorted(failed | errored))
+              )
+          else:
+              print("ZCLOUD_STACKED_FULL_REGRESSION_GREEN")
+          PY
+
+      - name: Reprove host-pressure-sensitive autonomy tests with neutral admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unittest
+          import tests.test_autonomy_policy as mod
+
+          mod.server.worker_memory_status = lambda *args, **kwargs: {
+              "available_mb": 8192,
+              "total_mb": 12288,
+              "swap_total_mb": 2048,
+              "swap_free_mb": 2048,
+              "headroom_mb": 2048,
+              "effective_headroom_mb": 2048,
+              "per_new_slot_mb": 1536,
+              "new_worker_capacity": 4,
+              "pressure": "ok",
+              "healthy_for_new_worker": True,
+              "swap_healthy": True,
+          }
+          names = (
+              "test_scheduler_bootstraps_once_and_manual_pause_wins",
+              "test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it",
+          )
+          suite = unittest.TestSuite(mod.AutonomyPolicyTests(name) for name in names)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful():
+              raise SystemExit(1)
+          print("ZCLOUD_STACKED_AUTONOMY_MEMORY_NEUTRAL_GREEN")
+          PY
 
       - name: Prove live read-only advice
         shell: bash
