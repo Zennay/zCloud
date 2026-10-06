@@ -22,8 +22,27 @@ class FirefoxSupervisorTests(unittest.TestCase):
         supervisor.STATE = self.original_state
         self.temp.cleanup()
 
+    def test_db_failure_falls_back_to_runner_targets_api(self):
+        with mock.patch.object(supervisor, "allocated_workers_from_db", return_value=(None, "PermissionError: denied")), \
+             mock.patch.object(supervisor, "allocated_workers_from_api", return_value=(8, None)):
+            count, source, error = supervisor.allocation_state()
+
+        self.assertEqual(8, count)
+        self.assertEqual("api", source)
+        self.assertIn("PermissionError", error)
+
+    def test_total_allocation_state_failure_does_not_claim_idle(self):
+        with mock.patch.object(supervisor, "allocation_state", return_value=(None, "unavailable", "db+api down")), \
+             mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
+             mock.patch.object(supervisor, "restart_firefox") as restart:
+            result = supervisor.run_once(now=100)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("allocation-state-unavailable", result["state"])
+        restart.assert_not_called()
+
     def test_live_firefox_normalizes_obsolete_low_priority(self):
-        with mock.patch.object(supervisor, "allocated_workers", return_value=8), \
+        with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[101, 102]), \
              mock.patch.object(supervisor.os, "getpriority", side_effect=[10, 0]), \
              mock.patch.object(supervisor.os, "setpriority") as setpriority:
@@ -34,7 +53,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
         self.assertEqual([101], result["priority"]["changed"])
 
     def test_missing_firefox_requires_two_confirmations_then_restarts(self):
-        with mock.patch.object(supervisor, "allocated_workers", return_value=8), \
+        with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
              mock.patch.object(supervisor, "restart_firefox", return_value={"ok": True, "status": 200}) as restart:
             first = supervisor.run_once(now=100)
@@ -47,7 +66,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
 
     def test_restart_cooldown_prevents_loop(self):
         self.state.write_text('{"missing_confirmations": 1, "last_restart_at": 90}\n')
-        with mock.patch.object(supervisor, "allocated_workers", return_value=8), \
+        with mock.patch.object(supervisor, "allocation_state", return_value=(8, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]), \
              mock.patch.object(supervisor, "restart_firefox") as restart:
             result = supervisor.run_once(now=100)
@@ -56,7 +75,7 @@ class FirefoxSupervisorTests(unittest.TestCase):
         restart.assert_not_called()
 
     def test_no_allocations_does_not_manage_firefox(self):
-        with mock.patch.object(supervisor, "allocated_workers", return_value=0), \
+        with mock.patch.object(supervisor, "allocation_state", return_value=(0, "sqlite", None)), \
              mock.patch.object(supervisor, "firefox_pids", return_value=[]) as pids, \
              mock.patch.object(supervisor, "restart_firefox") as restart:
             result = supervisor.run_once(now=100)
