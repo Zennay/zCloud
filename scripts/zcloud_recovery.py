@@ -35,6 +35,7 @@ LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS = float(
     os.environ.get("ZCLOUD_LKG_CAPTURE_HEALTH_TIMEOUT_SECONDS", "30")
 )
 RECOVERY_SNAPSHOT_RETENTION = 8
+RECOVERY_TRANSACTION_RETENTION = 8
 
 MANAGED_PATHS = (
     "server.py",
@@ -327,6 +328,90 @@ def prune_recovery_snapshots(
     return removed
 
 
+TERMINAL_TRANSACTION_EVENTS = frozenset({
+    "rollback_succeeded",
+    "rollback_failed_reverted",
+})
+
+
+def terminal_recovery_transactions(state: Path) -> dict[str, str]:
+    """Return terminal rollback transaction ids mapped to their durable log time.
+
+    Only a terminal recovery.log event makes a transaction directory eligible
+    for retention cleanup. Unknown, in-progress and failed-revert transactions
+    are deliberately omitted and therefore preserved.
+    """
+    log = state / "recovery.log"
+    if not log.is_file():
+        return {}
+    terminal: dict[str, str] = {}
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(row.get("event") or "") not in TERMINAL_TRANSACTION_EVENTS:
+            continue
+        transaction_id = str(row.get("transaction_id") or "").strip()
+        observed_at = str(row.get("time") or "").strip()
+        if not transaction_id or not observed_at:
+            continue
+        try:
+            datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        previous = terminal.get(transaction_id)
+        if previous is None or observed_at > previous:
+            terminal[transaction_id] = observed_at
+    return terminal
+
+
+def prune_recovery_transactions(
+    state: Path,
+    *,
+    retain: int = RECOVERY_TRANSACTION_RETENTION,
+) -> list[str]:
+    """Bound completed rollback transaction trees using durable log evidence.
+
+    A directory is removable only when recovery.log proves the same transaction
+    id reached rollback_succeeded or rollback_failed_reverted. Symlinks,
+    unlogged directories, active/in-progress transactions and failed-revert
+    evidence are never guessed safe to delete.
+    """
+    if retain < 1:
+        raise RecoveryError("recovery transaction retention must be at least 1")
+
+    transactions = state / "transactions"
+    if not transactions.is_dir():
+        return []
+
+    terminal = terminal_recovery_transactions(state)
+    valid: list[tuple[str, str, Path]] = []
+    for path in transactions.iterdir():
+        if (
+            not path.is_dir()
+            or path.is_symlink()
+            or path.name.startswith(".")
+            or path.name not in terminal
+        ):
+            continue
+        valid.append((terminal[path.name], path.name, path))
+
+    valid.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    keep = {transaction_id for _, transaction_id, _ in valid[:retain]}
+    removed: list[str] = []
+    for _, transaction_id, path in valid:
+        if transaction_id in keep:
+            continue
+        shutil.rmtree(path)
+        removed.append(transaction_id)
+    return removed
+
+
 def load_lkg(state: Path) -> tuple[Path, dict]:
     pointer = state / "last-known-good.json"
     if not pointer.exists():
@@ -410,6 +495,26 @@ def capture(root: Path, state: Path, evidence: str, *, require_health=True, serv
         append_log(
             state,
             "recovery_snapshot_prune_failed",
+            snapshot_id=snap_id,
+            error=str(exc)[:300],
+        )
+
+    try:
+        removed_transactions = prune_recovery_transactions(state)
+        if removed_transactions:
+            append_log(
+                state,
+                "recovery_transactions_pruned",
+                snapshot_id=snap_id,
+                retained=RECOVERY_TRANSACTION_RETENTION,
+                removed_transaction_ids=removed_transactions,
+            )
+    except Exception as exc:
+        # Transaction housekeeping is likewise non-fatal. An LKG capture must
+        # never be rejected because retention cleanup itself cannot run.
+        append_log(
+            state,
+            "recovery_transaction_prune_failed",
             snapshot_id=snap_id,
             error=str(exc)[:300],
         )
