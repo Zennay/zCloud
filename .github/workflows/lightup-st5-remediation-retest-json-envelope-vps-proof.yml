@@ -1,4 +1,4 @@
-name: LightUp ST5 remediation/retest JSON envelope VPS proof
+name: LightUp ST5 remediation/retest hardening + JSON envelope VPS proof
 
 on:
   push:
@@ -17,12 +17,12 @@ concurrency:
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/st5-remediation-retest-json-envelope-integrity-20261006
-  LIGHTUP_EXPECTED_SHA: 6fa4c5d2243bf94e45051a3020cf1e29bfd37698
+  LIGHTUP_BRANCH: chatgpt/st5-remediation-retest-json-envelope-hardening-pack-20261006
+  LIGHTUP_EXPECTED_SHA: 7e4c0a413d3d85f54c602c349882f735e4215b3e
 
 jobs:
   prove:
-    name: Exact LightUp JSON-envelope integrity on vps-bb300bba
+    name: Exact LightUp hardening + JSON-envelope pack on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 35
 
@@ -67,7 +67,12 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_json_envelope_integrity             test_future_security_remediation_retest_plan_handoff
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_security_remediation_retest_nested_json_integrity \
+            test_future_security_remediation_retest_nested_schema_integrity \
+            test_future_security_remediation_retest_graph_action_coherence \
+            test_future_security_remediation_retest_json_envelope_integrity \
+            test_future_security_remediation_retest_plan_handoff
           PYTHONPATH=src:tests python -m unittest discover -s tests -v
           PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
           PYTHONPATH=src python scripts/check_safety_canaries.py
@@ -83,7 +88,12 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v             test_future_security_remediation_retest_json_envelope_integrity             test_future_security_remediation_retest_plan_handoff
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_security_remediation_retest_nested_json_integrity \
+            test_future_security_remediation_retest_nested_schema_integrity \
+            test_future_security_remediation_retest_graph_action_coherence \
+            test_future_security_remediation_retest_json_envelope_integrity \
+            test_future_security_remediation_retest_plan_handoff
           PYTHONPATH=src:tests python -m unittest discover -s tests -v
           PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
           PYTHONPATH=src python scripts/check_safety_canaries.py
@@ -93,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-remediation-retest-json-envelope-receipt"
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-remediation-retest-hardening-json-envelope-receipt"
           mkdir -p "${RECEIPT_DIR}"
           python3 - <<'PY'
           import json
@@ -102,16 +112,16 @@ jobs:
 
           payload = {
               "project": "LightUp",
-              "issues": [374],
+              "issues": [371, 373, 374, 375],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
               "host": os.uname().nodename,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "python": ["3.11", "3.14"],
-              "proof": "compile+dedicated+parent-handoff+full-unit+integration+safety-canaries",
+              "proof": "compile+all-hardening-dedicated+parent-handoff+full-unit+integration+safety-canaries",
           }
-          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-retest-json-envelope-receipt" / "receipt.json"
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-retest-hardening-json-envelope-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -120,8 +130,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lightup-st5-remediation-retest-json-envelope-vps-proof
-          path: ${{ runner.temp }}/lightup-st5-remediation-retest-json-envelope-receipt/receipt.json
+          name: lightup-st5-remediation-retest-hardening-json-envelope-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-remediation-retest-hardening-json-envelope-receipt/receipt.json
           if-no-files-found: error
 
       - name: Cleanup snapshot
