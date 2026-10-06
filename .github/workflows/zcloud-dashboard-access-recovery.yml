@@ -66,16 +66,16 @@ jobs:
           done
 
           sudo -n -u "$service_user" python3 - <<'PY'
-import sqlite3
-db="/home/ubuntu/zennay-cloud/history.db"
-conn=sqlite3.connect(db, timeout=10)
-try:
-    conn.execute("BEGIN IMMEDIATE")
-    conn.rollback()
-finally:
-    conn.close()
-print("ZCLOUD_SQLITE_WRITE_PROBE_GREEN")
-PY
+          import sqlite3
+          db="/home/ubuntu/zennay-cloud/history.db"
+          conn=sqlite3.connect(db, timeout=10)
+          try:
+              conn.execute("BEGIN IMMEDIATE")
+              conn.rollback()
+          finally:
+              conn.close()
+          print("ZCLOUD_SQLITE_WRITE_PROBE_GREEN")
+          PY
           stat -c 'after %U:%G %a %n' "$root" "$db" 2>/dev/null || true
 
           sudo -n systemctl reset-failed "$service" || true
