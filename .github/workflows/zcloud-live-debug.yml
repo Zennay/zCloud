@@ -183,12 +183,17 @@ jobs:
               report["lkg"]={"error":type(exc).__name__}
 
           try:
-              conn=sqlite3.connect(root/"history.db",timeout=4)
-              rows=conn.execute(
-                  "SELECT ts,target,new_value_json,result FROM config_audit "
-                  "WHERE config_key='resource.priority' ORDER BY id DESC LIMIT 20"
-              ).fetchall()
-              conn.close()
+              db_path=root/"history.db"
+              if db_path.is_symlink() or not db_path.is_file():
+                  raise RuntimeError("live history.db must be a regular non-symlink file")
+              with sqlite3.connect(f"file:{db_path}?mode=ro",uri=True,timeout=4) as conn:
+                  conn.execute("PRAGMA query_only=ON")
+                  rows=conn.execute(
+                      "SELECT ts,target,new_value_json,result FROM config_audit "
+                      "WHERE config_key='resource.priority' ORDER BY id DESC LIMIT 20"
+                  ).fetchall()
+                  if conn.total_changes != 0:
+                      raise RuntimeError("read-only history.db diagnostic unexpectedly changed SQLite state")
               report["resource_priority_audit"]=[
                   {"ts":r[0],"target":r[1],"new_value_json":r[2],"result":r[3]} for r in rows
               ]
