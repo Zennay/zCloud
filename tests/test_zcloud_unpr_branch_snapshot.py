@@ -66,18 +66,34 @@ class UnprBranchSnapshotTests(unittest.TestCase):
         )
 
     @mock.patch.object(snap, "_run_git")
-    def test_origin_branch_inventory_requires_main_and_rejects_overflow(self, run_git):
-        run_git.return_value = "feature/a\n"
+    def test_origin_branch_inventory_requires_main_and_bounds_unmerged_refs(self, run_git):
+        run_git.return_value = "not-a-sha\n"
         with self.assertRaisesRegex(snap.SnapshotError, "base_branch_missing"):
             snap._origin_branches(Path("/repo"), "origin")
 
-        run_git.return_value = "main\n" + "".join(
-            f"feature/{idx}\n" for idx in range(snap.MAX_BRANCHES)
-        )
+        run_git.side_effect = [
+            "0123456789abcdef0123456789abcdef01234567\n",
+            "".join(f"feature/{idx}\n" for idx in range(snap.MAX_BRANCHES + 1)),
+        ]
         with self.assertRaisesRegex(
             snap.SnapshotError, "remote_branch_inventory_too_large"
         ):
             snap._origin_branches(Path("/repo"), "origin")
+
+    @mock.patch.object(snap, "_run_git")
+    def test_origin_branch_inventory_asks_git_for_only_unmerged_refs(self, run_git):
+        run_git.side_effect = [
+            "0123456789abcdef0123456789abcdef01234567\n",
+            "feature/z\nfeature/a\n",
+        ]
+        self.assertEqual(
+            ["feature/a", "feature/z"],
+            snap._origin_branches(Path("/repo"), "origin"),
+        )
+        self.assertIn(
+            "--no-merged=refs/remotes/origin/main",
+            run_git.call_args_list[1].args,
+        )
 
     @mock.patch.object(snap, "_run_git")
     def test_changed_files_are_sorted_and_bounded(self, run_git):
