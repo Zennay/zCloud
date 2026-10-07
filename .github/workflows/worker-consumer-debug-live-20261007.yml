@@ -25,14 +25,23 @@ jobs:
           import json
           import sqlite3
           import urllib.request
+          import time
 
           BASE = "http://127.0.0.1:8765"
           DB = "/home/ubuntu/zennay-cloud/history.db"
           WORKERS = ("ftmo::w1", "raiseai::w1", "supa::w1", "supa::w2", "zguard::w1")
 
           def get(path):
-              with urllib.request.urlopen(BASE + path, timeout=10) as response:
-                  return json.load(response)
+              last = None
+              for attempt in range(1, 7):
+                  try:
+                      with urllib.request.urlopen(BASE + path, timeout=10) as response:
+                          return json.load(response)
+                  except Exception as exc:
+                      last = exc
+                      print(f"GET_RETRY path={path} attempt={attempt} error={type(exc).__name__}:{exc}")
+                      time.sleep(min(1.5 * attempt, 5))
+              raise RuntimeError(f"{path} unavailable after retries: {last}")
 
           targets = get("/api/runner-targets")
           live = get("/api/runner-live")
