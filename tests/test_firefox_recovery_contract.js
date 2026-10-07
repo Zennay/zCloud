@@ -309,7 +309,7 @@ assert.ok(freshChatStart >= 0 && freshChatEnd > freshChatStart, "fresh-chat repl
 const freshChatBlock = background.slice(freshChatStart, freshChatEnd);
 const resetBindingIndex = freshChatBlock.indexOf('event: "conversation-reset-requested"');
 const clearBindingIndex = freshChatBlock.indexOf('target.conversation_id = ""');
-const openFreshChatIndex = freshChatBlock.indexOf('browser.tabs.create({url: "https://chatgpt.com/"');
+const openFreshChatIndex = freshChatBlock.indexOf('browser.tabs.create({url: target.url, active: true})');
 assert.ok(resetBindingIndex >= 0, "fresh chat must reset the durable conversation binding");
 assert.ok(clearBindingIndex > resetBindingIndex, "local stale conversation id must clear after backend reset request");
 assert.ok(openFreshChatIndex > clearBindingIndex, "fresh tab must open after stale binding is cleared");
