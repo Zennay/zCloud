@@ -69,6 +69,8 @@ jobs:
               )
               trigger_ok = (
                   trigger_repo_name == CANONICAL_REPOSITORY
+                  and str(trigger.get("path") or "")
+                  == ".github/workflows/zcloud-vps-deploy.yml"
                   and str(trigger.get("head_branch") or "") == "main"
                   and str(trigger.get("conclusion") or "") == "success"
                   and str(trigger.get("event") or "") in TRUSTED_DEPLOY_EVENTS
