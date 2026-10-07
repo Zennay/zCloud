@@ -152,6 +152,9 @@ class CapabilityDependencyDagTests(unittest.TestCase):
             self.capability("upstream", lane="deploy-ops"),
             self.capability("consumer", dependencies=["upstream"]),
         ])
+        # CLI uses the real wall clock; keep this fixture fresh so this test
+        # reaches the require-ready gate instead of the stale-snapshot gate.
+        snap["observed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "snapshot.json"
             path.write_text(json.dumps(snap), encoding="utf-8")
