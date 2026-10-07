@@ -56,5 +56,8 @@ assert.ok(background.includes('"https://claude.com/*"'));
 assert.ok(background.includes("claude-requires-violentmonkey-primary-runner"));
 assert.ok(!background.includes('target.url = "https://chatgpt.com/";'));
 assert.ok(background.includes("browser.tabs.create({url: target.url, active: true})"));
+assert.ok(background.includes("!Recovery.providerFromUrl(tab.url)"));
+assert.ok(background.includes("Recovery.matchesConversation(tab, t)"));
+assert.ok(!background.includes('tab.url.includes("chatgpt.com")'));
 
 console.log("Dual-provider worker recovery checks passed.");
