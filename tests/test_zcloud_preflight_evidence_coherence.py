@@ -31,6 +31,7 @@ def snapshot(now: dt.datetime) -> dict:
             {
                 "kind": kind,
                 "policy": audit.REQUIRED_POLICIES[kind],
+                "capability_id": "control-plane:test-capability",
                 "observed_at": captured,
                 "main_sha": SHA,
                 "verdict": verdict,
@@ -58,6 +59,12 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
         self.assertEqual([], result["blocked_kinds"])
         self.assertFalse(result["mutation_performed"])
         self.assertEqual(5, len(result["evidence"]))
+        self.assertTrue(
+            all(
+                row["capability_id"] == "control-plane:test-capability"
+                for row in result["evidence"]
+            )
+        )
 
     def test_mixed_main_evidence_fails_closed(self):
         payload = snapshot(self.now)
@@ -86,6 +93,14 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
         payload = snapshot(self.now)
         payload["evidence"][0]["policy"] = "generic-green-label-v1"
         with self.assertRaisesRegex(audit.EvidenceError, "evidence_policy_mismatch"):
+            audit.audit_snapshot(payload, now=self.now)
+
+    def test_mixed_capability_evidence_fails_closed(self):
+        payload = snapshot(self.now)
+        payload["evidence"][3]["capability_id"] = "control-plane:other-capability"
+        with self.assertRaisesRegex(
+            audit.EvidenceError, "evidence_capability_mismatch"
+        ):
             audit.audit_snapshot(payload, now=self.now)
 
     def test_incomplete_evidence_is_never_approval(self):
