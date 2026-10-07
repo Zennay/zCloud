@@ -218,7 +218,7 @@ jobs:
                           "events":[x["event"] for x in chain[-16:]],
                       })
 
-          cutoff=parse_ts("2026-10-07T21:55:57Z")
+          cutoff=parse_ts("2026-10-07T22:01:38Z")
           post_rows=[
               row for row in rows
               if (parse_ts(row.get("ts")) and cutoff and parse_ts(row.get("ts")) >= cutoff)
@@ -244,7 +244,7 @@ jobs:
 
           print("ACTIVE_AND_TERMINAL_CHAINS="+json.dumps(chains[-50:],sort_keys=True))
           print("SUSPICIOUS_WINDOWS="+json.dumps(suspicious[-50:],sort_keys=True))
-          print("POST_STABILIZATION_COUNTS="+json.dumps(post_counts,sort_keys=True))
-          print("POST_STABILIZATION_WORKERS="+json.dumps(post_workers,sort_keys=True))
+          print("FINAL_STABILITY_COUNTS="+json.dumps(post_counts,sort_keys=True))
+          print("FINAL_STABILITY_WORKERS="+json.dumps(post_workers,sort_keys=True))
           print("FIREFOX_GENERATION_STATE_BUG="+("1" if suspicious else "0"))
           PY
