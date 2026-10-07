@@ -94,7 +94,7 @@ def audit_source(text: str) -> dict[str, object]:
         for marker in (
             "Saving priority",
             "Saving…",
-            "aria-busy",
+            "setAttribute('aria-busy','true')",
             "resource-priority-pending",
         )
     )
