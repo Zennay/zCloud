@@ -56,6 +56,25 @@ def _safe_scalar(value: Any) -> str | int | float | bool | None:
     return None
 
 
+def _plain_status(points: dict[str, dict[str, Any]]) -> str:
+    if not points:
+        return "Geen projectspecifieke resultaatdata"
+
+    latest = points.get("latest")
+    current = points.get("current")
+    best = points.get("best")
+
+    if latest and not latest.get("validated"):
+        return "Nieuw resultaat wacht op validatie"
+    if current and best and current.get("value") == best.get("value") and best.get("validated"):
+        return "Huidig resultaat is gevalideerd"
+    if current:
+        return "Huidig resultaat beschikbaar"
+    if best and best.get("validated"):
+        return "Gevalideerd resultaat beschikbaar"
+    return "Resultaatdata beschikbaar"
+
+
 def _project_point(kind: str, point: Any) -> dict[str, Any] | None:
     if not isinstance(point, dict):
         return None
@@ -100,6 +119,7 @@ def project_summary(
         "stage": _bounded_text(quality.get("stage"), 120) or None,
         "available": bool(points),
         "evidence_state": "available" if points else "missing",
+        "plain_status": _plain_status(points),
         "results": points,
         "result_count": len(points),
     }
