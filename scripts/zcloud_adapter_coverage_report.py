@@ -33,10 +33,12 @@ def _project_id(value: Any) -> str:
 
 
 def load_registry(path: Path) -> list[dict[str, Any]]:
-    path = path.resolve(strict=False)
+    path = Path(path)
+    if path.is_symlink():
+        raise AdapterCoverageError("projects registry must be a regular non-symlink file")
     if not path.exists():
         raise AdapterCoverageError("projects registry is missing")
-    if path.is_symlink() or not path.is_file():
+    if not path.is_file():
         raise AdapterCoverageError("projects registry must be a regular non-symlink file")
     if path.stat().st_size > MAX_REGISTRY_BYTES:
         raise AdapterCoverageError("projects registry exceeds 2 MiB")
