@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "capability": "high-blast-radius-adr-composition",
+  "owners": [
+    {
+      "ref": "#589",
+      "branch": "worker/deploy-ops-high-blast-adr-gate-20261006",
+      "role": "classifier-lifecycle",
+      "unique_controls": [
+        "bootstrap_adr_seed",
+        "numbered_adr_lifecycle",
+        "status_enum",
+        "transactional_blast_classifier_parity"
+      ]
+    },
+    {
+      "ref": "#709",
+      "branch": "feature/control-plane-blast-radius-adr-guard-20261006",
+      "role": "coverage-hardening",
+      "unique_controls": [
+        "bounded_output",
+        "exact_risk_path_coverage",
+        "permanent_vps_proof",
+        "placeholder_rejection",
+        "symlink_rejection"
+      ]
+    }
+  ],
+  "shared_controls": [
+    "deletion_inclusive_diff",
+    "immutable_read_only_ci"
+  ],
+  "required_controls": [
+    "bootstrap_adr_seed",
+    "bounded_output",
+    "deletion_inclusive_diff",
+    "exact_risk_path_coverage",
+    "immutable_read_only_ci",
+    "numbered_adr_lifecycle",
+    "permanent_vps_proof",
+    "placeholder_rejection",
+    "status_enum",
+    "symlink_rejection",
+    "transactional_blast_classifier_parity"
+  ],
+  "resolution": {
+    "mode": "compose-before-retire",
+    "replacement_owner_required": true,
+    "retire_only_after_composite_green": true,
+    "serialized_live_mutation": false
+  }
+}
