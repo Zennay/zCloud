@@ -110,7 +110,15 @@ def parse_snapshot(payload: Any) -> tuple[PullRequest, ...]:
 
         head_ref = _bounded_string(row.get("headRefName", ""), "headRefName", MAX_HEAD_REF_LENGTH)
         updated_at = _bounded_string(row.get("updatedAt", ""), "updatedAt", 64)
+        changed_files = row.get("changedFiles")
+        if isinstance(changed_files, bool) or not isinstance(changed_files, int) or changed_files < 0:
+            raise AuditError("changedFiles must be a non-negative integer")
         files = _parse_files(row.get("files"))
+        if changed_files != len(files):
+            raise AuditError(
+                f"PR #{number} file evidence incomplete: "
+                f"changedFiles={changed_files}, received={len(files)}"
+            )
         prs.append(PullRequest(number, head_ref, draft, updated_at, files))
 
     return tuple(sorted(prs, key=lambda pr: pr.number))
