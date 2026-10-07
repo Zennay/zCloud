@@ -14,6 +14,9 @@ class ViolentmonkeyProfileDiagnosticWorkflowTests(unittest.TestCase):
     def test_pr_validation_is_hosted_exact_head_and_non_mutating(self):
         self.assertIn("pull_request:", self.text)
         self.assertIn("types: [opened, synchronize, reopened]", self.text)
+        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertNotIn("contents: write", self.text)
+        self.assertNotIn("continue-on-error:", self.text)
         self.assertIn("validate:\n    if: github.event_name == 'pull_request'", self.text)
         self.assertIn("runs-on: ubuntu-latest", self.text)
         self.assertIn("github.event.pull_request.head.sha", self.text)
