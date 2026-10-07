@@ -14,6 +14,16 @@ class WorkerScalingDashboardTests(unittest.TestCase):
         self.assertIn("${dynamicWorkerControl()}${workerScalingPanel()}${workerDebugPanel()}", app)
         self.assertNotIn("api('/api/status?worker_scaling", app)
 
+    def test_dashboard_exposes_per_worker_time_breakdown(self):
+        app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("worker-time-breakdown", app)
+        self.assertIn("m.working_seconds", app)
+        self.assertIn("m.idle_seconds", app)
+        self.assertIn("m.blocked_seconds", app)
+        self.assertIn("m.observed_seconds", app)
+        self.assertIn(" · idle ", app)
+        self.assertIn(" · blocked ", app)
+
     def test_server_endpoint_is_read_only_report_adapter(self):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("if u.path=='/api/worker-scaling':", server)
