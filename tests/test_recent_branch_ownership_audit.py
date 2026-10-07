@@ -321,15 +321,28 @@ class RecentBranchAuditTests(unittest.TestCase):
                 with self.assertRaises(audit.AuditError):
                     audit.build_report(parsed, ("x.py",))
 
+    def test_current_pr_head_mismatch_fails_closed(self):
+        with self.assertRaisesRegex(audit.AuditError, "current_pr_head_mismatch"):
+            audit.parse_current_pr(
+                {
+                    "headRefOid": OPEN,
+                    "changedFiles": 1,
+                    "files": [{"path": "server.py"}],
+                },
+                RECENT,
+            )
+
     def test_current_pr_file_truncation_fails_closed(self):
         with self.assertRaisesRegex(
             audit.AuditError, "current_pr_file_evidence_incomplete"
         ):
             audit.parse_current_pr(
                 {
+                    "headRefOid": RECENT,
                     "changedFiles": 2,
                     "files": [{"path": "scripts/only-one.py"}],
-                }
+                },
+                RECENT,
             )
 
     def test_cli_distinguishes_conflict_from_bad_evidence(self):
@@ -355,7 +368,7 @@ class RecentBranchAuditTests(unittest.TestCase):
             )
             current.write_text(
                 json.dumps(
-                    {"changedFiles": 1, "files": [{"path": "server.py"}]}
+                    {"headRefOid": RECENT, "changedFiles": 1, "files": [{"path": "server.py"}]}
                 ),
                 encoding="utf-8",
             )
@@ -367,6 +380,8 @@ class RecentBranchAuditTests(unittest.TestCase):
                     str(snapshot),
                     "--current-pr-json",
                     str(current),
+                    "--expected-current-head",
+                    RECENT,
                     "--require-clear",
                 ],
                 cwd=ROOT,
@@ -386,6 +401,8 @@ class RecentBranchAuditTests(unittest.TestCase):
                     str(snapshot),
                     "--current-pr-json",
                     str(current),
+                    "--expected-current-head",
+                    RECENT,
                     "--require-clear",
                 ],
                 cwd=ROOT,
