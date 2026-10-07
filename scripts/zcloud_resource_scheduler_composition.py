@@ -224,6 +224,7 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
             "decision_ready": False,
             "reason": "minimum_capacity_exceeded",
             "base_allocations": [],
+            "planned_allocations": [],
             "borrow_admissions": [],
             "totals": {
                 "minimum_cpu_cores": minimum_total,
@@ -339,6 +340,30 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if planned_total > capacity + 1e-8:
         raise CompositionError("planned_capacity_exceeded")
 
+    base_by_project = {
+        row["project_id"]: row["cpu_cores"]
+        for row in base_allocations
+    }
+    planned_allocations = [
+        {
+            "project_id": row["project_id"],
+            "scheduler_rank": row["scheduler_rank"],
+            "minimum_cpu_cores": row["minimum_cpu_cores"],
+            "target_cpu_cores": row["target_cpu_cores"],
+            "maximum_cpu_cores": row["maximum_cpu_cores"],
+            "requested_cpu_cores": row["requested_cpu_cores"],
+            "base_cpu_cores": round(base_by_project[row["project_id"]], 6),
+            "borrowed_cpu_cores": round(
+                max(0.0, allocations[row["project_id"]] - base_by_project[row["project_id"]]),
+                6,
+            ),
+            "planned_cpu_cores": round(allocations[row["project_id"]], 6),
+            "requested_satisfied": allocations[row["project_id"]] + 1e-9
+            >= row["requested_cpu_cores"],
+        }
+        for row in projects
+    ]
+
     if blocked_reason == "source_incomplete":
         status = "incomplete"
         decision_ready = False
@@ -358,6 +383,7 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
         "decision_ready": decision_ready,
         "reason": blocked_reason,
         "base_allocations": base_allocations,
+        "planned_allocations": planned_allocations,
         "borrow_admissions": borrow_admissions,
         "totals": {
             "minimum_cpu_cores": round(minimum_total, 6),
