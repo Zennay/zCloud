@@ -1,0 +1,97 @@
+name: Drain owner-recovery deploy noise
+
+on:
+  push:
+    branches:
+      - "ops/zguard-targeted-recovery-live-20261007"
+    paths:
+      - ".github/workflows/drain-owner-recovery-deploy-noise.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel only deploys caused by owner worker-recovery commits
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, time, urllib.parse, urllib.request
+
+          repo=os.environ["GITHUB_REPOSITORY"]
+          token=os.environ["GH_TOKEN"]
+          owned={
+              "cb0df01298eaee048e94e1208993369d20c64703",
+              "baec3ad65cf96b33843457bdeab262480d0c5154",
+              "4a2167f5611eb4d321fd56b6a6b499c573f765c2",
+          }
+          headers={
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-drain-owner-recovery-deploy-noise",
+          }
+          url=f"https://api.github.com/repos/{repo}/actions/runs?per_page=100"
+          with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as r:
+              payload=json.load(r)
+
+          candidates=[]
+          for run in payload.get("workflow_runs", []):
+              if (
+                  run.get("name") == "zCloud VPS deploy"
+                  and run.get("head_sha") in owned
+                  and run.get("status") != "completed"
+              ):
+                  candidates.append({
+                      "id": int(run["id"]),
+                      "head_sha": run.get("head_sha"),
+                      "status": run.get("status"),
+                  })
+          print("OWNED_DEPLOY_CANDIDATES="+json.dumps(candidates, sort_keys=True))
+
+          for item in candidates:
+              req=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/runs/{item['id']}/cancel",
+                  data=b"{}",
+                  headers={**headers, "Content-Type":"application/json"},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as r:
+                      print(f"CANCEL_ACCEPTED id={item['id']} http={r.status}")
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 409:
+                      print(f"CANCEL_RACE id={item['id']} status=already-terminal")
+                  else:
+                      raise
+
+          deadline=time.time()+55
+          remaining=candidates
+          while remaining and time.time()<deadline:
+              next_remaining=[]
+              for item in remaining:
+                  check=f"https://api.github.com/repos/{repo}/actions/runs/{item['id']}"
+                  with urllib.request.urlopen(urllib.request.Request(check, headers=headers), timeout=15) as r:
+                      state=json.load(r)
+                  if state.get("status")!="completed":
+                      next_remaining.append(item)
+                  else:
+                      print("TERMINAL="+json.dumps({
+                          "id":item["id"],
+                          "head_sha":item["head_sha"],
+                          "conclusion":state.get("conclusion"),
+                      },sort_keys=True))
+              remaining=next_remaining
+              if remaining:
+                  time.sleep(2)
+          if remaining:
+              raise SystemExit("owned recovery deploys still non-terminal: "+json.dumps(remaining,sort_keys=True))
+          print("OWNER_RECOVERY_DEPLOY_NOISE_DRAINED_GREEN=1")
+          PY
