@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-violentmonkey-profile-diagnostic-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: zcloud-violentmonkey-profile-diagnostic-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
