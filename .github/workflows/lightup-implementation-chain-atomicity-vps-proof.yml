@@ -1,0 +1,153 @@
+name: LightUp implementation-chain atomicity VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-implementation-chain-atomicity-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-implementation-chain-atomicity-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    if: github.event_name == 'pull_request'
+    name: Exact LightUp evidence-remediation heads on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove exact LightUp heads on Python 3.11
+        shell: bash
+        run: |
+          set -euo pipefail
+          cases=(
+            "pr473|chatgpt/st5-implementation-planning-request-builder-input-atomicity-20261007|b175d17095e4d0bfcf51380a3bdab27e13748d2e|test_future_remediation_implementation_plan_request_builder_input_atomicity test_future_remediation_implementation_plan_request"
+            "pr476|chatgpt/st5-implementation-plan-producer-input-atomicity-20261007|2dae0661c7465667ac10520566f2081e45fdcbfc|test_future_remediation_implementation_plan_producer_input_atomicity test_future_remediation_implementation_plan"
+            "pr480|chatgpt/st5-implementation-plan-review-request-builder-input-atomicity-20261007|083b510ea00758139b87224a658b795b089ca73d|test_future_remediation_implementation_plan_review_request_builder_input_atomicity test_future_remediation_implementation_plan_review_request"
+            "pr483|chatgpt/st5-implementation-plan-reviewer-producer-input-atomicity-20261007|cb84ce2854aad9fd564e7079ca236bad556831fd|test_future_remediation_implementation_plan_reviewer_producer_input_atomicity test_future_remediation_implementation_plan_review"
+            "pr489|chatgpt/st5-implementation-plan-review-request-parser-input-purity-20261007|b7f261934d89eecdc1e62cf26d66ce6de6e97bdb|test_future_remediation_implementation_plan_review_request_parser_input_purity test_future_remediation_implementation_plan_review_request_handoff test_future_remediation_implementation_plan_review_request"
+            "pr492|chatgpt/st5-implementation-planning-request-parser-input-purity-20261007|f422d1e7be89424abccdbb7c5c8507a1278e48ca|test_future_remediation_implementation_plan_request_parser_input_purity test_future_remediation_implementation_plan_request_handoff test_future_remediation_implementation_plan_request"
+          )
+          for entry in "${cases[@]}"; do
+            IFS='|' read -r label branch expected tests <<< "${entry}"
+            remote_ref="refs/remotes/origin/lightup-${label}-proof"
+            snapshot="${RUNNER_TEMP}/lightup-${label}-py311-${GITHUB_RUN_ID}"
+            git -C "${LIGHTUP_REPO}" fetch --prune origin "+refs/heads/${branch}:${remote_ref}"
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v ${tests}
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          done
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove exact LightUp heads on Python 3.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          cases=(
+            "pr473|chatgpt/st5-implementation-planning-request-builder-input-atomicity-20261007|b175d17095e4d0bfcf51380a3bdab27e13748d2e|test_future_remediation_implementation_plan_request_builder_input_atomicity test_future_remediation_implementation_plan_request"
+            "pr476|chatgpt/st5-implementation-plan-producer-input-atomicity-20261007|2dae0661c7465667ac10520566f2081e45fdcbfc|test_future_remediation_implementation_plan_producer_input_atomicity test_future_remediation_implementation_plan"
+            "pr480|chatgpt/st5-implementation-plan-review-request-builder-input-atomicity-20261007|083b510ea00758139b87224a658b795b089ca73d|test_future_remediation_implementation_plan_review_request_builder_input_atomicity test_future_remediation_implementation_plan_review_request"
+            "pr483|chatgpt/st5-implementation-plan-reviewer-producer-input-atomicity-20261007|cb84ce2854aad9fd564e7079ca236bad556831fd|test_future_remediation_implementation_plan_reviewer_producer_input_atomicity test_future_remediation_implementation_plan_review"
+            "pr489|chatgpt/st5-implementation-plan-review-request-parser-input-purity-20261007|b7f261934d89eecdc1e62cf26d66ce6de6e97bdb|test_future_remediation_implementation_plan_review_request_parser_input_purity test_future_remediation_implementation_plan_review_request_handoff test_future_remediation_implementation_plan_review_request"
+            "pr492|chatgpt/st5-implementation-planning-request-parser-input-purity-20261007|f422d1e7be89424abccdbb7c5c8507a1278e48ca|test_future_remediation_implementation_plan_request_parser_input_purity test_future_remediation_implementation_plan_request_handoff test_future_remediation_implementation_plan_request"
+          )
+          for entry in "${cases[@]}"; do
+            IFS='|' read -r label branch expected tests <<< "${entry}"
+            remote_ref="refs/remotes/origin/lightup-${label}-proof"
+            snapshot="${RUNNER_TEMP}/lightup-${label}-py314-${GITHUB_RUN_ID}"
+            git -C "${LIGHTUP_REPO}" fetch --prune origin "+refs/heads/${branch}:${remote_ref}"
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v ${tests}
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          done
+
+      - name: Write exact-head proof receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_dir="${RUNNER_TEMP}/lightup-implementation-chain-atomicity-receipt"
+          mkdir -p "${receipt_dir}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          heads = {
+              "473": "b175d17095e4d0bfcf51380a3bdab27e13748d2e",
+              "476": "2dae0661c7465667ac10520566f2081e45fdcbfc",
+              "480": "083b510ea00758139b87224a658b795b089ca73d",
+              "483": "cb84ce2854aad9fd564e7079ca236bad556831fd",
+              "489": "b7f261934d89eecdc1e62cf26d66ce6de6e97bdb",
+              "492": "f422d1e7be89424abccdbb7c5c8507a1278e48ca",
+          }
+          payload = {
+              "project": "LightUp",
+              "focus": "evidence-remediation",
+              "pull_requests": heads,
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "six-exact-head-dedicated-atomicity+parent-controls+safety-canaries",
+              "production_source_changes": 0,
+              "authority_widening": False,
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-implementation-chain-atomicity-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head proof receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-implementation-chain-atomicity-vps-proof
+          path: ${{ runner.temp }}/lightup-implementation-chain-atomicity-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}"/lightup-pr473-*                  "${RUNNER_TEMP}"/lightup-pr476-*                  "${RUNNER_TEMP}"/lightup-pr480-*                  "${RUNNER_TEMP}"/lightup-pr483-*                  "${RUNNER_TEMP}"/lightup-pr489-*                  "${RUNNER_TEMP}"/lightup-pr492-*
