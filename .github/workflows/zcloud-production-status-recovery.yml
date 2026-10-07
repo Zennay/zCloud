@@ -35,7 +35,7 @@ jobs:
           import urllib.request
 
           CANONICAL_REPOSITORY = "Zennay/zCloud"
-          TRUSTED_EVENTS = {"push", "workflow_dispatch"}
+          TRUSTED_DEPLOY_EVENTS = {"workflow_run"}
 
           repo = os.environ["GITHUB_REPOSITORY"]
           token = os.environ["GITHUB_TOKEN"]
@@ -71,7 +71,7 @@ jobs:
                   trigger_repo_name == CANONICAL_REPOSITORY
                   and str(trigger.get("head_branch") or "") == "main"
                   and str(trigger.get("conclusion") or "") == "success"
-                  and str(trigger.get("event") or "") in TRUSTED_EVENTS
+                  and str(trigger.get("event") or "") in TRUSTED_DEPLOY_EVENTS
               )
               if not trigger_ok:
                   print("PRODUCTION_STATUS_RECOVERY_REJECT reason=workflow_run_provenance")
