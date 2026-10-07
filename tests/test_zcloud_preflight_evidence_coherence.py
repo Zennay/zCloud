@@ -39,7 +39,7 @@ def snapshot(now: dt.datetime) -> dict:
             }
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "captured_at": captured,
         "main_sha": SHA,
         "candidate_base_sha": SHA,
@@ -66,6 +66,12 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
                 for row in result["evidence"]
             )
         )
+
+    def test_legacy_schema_fails_closed(self):
+        payload = snapshot(self.now)
+        payload["schema_version"] = 1
+        with self.assertRaisesRegex(audit.EvidenceError, "schema_version_unsupported"):
+            audit.audit_snapshot(payload, now=self.now)
 
     def test_mixed_main_evidence_fails_closed(self):
         payload = snapshot(self.now)
