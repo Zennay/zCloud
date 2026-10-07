@@ -3,7 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.zcloud_serialized_writer_window_audit import (
@@ -41,6 +41,7 @@ class SerializedWriterWindowAuditTests(unittest.TestCase):
             "schema_version": 1,
             "observed_at": "2026-10-07T06:55:00Z",
             "window_id": "control-plane-live-writer",
+            "inventory_complete": True,
             "owners": owners,
         }
 
@@ -177,6 +178,21 @@ class SerializedWriterWindowAuditTests(unittest.TestCase):
         snap = self.snapshot([self.owner("pr:580")])
         snap["owners"][0]["title"] = "must never enter bounded evidence"
         with self.assertRaisesRegex(WindowEvidenceError, "owner_invalid"):
+            audit_snapshot(snap, now=self.now())
+
+    def test_incomplete_inventory_fails_closed(self):
+        snap = self.snapshot([self.owner("pr:580")])
+        snap["inventory_complete"] = False
+        with self.assertRaisesRegex(WindowEvidenceError, "inventory_incomplete"):
+            audit_snapshot(snap, now=self.now())
+
+    def test_inventory_complete_must_be_boolean(self):
+        snap = self.snapshot([self.owner("pr:580")])
+        snap["inventory_complete"] = 1
+        with self.assertRaisesRegex(
+            WindowEvidenceError,
+            "inventory_complete_invalid",
+        ):
             audit_snapshot(snap, now=self.now())
 
     def test_rejects_stale_and_future_evidence(self):
