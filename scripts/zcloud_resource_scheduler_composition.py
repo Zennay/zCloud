@@ -317,9 +317,14 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if planned_total > capacity + 1e-8:
         raise CompositionError("planned_capacity_exceeded")
 
-    if blocked_reason is not None:
-        status = "incomplete" if blocked_reason == "source_incomplete" else "held"
+    if blocked_reason == "source_incomplete":
+        status = "incomplete"
         decision_ready = False
+    elif blocked_reason is not None:
+        # Pressure is a valid scheduler decision: preserve the bounded base plan
+        # while holding opportunistic borrowing/parallel expansion.
+        status = "held"
+        decision_ready = True
     else:
         status = "ready"
         decision_ready = True
