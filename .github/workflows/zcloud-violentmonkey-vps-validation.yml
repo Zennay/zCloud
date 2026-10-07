@@ -17,10 +17,21 @@ concurrency:
 
 jobs:
   validate:
+    if: github.actor == 'Zennay' && github.triggering_actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact same-repo PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact candidate revision
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
       - name: Guard permanent zCloud runner
         run: |
           set -euo pipefail
