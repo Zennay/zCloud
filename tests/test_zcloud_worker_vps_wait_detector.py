@@ -160,8 +160,17 @@ class WorkerVpsWaitDetectorTests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_cli_output_is_bounded_and_free_of_raw_fields(self):
-        self.emit("cloud", 1, 10, "autonomy-wait-vps")
-        self.emit("cloud", 1, 5, "autonomy-wait-vps")
+        current = dt.datetime.now(dt.timezone.utc)
+        with sqlite3.connect(self.db) as conn:
+            conn.executemany(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending) "
+                "VALUES(?,?,?,?,?,?)",
+                [
+                    ((current - dt.timedelta(minutes=10)).isoformat(), "autonomy-wait-vps", "cloud", 1, 0, 0),
+                    ((current - dt.timedelta(minutes=5)).isoformat(), "autonomy-wait-vps", "cloud", 1, 0, 0),
+                ],
+            )
+            conn.commit()
         completed = subprocess.run(
             [
                 sys.executable,
@@ -201,7 +210,7 @@ class WorkerVpsWaitDetectorTests(unittest.TestCase):
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
-        self.assertIn("--db", text)
+        self.assertIn("LIVE_DB: /home/ubuntu/zennay-cloud/history.db", text)
         self.assertIn("--require-compatible", text)
         self.assertIn("ZCLOUD_WORKER_VPS_WAIT_DETECTOR_GREEN=", text)
         self.assertIn("retention-days: 14", text)
