@@ -17,6 +17,18 @@ class PushAllWorkersWorkflowTests(unittest.TestCase):
         self.assertIn('ALL_PENDING_JUSTIFIED_BY_ACTIVE_GENERATION=1', text)
         self.assertIn('ALL_WORKERS_PUSHED_GREEN=1', text)
 
+    def test_push_all_waits_for_desired_allocation_before_dispatch(self):
+        text = (ROOT / ".github/workflows/push-all-workers-now.yml").read_text(encoding="utf-8")
+        self.assertIn('desired_total = int(', text)
+        self.assertIn('allocation_deadline = time.time() + 20', text)
+        self.assertIn('ALLOCATION_CONVERGENCE=', text)
+        self.assertIn('len(allocation) >= desired_total', text)
+        self.assertIn('worker allocation did not converge to desired capacity:', text)
+        self.assertLess(
+            text.index('ALLOCATION_CONVERGENCE='),
+            text.index('FORCE_PUSH='),
+        )
+
     def test_push_all_recovers_only_idle_pending_workers_before_failing(self):
         text = (ROOT / ".github/workflows/push-all-workers-now.yml").read_text(encoding="utf-8")
         self.assertIn('if unjustified_pending:', text)
