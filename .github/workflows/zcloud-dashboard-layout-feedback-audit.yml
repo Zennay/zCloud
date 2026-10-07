@@ -1,0 +1,63 @@
+name: zCloud dashboard layout feedback audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - public/app.js
+      - scripts/zcloud_dashboard_layout_feedback_audit.py
+      - tests/test_dashboard_layout_feedback_audit.py
+      - .github/workflows/zcloud-dashboard-layout-feedback-audit.yml
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-layout-feedback-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Prove audit contract and current baseline
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m py_compile scripts/zcloud_dashboard_layout_feedback_audit.py tests/test_dashboard_layout_feedback_audit.py
+          python3 -m unittest -v tests.test_dashboard_layout_feedback_audit
+          python3 scripts/zcloud_dashboard_layout_feedback_audit.py --json
+          echo "ZCLOUD_LAYOUT_FEEDBACK_AUDIT_GREEN=1"
+
+  permanent-vps-proof:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify exact candidate and read-only baseline on permanent VPS
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 -m unittest -v tests.test_dashboard_layout_feedback_audit
+          python3 scripts/zcloud_dashboard_layout_feedback_audit.py --json
+          echo "ZCLOUD_LAYOUT_FEEDBACK_AUDIT_VPS_GREEN=1"
