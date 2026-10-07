@@ -23,12 +23,21 @@ class PortfolioPriorityNormalizerWorkflowTests(unittest.TestCase):
             validate,
         )
 
+    def test_permissions_are_read_only(self):
+        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertNotIn("contents: write", self.text)
+        self.assertNotIn("pull_request_target:", self.text)
+
     def test_live_mutation_is_main_only_and_skips_pull_requests(self):
         reconcile = self.text.split("\n  reconcile:", 1)[1]
         self.assertIn("github.event_name != 'pull_request'", reconcile)
         self.assertIn("github.repository == 'Zennay/zCloud'", reconcile)
         self.assertIn("github.ref == 'refs/heads/main'", reconcile)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", reconcile)
+        validate = self.text.split("  validate:", 1)[1].split("\n  reconcile:", 1)[0]
+        self.assertNotIn("127.0.0.1:8765", validate)
+        self.assertNotIn('"/api/portfolio-queue"', validate)
+        self.assertNotIn('"/api/dynamic-workers"', validate)
 
     def test_checkout_is_immutable_exact_and_credential_free(self):
         pinned = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"
