@@ -1,0 +1,45 @@
+name: HaxLab Node lockfile generator 2026-10-07
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/haxlab-node-lockfile-generator-20261007.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Generate canonical HaxLab package lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          cat > "$tmp/package.json" <<'JSON'
+          {
+            "name": "haxlab-replay-engine",
+            "private": true,
+            "version": "0.1.0",
+            "description": "Node sidecar used by HaxLab for full HBR2 state reconstruction",
+            "dependencies": {
+              "node-haxball": "2.3.1"
+            }
+          }
+          JSON
+          cd "$tmp"
+          echo "NODE_VERSION=$(node --version)"
+          echo "NPM_VERSION=$(npm --version)"
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+          data=Path("package-lock.json").read_bytes()
+          print("HAXLAB_PACKAGE_LOCK_BYTES=" + str(len(data)))
+          print("HAXLAB_PACKAGE_LOCK_BASE64=" + base64.b64encode(data).decode("ascii"))
+          PY
