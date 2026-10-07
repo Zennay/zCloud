@@ -65,6 +65,19 @@ class SerializedGateMetadataDriftAuditTests(unittest.TestCase):
         self.assertFalse(result["release_authorized"])
         self.assertFalse(result["mutation_performed"])
 
+    def test_successor_pr_historical_provenance_is_not_stale(self):
+        result = audit.audit_snapshot(
+            snapshot([
+                pr(
+                    1089,
+                    body="Supersedes #576; keep unmerged while #580/PWQ-41 owns the serialized window.",
+                )
+            ])
+        )
+        self.assertEqual("clean", result["status"])
+        self.assertEqual([], result["stale_reference_prs"])
+        self.assertEqual(0, result["serialized_primary_pr_count"])
+
     def test_successor_aware_reference_is_not_stale(self):
         result = audit.audit_snapshot(
             snapshot([
