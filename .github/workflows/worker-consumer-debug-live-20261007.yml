@@ -1,4 +1,4 @@
-name: Live worker consumer debug after recovery failure
+name: Exact live worker assignment debug
 
 on:
   push:
@@ -15,63 +15,104 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 2
     steps:
-      - name: Capture bounded live consumer evidence
+      - name: Capture exact assignment and client state
         shell: bash
         run: |
           set -euo pipefail
           test "$(id -un)" = "ubuntu"
           test "$(hostname)" = "vps-bb300bba"
           python3 - <<'PY'
-          import json, sqlite3, urllib.request
-          BASE="http://127.0.0.1:8765"
-          DB="/home/ubuntu/zennay-cloud/history.db"
-          AFFECTED=("ftmo::w1","supa::w1","supa::w2","zguard::w1")
+          import json
+          import sqlite3
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+          WORKERS = ("ftmo::w1", "raiseai::w1", "supa::w1", "supa::w2", "zguard::w1")
+
           def get(path):
-              with urllib.request.urlopen(BASE+path,timeout=10) as r:
-                  return json.load(r)
+              with urllib.request.urlopen(BASE + path, timeout=10) as response:
+                  return json.load(response)
 
-          debug=get("/api/worker-debug")
-          live=get("/api/runner-live")
-          targets=get("/api/runner-targets")
-          print("WORKER_DEBUG="+json.dumps(debug,sort_keys=True))
-          print("TARGETS="+json.dumps({k:{\n              "active":v.get("active"),"assignment_ready":v.get("assignment_ready"),\n              "global_worker_slot":v.get("global_worker_slot"),"desired_state":v.get("desired_state"),\n              "queue_item":{kk:(v.get("queue_item") or {}).get(kk) for kk in ("queue_id","project_id","status","worker_slot","claimed_by","claim_expires_at")},\n              "prompt_prefix":str(v.get("prompt") or "")[:120]\n          } for k,v in (targets.get("projects") or {}).items() if k in AFFECTED or k=="raiseai::w1"},sort_keys=True))\n          print("ALLOCATION="+json.dumps([
-              {
-                  "worker_key":r.get("worker_key"),
-                  "project_id":r.get("project_id"),
-                  "worker_slot":r.get("worker_slot"),
-                  "provider":r.get("provider"),
-                  "queue_id":r.get("queue_id"),
+          targets = get("/api/runner-targets")
+          live = get("/api/runner-live")
+          debug = get("/api/worker-debug")
+
+          exact = {}
+          for key, value in (targets.get("projects") or {}).items():
+              if key not in WORKERS:
+                  continue
+              q = value.get("queue_item") or {}
+              exact[key] = {
+                  "active": value.get("active"),
+                  "assignment_ready": value.get("assignment_ready"),
+                  "global_worker_slot": value.get("global_worker_slot"),
+                  "desired_state": value.get("desired_state"),
+                  "provider": value.get("provider"),
+                  "queue_item": {
+                      field: q.get(field)
+                      for field in (
+                          "queue_id", "project_id", "status", "worker_slot",
+                          "claimed_by", "claim_expires"
+                      )
+                  },
+                  "prompt_prefix": str(value.get("prompt") or "")[:160],
               }
-              for r in ((targets.get("global_allocation") or {}).get("workers") or [])
-          ],sort_keys=True))
-          compact={}
-          for base, group in (live.get("chatgpt_runners") or {}).items():
-              for row in (group or {}).get("workers") or []:
-                  wid=str(row.get("worker_id") or "")
-                  if wid in AFFECTED:
-                      compact[wid]={
-                          "state":row.get("state"),
-                          "generating":bool(row.get("generating")),
-                          "sending":bool(row.get("sending")),
-                          "progress_age_seconds":row.get("progress_age_seconds"),
-                          "conversation_id":bool(row.get("conversation_id")),
-                          "tab_id":row.get("tab_id"),
-                          "last_error":row.get("last_error"),
-                      }
-          print("AFFECTED_LIVE="+json.dumps(compact,sort_keys=True))
+          print("TARGETS=" + json.dumps(exact, sort_keys=True, default=str))
 
-          with sqlite3.connect(DB,timeout=10) as c:
-              c.row_factory=sqlite3.Row
-              commands=[dict(r) for r in c.execute(
-                  "SELECT id,project_id,action,status,created_at,updated_at "
-                  "FROM runner_commands WHERE project_id IN (?,?,?,?) "
-                  "ORDER BY id DESC LIMIT 48", AFFECTED
-              ).fetchall()]
-              events=[dict(r) for r in c.execute(
-                  "SELECT id,ts,event,project_id,worker_slot,target,reason,error,generating,sending "
-                  "FROM runner_events WHERE project_id IN ('ftmo','supa','zguard') "
-                  "ORDER BY id DESC LIMIT 120"
-              ).fetchall()]
-          print("AFFECTED_COMMANDS="+json.dumps(commands,sort_keys=True,default=str))
-          print("AFFECTED_EVENTS="+json.dumps(events,sort_keys=True,default=str))
+          allocation = []
+          for row in ((targets.get("global_allocation") or {}).get("workers") or []):
+              if str(row.get("worker_key") or "") in WORKERS:
+                  allocation.append({
+                      field: row.get(field)
+                      for field in (
+                          "worker_key", "project_id", "worker_slot",
+                          "global_worker_slot", "provider", "queue_id"
+                      )
+                  })
+          print("ALLOCATION=" + json.dumps(allocation, sort_keys=True, default=str))
+
+          live_exact = {}
+          for group in (live.get("chatgpt_runners") or {}).values():
+              for row in (group or {}).get("workers") or []:
+                  wid = str(row.get("worker_id") or "")
+                  if wid in WORKERS:
+                      live_exact[wid] = {
+                          "state": row.get("state"),
+                          "generating": bool(row.get("generating")),
+                          "sending": bool(row.get("sending")),
+                          "progress_age_seconds": row.get("progress_age_seconds"),
+                          "conversation_id": bool(row.get("conversation_id")),
+                          "last_error": row.get("last_error"),
+                      }
+          print("LIVE=" + json.dumps(live_exact, sort_keys=True, default=str))
+
+          verdicts = {}
+          for row in debug.get("workers") or []:
+              wid = str(row.get("worker") or "")
+              if wid in WORKERS:
+                  verdicts[wid] = {
+                      "verdict": row.get("verdict"),
+                      "reason": row.get("reason"),
+                      "last_event": row.get("last_event"),
+                      "last_event_age_s": row.get("last_event_age_s"),
+                      "last_prompt_age_s": row.get("last_prompt_age_s"),
+                      "queue_id": row.get("queue_id"),
+                  }
+          print("VERDICTS=" + json.dumps(verdicts, sort_keys=True, default=str))
+
+          with sqlite3.connect(DB, timeout=10) as conn:
+              conn.row_factory = sqlite3.Row
+              rows = conn.execute(
+                  """
+                  SELECT queue_id, project_id, status, worker_slot, claimed_at,
+                         claim_expires, updated_at
+                  FROM portfolio_queue
+                  WHERE queue_id IN (?, ?, ?, ?, ?)
+                  ORDER BY queue_id
+                  """,
+                  tuple((exact.get(worker) or {}).get("queue_item", {}).get("queue_id") or ""
+                        for worker in WORKERS),
+              ).fetchall()
+          print("QUEUE_ROWS=" + json.dumps([dict(row) for row in rows], sort_keys=True, default=str))
           PY
