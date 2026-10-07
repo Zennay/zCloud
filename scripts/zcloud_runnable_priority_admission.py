@@ -72,6 +72,9 @@ def rank_runnable_projects(
     *,
     contracts: dict[str, Any],
 ) -> dict[str, Any]:
+    allowed_top_level = {"schema_version", "projects"}
+    if set(evidence) - allowed_top_level:
+        raise AdmissionError("evidence_unknown_top_level_field")
     if evidence.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
         raise AdmissionError("evidence_schema_invalid")
 
@@ -93,9 +96,10 @@ def rank_runnable_projects(
             raise AdmissionError("evidence_unknown_field")
 
         project_id = row.get("project_id")
-        if not isinstance(project_id, str) or not project_id.strip():
+        if not isinstance(project_id, str) or not project_id:
             raise AdmissionError("project_id_invalid")
-        project_id = project_id.strip()
+        if project_id != project_id.strip():
+            raise AdmissionError("project_id_invalid")
         if project_id in seen:
             raise AdmissionError("project_duplicate")
         seen.add(project_id)
