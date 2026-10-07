@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.16";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.17";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -1177,6 +1177,19 @@ function runProject(cfg) {
         generationDeadlineMs: 120000
       });
       status("generation-not-started", {reason: "no-generation-after-send", weakCycleStreak, retryScheduled});
+      // A VPS-dispatch-only worker cannot rely on the idle startup path here:
+      // that path deliberately stays closed unless the backend dispatches again.
+      // After the full 120s generation deadline, replay the exact same canonical
+      // assignment locally so a submitted-but-never-started ChatGPT turn cannot
+      // strand the worker indefinitely. This retry does not widen scope or change
+      // the assignment and still respects the per-worker anti-spam interval.
+      if (retryScheduled) {
+        if (await canAutoContinue()) {
+          await send("no-generation-retry");
+        } else {
+          status("auto-continue-blocked", {reason: "no-generation-retry-policy-closed"});
+        }
+      }
       return;
     }
     if (sawGeneration) {

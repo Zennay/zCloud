@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.16
+// @version      1.3.17
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.16";
+  const SCRIPT_VERSION = "1.3.17";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -1339,7 +1339,21 @@
         await status("generation-finished", {reason: "response-detected-between-polls"});
       } else if (now >= generationDeadline) {
         awaitingGeneration = false;
-        await status("generation-not-started", {reason: "no-generation-after-send"});
+        await scheduleQualityRetry("no-generation-after-send", {
+          generationDeadlineMs: timing.generationStartTimeoutMs
+        });
+        await status("generation-not-started", {
+          reason: "no-generation-after-send",
+          retryScheduled: true
+        });
+        // The prompt was already dispatched and the full anti-spam interval has
+        // elapsed, but ChatGPT/Claude never entered a generating state. Reuse the
+        // exact same assignment locally so a VPS-dispatch-only worker cannot
+        // remain stranded waiting for another backend push.
+        if (target && assignmentReady(target) && !draining) {
+          const retried = await sendPrompt("no-generation-retry");
+          if (!retried) await reportSendBlocked("no-generation-retry-send-unavailable");
+        }
       }
       return;
     }
