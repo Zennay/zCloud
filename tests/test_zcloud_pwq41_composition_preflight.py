@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-pwq41-composition-preflight.yml"
 SPEC = importlib.util.spec_from_file_location(
     "zcloud_pwq41_composition_preflight",
     ROOT / "scripts" / "zcloud_pwq41_composition_preflight.py",
@@ -84,6 +85,27 @@ class Pwq41CompositionPreflightTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(2, code)
+
+    def test_workflow_is_exact_head_read_only_and_permanent_vps_guarded(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("timeout-minutes: 5", text)
+        self.assertIn(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            text,
+        )
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', text)
+        self.assertIn("--expected-head "$EXPECTED_SHA"", text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertNotIn("contents: write", text)
+        self.assertNotIn("git push", text)
+        self.assertNotIn("systemctl restart", text)
 
 
 if __name__ == "__main__":
