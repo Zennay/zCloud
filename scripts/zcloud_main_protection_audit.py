@@ -101,13 +101,9 @@ def audit_protection(
     if isinstance(status_checks, dict):
         checks = status_checks.get("checks")
         contexts = status_checks.get("contexts")
-        check_count = (
-            len(checks)
-            if isinstance(checks, list)
-            else len(contexts)
-            if isinstance(contexts, list)
-            else 0
-        )
+        modern_count = len(checks) if isinstance(checks, list) else 0
+        legacy_count = len(contexts) if isinstance(contexts, list) else 0
+        check_count = max(modern_count, legacy_count)
         strict_status_checks = status_checks.get("strict") is True
     else:
         check_count = 0
