@@ -39,27 +39,8 @@ jobs:
             | tail -n 200 || true
           echo "=== WATCHDOG STATE ==="
           if sudo -n test -r /var/lib/zcloud/worker-progress-watchdog.json 2>/dev/null; then
-            sudo -n python3 - <<'PY_STATE'
-import json
-p="/var/lib/zcloud/worker-progress-watchdog.json"
-try:
-    data=json.load(open(p,encoding="utf-8"))
-except Exception as exc:
-    print("WATCHDOG_STATE_ERROR="+repr(exc))
-else:
-    workers=data.get("workers") or {}
-    print("WATCHDOG_STATE="+json.dumps({
-        "updated_at":data.get("updated_at"),
-        "global":data.get("global"),
-        "workers":{k:{
-            "last_action":v.get("last_action"),
-            "last_action_at":v.get("last_action_at"),
-            "last_new_chat_at":v.get("last_new_chat_at"),
-            "last_progress_at":v.get("last_progress_at"),
-            "stalled_since":v.get("stalled_since"),
-        } for k,v in workers.items()}
-    },sort_keys=True))
-PY_STATE
+            sudo -n cat /var/lib/zcloud/worker-progress-watchdog.json \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); w=d.get("workers") or {}; print("WATCHDOG_STATE="+json.dumps({"updated_at":d.get("updated_at"),"global":d.get("global"),"workers":{k:{"last_action":v.get("last_action"),"last_action_at":v.get("last_action_at"),"last_new_chat_at":v.get("last_new_chat_at"),"last_progress_at":v.get("last_progress_at"),"stalled_since":v.get("stalled_since")} for k,v in w.items()}},sort_keys=True))'
           else
             echo "WATCHDOG_STATE=unreadable"
           fi
