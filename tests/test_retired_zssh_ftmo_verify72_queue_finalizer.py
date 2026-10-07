@@ -18,7 +18,7 @@ class RetiredZsshFtmoVerify72QueueFinalizerTests(unittest.TestCase):
         markers = (
             "Finalize zSSH FTMO runner recovery queue item",
             "zssh-ftmo-runner-recovery-queue-finalize",
-            "ZCLOUD_SQLITE_QUEUE_DONE_GREEN=1",
+            "FTMO_RUNNER_FINAL_VERIFY",
         )
         active = "\n".join(
             path.read_text(encoding="utf-8")
