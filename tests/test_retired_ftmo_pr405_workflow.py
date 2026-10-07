@@ -4,32 +4,46 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
-RETIRED_WORKFLOW = WORKFLOW_DIR / "ftmo-pr405-hour-cache-proof.yml"
 
-# This authority was tied to FTMO PR #405 and two exact CI runs that are
-# terminal. It must not silently return under a renamed workflow.
-HISTORICAL_CANCELLATION_FINGERPRINTS = (
+RETIRED_WORKFLOWS = (
+    WORKFLOW_DIR / "ftmo-pr405-hour-cache-proof.yml",
+    WORKFLOW_DIR / "ftmo-pr408-provider-boundary-proof.yml",
+)
+
+# These authorities were tied to terminal FTMO PR-specific proof/cleanup work.
+# They must not silently return under renamed workflows.
+HISTORICAL_AUTHORITY_FINGERPRINTS = (
+    # PR405 stale-CI cancellation authority.
     "repos/Zennay/Ftmo/pulls/405",
     "36980508317",
     "36980508313",
     "STALE_PR405_CANCEL_REQUESTED",
+    # PR408 exact-head proof authority.
+    "98c033b2b571cea2313f20bee31820286132226f",
+    "FTMO_PR408_TARGETED_GREEN",
 )
 
 
-class RetiredFtmoPr405WorkflowTests(unittest.TestCase):
-    def test_historical_pr405_cancellation_workflow_stays_retired(self):
-        self.assertFalse(
-            RETIRED_WORKFLOW.exists(),
-            "terminal FTMO PR405 cancellation workflow must stay retired",
+class RetiredFtmoHistoricalWorkflowTests(unittest.TestCase):
+    def test_terminal_ftmo_workflows_stay_retired(self):
+        resurrected = [
+            str(path.relative_to(ROOT))
+            for path in RETIRED_WORKFLOWS
+            if path.exists()
+        ]
+        self.assertEqual(
+            [],
+            resurrected,
+            "terminal FTMO PR-specific workflows must stay retired",
         )
 
-    def test_active_workflows_do_not_restore_pr405_cancellation_authority(self):
+    def test_active_workflows_do_not_restore_historical_authority(self):
         offenders = {}
         for path in sorted(WORKFLOW_DIR.glob("*.yml")):
             text = path.read_text(encoding="utf-8")
             hits = [
                 marker
-                for marker in HISTORICAL_CANCELLATION_FINGERPRINTS
+                for marker in HISTORICAL_AUTHORITY_FINGERPRINTS
                 if marker in text
             ]
             if hits:
@@ -38,7 +52,7 @@ class RetiredFtmoPr405WorkflowTests(unittest.TestCase):
         self.assertEqual(
             {},
             offenders,
-            "historical FTMO PR405 cancellation authority resurfaced",
+            "historical FTMO PR-specific authority resurfaced",
         )
 
 
