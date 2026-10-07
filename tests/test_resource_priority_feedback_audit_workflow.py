@@ -36,6 +36,7 @@ class ResourcePriorityFeedbackWorkflowTests(unittest.TestCase):
         )
 
     def test_untrusted_pull_requests_never_reach_permanent_runner(self):
+        self.assertIn("  permanent-vps-proof:\n    needs: validate\n", self.text)
         self.assertIn("runs-on: ubuntu-latest", self.text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", self.text)
         self.assertIn(
