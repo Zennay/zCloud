@@ -88,6 +88,7 @@ jobs:
                   {
                       "kind": kind,
                       "policy": policies[kind],
+                      "capability_id": "control-plane:workflow-proof",
                       "observed_at": os.environ["NOW"],
                       "main_sha": os.environ["MAIN_SHA"],
                       "verdict": verdict,
@@ -111,6 +112,10 @@ jobs:
           assert payload["status"] == "admit"
           assert payload["mutation_performed"] is False
           assert len(payload["evidence"]) == 5
+          assert all(
+              row["capability_id"] == "control-plane:workflow-proof"
+              for row in payload["evidence"]
+          )
           print(
               "ZCLOUD_PREFLIGHT_EVIDENCE_COHERENCE_GREEN="
               f"main:{payload['main_sha']}:span:{payload['evidence_span_seconds']}"
