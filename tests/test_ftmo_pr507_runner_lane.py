@@ -17,7 +17,14 @@ class FtmoDedicatedRunnerLaneTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn(
+            'paths:\n      - ".github/workflows/ftmo-runner-self-health-proof-20261002.yml"',
+            text,
+        )
         self.assertNotIn("workflow_dispatch:", text)
+        self.assertNotIn("pull_request:", text)
+        self.assertNotIn("pull_request_target:", text)
+        self.assertNotIn("schedule:", text)
         self.assertNotIn("contents: write", text)
         self.assertNotIn("actions: write", text)
         self.assertNotIn("git push", text)
