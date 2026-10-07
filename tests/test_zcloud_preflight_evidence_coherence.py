@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "zcloud_preflight_evidence_coherence.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-preflight-evidence-coherence.yml"
 SHA = "1" * 40
+HEAD_SHA = "3" * 40
 
 
 def snapshot(now: dt.datetime) -> dict:
@@ -32,6 +33,7 @@ def snapshot(now: dt.datetime) -> dict:
                 "kind": kind,
                 "policy": audit.REQUIRED_POLICIES[kind],
                 "capability_id": "control-plane:test-capability",
+                "candidate_head_sha": HEAD_SHA,
                 "observed_at": captured,
                 "main_sha": SHA,
                 "verdict": verdict,
@@ -43,6 +45,7 @@ def snapshot(now: dt.datetime) -> dict:
         "captured_at": captured,
         "main_sha": SHA,
         "candidate_base_sha": SHA,
+        "candidate_head_sha": HEAD_SHA,
         "capability_id": "control-plane:test-capability",
         "evidence": rows,
     }
@@ -57,12 +60,14 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual("control-plane-preflight-evidence-coherence-v2", result["policy"])
         self.assertEqual("admit", result["status"])
+        self.assertEqual(HEAD_SHA, result["candidate_head_sha"])
         self.assertEqual([], result["blocked_kinds"])
         self.assertFalse(result["mutation_performed"])
         self.assertEqual(5, len(result["evidence"]))
         self.assertTrue(
             all(
                 row["capability_id"] == "control-plane:test-capability"
+                and row["candidate_head_sha"] == HEAD_SHA
                 for row in result["evidence"]
             )
         )
@@ -84,6 +89,21 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
         payload["candidate_base_sha"] = "2" * 40
         with self.assertRaisesRegex(audit.EvidenceError, "candidate_base_mismatch"):
             audit.audit_snapshot(payload, now=self.now)
+
+    def test_candidate_head_binding_fails_closed(self):
+        payload = snapshot(self.now)
+        payload["evidence"][1]["candidate_head_sha"] = "4" * 40
+        with self.assertRaisesRegex(
+            audit.EvidenceError, "evidence_candidate_head_mismatch"
+        ):
+            audit.audit_snapshot(payload, now=self.now)
+
+        with self.assertRaisesRegex(audit.EvidenceError, "candidate_head_mismatch"):
+            audit.audit_snapshot(
+                snapshot(self.now),
+                now=self.now,
+                expected_candidate_head_sha="5" * 40,
+            )
 
     def test_duplicate_or_missing_evidence_is_rejected(self):
         payload = snapshot(self.now)
@@ -162,8 +182,27 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
             current = dt.datetime.now(dt.timezone.utc)
             payload = snapshot(current)
             path.write_text(json.dumps(payload), encoding="utf-8")
-            ok = subprocess.run(
+            missing_expected = subprocess.run(
                 [sys.executable, str(SCRIPT), str(path), "--require-admit"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(2, missing_expected.returncode, missing_expected.stderr)
+            self.assertEqual(
+                ["expected_candidate_head_required"],
+                json.loads(missing_expected.stdout)["errors"],
+            )
+
+            ok = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(path),
+                    "--expected-candidate-head-sha",
+                    HEAD_SHA,
+                    "--require-admit",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -176,7 +215,14 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
             payload["evidence"][0]["verdict"] = "blocked"
             path.write_text(json.dumps(payload), encoding="utf-8")
             blocked = subprocess.run(
-                [sys.executable, str(SCRIPT), str(path), "--require-admit"],
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(path),
+                    "--expected-candidate-head-sha",
+                    HEAD_SHA,
+                    "--require-admit",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -195,6 +241,7 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
                 "policy",
                 "status",
                 "main_sha",
+                "candidate_head_sha",
                 "capability_id",
                 "required_kinds",
                 "blocked_kinds",
