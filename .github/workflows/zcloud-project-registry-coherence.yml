@@ -56,6 +56,33 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Guard canonical permanent VPS identity
         run: python3 scripts/zcloud_vps_runner_guard.py
+      - name: Prove live zGuard scheduler target is registered
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          url = "http://127.0.0.1:8765/api/runner-targets"
+          with urllib.request.urlopen(url, timeout=8) as response:
+              payload = json.load(response)
+
+          projects = payload.get("projects") or {}
+          worker = projects.get("zguard::w1")
+          if not isinstance(worker, dict):
+              raise SystemExit("live scheduler is missing zguard::w1")
+          if worker.get("base_project_id") != "zguard":
+              raise SystemExit(f"zguard::w1 has wrong base_project_id: {worker.get('base_project_id')!r}")
+          if worker.get("project_id") != "zguard::w1":
+              raise SystemExit(f"zguard::w1 has wrong project_id: {worker.get('project_id')!r}")
+
+          print(json.dumps({
+              "state": "live-scheduler-registered",
+              "worker_key": "zguard::w1",
+              "base_project_id": worker.get("base_project_id"),
+              "active": bool(worker.get("active")),
+              "has_queue_assignment": bool(worker.get("queue_item") or worker.get("queue_id")),
+          }, sort_keys=True, separators=(",", ":")))
+          PY
       - name: Re-run coherence proof on permanent VPS
         run: |
           python3 scripts/zcloud_project_registry_coherence.py
