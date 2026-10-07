@@ -17,7 +17,7 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/scope-authorization-exact-target-object-red-20261007
-  LIGHTUP_EXPECTED_SHA: 534a0ab42461a7f778664cb4293668d24eab15be
+  LIGHTUP_EXPECTED_SHA: ab0764655c8cf45d7bf43f1583745bb6a9bf3d96
 
 jobs:
   prove-red:
