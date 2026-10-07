@@ -91,6 +91,8 @@ jobs:
           ci = github.get("ci") or {}
           if ci.get("status") not in {"success", "failure", "in_progress", "not_configured", "unknown"}:
               raise SystemExit("invalid CI state")
+          if int(ci.get("status_context_count") or 0) > 0 and ci.get("source") != "github_commit_status_exact_head":
+              raise SystemExit("exact-head commit status was not authoritative")
           scorecard = payload.get("scorecard") or {}
           if not scorecard.get("milestones"):
               raise SystemExit("milestone evidence missing")
@@ -98,6 +100,8 @@ jobs:
               "main_sha": github["main_sha"],
               "open_pr_count": github["open_pr_count"],
               "ci_status": ci["status"],
+              "ci_source": ci["source"],
+              "status_context_count": ci["status_context_count"],
               "milestone_count": len(scorecard["milestones"]),
           }, sort_keys=True, separators=(",", ":")))
           PY
