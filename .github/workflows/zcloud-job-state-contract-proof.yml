@@ -1,0 +1,92 @@
+name: zCloud canonical job-state contract proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_job_state_contract.py
+      - tests/test_job_state_contract.py
+      - tests/test_job_state_contract_workflow.py
+      - docs/control-plane-job-state-contract.md
+      - .github/workflows/zcloud-job-state-contract-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-job-state-contract-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact requested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "ZCLOUD_JOB_STATE_EXACT_CHECKOUT_GREEN=$actual"
+
+      - name: Run focused job-state regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_job_state_contract tests.test_job_state_contract_workflow
+
+      - name: Audit live queue state contract without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from scripts.zcloud_job_state_contract import audit_job_state_contract
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          source = Path("server.py")
+          before = (db.stat().st_size, db.stat().st_mtime_ns)
+          report = audit_job_state_contract(db, source)
+          after = (db.stat().st_size, db.stat().st_mtime_ns)
+
+          if before != after:
+              raise SystemExit("live history.db changed during read-only job-state audit")
+          if not report.get("database_fingerprint_unchanged"):
+              raise SystemExit("audit did not prove database fingerprint immutability")
+          if not report.get("mapping_complete"):
+              raise SystemExit("live queue contains an unrecognized job state")
+
+          bounded = {
+              "schema_version": report["schema_version"],
+              "rows_observed": report["rows_observed"],
+              "canonical_state_counts": report["canonical_state_counts"],
+              "legacy_mapped_rows": report["legacy_mapped_rows"],
+              "dropped_without_blocker_rows": report["dropped_without_blocker_rows"],
+              "source_contract": report["source_contract"],
+              "native_lifecycle_complete": report["native_lifecycle_complete"],
+          }
+          print("ZCLOUD_JOB_STATE_CONTRACT=" + json.dumps(
+              bounded, sort_keys=True, separators=(",", ":")
+          ))
+          print("ZCLOUD_JOB_STATE_CONTRACT_READONLY_GREEN=1")
+          PY
