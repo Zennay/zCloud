@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, urllib.request
+          import json, os, urllib.error, urllib.request
           from datetime import datetime, timezone
 
           repo=os.environ["REPO"]
@@ -41,18 +41,30 @@ jobs:
               "User-Agent":"zcloud-stale-vps-queue-cleanup/1",
           }
 
-          def req(method,path):
+          def req(method,path,allow_conflict=False):
               r=urllib.request.Request(api+path,headers=headers,method=method)
-              with urllib.request.urlopen(r,timeout=20) as response:
-                  raw=response.read()
-                  return json.loads(raw) if raw else {}
+              try:
+                  with urllib.request.urlopen(r,timeout=20) as response:
+                      raw=response.read()
+                      return int(response.status), (json.loads(raw) if raw else {})
+              except urllib.error.HTTPError as exc:
+                  if allow_conflict and exc.code in (404,409):
+                      return int(exc.code), {}
+                  raw=exc.read().decode("utf-8","replace")
+                  raise SystemExit(f"GitHub API {method} {path} failed: HTTP {exc.code} {raw[:500]}")
 
-          main=req("GET",f"/repos/{repo}/branches/main")
+          def get(path):
+              status, body=req("GET",path)
+              if status>=300:
+                  raise SystemExit(f"unexpected GET status {status} for {path}")
+              return body
+
+          main=get(f"/repos/{repo}/branches/main")
           main_sha=str((main.get("commit") or {}).get("sha") or "")
           if len(main_sha)!=40:
               raise SystemExit("could not resolve canonical main SHA")
 
-          queued=req("GET",f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
+          queued=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
           now=datetime.now(timezone.utc)
           cancelled=[]
           kept=[]
@@ -73,11 +85,15 @@ jobs:
                   })
                   continue
               run_id=int(run["id"])
-              req("POST",f"/repos/{repo}/actions/runs/{run_id}/cancel")
-              cancelled.append({
+              status,_=req("POST",f"/repos/{repo}/actions/runs/{run_id}/cancel",allow_conflict=True)
+              item={
                   "id":run_id,"path":path,"head_sha":run.get("head_sha"),
-                  "age_seconds":round(age),
-              })
+                  "age_seconds":round(age),"cancel_status":status,
+              }
+              if status in (202,204):
+                  cancelled.append(item)
+              else:
+                  kept.append({**item,"reason":"status-raced-before-cancel"})
 
           print("CANONICAL_MAIN="+main_sha)
           print("CANCELLED="+json.dumps(cancelled,sort_keys=True))
