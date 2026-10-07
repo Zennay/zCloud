@@ -21,6 +21,7 @@ SCHEMA_VERSION = "recent-branch-ownership-snapshot-v1"
 MAX_BRANCHES = 500
 MAX_OPEN_PRS = 500
 MAX_COMPARE_FILES = 300
+MAX_RECENT_COMPARE_BRANCHES = 100
 MAX_RECENT_HOURS = 168
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -231,13 +232,18 @@ def collect_snapshot(
     ]
 
     cutoff = as_of - dt.timedelta(hours=recent_hours)
+    candidates: list[dict[str, Any]] = []
     for row in branches:
         committed_dt = parse_utc(row["committed_at"])
         if row["name"] == "main" or row["has_open_pr"] or committed_dt < cutoff:
             continue
         if committed_dt > as_of + dt.timedelta(minutes=5):
             raise CollectorError("future_branch_timestamp")
+        candidates.append(row)
+    if len(candidates) > MAX_RECENT_COMPARE_BRANCHES:
+        raise CollectorError("recent_branch_compare_bound_exceeded")
 
+    for row in candidates:
         compare = runner([
             "gh", "api",
             f"repos/{repo}/compare/{main_sha}...{row['sha']}",
