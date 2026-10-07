@@ -1,4 +1,4 @@
-# owner-requested all-worker recovery trigger 2026-10-07T11:28Z
+# owner-requested targeted all-worker recovery trigger 2026-10-07T11:37Z
 name: Push all zCloud workers now
 # enforce seven desired ChatGPT workers + push all 2026-10-06T07:36Z
 
@@ -67,8 +67,30 @@ jobs:
           if not reconciled.get("ok"):
               raise SystemExit("failed to reconcile seven-worker desired capacity")
 
-          before = call("GET", "/api/runner-targets")
-          allocation = (before.get("global_allocation") or {}).get("workers") or []
+          desired_total = int(
+              ((reconciled.get("dynamic_workers") or {}).get("count") or 0)
+          )
+          allocation_deadline = time.time() + 20
+          before = {}
+          allocation = []
+          while time.time() < allocation_deadline:
+              before = call("GET", "/api/runner-targets")
+              allocation = (before.get("global_allocation") or {}).get("workers") or []
+              if desired_total <= 0 or len(allocation) >= desired_total:
+                  break
+              time.sleep(2)
+
+          print("ALLOCATION_CONVERGENCE=" + json.dumps({
+              "desired": desired_total,
+              "allocated": len(allocation),
+              "workers": [str(item.get("worker_key") or "") for item in allocation],
+          }, sort_keys=True))
+          if desired_total > 0 and len(allocation) < desired_total:
+              raise SystemExit(
+                  f"worker allocation did not converge to desired capacity: "
+                  f"{len(allocation)}/{desired_total}"
+              )
+
           active = []
           for item in allocation:
               key = str(item.get("worker_key") or "").strip()
@@ -191,11 +213,143 @@ jobs:
                   if not runtime["generating"] and not runtime["sending"]:
                       unjustified_pending.append(worker)
               print("PENDING_WORKER_RUNTIME=" + json.dumps(pending_runtime, sort_keys=True))
+
+              # Recover only exact allocated workers that are still idle after
+              # the normal push window. Do not restart Firefox or disturb the
+              # healthy workers: supersede the stuck push, open one fresh chat,
+              # then send one targeted push and prove browser progress again.
               if unjustified_pending:
-                  raise SystemExit(
-                      "fresh push stayed pending without active generation/sending for: "
-                      + ", ".join(unjustified_pending)
-                  )
+                  with sqlite3.connect(DB, timeout=10) as conn:
+                      conn.execute("PRAGMA busy_timeout=10000")
+                      conn.execute("BEGIN IMMEDIATE")
+                      ts = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+                      for worker in unjustified_pending:
+                          command_id = command_ids[worker]
+                          conn.execute(
+                              "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                              "WHERE id=? AND status='pending'",
+                              (ts, "push-all targeted recovery superseded idle pending push", command_id),
+                          )
+
+                  recovery_ids = {}
+                  for worker in unjustified_pending:
+                      recovery = call("POST", "/api/runner-control", {
+                          "project_id": worker,
+                          "action": "new_chat",
+                      })
+                      if not recovery.get("ok") or not recovery.get("command_id"):
+                          raise SystemExit(
+                              "targeted new_chat recovery was not admitted for "
+                              + worker + ": " + json.dumps(recovery, sort_keys=True)
+                          )
+                      recovery_ids[worker] = int(recovery["command_id"])
+                  print("TARGETED_NEW_CHAT=" + json.dumps(recovery_ids, sort_keys=True))
+
+                  recovery_deadline = time.time() + 30
+                  recovery_states = {}
+                  while time.time() < recovery_deadline:
+                      with sqlite3.connect(DB, timeout=5) as conn:
+                          conn.row_factory = sqlite3.Row
+                          recovery_states = {}
+                          for worker, command_id in recovery_ids.items():
+                              row = conn.execute(
+                                  "SELECT id,action,status,result,created_at,updated_at "
+                                  "FROM runner_commands WHERE id=?",
+                                  (command_id,),
+                              ).fetchone()
+                              recovery_states[worker] = dict(row) if row else {"status": "missing"}
+                      if all(
+                          state.get("status") in ("completed", "failed")
+                          for state in recovery_states.values()
+                      ):
+                          break
+                      time.sleep(3)
+                  print("TARGETED_NEW_CHAT_RESULT=" + json.dumps(
+                      recovery_states, sort_keys=True, default=str
+                  ))
+                  recovery_failed = [
+                      worker for worker, state in recovery_states.items()
+                      if state.get("status") in ("failed", "missing")
+                  ]
+                  if recovery_failed:
+                      raise SystemExit(
+                          "targeted new_chat recovery failed for: "
+                          + ", ".join(recovery_failed)
+                      )
+
+                  live_after_recovery = call("GET", "/api/runner-live")
+                  targeted_push_ids = {}
+                  recovered_by_activity = []
+                  for worker in unjustified_pending:
+                      state = locate_live_worker(live_after_recovery, worker) or {}
+                      if bool(state.get("generating")) or bool(state.get("sending")):
+                          recovered_by_activity.append(worker)
+                          continue
+                      if recovery_states.get(worker, {}).get("status") != "completed":
+                          raise SystemExit(
+                              "targeted new_chat recovery stayed pending and idle for: " + worker
+                          )
+                      retry = call("POST", "/api/runner-control", {
+                          "project_id": worker,
+                          "action": "push",
+                      })
+                      if not retry.get("ok") or not retry.get("command_id"):
+                          raise SystemExit(
+                              "targeted push recovery was not admitted for "
+                              + worker + ": " + json.dumps(retry, sort_keys=True)
+                          )
+                      targeted_push_ids[worker] = int(retry["command_id"])
+                  print("TARGETED_PUSH=" + json.dumps(targeted_push_ids, sort_keys=True))
+
+                  targeted_states = {}
+                  targeted_deadline = time.time() + 35
+                  while targeted_push_ids and time.time() < targeted_deadline:
+                      with sqlite3.connect(DB, timeout=5) as conn:
+                          conn.row_factory = sqlite3.Row
+                          targeted_states = {}
+                          for worker, command_id in targeted_push_ids.items():
+                              row = conn.execute(
+                                  "SELECT id,action,status,result,created_at,updated_at "
+                                  "FROM runner_commands WHERE id=?",
+                                  (command_id,),
+                              ).fetchone()
+                              targeted_states[worker] = dict(row) if row else {"status": "missing"}
+                      if all(
+                          state.get("status") in ("completed", "failed")
+                          for state in targeted_states.values()
+                      ):
+                          break
+                      time.sleep(3)
+
+                  final_live = call("GET", "/api/runner-live")
+                  unrecovered = []
+                  recovery_evidence = {}
+                  for worker in unjustified_pending:
+                      runtime = locate_live_worker(final_live, worker) or {}
+                      command_state = targeted_states.get(worker, {})
+                      recovered = (
+                          worker in recovered_by_activity
+                          or command_state.get("status") == "completed"
+                          or bool(runtime.get("generating"))
+                          or bool(runtime.get("sending"))
+                      )
+                      recovery_evidence[worker] = {
+                          "new_chat_status": recovery_states.get(worker, {}).get("status"),
+                          "targeted_push_status": command_state.get("status"),
+                          "generating": bool(runtime.get("generating")),
+                          "sending": bool(runtime.get("sending")),
+                      }
+                      if command_state.get("status") in ("failed", "missing") or not recovered:
+                          unrecovered.append(worker)
+                  print("TARGETED_RECOVERY_EVIDENCE=" + json.dumps(
+                      recovery_evidence, sort_keys=True
+                  ))
+                  if unrecovered:
+                      raise SystemExit(
+                          "fresh push stayed idle after targeted recovery for: "
+                          + ", ".join(unrecovered)
+                      )
+                  progressed.update(unjustified_pending)
 
           if not progressed and pending:
               print("ALL_PENDING_JUSTIFIED_BY_ACTIVE_GENERATION=1")
