@@ -76,6 +76,16 @@ class OneWorkerTestingActivationWorkflowTests(unittest.TestCase):
         self.assertNotIn("contents: write", self.text)
         self.assertNotIn("actions: write", self.text)
 
+    def test_transient_runner_live_poll_errors_use_outer_bounded_retry(self):
+        self.assertIn('if runner_live and exc.code == 503:', self.activate)
+        self.assertIn('RUNNER_LIVE_TRANSIENT http=', self.activate)
+        self.assertIn('if runner_live:', self.activate)
+        self.assertIn('RUNNER_LIVE_TRANSIENT transport=', self.activate)
+        self.assertIn('return {}', self.activate)
+        # Keep runner-live as a single short inner attempt; resilience belongs
+        # to the existing bounded outer poll/recovery loops.
+        self.assertIn('attempts = 1 if runner_live else (3 if method == "GET" else 1)', self.activate)
+
     def test_newer_pending_command_can_supersede_activation_without_false_negative(self):
         marker = 'if latest_command_id > int(command_id) and command_status == "pending":'
         self.assertIn(marker, self.activate)
