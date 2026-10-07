@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 from datetime import datetime, timezone
 import json
 import math
@@ -15,8 +16,6 @@ from typing import Any, Callable, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-import enhancements
 
 SCHEMA_VERSION = 1
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -125,12 +124,31 @@ def project_summary(
     }
 
 
+def _load_adapter_contract():
+    module_path = ROOT / "enhancements.py"
+    spec = importlib.util.spec_from_file_location("_zcloud_project_result_enhancements", module_path)
+    if spec is None or spec.loader is None:
+        raise ProjectResultSummaryError("telemetry adapter contract cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "quality_for", None)):
+        raise ProjectResultSummaryError("telemetry adapter quality reader is unavailable")
+    if not callable(getattr(module, "telemetry_adapter_projects", None)):
+        raise ProjectResultSummaryError("telemetry adapter registry is unavailable")
+    return module
+
+
 def build_report(
     project_ids: Iterable[str] | None = None,
     *,
-    quality_reader: Callable[[str], dict[str, Any]] = enhancements.quality_for,
-    adapter_projects_reader: Callable[[], Iterable[str]] = enhancements.telemetry_adapter_projects,
+    quality_reader: Callable[[str], dict[str, Any]] | None = None,
+    adapter_projects_reader: Callable[[], Iterable[str]] | None = None,
 ) -> dict[str, Any]:
+    if quality_reader is None or adapter_projects_reader is None:
+        contract = _load_adapter_contract()
+        quality_reader = quality_reader or contract.quality_for
+        adapter_projects_reader = adapter_projects_reader or contract.telemetry_adapter_projects
+
     registered = {_normalize_project_id(item) for item in adapter_projects_reader()}
     requested = sorted(registered) if project_ids is None else list(project_ids)
 
