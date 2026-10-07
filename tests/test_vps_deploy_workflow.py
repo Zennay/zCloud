@@ -490,6 +490,26 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("VPS_EXECUTION_POLICY = _load_vps_execution_policy()", server)
 
+    def test_guard_release_immediately_rearms_vps_native_self_heal(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        resume = "Resume external self-heal"
+        rearm = "Re-arm VPS-native self-heal after guarded deploy"
+        receipt = "Record evidence-backed production state receipt"
+        self.assertIn(rearm, text)
+        block = text[text.index("- name: " + rearm):text.index("- name: " + receipt)]
+        self.assertIn("if: always()", block)
+        self.assertIn('test ! -e "$sentinel"', block)
+        self.assertIn("test -x /usr/local/sbin/zcloud-self-heal", block)
+        self.assertIn("test -x /usr/local/sbin/zcloud-worker-watchdog", block)
+        self.assertIn("sudo -n systemctl start zcloud-self-heal.service", block)
+        self.assertIn("systemctl is-enabled --quiet zcloud-self-heal.timer", block)
+        self.assertIn("systemctl is-active --quiet zcloud-self-heal.timer", block)
+        self.assertIn('get("/api/runner-targets")', block)
+        self.assertIn('get("/api/runner-live")', block)
+        self.assertIn("POSTDEPLOY_SELF_HEAL_GREEN", block)
+        self.assertLess(text.index(resume), text.index(rearm))
+        self.assertLess(text.index(rearm), text.index(receipt))
+
     def test_successful_deploy_records_and_verifies_live_state_receipt(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         step = "Record evidence-backed production state receipt"
