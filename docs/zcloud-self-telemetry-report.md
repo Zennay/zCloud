@@ -7,7 +7,7 @@ This add-only reporter creates an evidence-backed foundation for zCloud's own co
 - Scorecard progress comes only from the canonical `cloud` row in `projects.json`.
 - GitHub evidence resolves the exact `Zennay/zCloud` main SHA and paginates open pull requests through a hard five-page bound.
 - The total open-PR count is exact inside that bound; only the newest 64 PR numbers are emitted and a truncation flag makes the projection limit explicit.
-- CI is tied to that exact main SHA. Exact-head GitHub Actions runs are preferred; commit-status contexts are the fallback.
+- CI is tied to that exact main SHA. Explicit commit-status contexts are authoritative when present; GitHub Actions runs are only the fallback, because recurring watchdog/workflow-run jobs can reuse the same main SHA long after the source commit.
 - Missing CI remains `not_configured`; it is never turned into an invented green state.
 - PR titles, bodies, workflow logs, Notion content, tokens, prompts and runtime command payloads are not projected.
 
