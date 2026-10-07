@@ -39,14 +39,14 @@ class ComposerLocalRecoveryTests(unittest.TestCase):
         self.fail(f"unterminated function: {signature}")
 
     def test_recovery_has_45_second_grace_and_episode_state(self):
-        self.assertIn("const COMPOSER_RECOVERY_TIMEOUT_MS = 45000;", self.text)
+        self.assertIn("const COMPOSER_RECOVERY_MS = 45000;", self.text)
         self.assertIn("let composerMissingSince = 0;", self.text)
         self.assertIn("let composerRecoveryAttempted = false;", self.text)
         self.assertIn('let composerRecoveryProjectId = "";', self.text)
 
     def test_recovery_is_one_shot_and_uses_existing_fresh_chat_guard(self):
         body = self.function_body("async function recoverMissingComposer(")
-        self.assertIn("if (composerRecoveryAttempted || nowMs - composerMissingSince < COMPOSER_RECOVERY_TIMEOUT_MS) return false;", body)
+        self.assertIn("if (composerRecoveryAttempted || nowMs - composerMissingSince < COMPOSER_RECOVERY_MS) return false;", body)
         self.assertIn("composerRecoveryAttempted = true;", body)
         self.assertIn('return requestFreshConversation("composer-missing-timeout");', body)
         self.assertLess(body.index("composerRecoveryAttempted = true;"), body.index('requestFreshConversation("composer-missing-timeout")'))
@@ -66,11 +66,13 @@ class ComposerLocalRecoveryTests(unittest.TestCase):
     def test_tick_runs_recovery_without_extra_timer(self):
         tick = self.function_body("async function tick()")
         self.assertIn("if (await recoverMissingComposer()) return;", tick)
-        self.assertEqual(2, self.text.count("COMPOSER_RECOVERY_TIMEOUT_MS"))
+        self.assertEqual(2, self.text.count("COMPOSER_RECOVERY_MS"))
         self.assertNotIn("setInterval(recoverMissingComposer", self.text)
 
     def test_composer_blocked_telemetry_uses_existing_dedupe(self):
-        send = self.function_body("async function sendPrompt(")
+        start = self.text.index("async function sendPrompt(")
+        end = self.text.index("function nextTaskFromText(", start)
+        send = self.text[start:end]
         self.assertIn('await reportSendBlocked("composer-missing");', send)
         self.assertNotIn('await status("send-blocked", {reason: "composer-missing"});', send)
 
