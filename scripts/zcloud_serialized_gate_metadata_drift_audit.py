@@ -155,6 +155,10 @@ def audit_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
         body = _body(raw.get("body"))
         lowered = body.lower()
 
+        # The successor PR necessarily documents the retired predecessor in its
+        # own supersession history. That is provenance, not stale coordination.
+        if number == successor_gate:
+            continue
         if not _serialized_context(body) or primary_marker not in lowered:
             continue
 
