@@ -52,6 +52,7 @@ def snapshot(pulls=None, gates=None):
     return {
         "repository": "Zennay/zCloud",
         "current_main_sha": MAIN,
+        "inventory_complete": True,
         "gates": gates if gates is not None else [gate(580), gate(576)],
         "pull_requests": pulls or [],
     }
@@ -111,6 +112,18 @@ class SerializedGateBacklogAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(audit.SnapshotError, "missing gate"):
             audit.audit_snapshot(snapshot(gates=[gate(580)]))
 
+    def test_incomplete_inventory_fails_closed(self):
+        payload = snapshot()
+        payload["inventory_complete"] = False
+        with self.assertRaisesRegex(audit.SnapshotError, "inventory incomplete"):
+            audit.audit_snapshot(payload)
+
+    def test_missing_inventory_completeness_fails_closed(self):
+        payload = snapshot()
+        del payload["inventory_complete"]
+        with self.assertRaisesRegex(audit.SnapshotError, "inventory_complete"):
+            audit.audit_snapshot(payload)
+
     def test_duplicate_open_pr_identity_fails_closed(self):
         body = "#580 and #576 serialized live writer window"
         with self.assertRaisesRegex(audit.SnapshotError, "duplicate pull request"):
@@ -148,6 +161,16 @@ class SerializedGateBacklogAuditTests(unittest.TestCase):
             link.symlink_to(real)
             with self.assertRaisesRegex(audit.SnapshotError, "symlink"):
                 audit._load_json(link)
+
+    def test_cli_rejects_symlink_without_dereferencing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "snapshot.json"
+            real.write_text(json.dumps(snapshot()), encoding="utf-8")
+            link = root / "link.json"
+            link.symlink_to(real)
+            code = audit.main(["--snapshot", str(link), "--json"])
+        self.assertEqual(1, code)
 
     def test_cli_require_released_returns_two_while_gate_open(self):
         with tempfile.TemporaryDirectory() as tmp:
