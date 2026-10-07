@@ -1,0 +1,132 @@
+name: Owner worker continuity watch 2026-10-07
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/owner-worker-continuity-watch-20261007.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-worker-continuity-watch-20261007
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Observe worker continuity for three minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import collections
+          import json
+          import os
+          import sqlite3
+          import time
+          import urllib.request
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+
+          def get(path):
+              with urllib.request.urlopen(BASE+path, timeout=8) as r:
+                  return json.load(r)
+
+          def mem():
+              vals={}
+              with open("/proc/meminfo", encoding="utf-8") as f:
+                  for line in f:
+                      k,v,*_=line.split()
+                      if k in {"MemAvailable:","SwapFree:","SwapTotal:"}:
+                          vals[k[:-1]]=int(v)//1024
+              return vals
+
+          def command_summary():
+              uri="file:" + DB + "?mode=ro"
+              with sqlite3.connect(uri, uri=True, timeout=5) as c:
+                  c.row_factory=sqlite3.Row
+                  c.execute("PRAGMA query_only=ON")
+                  rows=c.execute(
+                      "SELECT id,project_id,action,status,created_at,updated_at "
+                      "FROM runner_commands ORDER BY id DESC LIMIT 400"
+                  ).fetchall()
+                  events=c.execute(
+                      "SELECT event FROM runner_events ORDER BY id DESC LIMIT 400"
+                  ).fetchall()
+              now=time.time()
+              status=collections.Counter()
+              action_status=collections.Counter()
+              stale=[]
+              for row in rows:
+                  status[str(row["status"])] += 1
+                  action_status[(str(row["action"]),str(row["status"]))] += 1
+                  if str(row["status"]) != "pending":
+                      continue
+                  try:
+                      created=datetime.fromisoformat(
+                          str(row["created_at"]).replace("Z","+00:00")
+                      ).timestamp()
+                  except Exception:
+                      created=0
+                  age=max(0,int(now-created)) if created else 999999
+                  if age > 120:
+                      stale.append({
+                          "id":int(row["id"]),
+                          "worker":str(row["project_id"]),
+                          "action":str(row["action"]),
+                          "age_s":age,
+                      })
+              event_counts=collections.Counter(str(r["event"]) for r in events)
+              return {
+                  "status":dict(status),
+                  "action_status":{
+                      f"{a}:{s}":n for (a,s),n in sorted(action_status.items())
+                  },
+                  "stale_pending":stale[:25],
+                  "recent_events":dict(event_counts.most_common(12)),
+              }
+
+          samples=[]
+          for i in range(13):
+              targets=get("/api/runner-targets")
+              live=get("/api/runner-live")
+              allocation=(targets.get("global_allocation") or {}).get("workers") or []
+              keys=[
+                  str(x.get("worker_key") or f"{x.get('project_id')}::w{int(x.get('worker_slot') or 1)}")
+                  for x in allocation
+              ]
+              firefox=live.get("chatgpt_firefox") or {}
+              snap={
+                  "sample":i,
+                  "ts":datetime.now(timezone.utc).isoformat(),
+                  "allocated":len(keys),
+                  "workers":keys,
+                  "firefox_active":bool(firefox.get("active")),
+                  "firefox_state":firefox.get("state") or firefox.get("service_state"),
+                  "memory_mb":mem(),
+                  "commands":command_summary(),
+              }
+              samples.append(snap)
+              print("WATCH="+json.dumps(snap,sort_keys=True), flush=True)
+              if i < 12:
+                  time.sleep(15)
+
+          final=samples[-1]
+          if not final["firefox_active"]:
+              raise SystemExit("continuity failure: Firefox consumer inactive")
+          if final["allocated"] < 7:
+              raise SystemExit(f"continuity failure: only {final['allocated']} workers allocated")
+          stale=final["commands"]["stale_pending"]
+          if stale:
+              raise SystemExit(
+                  "continuity failure: stale pending control commands remain: "
+                  + json.dumps(stale, sort_keys=True)
+              )
+          print("OWNER_WORKER_CONTINUITY_GREEN=1")
+          PY
