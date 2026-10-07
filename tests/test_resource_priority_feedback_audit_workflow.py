@@ -27,6 +27,13 @@ class ResourcePriorityFeedbackWorkflowTests(unittest.TestCase):
             ),
         )
         self.assertEqual(2, self.text.count("persist-credentials: false"))
+        self.assertEqual(
+            2,
+            self.text.count(
+                "python3 -m unittest -v tests.test_resource_priority_feedback_audit "
+                "tests.test_resource_priority_feedback_audit_workflow"
+            ),
+        )
 
     def test_untrusted_pull_requests_never_reach_permanent_runner(self):
         self.assertIn("runs-on: ubuntu-latest", self.text)
