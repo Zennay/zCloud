@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import types
 import sys
 import unittest
 from pathlib import Path
@@ -120,6 +121,20 @@ class ProjectResultSummaryTests(unittest.TestCase):
 
         self.assertFalse(result["available"])
         self.assertEqual({}, result["results"])
+
+    def test_real_adapter_contract_ignores_preexisting_enhancements_stub(self):
+        original = sys.modules.get("enhancements")
+        sys.modules["enhancements"] = types.SimpleNamespace()
+        try:
+            contract = summary._load_adapter_contract()
+        finally:
+            if original is None:
+                sys.modules.pop("enhancements", None)
+            else:
+                sys.modules["enhancements"] = original
+
+        self.assertTrue(callable(contract.quality_for))
+        self.assertTrue(callable(contract.telemetry_adapter_projects))
 
     def test_build_report_deduplicates_project_ids_and_preserves_order(self):
         qualities = {
