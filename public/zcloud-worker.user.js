@@ -72,6 +72,10 @@
   let tickTimer = null;
   let heartbeatTimer = null;
   let freshConversationPending = false;
+  const COMPOSER_RECOVERY_MS = 45000;
+  let composerMissingSince = 0;
+  let composerRecoveryAttempted = false;
+  let composerRecoveryProjectId = "";
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -471,6 +475,7 @@
       releaseClaim(target);
       target = null;
       draining = false;
+      resetComposerRecovery();
       return;
     }
 
@@ -594,6 +599,41 @@
     return document.querySelector("#prompt-textarea") ||
       document.querySelector('[contenteditable="true"][role="textbox"]') ||
       document.querySelector("textarea");
+  }
+  function resetComposerRecovery(projectId = "") {
+    composerMissingSince = 0;
+    composerRecoveryAttempted = false;
+    composerRecoveryProjectId = String(projectId || "");
+  }
+
+  async function recoverMissingComposer(nowMs = Date.now()) {
+    const projectId = String(target?.project_id || "");
+    const currentProvider = provider();
+    if (!projectId || !isWorkerProvider(currentProvider) || candidateProvider(target) !== currentProvider || !assignmentReady(target)) {
+      resetComposerRecovery();
+      return false;
+    }
+    if (composerRecoveryProjectId !== projectId) resetComposerRecovery(projectId);
+    if (composer()) {
+      resetComposerRecovery(projectId);
+      return false;
+    }
+    if (sending || draining || generationActive() || awaitingGeneration) {
+      composerMissingSince = 0;
+      composerRecoveryAttempted = false;
+      return false;
+    }
+    if (!composerMissingSince) {
+      composerMissingSince = nowMs;
+      return false;
+    }
+    if (composerRecoveryAttempted || nowMs - composerMissingSince < COMPOSER_RECOVERY_MS) return false;
+
+    // One-shot per missing-composer episode. A failed request is not retried
+    // until the composer reappears (or the project changes), avoiding a
+    // navigation/new-chat loop on a persistently broken page.
+    composerRecoveryAttempted = true;
+    return requestFreshConversation("composer-missing-timeout");
   }
 
   function sendButton() {
@@ -1093,7 +1133,7 @@
       }
 
       if (!(await fill(prompt))) {
-        await status("send-blocked", {reason: "composer-missing"});
+        await reportSendBlocked("composer-missing");
         return false;
       }
       const button = await waitForSendButton();
@@ -1300,6 +1340,8 @@
     }
 
     await handleCommands();
+
+    if (await recoverMissingComposer()) return;
 
     const generating = generationActive();
     const text = assistantText();

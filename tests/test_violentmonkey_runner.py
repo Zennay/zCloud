@@ -382,5 +382,35 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("Promote Violentmonkey worker", workflow)
 
 
+    def test_primary_composer_recovery_is_bounded_and_one_shot(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        self.assertIn("const COMPOSER_RECOVERY_MS = 45000;", userscript)
+        start = userscript.index("async function recoverMissingComposer(")
+        end = userscript.index("function sendButton()", start)
+        recovery = userscript[start:end]
+        self.assertIn("composerMissingSince", recovery)
+        self.assertIn("composerRecoveryAttempted", recovery)
+        self.assertIn(
+            "composerRecoveryAttempted || nowMs - composerMissingSince < COMPOSER_RECOVERY_MS",
+            recovery,
+        )
+        self.assertIn('return requestFreshConversation("composer-missing-timeout");', recovery)
+        self.assertLess(
+            recovery.index("composerRecoveryAttempted = true;"),
+            recovery.index('requestFreshConversation("composer-missing-timeout")'),
+        )
+
+        tick_start = userscript.index("async function tick()")
+        heartbeat_start = userscript.index("async function heartbeat()", tick_start)
+        tick = userscript[tick_start:heartbeat_start]
+        self.assertIn("if (await recoverMissingComposer()) return;", tick)
+
+        send_start = userscript.index("async function sendPrompt(")
+        next_task_start = userscript.index("function nextTaskFromText(", send_start)
+        send = userscript[send_start:next_task_start]
+        self.assertIn('await reportSendBlocked("composer-missing");', send)
+
+
 if __name__ == "__main__":
     unittest.main()
