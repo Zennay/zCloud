@@ -1,4 +1,4 @@
-# Dispatch-race hardening 2026-10-07 05:2x UTC for HaxLab evaluation-validation recovery
+# Recovery retrigger 2026-10-07 14:36 UTC after HaxLab Arena calibration runner interruption
 name: Recover HaxLab runner
 
 on:
