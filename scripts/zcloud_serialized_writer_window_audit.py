@@ -100,7 +100,7 @@ def audit_snapshot(
 ) -> dict[str, Any]:
     if type(max_age_seconds) is not int or not 1 <= max_age_seconds <= 3600:
         raise WindowEvidenceError("max_age_invalid")
-    if set(snapshot) != {"schema_version", "observed_at", "window_id", "owners"}:
+    if set(snapshot) != {"schema_version", "observed_at", "window_id", "inventory_complete", "owners"}:
         raise WindowEvidenceError("snapshot_keys_invalid")
     if type(snapshot["schema_version"]) is not int or snapshot["schema_version"] != 1:
         raise WindowEvidenceError("schema_version_unsupported")
@@ -110,6 +110,11 @@ def audit_snapshot(
         or not re.fullmatch(r"^[a-z0-9][a-z0-9._:-]{0,79}$", window_id)
     ):
         raise WindowEvidenceError("window_id_invalid")
+    inventory_complete = snapshot["inventory_complete"]
+    if not isinstance(inventory_complete, bool):
+        raise WindowEvidenceError("inventory_complete_invalid")
+    if not inventory_complete:
+        raise WindowEvidenceError("inventory_incomplete")
 
     observed_at = _timestamp(snapshot["observed_at"])
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -178,6 +183,7 @@ def audit_snapshot(
         "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
         "status": status_value,
         "owner_count": len(owners),
+        "inventory_complete": True,
         "active_owner_refs": active_refs,
         "unproven_release_refs": unproven_release_refs,
         "released_owner_refs": released_refs,
