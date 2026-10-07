@@ -92,9 +92,10 @@ def build_plan(
         },
         "enforce_admins": True,
         "required_pull_request_reviews": {
-            "dismiss_stale_reviews": True,
+            "dismiss_stale_reviews": False,
             "require_code_owner_reviews": False,
             "required_approving_review_count": 0,
+            "require_last_push_approval": False,
             "bypass_pull_request_allowances": {
                 "users": [],
                 "teams": [],
