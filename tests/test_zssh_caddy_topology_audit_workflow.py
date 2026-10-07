@@ -37,6 +37,11 @@ class ZsshCaddyTopologyAuditWorkflowTests(unittest.TestCase):
         receipt = audit.index("Record evidence-backed Caddy topology receipt")
         self.assertLess(guard, read)
         self.assertLess(read, receipt)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', audit)
+        self.assertLess(
+            audit.index('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"'),
+            audit.index("scripts/zcloud_vps_runner_guard.py --json"),
+        )
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", audit)
         self.assertIn('test "$(id -un)" = "ubuntu"', audit)
 
