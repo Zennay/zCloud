@@ -79,6 +79,12 @@ jobs:
           unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
           gh auth status --hostname github.com >/dev/null 2>&1
 
+          admin="$(gh api repos/Zennay/zCloud --jq '.permissions.admin // false')"
+          case "$admin" in
+            true|false) echo "ZCLOUD_MAIN_PROTECTION_ADMIN_CAPABLE=$admin" ;;
+            *) echo "unexpected admin capability flag" >&2; exit 1 ;;
+          esac
+
           protected="$(gh api repos/Zennay/zCloud/branches/main --jq '.protected // false')"
           case "$protected" in
             true)
