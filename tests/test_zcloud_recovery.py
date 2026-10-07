@@ -177,6 +177,204 @@ class RecoveryTests(unittest.TestCase):
         pointer = json.loads((self.state / "last-known-good.json").read_text())
         self.assertEqual(manifests[-1]["snapshot_id"], pointer["snapshot_id"])
 
+    def test_transaction_retention_removes_only_durably_terminal_transactions(self):
+        self.assertEqual(8, recovery.RECOVERY_TRANSACTION_RETENTION)
+        transactions = self.state / "transactions"
+        transactions.mkdir(parents=True)
+        entries = [
+            ("tx-success-old", "rollback_succeeded", "2026-10-01T00:00:00+00:00"),
+            ("tx-reverted-old", "rollback_failed_reverted", "2026-10-02T00:00:00+00:00"),
+            ("tx-success-new", "rollback_succeeded", "2026-10-03T00:00:00+00:00"),
+            ("tx-reverted-new", "rollback_failed_reverted", "2026-10-04T00:00:00+00:00"),
+        ]
+        for transaction_id, event, observed_at in entries:
+            path = transactions / transaction_id
+            path.mkdir()
+            (path / "pre-rollback-files").mkdir()
+            recovery.append_log(
+                self.state,
+                event,
+                transaction_id=transaction_id,
+            )
+            rows = [
+                json.loads(line)
+                for line in (self.state / "recovery.log").read_text().splitlines()
+            ]
+            rows[-1]["time"] = observed_at
+            (self.state / "recovery.log").write_text(
+                "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+            )
+
+        in_progress = transactions / "tx-in-progress"
+        in_progress.mkdir()
+        recovery.append_log(
+            self.state,
+            "rollback_started",
+            transaction_id="tx-in-progress",
+        )
+        failed_revert = transactions / "tx-revert-failed"
+        failed_revert.mkdir()
+        recovery.append_log(
+            self.state,
+            "rollback_failed_revert_failed",
+            transaction_id="tx-revert-failed",
+        )
+        terminal_then_restarted = transactions / "tx-terminal-then-restarted"
+        terminal_then_restarted.mkdir()
+        recovery.append_log(
+            self.state,
+            "rollback_succeeded",
+            transaction_id="tx-terminal-then-restarted",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-01T12:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+        recovery.append_log(
+            self.state,
+            "rollback_started",
+            transaction_id="tx-terminal-then-restarted",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-05T12:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+
+        terminal_then_revert_failed = transactions / "tx-terminal-then-revert-failed"
+        terminal_then_revert_failed.mkdir()
+        recovery.append_log(
+            self.state,
+            "rollback_succeeded",
+            transaction_id="tx-terminal-then-revert-failed",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-01T13:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+        recovery.append_log(
+            self.state,
+            "rollback_failed_revert_failed",
+            transaction_id="tx-terminal-then-revert-failed",
+        )
+        rows = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        rows[-1]["time"] = "2026-10-05T13:00:00+00:00"
+        (self.state / "recovery.log").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+        )
+
+        unknown = transactions / "manual-operator-evidence"
+        unknown.mkdir()
+        (unknown / "notes.txt").write_text("keep me\n")
+        target = transactions / "symlink-target"
+        target.mkdir()
+        symlink = transactions / "tx-symlink"
+        symlink.symlink_to(target, target_is_directory=True)
+        recovery.append_log(
+            self.state,
+            "rollback_succeeded",
+            transaction_id="tx-symlink",
+        )
+
+        removed = recovery.prune_recovery_transactions(self.state, retain=2)
+
+        self.assertEqual(
+            {"tx-success-old", "tx-reverted-old"},
+            set(removed),
+        )
+        self.assertFalse((transactions / "tx-success-old").exists())
+        self.assertFalse((transactions / "tx-reverted-old").exists())
+        self.assertTrue((transactions / "tx-success-new").exists())
+        self.assertTrue((transactions / "tx-reverted-new").exists())
+        self.assertTrue(in_progress.exists())
+        self.assertTrue(failed_revert.exists())
+        self.assertTrue(terminal_then_restarted.exists())
+        self.assertTrue(terminal_then_revert_failed.exists())
+        self.assertTrue(unknown.exists())
+        self.assertTrue(symlink.is_symlink())
+        self.assertTrue(target.exists())
+
+    def test_capture_prunes_terminal_transaction_artifacts_and_logs_receipt(self):
+        transactions = self.state / "transactions"
+        transactions.mkdir(parents=True)
+        for index in range(10):
+            transaction_id = f"tx-{index:02d}"
+            path = transactions / transaction_id
+            path.mkdir()
+            (path / "pre-rollback-files").mkdir()
+            recovery.append_log(
+                self.state,
+                "rollback_succeeded",
+                transaction_id=transaction_id,
+            )
+
+        manifest = self.capture()
+
+        remaining = sorted(
+            path.name
+            for path in transactions.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        )
+        self.assertEqual(
+            [f"tx-{index:02d}" for index in range(2, 10)],
+            remaining,
+        )
+        events = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        prune = [
+            event
+            for event in events
+            if event.get("event") == "recovery_transactions_pruned"
+        ]
+        self.assertEqual(1, len(prune))
+        self.assertEqual(manifest["snapshot_id"], prune[0]["snapshot_id"])
+        self.assertEqual(8, prune[0]["retained"])
+        self.assertEqual(
+            {"tx-00", "tx-01"},
+            set(prune[0]["removed_transaction_ids"]),
+        )
+
+    def test_capture_remains_valid_when_transaction_retention_fails(self):
+        with patch.object(
+            recovery,
+            "prune_recovery_transactions",
+            side_effect=OSError("simulated transaction retention failure"),
+        ):
+            manifest = self.capture()
+
+        pointer = json.loads((self.state / "last-known-good.json").read_text())
+        self.assertEqual(manifest["snapshot_id"], pointer["snapshot_id"])
+        events = [
+            json.loads(line)
+            for line in (self.state / "recovery.log").read_text().splitlines()
+        ]
+        failures = [
+            event
+            for event in events
+            if event.get("event") == "recovery_transaction_prune_failed"
+        ]
+        self.assertEqual(1, len(failures))
+        self.assertIn(
+            "simulated transaction retention failure",
+            failures[0]["error"],
+        )
+
     def test_capture_remains_valid_when_retention_housekeeping_fails(self):
         with patch.object(
             recovery,
