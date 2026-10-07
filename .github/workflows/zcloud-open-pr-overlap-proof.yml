@@ -65,7 +65,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --state open \
             --limit 500 \
-            --json number,headRefName,isDraft,updatedAt,files > "$snapshot"
+            --json number,headRefName,isDraft,updatedAt,changedFiles,files > "$snapshot"
           python3 scripts/zcloud_open_pr_overlap_audit.py \
             --input "$snapshot" \
             --current-pr "$CURRENT_PR" \
@@ -83,7 +83,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --state open \
             --limit 500 \
-            --json number,headRefName,isDraft,updatedAt,files > "$snapshot"
+            --json number,headRefName,isDraft,updatedAt,changedFiles,files > "$snapshot"
           python3 scripts/zcloud_open_pr_overlap_audit.py --input "$snapshot"
           rm -f "$snapshot"
           echo "ZCLOUD_OPEN_PR_OVERLAP_AUDIT_GLOBAL_GREEN=1"
