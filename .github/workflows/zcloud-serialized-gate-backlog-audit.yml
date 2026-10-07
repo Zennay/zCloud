@@ -124,6 +124,7 @@ jobs:
           payload = {
               "repository": repo,
               "current_main_sha": current_main,
+              "inventory_complete": True,
               "gates": gates,
               "pull_requests": pulls,
           }
@@ -150,6 +151,7 @@ jobs:
           payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
           assert payload["schema"] == "zcloud-serialized-gate-backlog-audit-v1"
           assert payload["mutation_performed"] is False
+          assert payload["inventory_complete"] is True
           assert len(payload["gates"]) == 2
           assert payload["dependent_pr_count"] <= 500
           print(
