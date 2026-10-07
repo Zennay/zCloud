@@ -84,3 +84,50 @@ jobs:
           }
           print("LIGHTUP_RUNNER_HOST_INVENTORY=" + json.dumps(evidence, sort_keys=True))
           PY
+
+      - name: Read exact existing LightUp recovery queue item
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          from pathlib import Path
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          queue_id = "zssh-lightup-evidence-runner-recovery-20261006"
+          if not db.is_file() or db.is_symlink():
+              raise SystemExit("canonical zCloud SQLite DB missing or unsafe")
+
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          conn.row_factory = sqlite3.Row
+          conn.execute("PRAGMA query_only=ON")
+          columns = {
+              row["name"] for row in conn.execute("PRAGMA table_info(portfolio_queue)")
+          }
+          if not columns:
+              raise SystemExit("portfolio_queue table missing")
+
+          safe_fields = [
+              name for name in (
+                  "queue_id", "project_id", "title", "priority", "status",
+                  "eligible", "worker_slot", "parent_queue_id", "updated_at",
+                  "created_at", "blocker", "evidence"
+              )
+              if name in columns
+          ]
+          row = conn.execute(
+              "SELECT " + ",".join(safe_fields)
+              + " FROM portfolio_queue WHERE queue_id=? LIMIT 1",
+              (queue_id,),
+          ).fetchone()
+          result = {"queue_id": queue_id, "present": row is not None}
+          if row is not None:
+              for key in safe_fields:
+                  value = row[key]
+                  if isinstance(value, str) and len(value) > 500:
+                      value = value[:500] + "...[truncated]"
+                  result[key] = value
+          print("LIGHTUP_RECOVERY_QUEUE_ITEM=" + json.dumps(result, sort_keys=True))
+          conn.close()
+          PY
