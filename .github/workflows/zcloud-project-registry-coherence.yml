@@ -1,0 +1,61 @@
+name: zCloud project registry coherence
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - projects.json
+      - project-contracts.json
+      - vps-execution-policy.json
+      - portfolio_queue.seed.json
+      - scripts/zcloud_project_registry_coherence.py
+      - tests/test_project_registry_coherence.py
+      - tests/test_project_registry_coherence_workflow.py
+      - .github/workflows/zcloud-project-registry-coherence.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Prove exact checkout
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Validate project registration coherence
+        run: |
+          python3 scripts/zcloud_project_registry_coherence.py
+          python3 -m unittest -v \
+            tests.test_project_registry_coherence \
+            tests.test_project_registry_coherence_workflow
+
+  prove-on-permanent-vps:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Prove exact checkout
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Guard canonical permanent VPS identity
+        run: python3 scripts/zcloud_vps_runner_guard.py
+      - name: Re-run coherence proof on permanent VPS
+        run: |
+          python3 scripts/zcloud_project_registry_coherence.py
+          python3 -m unittest -v \
+            tests.test_project_registry_coherence \
+            tests.test_project_registry_coherence_workflow
+          echo "ZCLOUD_PROJECT_REGISTRY_COHERENCE_GREEN"
