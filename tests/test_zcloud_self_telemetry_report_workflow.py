@@ -30,6 +30,9 @@ class ZCloudSelfTelemetryWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", self.text)
         self.assertIn("scripts/zcloud_self_telemetry_report.py --projects projects.json", self.text)
         self.assertIn("ZCLOUD_SELF_TELEMETRY_PROOF=", self.text)
+        self.assertIn('"ci_source": ci["source"]', self.text)
+        self.assertIn('"status_context_count": ci["status_context_count"]', self.text)
+        self.assertIn('exact-head commit status was not authoritative', self.text)
 
 
 if __name__ == "__main__":
