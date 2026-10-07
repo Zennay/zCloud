@@ -125,6 +125,7 @@ def build_plan(
             "prove_persistent_vps_admin",
             "reconfirm_serialized_writer_window_clear",
             "reconfirm_zero_required_direct_main_writers",
+            "prove_required_check_current_and_pr_green",
             "capture_prechange_governance_evidence",
             "explicit_apply_lane_only",
         ],
