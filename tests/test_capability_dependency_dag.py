@@ -94,6 +94,26 @@ class CapabilityDependencyDagTests(unittest.TestCase):
         self.assertEqual("cycle", result["state"])
         self.assertEqual(["one", "two", "one"], result["cycle"])
 
+    def test_cycle_witness_is_canonical_when_dependency_order_changes(self):
+        first = audit_snapshot(
+            self.snapshot([
+                self.capability("a", dependencies=["c", "b"]),
+                self.capability("b", dependencies=["a"]),
+                self.capability("c", dependencies=["a"]),
+            ]),
+            now=self.now(),
+        )
+        second = audit_snapshot(
+            self.snapshot([
+                self.capability("c", dependencies=["a"]),
+                self.capability("a", dependencies=["b", "c"]),
+                self.capability("b", dependencies=["a"]),
+            ]),
+            now=self.now(),
+        )
+        self.assertEqual(["a", "b", "a"], first["cycle"])
+        self.assertEqual(first["cycle"], second["cycle"])
+
     def test_rejects_unknown_self_and_duplicate_dependencies(self):
         cases = [
             ([self.capability("one", dependencies=["missing"])], "dependency_unknown"),
