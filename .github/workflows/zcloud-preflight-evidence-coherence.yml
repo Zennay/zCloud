@@ -54,12 +54,13 @@ jobs:
         shell: bash
         env:
           MAIN_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           now="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
           snapshot="$RUNNER_TEMP/zcloud-preflight-evidence-coherence-input.json"
           report="$RUNNER_TEMP/zcloud-preflight-evidence-coherence.json"
-          NOW="$now" MAIN_SHA="$MAIN_SHA" SNAPSHOT="$snapshot" python3 - <<'PY'
+          NOW="$now" MAIN_SHA="$MAIN_SHA" CANDIDATE_HEAD_SHA="$CANDIDATE_HEAD_SHA" SNAPSHOT="$snapshot" python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -83,12 +84,14 @@ jobs:
               "captured_at": os.environ["NOW"],
               "main_sha": os.environ["MAIN_SHA"],
               "candidate_base_sha": os.environ["MAIN_SHA"],
+              "candidate_head_sha": os.environ["CANDIDATE_HEAD_SHA"],
               "capability_id": "control-plane:workflow-proof",
               "evidence": [
                   {
                       "kind": kind,
                       "policy": policies[kind],
                       "capability_id": "control-plane:workflow-proof",
+                      "candidate_head_sha": os.environ["CANDIDATE_HEAD_SHA"],
                       "observed_at": os.environ["NOW"],
                       "main_sha": os.environ["MAIN_SHA"],
                       "verdict": verdict,
@@ -101,7 +104,10 @@ jobs:
               json.dumps(payload, sort_keys=True), encoding="utf-8"
           )
           PY
-          python3 scripts/zcloud_preflight_evidence_coherence.py             "$snapshot"             --require-admit | tee "$report"
+          python3 scripts/zcloud_preflight_evidence_coherence.py \
+            "$snapshot" \
+            --expected-candidate-head-sha "$CANDIDATE_HEAD_SHA" \
+            --require-admit | tee "$report"
           REPORT="$report" python3 - <<'PY'
           import json
           import os
@@ -110,15 +116,18 @@ jobs:
           payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
           assert payload["policy"] == "control-plane-preflight-evidence-coherence-v2"
           assert payload["status"] == "admit"
+          assert payload["candidate_head_sha"] == os.environ["CANDIDATE_HEAD_SHA"]
           assert payload["mutation_performed"] is False
           assert len(payload["evidence"]) == 5
           assert all(
               row["capability_id"] == "control-plane:workflow-proof"
+              and row["candidate_head_sha"] == os.environ["CANDIDATE_HEAD_SHA"]
               for row in payload["evidence"]
           )
           print(
               "ZCLOUD_PREFLIGHT_EVIDENCE_COHERENCE_GREEN="
-              f"main:{payload['main_sha']}:span:{payload['evidence_span_seconds']}"
+              f"main:{payload['main_sha']}:head:{payload['candidate_head_sha']}:"
+              f"span:{payload['evidence_span_seconds']}"
           )
           PY
 
