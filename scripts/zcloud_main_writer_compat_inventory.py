@@ -20,14 +20,10 @@ MAIN_PUSH_RE = re.compile(
     r"(?i)(?:git\s+push[^\n]*(?:refs/heads/main|\bmain\b)|"
     r"git\s+push[^\n]*HEAD:main)"
 )
-REFS_API_RE = re.compile(
-    r"(?i)(?:/git/refs/(?:heads/)?main|/git/refs/heads/main|"
-    r"refs/heads/main)"
-)
+REFS_API_RE = re.compile(r"(?i)/git/refs/(?:heads/)?main\\b")
 WRITE_API_RE = re.compile(
-    r"(?i)(?:\b(?:POST|PUT|PATCH|DELETE)\b|"
-    r"gh\s+api[^\n]*(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)|"
-    r"curl[^\n]*\s-X\s*(?:POST|PUT|PATCH|DELETE))"
+    r"(?i)(?:\\b(?:POST|PUT|PATCH|DELETE)\\b|"
+    r"(?:--method|-X)\\s+(?:POST|PUT|PATCH|DELETE))"
 )
 CHECKOUT_CREDS_RE = re.compile(r"(?m)^\s*persist-credentials\s*:\s*true\s*(?:#.*)?$")
 
