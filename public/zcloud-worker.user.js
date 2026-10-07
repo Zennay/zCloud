@@ -72,7 +72,7 @@
   let tickTimer = null;
   let heartbeatTimer = null;
   let freshConversationPending = false;
-  const COMPOSER_RECOVERY_TIMEOUT_MS = 45000;
+  const COMPOSER_RECOVERY_MS = 45000;
   let composerMissingSince = 0;
   let composerRecoveryAttempted = false;
   let composerRecoveryProjectId = "";
@@ -627,7 +627,7 @@
       composerMissingSince = nowMs;
       return false;
     }
-    if (composerRecoveryAttempted || nowMs - composerMissingSince < COMPOSER_RECOVERY_TIMEOUT_MS) return false;
+    if (composerRecoveryAttempted || nowMs - composerMissingSince < COMPOSER_RECOVERY_MS) return false;
 
     // One-shot per missing-composer episode. A failed request is not retried
     // until the composer reappears (or the project changes), avoiding a
