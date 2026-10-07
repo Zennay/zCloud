@@ -52,6 +52,7 @@ class OpenPrOverlapWorkflowContractTests(unittest.TestCase):
         fields = match.group(1)
         self.assertIn("number", fields)
         self.assertIn("headRefName", fields)
+        self.assertIn("changedFiles", fields)
         self.assertIn("files", fields)
         for forbidden in ("title", "body", "comments", "author", "reviews"):
             self.assertNotIn(forbidden, fields)
