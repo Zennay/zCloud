@@ -114,6 +114,82 @@ query($owner:String!, $name:String!, $endCursor:String) {
     return refs
 
 
+def _open_pr_heads(
+    repo: str,
+    runner: Callable[[list[str]], Any],
+) -> frozenset[str]:
+    rows = runner([
+        "gh", "pr", "list",
+        "--repo", repo,
+        "--state", "open",
+        "--limit", str(MAX_OPEN_PRS + 1),
+        "--json", "headRefName,isCrossRepository",
+    ])
+    if not isinstance(rows, list):
+        raise CollectorError("open_pr_snapshot_invalid")
+    if len(rows) > MAX_OPEN_PRS:
+        raise CollectorError("open_pr_bound_exceeded")
+
+    heads: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise CollectorError("open_pr_snapshot_invalid")
+        branch = _validate_branch_name(row.get("headRefName"))
+        cross = row.get("isCrossRepository")
+        if not isinstance(cross, bool):
+            raise CollectorError("open_pr_snapshot_invalid")
+        if not cross:
+            heads.add(branch)
+    return frozenset(heads)
+
+
+def _branch_refs(
+    owner: str,
+    name: str,
+    runner: Callable[[list[str]], Any],
+) -> tuple[dict[str, str], ...]:
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    cursor: str | None = None
+    while True:
+        refs = _graphql_page(owner, name, cursor, runner)
+        for node in refs["nodes"]:
+            if not isinstance(node, dict):
+                raise CollectorError("branch_node_invalid")
+            branch_name = _validate_branch_name(node.get("name"))
+            if branch_name in seen:
+                raise CollectorError("duplicate_branch_ref")
+            seen.add(branch_name)
+            target = node.get("target")
+            if not isinstance(target, dict):
+                raise CollectorError("branch_target_invalid")
+            sha = _validate_sha(target.get("oid"))
+            committed_at = target.get("committedDate")
+            parse_utc(committed_at)
+            rows.append({
+                "name": branch_name,
+                "sha": sha,
+                "committed_at": committed_at,
+            })
+            if len(rows) > MAX_BRANCHES:
+                raise CollectorError("branch_bound_exceeded")
+
+        page = refs["pageInfo"]
+        has_next = page.get("hasNextPage")
+        next_cursor = page.get("endCursor")
+        if not isinstance(has_next, bool):
+            raise CollectorError("branch_page_invalid")
+        if not has_next:
+            break
+        if len(rows) >= MAX_BRANCHES:
+            raise CollectorError("branch_bound_exceeded")
+        if not isinstance(next_cursor, str) or not next_cursor:
+            raise CollectorError("branch_page_invalid")
+        cursor = next_cursor
+
+    return tuple(sorted(rows, key=lambda item: item["name"]))
+
+
 def collect_snapshot(
     repo: str,
     as_of: dt.datetime,
@@ -137,65 +213,22 @@ def collect_snapshot(
     except (KeyError, TypeError) as exc:
         raise CollectorError("main_ref_invalid") from exc
 
-    open_pr_rows = runner([
-        "gh", "pr", "list",
-        "--repo", repo,
-        "--state", "open",
-        "--limit", str(MAX_OPEN_PRS + 1),
-        "--json", "headRefName,isCrossRepository",
-    ])
-    if not isinstance(open_pr_rows, list):
-        raise CollectorError("open_pr_snapshot_invalid")
-    if len(open_pr_rows) > MAX_OPEN_PRS:
-        raise CollectorError("open_pr_bound_exceeded")
+    open_heads = _open_pr_heads(repo, runner)
+    ref_rows = _branch_refs(owner, name, runner)
+    main_rows = [row for row in ref_rows if row["name"] == "main"]
+    if len(main_rows) != 1 or main_rows[0]["sha"] != main_sha:
+        raise CollectorError("main_ref_snapshot_mismatch")
 
-    open_heads: set[str] = set()
-    for row in open_pr_rows:
-        if not isinstance(row, dict):
-            raise CollectorError("open_pr_snapshot_invalid")
-        branch = _validate_branch_name(row.get("headRefName"))
-        cross = row.get("isCrossRepository")
-        if not isinstance(cross, bool):
-            raise CollectorError("open_pr_snapshot_invalid")
-        if not cross:
-            open_heads.add(branch)
-
-    branches: list[dict[str, Any]] = []
-    cursor: str | None = None
-    while True:
-        refs = _graphql_page(owner, name, cursor, runner)
-        for node in refs["nodes"]:
-            if not isinstance(node, dict):
-                raise CollectorError("branch_node_invalid")
-            branch_name = _validate_branch_name(node.get("name"))
-            target = node.get("target")
-            if not isinstance(target, dict):
-                raise CollectorError("branch_target_invalid")
-            sha = _validate_sha(target.get("oid"))
-            committed_at = target.get("committedDate")
-            committed_dt = parse_utc(committed_at)
-            branches.append({
-                "name": branch_name,
-                "sha": sha,
-                "committed_at": committed_at,
-                "has_open_pr": branch_name in open_heads,
-                "compare": None,
-            })
-            if len(branches) > MAX_BRANCHES:
-                raise CollectorError("branch_bound_exceeded")
-
-        page = refs["pageInfo"]
-        has_next = page.get("hasNextPage")
-        next_cursor = page.get("endCursor")
-        if not isinstance(has_next, bool):
-            raise CollectorError("branch_page_invalid")
-        if not has_next:
-            break
-        if len(branches) >= MAX_BRANCHES:
-            raise CollectorError("branch_bound_exceeded")
-        if not isinstance(next_cursor, str) or not next_cursor:
-            raise CollectorError("branch_page_invalid")
-        cursor = next_cursor
+    branches: list[dict[str, Any]] = [
+        {
+            "name": row["name"],
+            "sha": row["sha"],
+            "committed_at": row["committed_at"],
+            "has_open_pr": row["name"] in open_heads,
+            "compare": None,
+        }
+        for row in ref_rows
+    ]
 
     cutoff = as_of - dt.timedelta(hours=recent_hours)
     for row in branches:
@@ -244,6 +277,20 @@ def collect_snapshot(
             # as potentially truncated rather than guessed complete.
             "file_list_complete": len(files_raw) < MAX_COMPARE_FILES,
         }
+
+    open_heads_after = _open_pr_heads(repo, runner)
+    if open_heads_after != open_heads:
+        raise CollectorError("open_pr_snapshot_changed")
+    ref_rows_after = _branch_refs(owner, name, runner)
+    if ref_rows_after != ref_rows:
+        raise CollectorError("branch_snapshot_changed")
+    ref_after = runner(["gh", "api", f"repos/{repo}/git/ref/heads/main"])
+    try:
+        main_sha_after = _validate_sha(ref_after["object"]["sha"])
+    except (KeyError, TypeError) as exc:
+        raise CollectorError("main_ref_invalid") from exc
+    if main_sha_after != main_sha:
+        raise CollectorError("main_ref_snapshot_changed")
 
     branches.sort(key=lambda item: item["name"])
     return {
