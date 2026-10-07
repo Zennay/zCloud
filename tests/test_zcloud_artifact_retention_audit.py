@@ -43,6 +43,21 @@ jobs:
         )
         self.assertEqual([14, None, 45, None], [row.retention_days for row in rows])
 
+    def test_detects_named_upload_step_with_uses_on_following_line(self):
+        text = """jobs:
+  proof:
+    steps:
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence
+          retention-days: 7
+"""
+        rows = audit.inspect_workflow(".github/workflows/named.yml", text, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("bounded", rows[0].status)
+        self.assertEqual(7, rows[0].retention_days)
+
     def test_rejects_invalid_github_retention_range(self):
         text = """jobs:
   proof:
