@@ -1,0 +1,76 @@
+name: zCloud project result summary proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_project_result_summary.py"
+      - "tests/test_project_result_summary.py"
+      - "docs/project-result-summary-contract.md"
+      - ".github/workflows/zcloud-project-result-summary-proof.yml"
+      - "enhancements.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-result-summary-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Run focused contract tests
+        run: python3 -m unittest -v tests.test_project_result_summary
+
+      - name: Compile projector
+        run: python3 -m py_compile scripts/zcloud_project_result_summary.py
+
+  prove-read-only:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Require canonical permanent VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused contract tests
+        run: python3 -m unittest -v tests.test_project_result_summary
+
+      - name: Exercise live read-only adapters
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_project_result_summary.py > /tmp/zcloud-project-result-summary.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/zcloud-project-result-summary.json").read_text(encoding="utf-8"))
+          assert payload["schema_version"] == 1
+          assert payload["project_count"] >= 1
+          for project in payload["projects"]:
+              encoded = json.dumps(project, sort_keys=True)
+              assert '"source"' not in encoded
+              assert "/opt/" not in encoded
+              assert "/var/" not in encoded
+          print("ZCLOUD_PROJECT_RESULT_SUMMARY_READONLY_GREEN=1")
+          PY
