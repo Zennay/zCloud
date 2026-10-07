@@ -87,7 +87,7 @@ def validate_snapshot(payload: object) -> dict:
         if status not in ALLOWED_STATES:
             raise PressureInputError("run_status_invalid")
         created_at = _parse_time(run["created_at"], "run_created_at")
-        if created_at > captured_at:
+        if (created_at - captured_at).total_seconds() > MAX_FUTURE_SKEW_SECONDS:
             raise PressureInputError("run_created_after_capture")
         jobs = run["jobs"]
         if not isinstance(jobs, list) or len(jobs) > MAX_JOBS_PER_RUN:
@@ -102,7 +102,7 @@ def validate_snapshot(payload: object) -> dict:
             if job_status not in ALLOWED_STATES:
                 raise PressureInputError("job_status_invalid")
             job_created = _parse_time(job["created_at"], "job_created_at")
-            if job_created > captured_at:
+            if (job_created - captured_at).total_seconds() > MAX_FUTURE_SKEW_SECONDS:
                 raise PressureInputError("job_created_after_capture")
             labels = job["labels"]
             if not isinstance(labels, list) or len(labels) > MAX_LABELS:
@@ -113,7 +113,6 @@ def validate_snapshot(payload: object) -> dict:
                     not isinstance(label, str)
                     or not label
                     or len(label) > MAX_LABEL_LENGTH
-                    or any(ch.isspace() for ch in label)
                 ):
                     raise PressureInputError("job_label_invalid")
                 clean_labels.append(label)
