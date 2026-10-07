@@ -74,14 +74,23 @@ jobs:
               with urllib.request.urlopen(req, timeout=20) as response:
                   return json.load(response)
 
-          runs_payload = get("/actions/runs?per_page=100")
-          active = [
-              run for run in runs_payload.get("workflow_runs", [])
-              if str(run.get("status") or "") in {
-                  "queued", "in_progress", "waiting", "pending", "requested"
-              }
-          ]
-          source_complete = len(active) <= 30
+          active_statuses = ("queued", "in_progress", "waiting", "pending", "requested")
+          source_complete = True
+          active_by_id = {}
+          for status in active_statuses:
+              payload = get(f"/actions/runs?status={status}&per_page=100")
+              rows = payload.get("workflow_runs", [])
+              if int(payload.get("total_count") or 0) > len(rows):
+                  source_complete = False
+              for run in rows:
+                  active_by_id[int(run["id"])] = run
+
+          active = sorted(
+              active_by_id.values(),
+              key=lambda run: str(run.get("created_at") or ""),
+          )
+          if len(active) > 30:
+              source_complete = False
           active = active[:30]
           runs = []
           for run in active:
