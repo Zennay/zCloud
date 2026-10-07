@@ -42,11 +42,12 @@ class ZcloudMainProtectionPlanTests(unittest.TestCase):
         result = MODULE.build_plan(
             audit=unprotected_audit(),
             expected_main_sha=sha,
-            required_check="zCloud regression smoke",
+            required_check="critical-runner-flows",
         )
         self.assertEqual(result["expected_main_sha"], sha)
         self.assertFalse(result["apply_allowed"])
         self.assertFalse(result["mutation_performed"])
+        self.assertIn("prove_required_check_current_and_pr_green", result["apply_requirements"])
         self.assertEqual(result["rollback"]["action"], "delete_branch_protection")
 
         target = result["target_protection"]
@@ -54,7 +55,7 @@ class ZcloudMainProtectionPlanTests(unittest.TestCase):
         self.assertTrue(target["required_status_checks"]["strict"])
         self.assertEqual(
             target["required_status_checks"]["contexts"],
-            ["zCloud regression smoke"],
+            ["critical-runner-flows"],
         )
         self.assertEqual(
             target["required_pull_request_reviews"]["bypass_pull_request_allowances"],
