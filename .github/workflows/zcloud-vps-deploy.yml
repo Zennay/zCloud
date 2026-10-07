@@ -841,6 +841,61 @@ jobs:
           rm -f /home/ubuntu/zennay-cloud/.disable-self-heal
           echo "SELF_HEAL_GUARD=released"
 
+      - name: Re-arm VPS-native self-heal after guarded deploy
+        if: always() && steps.freshness.outputs.deploy == 'true' && steps.self_heal_guard.outputs.created == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sentinel="/home/ubuntu/zennay-cloud/.disable-self-heal"
+          test ! -e "$sentinel"
+          test -x /usr/local/sbin/zcloud-self-heal
+          test -x /usr/local/sbin/zcloud-worker-watchdog
+
+          # The deploy guard intentionally suppresses the 30-second VPS watchdog
+          # while browser safe-idle/promotion owns the runtime. Do not leave
+          # continuity recovery waiting for the next timer edge: run one pass
+          # immediately after releasing the guard, then prove the timer remains
+          # armed for phone-independent recovery.
+          sudo -n systemctl start zcloud-self-heal.service
+          systemctl is-enabled --quiet zcloud-self-heal.timer
+          systemctl is-active --quiet zcloud-self-heal.timer
+
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+
+          def get(path):
+              with urllib.request.urlopen(BASE + path, timeout=10) as response:
+                  return json.load(response)
+
+          deadline = time.time() + 60
+          last = {}
+          while time.time() < deadline:
+              try:
+                  targets = get("/api/runner-targets")
+                  live = get("/api/runner-live")
+              except Exception as exc:
+                  last = {"error": type(exc).__name__}
+                  time.sleep(3)
+                  continue
+              workers = (targets.get("global_allocation") or {}).get("workers") or []
+              firefox = live.get("chatgpt_firefox") or {}
+              last = {
+                  "allocated": len(workers),
+                  "firefox_active": bool(firefox.get("active")),
+                  "firefox_state": firefox.get("state") or firefox.get("service_state"),
+              }
+              if last["firefox_active"] and last["allocated"] > 0:
+                  print("POSTDEPLOY_SELF_HEAL_GREEN=" + json.dumps(last, sort_keys=True))
+                  break
+              time.sleep(3)
+          else:
+              raise SystemExit("post-deploy self-heal did not restore a live worker runtime: " + json.dumps(last, sort_keys=True))
+          PY
+
       - name: Record evidence-backed production state receipt
         if: success() && steps.freshness.outputs.deploy == 'true' && steps.prewrite.outputs.deploy == 'true'
         shell: bash
