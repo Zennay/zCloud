@@ -1,0 +1,93 @@
+name: zCloud central eventstream proof
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_central_eventstream.py"
+      - "tests/test_central_eventstream.py"
+      - "tests/test_central_eventstream_workflow.py"
+      - ".github/workflows/zcloud-central-eventstream-proof.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_central_eventstream.py"
+      - "tests/test_central_eventstream.py"
+      - "tests/test_central_eventstream_workflow.py"
+      - ".github/workflows/zcloud-central-eventstream-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-central-eventstream-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+      - name: Run central eventstream contract
+        run: python3 -m unittest -v tests.test_central_eventstream tests.test_central_eventstream_workflow
+
+  permanent-vps-proof:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.owner.login == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact checkout and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Prove read-only eventstream projection
+        run: python3 -m unittest -v tests.test_central_eventstream tests.test_central_eventstream_workflow
+      - name: Smoke live zCloud event evidence read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=/home/ubuntu/zennay-cloud/history.db
+          test -f "$db"
+          out="$RUNNER_TEMP/zcloud-central-eventstream.json"
+          python3 scripts/zcloud_central_eventstream.py \
+            --db "$db" --project cloud --limit 20 --require-complete > "$out"
+          python3 - "$out" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data["schema_version"] == "zcloud-central-eventstream-v1"
+          assert data["coverage_complete"] is True
+          assert data["missing_sources"] == []
+          assert all(value == 0 for value in data["malformed_rows"].values())
+          assert all(item["project_id"] == "cloud" for item in data["events"])
+          forbidden = {"detail", "title", "error", "reason", "target", "evidence_json", "old_value_json", "new_value_json"}
+          assert all(not (forbidden & set(item)) for item in data["events"])
+          print("ZCLOUD_CENTRAL_EVENTSTREAM_LIVE_READ_GREEN", f"events={len(data['events'])}")
+          PY
