@@ -101,6 +101,14 @@ class QueueSeedReseedAuditTests(unittest.TestCase):
                 {},
             )
 
+    def test_runtime_still_hydrates_missing_seed_rows_with_insert_or_ignore(self):
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
+
+        self.assertIn("PORTFOLIO_QUEUE_SEED_FILE.read_text", server)
+        self.assertIn("INSERT OR IGNORE INTO portfolio_queue(", server)
+        self.assertIn("str(item.get('status') or 'queued').lower()", server)
+        self.assertIn("1 if item.get('eligible',True) else 0", server)
+
     def test_runtime_database_is_opened_read_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "history.db"
