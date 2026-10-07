@@ -1,4 +1,4 @@
-# Recovery retrigger after queued HaxLab #417/#424 jobs remained unassigned
+# Recovery retrigger 2026-10-07T18:02Z: HaxLab queue unassigned since 15:00 UTC
 name: Recover HaxLab runner
 
 on:
