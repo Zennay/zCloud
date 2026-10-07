@@ -69,6 +69,19 @@ steps:
         )
         self.assertIn("main_refs_write_api", signals)
 
+    def test_read_only_main_ref_plus_unrelated_post_is_not_api_write(self):
+        signals = module.classify_text(
+            """
+steps:
+  - run: git ls-remote origin refs/heads/main
+  - run: |
+      python3 - <<'PY'
+      request = urllib.request.Request("https://api.github.com/repos/o/r/statuses/abc", method="POST")
+      PY
+"""
+        )
+        self.assertNotIn("main_refs_write_api", signals)
+
     def test_contents_write_without_direct_main_is_separate(self):
         root = self.make_repo(
             {
