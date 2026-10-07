@@ -17,7 +17,7 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/st5-remediation-authoring-request-invariants-pack-20261006
-  LIGHTUP_EXPECTED_SHA: 448f0245170425c1917169731af08d1ed9afa83a
+  LIGHTUP_EXPECTED_SHA: 65e1fac544cc014dc797159893b825cd4b799390
 
 jobs:
   prove-red:
