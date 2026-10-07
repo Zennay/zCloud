@@ -404,6 +404,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", text[text.index(summary):text.index(cleanup)])
         self.assertIn("scripts/zcloud_deploy_summary.py", text)
         self.assertIn('--output "$GITHUB_STEP_SUMMARY"', text)
+        self.assertIn('--safe-idle-state "$ZCLOUD_RUN_STATE_DIR/zcloud-deploy-safe-idle.json"', text)
         self.assertIn("steps.freshness.outputs.deploy_sha", text)
         self.assertIn("steps.freshness.outputs.regression_run_id", text)
         self.assertIn("steps.freshness.outputs.regression_mode", text)
