@@ -1,0 +1,323 @@
+name: zCloud serialized integration wave plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_serialized_integration_wave_plan.py"
+      - "tests/test_zcloud_serialized_integration_wave_plan.py"
+      - ".github/workflows/zcloud-serialized-integration-wave-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-serialized-integration-wave-plan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_serialized_integration_wave_plan
+          python3 -m py_compile scripts/zcloud_serialized_integration_wave_plan.py
+
+      - name: Capture bounded live open-PR snapshot
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-integration-wave-snapshot.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          out = Path(os.environ["SNAPSHOT"])
+
+          def gh(path: str):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return json.loads(proc.stdout)
+
+          current_main = str(
+              gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+          )
+
+          open_pulls = []
+          inventory_complete = False
+          for page in range(1, 7):
+              batch = gh(
+                  f"repos/{repo}/pulls?state=open&per_page=100&page={page}&sort=created&direction=asc"
+              )
+              if page == 6 and batch:
+                  raise SystemExit("open PR inventory exceeds bounded limit of 500")
+              open_pulls.extend(batch)
+              if len(batch) < 100:
+                  inventory_complete = True
+                  break
+          if not inventory_complete:
+              raise SystemExit("open PR inventory completeness not proven")
+
+          pulls = [
+              {
+                  "number": int(item["number"]),
+                  "state": str(item["state"]),
+                  "draft": bool(item.get("draft")),
+                  "head_sha": str(item["head"]["sha"]),
+                  "base_sha": str(item["base"]["sha"]),
+                  "body": str(item.get("body") or ""),
+              }
+              for item in open_pulls
+          ]
+
+          gates = []
+          for number in (580, 576):
+              item = gh(f"repos/{repo}/pulls/{number}")
+              gates.append(
+                  {
+                      "number": number,
+                      "state": str(item["state"]),
+                      "merged": bool(item.get("merged")),
+                      "draft": bool(item.get("draft")),
+                      "head_sha": str(item["head"]["sha"]),
+                      "base_sha": str(item["base"]["sha"]),
+                  }
+              )
+
+          out.write_text(
+              json.dumps(
+                  {
+                      "repository": repo,
+                      "current_main_sha": current_main,
+                      "inventory_complete": True,
+                      "gates": gates,
+                      "pull_requests": pulls,
+                  },
+                  sort_keys=True,
+              ),
+              encoding="utf-8",
+          )
+          print(
+              "SERIALIZED_INTEGRATION_SNAPSHOT="
+              f"main:{current_main}:open_pulls:{len(pulls)}"
+          )
+          PY
+
+      - name: Classify exact current-main candidates
+        shell: bash
+        env:
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-integration-wave-snapshot.json
+          READY: ${{ runner.temp }}/zcloud-serialized-integration-ready.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_serialized_integration_wave_plan.py             --snapshot "$SNAPSHOT"             --list-ready             --json | tee "$READY"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["READY"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-serialized-integration-wave-plan-v2"
+          assert payload["mode"] == "ready_inventory"
+          assert payload["mutation_performed"] is False
+          assert len(payload["ready_pull_requests"]) <= 200
+          print(
+              "SERIALIZED_INTEGRATION_READY="
+              f"count:{len(payload['ready_pull_requests'])}:"
+              f"gate_open:{str(payload['gate_open']).lower()}"
+          )
+          PY
+
+      - name: Capture complete changed-file evidence with identity revalidation
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-integration-wave-snapshot.json
+          READY: ${{ runner.temp }}/zcloud-serialized-integration-ready.json
+          FILES: ${{ runner.temp }}/zcloud-serialized-integration-files.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          snapshot = json.loads(Path(os.environ["SNAPSHOT"]).read_text(encoding="utf-8"))
+          ready = json.loads(Path(os.environ["READY"]).read_text(encoding="utf-8"))
+          by_number = {int(item["number"]): item for item in snapshot["pull_requests"]}
+
+          def gh(path: str):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return json.loads(proc.stdout)
+
+          evidence = {}
+          for number in ready["ready_pull_requests"]:
+              number = int(number)
+              snap = by_number[number]
+              live = gh(f"repos/{repo}/pulls/{number}")
+              if str(live["state"]) != "open" or bool(live.get("draft")):
+                  raise SystemExit(f"candidate PR #{number} changed state after snapshot")
+              if str(live["head"]["sha"]) != str(snap["head_sha"]):
+                  raise SystemExit(f"candidate PR #{number} head moved after snapshot")
+              if str(live["base"]["sha"]) != str(snap["base_sha"]):
+                  raise SystemExit(f"candidate PR #{number} base moved after snapshot")
+              if str(live["base"]["sha"]) != str(snapshot["current_main_sha"]):
+                  raise SystemExit(f"candidate PR #{number} no longer targets snapshot main")
+
+              paths = []
+              complete = False
+              for page in range(1, 7):
+                  batch = gh(
+                      f"repos/{repo}/pulls/{number}/files?per_page=100&page={page}"
+                  )
+                  if page == 6 and batch:
+                      raise SystemExit(
+                          f"PR #{number} changed-file inventory exceeds bounded limit of 500"
+                      )
+                  paths.extend(str(item["filename"]) for item in batch)
+                  if len(batch) < 100:
+                      complete = True
+                      break
+              if not complete:
+                  raise SystemExit(f"PR #{number} changed-file completeness not proven")
+              if not paths:
+                  raise SystemExit(f"PR #{number} has empty changed-file evidence")
+              evidence[str(number)] = {"complete": True, "files": paths}
+
+          live_main = str(
+              gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+          )
+          if live_main != str(snapshot["current_main_sha"]):
+              raise SystemExit("main moved during changed-file evidence capture")
+
+          gates_by_number = {
+              int(item["number"]): item for item in snapshot["gates"]
+          }
+          for number in (580, 576):
+              snap_gate = gates_by_number[number]
+              live_gate = gh(f"repos/{repo}/pulls/{number}")
+              live_fields = {
+                  "state": str(live_gate["state"]),
+                  "merged": bool(live_gate.get("merged")),
+                  "draft": bool(live_gate.get("draft")),
+                  "head_sha": str(live_gate["head"]["sha"]),
+                  "base_sha": str(live_gate["base"]["sha"]),
+              }
+              snap_fields = {
+                  "state": str(snap_gate["state"]),
+                  "merged": bool(snap_gate.get("merged")),
+                  "draft": bool(snap_gate.get("draft")),
+                  "head_sha": str(snap_gate["head_sha"]),
+                  "base_sha": str(snap_gate["base_sha"]),
+              }
+              if live_fields != snap_fields:
+                  raise SystemExit(
+                      f"serialized gate #{number} moved during evidence capture"
+                  )
+
+          Path(os.environ["FILES"]).write_text(
+              json.dumps(evidence, sort_keys=True),
+              encoding="utf-8",
+          )
+          print(
+              "SERIALIZED_INTEGRATION_FILE_EVIDENCE="
+              f"candidates:{len(evidence)}"
+          )
+          PY
+
+      - name: Build deterministic file-disjoint wave preview
+        shell: bash
+        env:
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-integration-wave-snapshot.json
+          FILES: ${{ runner.temp }}/zcloud-serialized-integration-files.json
+          REPORT: ${{ runner.temp }}/zcloud-serialized-integration-wave-plan.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_serialized_integration_wave_plan.py             --snapshot "$SNAPSHOT"             --files "$FILES"             --wave-size 10             --json | tee "$REPORT"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-serialized-integration-wave-plan-v2"
+          assert payload["mutation_performed"] is False
+          assert payload["merge_authorized"] is False
+          assert payload["auto_merge_allowed"] is False
+          assert payload["ci_revalidation_required"] is True
+          assert payload["ownership_revalidation_required"] is True
+          assert payload["requires_per_pr_revalidation"] is True
+          assert payload["wave_size"] == 10
+          assert len(payload["gates"]) == 2
+          assert all(wave["file_disjoint"] is True for wave in payload["waves"])
+          assert all(
+              len(wave["pull_requests"]) <= payload["wave_size"]
+              for wave in payload["waves"]
+          )
+          print(
+              "ZCLOUD_SERIALIZED_INTEGRATION_PLAN="
+              f"status:{payload['status']}:"
+              f"ready:{payload['ready_current_main_count']}:"
+              f"waves:{payload['wave_count']}:"
+              f"stale:{payload['stale_base_count']}:"
+              f"drafts:{payload['draft_count']}:"
+              f"merge_authorized:{str(payload['merge_authorized']).lower()}"
+          )
+          PY
+
+      - name: Upload bounded integration-plan evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-serialized-integration-wave-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-serialized-integration-wave-plan.json
+          if-no-files-found: error
+          retention-days: 14
