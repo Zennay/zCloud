@@ -21,7 +21,9 @@ SCHEMA_VERSION = "zcloud-control-plane-telemetry-v1"
 DEFAULT_REPO = "Zennay/zCloud"
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_MILESTONES = 64
-MAX_OPEN_PRS = 100
+PR_PAGE_SIZE = 100
+MAX_PR_PAGES = 5
+MAX_PR_NUMBERS_EMITTED = 64
 MAX_TEXT = 320
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -134,6 +136,43 @@ def _repo_url(repo: str, suffix: str = "") -> str:
     return f"https://api.github.com/repos/{repo}{suffix}"
 
 
+def _open_pr_inventory(repo: str, token: str | None, getter: Callable[[str, str | None], object]) -> dict:
+    numbers = []
+    for page in range(1, MAX_PR_PAGES + 1):
+        payload = getter(
+            _repo_url(repo, "/pulls?" + urllib.parse.urlencode({
+                "state": "open",
+                "base": "main",
+                "per_page": str(PR_PAGE_SIZE),
+                "page": str(page),
+            })),
+            token,
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("GitHub pull request response is invalid")
+        if len(payload) > PR_PAGE_SIZE:
+            raise RuntimeError("GitHub pull request page exceeds bound")
+        for row in payload:
+            number = row.get("number") if isinstance(row, dict) else None
+            if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+                raise RuntimeError("GitHub pull request row is invalid")
+            numbers.append(number)
+        if len(payload) < PR_PAGE_SIZE:
+            break
+    else:
+        raise RuntimeError("open pull request inventory exceeds bounded page limit")
+
+    if len(set(numbers)) != len(numbers):
+        raise RuntimeError("GitHub pull request inventory contains duplicate numbers")
+    emitted = sorted(numbers, reverse=True)[:MAX_PR_NUMBERS_EMITTED]
+    return {
+        "open_pr_count": len(numbers),
+        "open_pr_numbers": emitted,
+        "open_pr_numbers_truncated": len(numbers) > len(emitted),
+        "open_pr_number_limit": MAX_PR_NUMBERS_EMITTED,
+    }
+
+
 def _classify_ci(runs: list[dict], status_payload: dict) -> dict:
     exact = [row for row in runs if isinstance(row, dict)]
     contexts = status_payload.get("statuses") if isinstance(status_payload, dict) else None
@@ -207,22 +246,7 @@ def build_report(
     if not SHA_RE.fullmatch(main_sha):
         raise RuntimeError("GitHub main commit SHA is invalid")
 
-    pulls_payload = getter(
-        _repo_url(repo, "/pulls?" + urllib.parse.urlencode({
-            "state": "open", "base": "main", "per_page": str(MAX_OPEN_PRS)
-        })),
-        token,
-    )
-    if not isinstance(pulls_payload, list):
-        raise RuntimeError("GitHub pull request response is invalid")
-    if len(pulls_payload) > MAX_OPEN_PRS:
-        raise RuntimeError("open pull request count exceeds bound")
-    pr_numbers = []
-    for row in pulls_payload:
-        number = row.get("number") if isinstance(row, dict) else None
-        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
-            raise RuntimeError("GitHub pull request row is invalid")
-        pr_numbers.append(number)
+    pull_inventory = _open_pr_inventory(repo, token, getter)
 
     runs_payload = getter(
         _repo_url(repo, "/actions/runs?" + urllib.parse.urlencode({
@@ -254,8 +278,7 @@ def build_report(
         "github": {
             "repository": repo,
             "main_sha": main_sha,
-            "open_pr_count": len(pr_numbers),
-            "open_pr_numbers": sorted(pr_numbers),
+            **pull_inventory,
             "ci": ci,
         },
         "evidence_contract": {
