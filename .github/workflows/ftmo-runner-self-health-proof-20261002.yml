@@ -40,6 +40,8 @@ jobs:
         run: |
           set -u
           SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
           echo "FTMO_RUNNER_PROCESSES_BEGIN"
           ps -o pid=,ppid=,lstart=,etime=,cmd= -u ftmo-runner | grep -E "Runner\\.(Worker|Listener)|runsvc\\.sh" || true
           echo "FTMO_RUNNER_PROCESSES_END"
