@@ -1,4 +1,4 @@
-# Operational retrigger 2026-10-07 05:2x UTC for HaxLab evaluation-validation queue recovery
+# Dispatch-race hardening 2026-10-07 05:2x UTC for HaxLab evaluation-validation recovery
 name: Recover HaxLab runner
 
 on:
@@ -44,8 +44,28 @@ jobs:
           elif [ "$worker" -eq 1 ]; then
             action=preserve-active-worker
           else
-            sudo -n systemctl restart "$SERVICE"
-            action=restart-idle-listener
+            # GitHub may have assigned a queued job while Runner.Worker has not
+            # spawned yet. Give the listener a bounded dispatch grace window
+            # before treating an active/no-worker listener as safely idle.
+            for _ in $(seq 1 12); do
+              sleep 1
+              if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
+                worker=1
+                break
+              fi
+              [ "$(systemctl is-active "$SERVICE" || true)" = "active" ] || break
+            done
+
+            recheck_state="$(systemctl is-active "$SERVICE" || true)"
+            recheck_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+            if [ "$worker" -eq 1 ]; then
+              action=preserve-dispatching-worker
+            elif [ "$recheck_state" = "active" ] && [ "$recheck_pid" != "$pre_pid" ]; then
+              action=preserve-refreshed-listener
+            else
+              sudo -n systemctl restart "$SERVICE"
+              action=restart-idle-listener-after-grace
+            fi
           fi
 
           for _ in $(seq 1 20); do
