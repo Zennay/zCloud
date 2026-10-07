@@ -48,17 +48,31 @@ class NegativeCanaryPlanTests(unittest.TestCase):
         self.assertFalse(plan["mutation_performed"])
         self.assertEqual(plan["mutation_scope"]["forbidden_refs"], ["refs/heads/main"])
         for step in plan["execution_sequence"]:
-            if step["mutation"]:
+            if step["mutation"] and step.get("operation") != "create_unreferenced_commit":
                 self.assertNotEqual(step.get("target"), "refs/heads/main")
         attempt = next(x for x in plan["execution_sequence"] if x["step"] == "attempt_direct_canary_update")
         self.assertEqual(attempt["expect"], "rejected")
         self.assertFalse(attempt["force"])
 
-    def test_cleanup_removes_protection_before_branch(self):
+    def test_cleanup_is_mandatory_even_if_rejection_fails(self):
         plan = MODULE.build_plan(target_plan())
-        steps = [x["step"] for x in plan["execution_sequence"]]
-        self.assertLess(steps.index("cleanup_canary_protection"), steps.index("cleanup_canary_branch"))
-        self.assertEqual(steps[-1], "verify_main_unchanged")
+        steps = {x["step"]: x for x in plan["execution_sequence"]}
+        self.assertTrue(plan["failure_handling"]["cleanup_on_all_outcomes"])
+        self.assertEqual(plan["failure_handling"]["unexpected_direct_update_success"], "record_failure_then_cleanup")
+        self.assertTrue(steps["cleanup_canary_protection"]["always"])
+        self.assertTrue(steps["cleanup_canary_branch"]["always"])
+        self.assertTrue(steps["verify_main_unchanged"]["always"])
+
+        order = [x["step"] for x in plan["execution_sequence"]]
+        self.assertLess(order.index("cleanup_canary_protection"), order.index("cleanup_canary_branch"))
+        self.assertEqual(order[-1], "verify_main_unchanged")
+
+    def test_unreferenced_commit_is_declared_as_mutation_but_cannot_move_main(self):
+        plan = MODULE.build_plan(target_plan())
+        step = next(x for x in plan["execution_sequence"] if x["step"] == "prepare_benign_commit")
+        self.assertTrue(step["mutation"])
+        self.assertTrue(plan["mutation_scope"]["allow_unreferenced_commit_object"])
+        self.assertNotIn("refs/heads/main", plan["mutation_scope"]["allowed_refs"])
 
     def test_rejects_weakened_target_contract(self):
         cases = [
