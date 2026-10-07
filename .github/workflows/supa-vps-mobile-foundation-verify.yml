@@ -1,0 +1,43 @@
+name: Supa VPS mobile foundation verify
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/supa-vps-mobile-foundation-verify.yml"
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Check out zCloud runner guard
+        uses: actions/checkout@v4
+
+      - name: Verify permanent VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Check out exact Supa release state
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Supa
+          ref: 1bf6742d21260e1c13115a151b60ce8ec1b36835
+          path: supa
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: supa/package-lock.json
+
+      - name: Install dependencies
+        working-directory: supa
+        run: npm ci
+
+      - name: Test planner domain
+        working-directory: supa
+        run: npm test
+
+      - name: Build production bundle
+        working-directory: supa
+        run: npm run build
