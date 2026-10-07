@@ -1,0 +1,204 @@
+name: Emergency clear stale zCloud safe-idle deadlock 2026-10-07
+
+on:
+  push:
+    branches:
+      - ops/postdeploy-self-heal-rearm-20261007
+    paths:
+      - .github/workflows/emergency-clear-zcloud-safe-idle-deadlock-20261007.yml
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: emergency-clear-zcloud-safe-idle-deadlock-20261007
+  cancel-in-progress: false
+
+jobs:
+  cancel-stale-deploys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel nonterminal zCloud deploy transactions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t rows < <(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=50" \
+              --jq '.workflow_runs[] | [.id,.status,.head_sha,.created_at] | @tsv'
+          )
+          cancelled=0
+          for row in "${rows[@]}"; do
+            IFS=$'\t' read -r run_id status head_sha created_at <<<"$row"
+            case "$status" in
+              in_progress|queued|pending|waiting|requested)
+                echo "EMERGENCY_CANCEL_REQUEST run_id=$run_id status=$status sha=$head_sha created_at=$created_at"
+                gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id/cancel" >/dev/null || true
+                cancelled=$((cancelled + 1))
+                ;;
+            esac
+          done
+          echo "EMERGENCY_CANCEL_COUNT=$cancelled"
+
+          # Bound the hosted-side wait. The VPS cleanup job remains queued until
+          # the self-hosted listener is actually free, so no phone/browser action
+          # is needed to continue the recovery.
+          for _ in $(seq 1 30); do
+            active="$(
+              gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=30" \
+                --jq '[.workflow_runs[] | select(.status=="in_progress" or .status=="queued" or .status=="pending" or .status=="waiting" or .status=="requested")] | length'
+            )"
+            echo "EMERGENCY_DEPLOYS_REMAINING=$active"
+            [[ "$active" == "0" ]] && exit 0
+            sleep 2
+          done
+          echo "EMERGENCY_CANCEL_ACCEPTED_WAITING_FOR_RUNNER_RELEASE=1"
+
+  recover-vps-workers:
+    needs: cancel-stale-deploys
+    if: always()
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Clear orphan guard and restart autonomous workers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+
+          active="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=30" \
+              --jq '[.workflow_runs[] | select(.status=="in_progress")] | length'
+          )"
+          echo "EMERGENCY_ACTIVE_DEPLOYS=$active"
+          test "$active" = "0"
+
+          sentinel="/home/ubuntu/zennay-cloud/.disable-self-heal"
+          if [[ -e "$sentinel" ]]; then
+            rm -f "$sentinel"
+            echo "EMERGENCY_SELF_HEAL_GUARD=removed"
+          else
+            echo "EMERGENCY_SELF_HEAL_GUARD=absent"
+          fi
+
+          sudo -n systemctl start zcloud-self-heal.service
+          systemctl is-enabled --quiet zcloud-self-heal.timer
+          systemctl is-active --quiet zcloud-self-heal.timer
+
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+
+          def call(method, path, payload=None, attempts=6):
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              headers = {"User-Agent": "zcloud-emergency-safe-idle-recovery/1"}
+              if data is not None:
+                  headers["Content-Type"] = "application/json"
+              last = None
+              for attempt in range(1, attempts + 1):
+                  try:
+                      req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+                      with urllib.request.urlopen(req, timeout=20) as response:
+                          return json.load(response)
+                  except Exception as exc:
+                      last = exc
+                      if attempt == attempts:
+                          raise
+                      time.sleep(3)
+              raise last
+
+          current = (call("GET", "/api/dynamic-workers").get("dynamic_workers") or {})
+          desired = {
+              key: current.get(key)
+              for key in (
+                  "chatgpt_cooldown_seconds", "claude_cooldown_seconds",
+                  "check_interval_ms", "tick_interval_ms", "heartbeat_interval_ms",
+                  "generation_start_timeout_ms", "scheduler_interval_seconds",
+              )
+              if current.get(key) is not None
+          }
+          desired["chatgpt_count"] = 7
+          desired["claude_count"] = max(1, int(current.get("claude_count") or 1))
+          reconciled = call("POST", "/api/dynamic-workers", desired)
+          if not reconciled.get("ok"):
+              raise SystemExit("dynamic worker reconcile returned ok=false")
+
+          # Reassert every portfolio project the owner expects to stay autonomous.
+          for project in ("cloud", "ftmo", "haxlab", "lightup", "raiseai", "supa", "zguard"):
+              result = call("POST", "/api/runner-control", {
+                  "project_id": project,
+                  "action": "start",
+              })
+              print("EMERGENCY_PROJECT_START", project, bool(result.get("ok")))
+
+          time.sleep(8)
+          targets = call("GET", "/api/runner-targets")
+          workers = (targets.get("global_allocation") or {}).get("workers") or []
+          if not workers:
+              raise SystemExit("no worker allocation after emergency reconcile")
+          worker_keys = [
+              str(item.get("worker_key") or f"{item.get('project_id')}::w{int(item.get('worker_slot') or 1)}")
+              for item in workers
+          ]
+          print("EMERGENCY_ALLOCATED_WORKERS=" + json.dumps(worker_keys))
+
+          for worker in worker_keys:
+              result = call("POST", "/api/runner-control", {
+                  "project_id": worker,
+                  "action": "start",
+              })
+              if not result.get("ok"):
+                  print("EMERGENCY_WORKER_START_DEFERRED", worker, result.get("error"))
+
+          pushed = call("POST", "/api/dynamic-workers/force-push", {})
+          if not pushed.get("ok"):
+              raise SystemExit("force-push returned ok=false")
+          rows = pushed.get("results") or []
+          ids = {
+              str(row.get("worker")): int(row["command_id"])
+              for row in rows
+              if row.get("queued") and row.get("command_id") is not None
+          }
+          if not ids:
+              raise SystemExit("force-push queued no worker commands")
+          print("EMERGENCY_PUSH_IDS=" + json.dumps(ids, sort_keys=True))
+
+          deadline = time.time() + 150
+          states = {}
+          while time.time() < deadline:
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  states = {}
+                  for worker, command_id in ids.items():
+                      row = conn.execute(
+                          "SELECT status,updated_at,result FROM runner_commands WHERE id=?",
+                          (command_id,),
+                      ).fetchone()
+                      states[worker] = dict(row) if row else {"status": "missing"}
+              pending = [worker for worker, state in states.items() if state.get("status") == "pending"]
+              if not pending:
+                  break
+              time.sleep(5)
+
+          print("EMERGENCY_PUSH_FINAL=" + json.dumps(states, sort_keys=True))
+          pending = [worker for worker, state in states.items() if state.get("status") == "pending"]
+          if pending:
+              raise SystemExit("worker consumer still pending after recovery: " + ",".join(pending))
+
+          live = call("GET", "/api/runner-live")
+          firefox = live.get("chatgpt_firefox") or {}
+          if not firefox.get("active"):
+              raise SystemExit("Firefox not active after emergency recovery")
+          print("EMERGENCY_ZCLOUD_AUTONOMY_GREEN=1")
+          PY
