@@ -13,6 +13,15 @@ class DashboardResilienceTests(unittest.TestCase):
         self.assertIn("api('/api/status',STATUS_TIMEOUT_MS)", text)
         self.assertIn("Showing the last successful dashboard snapshot", text)
 
+    def test_dashboard_recovery_does_not_mutate_production_from_pull_requests(self):
+        text = (ROOT / ".github" / "workflows" / "zcloud-dashboard-access-recovery.yml").read_text(encoding="utf-8")
+        recover = text.split("  recover:", 1)[1].split("\n  external_verify:", 1)[0]
+        self.assertIn("if: github.event_name != 'pull_request'", recover)
+        self.assertIn("runs-on: self-hosted", recover)
+        external = text.split("\n  external_verify:", 1)[1]
+        self.assertIn("runs-on: ubuntu-latest", external)
+        self.assertNotIn("systemctl restart", external)
+
     def test_dashboard_recovery_validates_status_api_not_only_static_html(self):
         text = (ROOT / ".github" / "workflows" / "zcloud-dashboard-access-recovery.yml").read_text(encoding="utf-8")
         self.assertIn('status_url="http://127.0.0.1:${port}/api/status"', text)
