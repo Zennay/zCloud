@@ -73,6 +73,17 @@ def _validate_branch_name(value: Any) -> str:
     return value
 
 
+def _validate_repo_path(value: Any) -> str:
+    if not isinstance(value, str) or not value or len(value) > 512:
+        raise CollectorError("compare_file_invalid")
+    if value.startswith("/") or "\\" in value or any(ord(ch) < 32 for ch in value):
+        raise CollectorError("compare_file_invalid")
+    parts = value.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise CollectorError("compare_file_invalid")
+    return value
+
+
 def _graphql_page(
     owner: str,
     name: str,
@@ -251,7 +262,8 @@ def collect_snapshot(
             (
                 "{ahead_by:.ahead_by,behind_by:.behind_by,"
                 "merge_base_commit:{sha:.merge_base_commit.sha},"
-                "files:[.files[]?|{filename:.filename}]}"
+                "files:[.files[]?|{filename:.filename,"
+                "previous_filename:.previous_filename}]}"
             ),
         ])
         try:
@@ -270,15 +282,12 @@ def collect_snapshot(
 
         files: list[str] = []
         for item in files_raw:
-            if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
+            if not isinstance(item, dict):
                 raise CollectorError("compare_file_invalid")
-            path = item["filename"]
-            if not path or len(path) > 512 or path.startswith("/") or "\\" in path:
-                raise CollectorError("compare_file_invalid")
-            parts = path.split("/")
-            if any(part in ("", ".", "..") for part in parts):
-                raise CollectorError("compare_file_invalid")
-            files.append(path)
+            files.append(_validate_repo_path(item.get("filename")))
+            previous = item.get("previous_filename")
+            if previous is not None:
+                files.append(_validate_repo_path(previous))
 
         row["compare"] = {
             "ahead_by": ahead_by,
