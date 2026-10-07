@@ -26,6 +26,7 @@ jobs:
           python3 - <<'PY'
           import json
           import time
+          import http.client
           import urllib.error
           import urllib.request
 
@@ -47,6 +48,8 @@ jobs:
                   try: body=json.loads(raw)
                   except Exception: body={"error":raw[:1000]}
                   return int(exc.code), body if isinstance(body,dict) else {}
+              except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as exc:
+                  return 599, {"transport_error":type(exc).__name__+":"+str(exc)[:300]}
 
           settings_status, current=api("GET","/api/dynamic-workers")
           if settings_status >= 300:
@@ -76,17 +79,33 @@ jobs:
               "allocated":((before_targets.get("global_allocation") or {}).get("workers") if before_targets_status < 300 else None),
           },sort_keys=True))
 
-          update_status, updated=api("POST","/api/dynamic-workers",payload)
-          if update_status >= 300 or not updated.get("ok"):
-              raise SystemExit(f"worker stabilization rejected: HTTP {update_status} {updated}")
+          current_count=int(settings.get("chatgpt_count") or 0)
+          update_result={"skipped": current_count <= 4}
+          if current_count > 4:
+              update_status, updated=api("POST","/api/dynamic-workers",payload)
+              update_result={"http_status":update_status,"response":updated}
+              # A settings write may briefly recycle the API process/connection.
+              # Treat transport loss as ambiguous, never as proof that the write
+              # failed; verify durable readback before deciding whether to retry.
+              if update_status < 300 and updated.get("ok"):
+                  pass
+              elif update_status != 599:
+                  raise SystemExit(f"worker stabilization rejected: HTTP {update_status} {updated}")
 
-          effective=updated.get("dynamic_workers") or {}
-          if int(effective.get("chatgpt_count") or 0) != 4:
-              raise SystemExit(f"expected chatgpt_count=4, got {effective}")
+          effective=None
+          for attempt in range(8):
+              time.sleep(3 if attempt else 2)
+              read_status, readback=api("GET","/api/dynamic-workers")
+              if read_status < 300:
+                  effective=readback.get("dynamic_workers") or {}
+                  if int(effective.get("chatgpt_count") or 0) <= 4:
+                      break
+          if not effective or int(effective.get("chatgpt_count") or 0) > 4:
+              raise SystemExit(f"worker stabilization not durably applied; update={update_result} readback={effective}")
 
           # Give allocator a short reconciliation window. Do not issue any
           # runner-control or browser restart action from this lane.
-          time.sleep(12)
+          time.sleep(8)
 
           after_status_code, after=api("GET","/api/status")
           targets_status, targets=api("GET","/api/runner-targets")
@@ -98,7 +117,9 @@ jobs:
           if len(chatgpt_allocated) > 4:
               raise SystemExit(f"allocator still has {len(chatgpt_allocated)} ChatGPT workers: {chatgpt_allocated}")
 
+          print("UPDATE_RESULT="+json.dumps(update_result,sort_keys=True))
           print("AFTER="+json.dumps({
+              "effective_settings":effective,
               "settings":after.get("dynamic_workers"),
               "firefox":after.get("chatgpt_firefox"),
               "memory_guard":((after.get("dynamic_workers") or {}).get("memory_guard")),
