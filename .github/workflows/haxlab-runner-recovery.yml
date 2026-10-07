@@ -1,4 +1,4 @@
-# Recovery retrigger 2026-10-07 14:36 UTC after HaxLab Arena calibration runner interruption
+# Recovery retrigger after queued HaxLab #417/#424 jobs remained unassigned
 name: Recover HaxLab runner
 
 on:
