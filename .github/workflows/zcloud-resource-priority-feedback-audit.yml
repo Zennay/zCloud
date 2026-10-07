@@ -6,6 +6,7 @@ on:
       - public/enhancements.js
       - scripts/zcloud_resource_priority_feedback_audit.py
       - tests/test_resource_priority_feedback_audit.py
+      - tests/test_resource_priority_feedback_audit_workflow.py
       - .github/workflows/zcloud-resource-priority-feedback-audit.yml
   workflow_dispatch:
 
@@ -31,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_resource_priority_feedback_audit
+          python3 -m unittest -v tests.test_resource_priority_feedback_audit tests.test_resource_priority_feedback_audit_workflow
           python3 scripts/zcloud_resource_priority_feedback_audit.py --json
 
   permanent-vps-proof:
