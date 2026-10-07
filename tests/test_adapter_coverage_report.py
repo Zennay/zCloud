@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import types
 import sys
 import tempfile
 import unittest
@@ -50,6 +51,20 @@ class AdapterCoverageReportTests(unittest.TestCase):
         self.assertTrue(result["coverage_complete"])
         self.assertEqual(2, result["adapter_backed_count"])
         self.assertEqual([], result["generic_only_projects"])
+
+    def test_real_adapter_registry_ignores_preexisting_enhancements_stub(self):
+        original = sys.modules.get("enhancements")
+        sys.modules["enhancements"] = types.SimpleNamespace()
+        try:
+            reader = coverage._load_adapter_projects_reader()
+        finally:
+            if original is None:
+                sys.modules.pop("enhancements", None)
+            else:
+                sys.modules["enhancements"] = original
+
+        self.assertTrue(callable(reader))
+        self.assertIn("ftmo", tuple(reader()))
 
     def test_duplicate_active_project_id_fails_closed(self):
         with self.assertRaisesRegex(coverage.AdapterCoverageError, "duplicate active project id"):
