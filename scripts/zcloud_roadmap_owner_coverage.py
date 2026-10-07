@@ -80,9 +80,11 @@ def audit_snapshot(
     now: datetime | None = None,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> dict[str, Any]:
+    if type(max_age_seconds) is not int or not 1 <= max_age_seconds <= 3600:
+        raise SnapshotError("max_age_invalid")
     if set(snapshot) != {"schema_version", "observed_at", "lane", "capabilities", "owners"}:
         raise SnapshotError("snapshot_keys_invalid")
-    if snapshot["schema_version"] != 1:
+    if type(snapshot["schema_version"]) is not int or snapshot["schema_version"] != 1:
         raise SnapshotError("schema_version_unsupported")
     lane = _token(snapshot["lane"], "lane_invalid")
     observed_at = _timestamp(snapshot["observed_at"])
@@ -114,7 +116,7 @@ def audit_snapshot(
         capability_id = _token(row["id"], "capability_id_invalid")
         capability_lane = _token(row["lane"], "capability_lane_invalid")
         state = row["state"]
-        if state not in CAPABILITY_STATE:
+        if not isinstance(state, str) or state not in CAPABILITY_STATE:
             raise SnapshotError("capability_state_invalid")
         if capability_id in capability_map:
             raise SnapshotError("capability_duplicate")
@@ -144,9 +146,9 @@ def audit_snapshot(
         kind = row["kind"]
         state = row["state"]
         owner_id = _token(row["id"], "owner_id_invalid")
-        if kind not in OWNER_KIND:
+        if not isinstance(kind, str) or kind not in OWNER_KIND:
             raise SnapshotError("owner_kind_invalid")
-        if state not in OWNER_STATE:
+        if not isinstance(state, str) or state not in OWNER_STATE:
             raise SnapshotError("owner_state_invalid")
         identity = (capability_id, kind, owner_id)
         if identity in owner_identities:
@@ -214,15 +216,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-candidate", action="store_true")
     parser.add_argument("--require-clear", action="store_true")
     args = parser.parse_args(argv)
-
-    if not 1 <= args.max_age_seconds <= 3600:
-        print(
-            json.dumps(
-                {"ok": False, "state": "incomplete", "errors": ["max_age_invalid"]},
-                sort_keys=True,
-            )
-        )
-        return 1
 
     try:
         result = audit_snapshot(
