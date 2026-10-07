@@ -1,0 +1,78 @@
+name: Quarantine zCloud Firefox churn automations
+
+on:
+  push:
+    branches:
+      - ops/firefox-generation-start-race-debug-20261007-w1
+    paths:
+      - .github/workflows/zcloud-quarantine-firefox-churn-now.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  quarantine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Disable only proven Firefox churn automations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.parse, urllib.request
+
+          repo=os.environ["REPO"]
+          token=os.environ["GH_TOKEN"]
+          base="https://api.github.com"
+          targets=[
+              "zcloud-self-hosted-queue-watchdog.yml",
+              "push-all-workers-now.yml",
+          ]
+          headers={
+              "Authorization":f"Bearer {token}",
+              "Accept":"application/vnd.github+json",
+              "X-GitHub-Api-Version":"2022-11-28",
+              "User-Agent":"zcloud-firefox-churn-quarantine/1",
+          }
+
+          def call(method,path):
+              req=urllib.request.Request(base+path,headers=headers,method=method)
+              try:
+                  with urllib.request.urlopen(req,timeout=20) as resp:
+                      raw=resp.read()
+                      return int(resp.status), (json.loads(raw) if raw else {})
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read().decode("utf-8","replace")
+                  return int(exc.code), {"error":raw[:800]}
+
+          evidence=[]
+          for workflow in targets:
+              quoted=urllib.parse.quote(workflow,safe="")
+              get_status,before=call("GET",f"/repos/{repo}/actions/workflows/{quoted}")
+              if get_status>=300:
+                  raise SystemExit(f"cannot inspect {workflow}: HTTP {get_status} {before}")
+              before_state=str(before.get("state") or "")
+              disable_status=204
+              if before_state!="disabled_manually":
+                  disable_status,_=call("PUT",f"/repos/{repo}/actions/workflows/{quoted}/disable")
+                  if disable_status!=204:
+                      raise SystemExit(f"cannot disable {workflow}: HTTP {disable_status}")
+              verify_status,after=call("GET",f"/repos/{repo}/actions/workflows/{quoted}")
+              if verify_status>=300 or str(after.get("state") or "")!="disabled_manually":
+                  raise SystemExit(f"disable did not persist for {workflow}: HTTP {verify_status} {after}")
+              evidence.append({
+                  "workflow":workflow,
+                  "id":after.get("id"),
+                  "before_state":before_state,
+                  "after_state":after.get("state"),
+                  "disable_status":disable_status,
+              })
+
+          print("QUARANTINE="+json.dumps(evidence,sort_keys=True))
+          print("ZCLOUD_FIREFOX_CHURN_AUTOMATIONS_QUARANTINED=1")
+          PY
