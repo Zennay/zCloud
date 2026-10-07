@@ -55,6 +55,7 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
     def test_coherent_clear_transaction_admits(self):
         result = audit.audit_snapshot(snapshot(self.now), now=self.now)
         self.assertTrue(result["ok"])
+        self.assertEqual("control-plane-preflight-evidence-coherence-v2", result["policy"])
         self.assertEqual("admit", result["status"])
         self.assertEqual([], result["blocked_kinds"])
         self.assertFalse(result["mutation_performed"])
