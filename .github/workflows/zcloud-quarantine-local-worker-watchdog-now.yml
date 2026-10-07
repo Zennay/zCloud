@@ -1,0 +1,85 @@
+name: Quarantine local zCloud worker-progress watchdog
+
+on:
+  push:
+    branches:
+      - ops/firefox-generation-start-race-debug-20261007-w1
+    paths:
+      - .github/workflows/zcloud-quarantine-local-worker-watchdog-now.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-quarantine-local-worker-watchdog-now
+  cancel-in-progress: false
+
+jobs:
+  quarantine:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Disable only mutating worker-progress subroutine
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          unit="zcloud-self-heal.service"
+          dropin="/etc/systemd/system/${unit}.d/90-worker-progress-quarantine.conf"
+          db="/home/ubuntu/zennay-cloud/history.db"
+
+          sudo -n systemctl cat "${unit}" >/dev/null
+
+          sudo -n install -d -m 0755 "/etc/systemd/system/${unit}.d"
+          printf '%s\n'             '[Service]'             'Environment="ZCLOUD_WORKER_WATCHDOG=/bin/true"'             | sudo -n tee "${dropin}" >/dev/null
+          sudo -n systemctl daemon-reload
+
+          echo "=== SELF-HEAL EFFECTIVE ENV ==="
+          sudo -n systemctl show "${unit}" -p Environment -p LoadState
+          sudo -n systemctl is-enabled zcloud-self-heal.timer || true
+          sudo -n systemctl is-active zcloud-self-heal.timer || true
+
+          echo "=== CLEAR STALE NEW_CHAT INTENTS ==="
+          python3 - <<'PY'
+          import json, sqlite3
+          from datetime import datetime, timezone
+
+          db="/home/ubuntu/zennay-cloud/history.db"
+          cutoff=datetime.now(timezone.utc).isoformat()
+          with sqlite3.connect(db,timeout=10) as conn:
+              conn.row_factory=sqlite3.Row
+              conn.execute("PRAGMA busy_timeout=10000")
+              rows=[dict(r) for r in conn.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at "
+                  "FROM runner_commands "
+                  "WHERE status='pending' AND action='new_chat' "
+                  "ORDER BY id"
+              ).fetchall()]
+              conn.execute("BEGIN IMMEDIATE")
+              changed=[]
+              for row in rows:
+                  created=str(row.get("created_at") or "")
+                  if created and created <= cutoff:
+                      result="firefox generation continuity quarantine superseded stale pending new_chat"
+                      cur=conn.execute(
+                          "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                          "WHERE id=? AND status='pending' AND action='new_chat'",
+                          (cutoff,result,int(row["id"])),
+                      )
+                      if cur.rowcount:
+                          changed.append({
+                              "id":int(row["id"]),
+                              "worker":row.get("project_id"),
+                              "created_at":row.get("created_at"),
+                          })
+              conn.commit()
+          print("STALE_NEW_CHAT_SUPERSEDED="+json.dumps(changed,sort_keys=True))
+          print("STALE_NEW_CHAT_SUPERSEDED_COUNT="+str(len(changed)))
+          PY
+
+          echo "=== VERIFY NO FIREFOX RESTART ==="
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+          runuser -u ubuntu -- env             XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}"             DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS}"             systemctl --user show chatgpt-firefox.service               -p MainPID -p ActiveEnterTimestamp -p ActiveState -p SubState -p NRestarts
+
+          echo "ZCLOUD_LOCAL_WORKER_WATCHDOG_QUARANTINED=1"
