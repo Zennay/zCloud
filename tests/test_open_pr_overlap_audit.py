@@ -19,6 +19,7 @@ def row(number, branch, files, *, draft=False, updated="2026-10-07T02:00:00Z"):
         "headRefName": branch,
         "isDraft": draft,
         "updatedAt": updated,
+        "changedFiles": len(files),
         "files": [{"path": path} for path in files],
         # These fields must never leak into the report if a caller supplies them.
         "title": f"sensitive title {number}",
@@ -84,6 +85,12 @@ class OpenPrOverlapAuditTests(unittest.TestCase):
         prs = audit.parse_snapshot([row(1, "a", ["server.py"])])
         with self.assertRaises(audit.AuditError):
             audit.overlap_report(prs, current_pr=99)
+
+    def test_truncated_file_evidence_is_rejected(self):
+        item = row(6, "a", ["a.py"])
+        item["changedFiles"] = 2
+        with self.assertRaises(audit.AuditError):
+            audit.parse_snapshot([item])
 
     def test_duplicate_pr_number_is_rejected(self):
         with self.assertRaises(audit.AuditError):
