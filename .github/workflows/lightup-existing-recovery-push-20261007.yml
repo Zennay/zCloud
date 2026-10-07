@@ -1,0 +1,156 @@
+name: Push existing LightUp runner recovery to Claude
+
+on:
+  push:
+    branches:
+      - "ops/lightup-runner-host-inventory-20261007"
+    paths:
+      - ".github/workflows/lightup-existing-recovery-push-20261007.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Guard permanent VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Push exact queued recovery only to a Claude zSSH slot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          base = "http://127.0.0.1:8765"
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          queue_id = "zssh-lightup-evidence-runner-recovery-20261006"
+
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          conn.row_factory = sqlite3.Row
+          conn.execute("PRAGMA query_only=ON")
+
+          queue_cols = {r["name"] for r in conn.execute("PRAGMA table_info(portfolio_queue)")}
+          required_queue = {"queue_id", "project_id", "status", "eligible"}
+          if not required_queue.issubset(queue_cols):
+              raise SystemExit("portfolio_queue schema missing required identity/state columns")
+          q = conn.execute(
+              "SELECT queue_id,project_id,status,eligible,worker_slot "
+              "FROM portfolio_queue WHERE queue_id=? LIMIT 1",
+              (queue_id,),
+          ).fetchone()
+          if q is None:
+              raise SystemExit("exact existing LightUp recovery queue item is missing")
+          if str(q["project_id"]) != "zssh":
+              raise SystemExit("exact recovery queue item changed project owner")
+          if str(q["status"]).lower() != "queued" or int(q["eligible"] or 0) != 1:
+              print("LIGHTUP_RECOVERY_PUSH_NOOP=" + json.dumps({
+                  "reason": "queue-item-not-eligible-queued",
+                  "queue_id": queue_id,
+                  "status": q["status"],
+                  "eligible": q["eligible"],
+                  "worker_slot": q["worker_slot"],
+              }, sort_keys=True))
+              raise SystemExit(0)
+
+          worker_cols = {r["name"] for r in conn.execute("PRAGMA table_info(runner_workers)")}
+          required_worker = {"project_id", "worker_slot", "provider"}
+          if not required_worker.issubset(worker_cols):
+              raise SystemExit("runner_workers schema lacks provider-bound slot identity")
+          select_cols = ["project_id", "worker_slot", "provider"]
+          if "desired_state" in worker_cols:
+              select_cols.append("desired_state")
+          workers = conn.execute(
+              "SELECT " + ",".join(select_cols)
+              + " FROM runner_workers WHERE project_id=? ORDER BY worker_slot",
+              ("zssh",),
+          ).fetchall()
+          candidates = []
+          for row in workers:
+              provider = str(row["provider"] or "").lower()
+              desired = str(row["desired_state"] or "").lower() if "desired_state" in select_cols else ""
+              if provider != "claude":
+                  continue
+              if desired in {"draining", "stopped", "paused"}:
+                  continue
+              candidates.append(int(row["worker_slot"]))
+          conn.close()
+
+          if not candidates:
+              print("LIGHTUP_RECOVERY_PUSH_NOOP=" + json.dumps({
+                  "reason": "no-runnable-claude-zssh-slot",
+                  "queue_id": queue_id,
+              }, sort_keys=True))
+              raise SystemExit(0)
+
+          slot = candidates[0]
+          worker_key = f"zssh::w{slot}"
+
+          def post(path, body):
+              req = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(body).encode(),
+                  method="POST",
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=10) as response:
+                  payload = json.load(response)
+              if not payload.get("ok"):
+                  raise RuntimeError(f"{path} rejected request: {payload}")
+              return payload
+
+          start = post("/api/runner-control", {"project_id": worker_key, "action": "start"})
+          push = post("/api/runner-control", {"project_id": worker_key, "action": "push"})
+          print("LIGHTUP_RECOVERY_CLAUDE_PUSH=" + json.dumps({
+              "queue_id": queue_id,
+              "worker": worker_key,
+              "provider": "claude",
+              "start_command_id": start.get("command_id"),
+              "push_command_id": push.get("command_id"),
+          }, sort_keys=True))
+
+          command_ids = {
+              int(value)
+              for value in (start.get("command_id"), push.get("command_id"))
+              if value is not None
+          }
+          deadline = time.monotonic() + 90
+          pending = set(command_ids)
+          while pending and time.monotonic() < deadline:
+              with urllib.request.urlopen(base + "/api/runner-commands?limit=200", timeout=10) as response:
+                  rows = json.load(response).get("commands") or []
+              pending = {
+                  int(row["id"])
+                  for row in rows
+                  if row.get("id") is not None and int(row["id"]) in command_ids
+              }
+              if pending:
+                  time.sleep(5)
+          if pending:
+              raise RuntimeError("Claude zSSH worker did not consume runner commands: " + ",".join(map(str, sorted(pending))))
+
+          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
+              live = json.load(response)
+          item = next(
+              (row for row in live.get("items", []) if row.get("queue_id") == queue_id),
+              None,
+          )
+          print("LIGHTUP_RECOVERY_QUEUE_AFTER_PUSH=" + json.dumps({
+              "queue_id": queue_id,
+              "status": None if item is None else item.get("status"),
+              "worker_slot": None if item is None else item.get("worker_slot"),
+              "provider_guard": "claude",
+              "commands_consumed": sorted(command_ids),
+          }, sort_keys=True))
+          PY
