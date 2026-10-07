@@ -1,28 +1,82 @@
 name: MixLab foundation proof and worker handoff
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/mixlab-foundation-proof.yml"
+      - "tests/test_mixlab_foundation_proof_workflow.py"
   push:
     branches: [main]
-    paths: [".github/workflows/mixlab-foundation-proof.yml"]
+    paths:
+      - ".github/workflows/mixlab-foundation-proof.yml"
+      - "tests/test_mixlab_foundation_proof_workflow.py"
   workflow_dispatch:
+
 permissions:
   contents: read
+
 concurrency:
-  group: mixlab-foundation-proof
+  group: mixlab-foundation-proof-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'live' }}
   cancel-in-progress: false
+
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact zCloud candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact zCloud candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+
+      - name: Validate MixLab workflow trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_mixlab_foundation_proof_workflow
+
   proof:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
       MIXLAB_SHA: df182461432e7f6e983f72614d850ce7daec0088
     steps:
+      - name: Checkout exact trusted zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent VPS runner and exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Checkout exact MixLab foundation
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Zennay/Mixlab
           ref: df182461432e7f6e983f72614d850ce7daec0088
           path: mixlab-foundation
           persist-credentials: false
+
       - name: Test and render synthetic proof on one CPU
         shell: bash
         run: |
@@ -34,6 +88,7 @@ jobs:
           python3 ops/prove.py "$evidence"
           echo "MIXLAB_EVIDENCE=$evidence" >> "$GITHUB_ENV"
           cat "$evidence/receipt.json" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Enqueue scoped zSSH integration work
         shell: bash
         run: |
@@ -72,6 +127,8 @@ jobs:
           from pathlib import Path
           Path(os.environ["MIXLAB_EVIDENCE"],"queue-receipt.json").write_text(json.dumps(receipt,indent=2)+"\n")
           PY
+          echo "ZCLOUD_MIXLAB_FOUNDATION_PROOF_GREEN=1"
+
       - name: Preserve sanitized evidence only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
