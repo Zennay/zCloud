@@ -38,6 +38,15 @@ class ProjectRegistryCoherenceWorkflowTests(unittest.TestCase):
         self.assertNotIn("actions/checkout@v5", self.text)
         self.assertNotIn("actions/checkout@v6", self.text)
 
+    def test_permanent_vps_proof_reads_live_scheduler_registration(self):
+        self.assertIn(
+            "http://127.0.0.1:8765/api/runner-targets",
+            self.text,
+        )
+        self.assertIn('worker = projects.get("zguard::w1")', self.text)
+        self.assertIn('worker.get("base_project_id") != "zguard"', self.text)
+        self.assertIn('worker.get("project_id") != "zguard::w1"', self.text)
+
     def test_superseded_proofs_are_concurrency_bounded(self):
         self.assertIn(
             "group: zcloud-project-registry-coherence-${{ github.event.pull_request.number || github.ref }}",
