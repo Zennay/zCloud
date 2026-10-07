@@ -21,9 +21,11 @@ class OptimisticUiAuditTests(unittest.TestCase):
         self.assertEqual([], result["unexpected_debt"])
         self.assertGreaterEqual(result["mutator_count"], 9)
         self.assertEqual(result["mutator_count"] - 1, result["guarded_count"])
+        self.assertEqual(1, result["inline_write_count"])
+        self.assertEqual(1, result["inline_guarded_count"])
         self.assertFalse(result["mutation_performed"])
 
-    def test_new_unguarded_write_is_a_regression(self):
+    def test_new_unguarded_named_write_is_a_regression(self):
         source = APP.read_text(encoding="utf-8") + """
 async function unsafeFutureWrite(value){
   await post('/api/future-write',{value});
@@ -33,7 +35,7 @@ async function unsafeFutureWrite(value){
         self.assertEqual("regressed", result["status"])
         self.assertEqual(["unsafeFutureWrite"], result["unexpected_debt"])
 
-    def test_new_guarded_write_is_allowed(self):
+    def test_new_guarded_named_write_is_allowed(self):
         source = APP.read_text(encoding="utf-8") + """
 async function guardedFutureWrite(button,value){
   button.disabled=true;
@@ -46,6 +48,16 @@ async function guardedFutureWrite(button,value){
         self.assertEqual([], result["unexpected_debt"])
         self.assertGreaterEqual(result["visible_pending_count"], 1)
 
+    def test_new_unguarded_inline_write_is_a_regression(self):
+        source = APP.read_text(encoding="utf-8") + """
+document.addEventListener('dblclick',async event=>{
+  await post('/api/future-inline-write',{});
+});
+"""
+        result = audit.audit(source)
+        self.assertEqual("regressed", result["status"])
+        self.assertIn("inline_write_without_guard", result["unexpected_debt"])
+
     def test_function_parser_does_not_absorb_following_event_listener(self):
         source = """
 async function guardedWrite(button){
@@ -54,14 +66,17 @@ async function guardedWrite(button){
 }
 function navigate(){return true}
 document.addEventListener('click',async e=>{
-  await post('/api/unrelated-inline-write',{});
+  e.target.disabled=true;
+  await post('/api/inline-write',{});
 });
 """
         blocks = dict(audit._function_blocks(source))
-        self.assertNotIn("unrelated-inline-write", blocks["navigate"])
+        self.assertNotIn("inline-write", blocks["navigate"])
         result = audit.audit(source)
         self.assertEqual("complete", result["status"])
         self.assertEqual(1, result["mutator_count"])
+        self.assertEqual(1, result["inline_write_count"])
+        self.assertEqual(1, result["inline_guarded_count"])
 
     def test_require_ratchet_accepts_current_bounded_baseline(self):
         proc = subprocess.run(
