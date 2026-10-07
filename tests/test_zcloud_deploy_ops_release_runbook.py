@@ -10,6 +10,9 @@ def test_deploy_ops_release_runbook_is_fail_closed():
     required_markers = [
         "PR #580 / PWQ-41",
         "PR #576",
+        "not an exhaustive allowlist",
+        "complete #920 blocker inventory is authoritative",
+        "any additional active serialized writer keeps the window blocked",
         "PR #920 has landed",
         "PR #866 has landed",
         "PR #924 has landed",
