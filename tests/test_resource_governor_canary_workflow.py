@@ -6,6 +6,17 @@ WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-resource-governor-canary.yml
 
 
 class ResourceGovernorCanaryWorkflowTests(unittest.TestCase):
+    def test_canary_tracks_current_main_and_guards_self_hosted_pull_requests(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("push:\n    branches: [main]", text)
+        self.assertIn("pull_request:\n    branches: [main]", text)
+        self.assertNotIn("worker/cloud-resource-governor-vps-canary-20261004", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+
     def test_canary_is_bounded_to_temporary_state_on_permanent_vps_runner(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
