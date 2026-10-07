@@ -1,6 +1,12 @@
 name: zCloud worker progress watchdog deploy
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-worker-watchdog-deploy.yml"
+      - "tests/test_worker_watchdog_deploy_workflow.py"
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
   push:
     branches: [main]
@@ -16,19 +22,53 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-worker-progress-watchdog-deploy
-  cancel-in-progress: true
+  group: zcloud-worker-progress-watchdog-deploy-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    runs-on: self-hosted
-    timeout-minutes: 8
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate deploy safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_worker_watchdog_deploy_workflow
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact deploy source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           clean: true
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Validate watchdog
         shell: bash
@@ -36,6 +76,30 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/zcloud_worker_watchdog.py
           python3 -m unittest tests.test_worker_progress_watchdog
+
+      - name: Snapshot current watchdog runtime
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup="$RUNNER_TEMP/zcloud-worker-watchdog-backup-$GITHUB_RUN_ID"
+          mkdir -p "$backup"
+          echo "path=$backup" >> "$GITHUB_OUTPUT"
+          for spec in             "watchdog:/usr/local/sbin/zcloud-worker-watchdog"             "self_heal:/usr/local/sbin/zcloud-self-heal"             "service:/etc/systemd/system/zcloud-self-heal.service"             "timer:/etc/systemd/system/zcloud-self-heal.timer"; do
+            key="${spec%%:*}"
+            src="${spec#*:}"
+            if sudo -n test -f "$src"; then
+              sudo -n cp -a "$src" "$backup/$key"
+              echo "had_$key=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "had_$key=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          enabled="$(sudo -n systemctl is-enabled zcloud-self-heal.timer 2>/dev/null || true)"
+          active="$(sudo -n systemctl is-active zcloud-self-heal.timer 2>/dev/null || true)"
+          echo "was_enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "was_active=$active" >> "$GITHUB_OUTPUT"
+          echo "WATCHDOG_DEPLOY_SNAPSHOT=$backup"
 
       - name: Install watchdog into the existing one-minute self-heal loop
         shell: bash
@@ -49,6 +113,7 @@ jobs:
           sudo -n systemctl enable --now zcloud-self-heal.timer
 
       - name: Verify live watchdog installation
+        id: verify
         shell: bash
         run: |
           set -euo pipefail
@@ -58,11 +123,51 @@ jobs:
           sudo -n systemctl start zcloud-self-heal.service
           sudo -n /usr/local/sbin/zcloud-worker-watchdog --dry-run --json | tee "$RUNNER_TEMP/zcloud-worker-watchdog-dry-run.json"
           sudo -n systemctl is-active --quiet zcloud-self-heal.timer
-          sudo -n systemctl --no-pager --full status zcloud-self-heal.timer
-          sudo -n journalctl -u zcloud-self-heal.service -n 80 --no-pager
+          sudo -n systemctl show zcloud-self-heal.timer             -p ActiveState -p SubState -p UnitFileState --no-pager
+
+      - name: Roll back watchdog runtime on failure
+        if: failure() && steps.snapshot.outcome == 'success'
+        shell: bash
+        env:
+          BACKUP: ${{ steps.snapshot.outputs.path }}
+          HAD_WATCHDOG: ${{ steps.snapshot.outputs.had_watchdog }}
+          HAD_SELF_HEAL: ${{ steps.snapshot.outputs.had_self_heal }}
+          HAD_SERVICE: ${{ steps.snapshot.outputs.had_service }}
+          HAD_TIMER: ${{ steps.snapshot.outputs.had_timer }}
+          WAS_ENABLED: ${{ steps.snapshot.outputs.was_enabled }}
+          WAS_ACTIVE: ${{ steps.snapshot.outputs.was_active }}
+        run: |
+          set -euo pipefail
+          restore_file() {
+            flag="$1"
+            backup_name="$2"
+            destination="$3"
+            mode="$4"
+            if [[ "$flag" == "true" ]]; then
+              sudo -n install -m "$mode" "$BACKUP/$backup_name" "$destination"
+            else
+              sudo -n rm -f "$destination"
+            fi
+          }
+          restore_file "$HAD_WATCHDOG" watchdog /usr/local/sbin/zcloud-worker-watchdog 0755
+          restore_file "$HAD_SELF_HEAL" self_heal /usr/local/sbin/zcloud-self-heal 0755
+          restore_file "$HAD_SERVICE" service /etc/systemd/system/zcloud-self-heal.service 0644
+          restore_file "$HAD_TIMER" timer /etc/systemd/system/zcloud-self-heal.timer 0644
+          sudo -n systemctl daemon-reload
+          if [[ "$WAS_ENABLED" == "enabled" ]]; then
+            sudo -n systemctl enable zcloud-self-heal.timer || true
+          else
+            sudo -n systemctl disable zcloud-self-heal.timer || true
+          fi
+          if [[ "$WAS_ACTIVE" == "active" ]]; then
+            sudo -n systemctl start zcloud-self-heal.timer || true
+          else
+            sudo -n systemctl stop zcloud-self-heal.timer || true
+          fi
+          echo "ZCLOUD_WORKER_WATCHDOG_DEPLOY_ROLLBACK_ATTEMPTED=1"
 
       - name: Upload watchdog evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zcloud-worker-watchdog-evidence-${{ github.run_id }}
           if-no-files-found: error
