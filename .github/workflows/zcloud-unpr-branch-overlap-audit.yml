@@ -57,7 +57,7 @@ jobs:
 
           gh pr list             --repo "$GITHUB_REPOSITORY"             --state open             --limit 501             --json headRefName,isCrossRepository > "$open_prs"
 
-          git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          git fetch --quiet --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
 
           python3 scripts/zcloud_unpr_branch_snapshot.py             --repo-root "$GITHUB_WORKSPACE"             --open-prs "$open_prs"             --output "$snapshot"
 
