@@ -101,7 +101,12 @@ def audit_source(text: str) -> dict[str, object]:
     )
 
     pending_feedback = any(
-        marker in handler
+        _ordered(
+            handler,
+            "el.disabled=true;",
+            marker,
+            "fetch('/api/resource-priority'",
+        )
         for marker in (
             "Saving priority",
             "Saving…",
@@ -110,7 +115,11 @@ def audit_source(text: str) -> dict[str, object]:
         )
     )
     success_feedback = any(
-        marker in handler
+        _ordered(
+            handler,
+            "el.dataset.previousValue=saved;",
+            marker,
+        )
         for marker in (
             "Priority updated.",
             "resource-priority-saved",
