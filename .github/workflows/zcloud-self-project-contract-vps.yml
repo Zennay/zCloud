@@ -1,0 +1,48 @@
+name: zCloud self-project contract VPS proof
+
+on:
+  pull_request:
+    paths:
+      - 'projects.json'
+      - 'project-contracts.json'
+      - 'resource-policy.json'
+      - 'project-layout.json'
+      - 'autonomy-policy.json'
+      - 'scripts/zcloud_self_project_contract.py'
+      - 'scripts/zcloud_vps_runner_guard.py'
+      - 'tests/test_self_project_contract.py'
+      - 'tests/test_self_project_contract_workflow.py'
+      - '.github/workflows/zcloud-self-project-contract-vps.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-self-project-contract-vps-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: github.event_name == 'workflow_dispatch' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact candidate and permanent runner
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Prove self-project orchestration contract
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_self_project_contract
+          python3 scripts/zcloud_self_project_contract.py
+          echo "ZCLOUD_SELF_PROJECT_VPS_GREEN=1"
