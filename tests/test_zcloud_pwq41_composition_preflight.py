@@ -98,7 +98,7 @@ class Pwq41CompositionPreflightTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', text)
-        self.assertIn("--expected-head "$EXPECTED_SHA"", text)
+        self.assertIn('--expected-head "$EXPECTED_SHA"', text)
         self.assertIn(
             "github.event.pull_request.head.repo.full_name == github.repository",
             text,
