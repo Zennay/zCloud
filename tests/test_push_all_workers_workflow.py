@@ -12,7 +12,7 @@ class PushAllWorkersWorkflowTests(unittest.TestCase):
         self.assertIn('if state.get("status") != "pending":', text)
         self.assertIn('live = call("GET", "/api/runner-live")', text)
         self.assertIn('not runtime["generating"] and not runtime["sending"]', text)
-        self.assertIn('fresh push stayed pending without active generation/sending', text)
+        self.assertIn('fresh push stayed idle after targeted recovery for:', text)
         self.assertIn('MATERIAL_PUSH_PROGRESS=', text)
         self.assertIn('ALL_PENDING_JUSTIFIED_BY_ACTIVE_GENERATION=1', text)
         self.assertIn('ALL_WORKERS_PUSHED_GREEN=1', text)
