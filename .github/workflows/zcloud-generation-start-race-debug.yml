@@ -32,6 +32,7 @@ jobs:
           echo "=== WORKER RACE ANALYSIS ==="
           python3 - <<'PY'
           import json, sqlite3, urllib.request
+          from collections import defaultdict
           from datetime import datetime, timezone
 
           BASE="http://127.0.0.1:8765"
@@ -62,17 +63,19 @@ jobs:
               "worker_count": len(workers or []),
               "workers": [
                   {
-                      "project_id": w.get("project_id"),
-                      "worker_slot": w.get("worker_slot"),
-                      "state": w.get("state"),
-                      "generating": w.get("generating"),
-                      "sending": w.get("sending"),
-                      "event": w.get("event"),
-                      "event_age_seconds": w.get("event_age_seconds"),
-                      "heartbeat_age_seconds": w.get("heartbeat_age_seconds"),
+                      "worker": w.get("worker"),
+                      "provider": w.get("provider"),
+                      "verdict": w.get("verdict"),
+                      "desired_state": w.get("desired_state"),
+                      "last_event": w.get("last_event"),
+                      "last_event_age_s": w.get("last_event_age_s"),
+                      "last_prompt_age_s": w.get("last_prompt_age_s"),
+                      "last_heartbeat_age_s": w.get("last_heartbeat_age_s"),
                   }
                   for w in (workers or [])
-              ]
+              ],
+              "event_counts": debug.get("event_counts") or debug.get("events"),
+              "failed_commands": debug.get("failed_commands"),
           }, sort_keys=True))
           print("STATUS_SUMMARY="+json.dumps({
               "dynamic_workers": status.get("dynamic_workers") if isinstance(status,dict) else None,
@@ -87,75 +90,113 @@ jobs:
               rows=[dict(r) for r in conn.execute(
                   "SELECT id,ts,event,project_id,worker_slot,reason,generating,sending,assistant_chars,progress_at "
                   "FROM runner_events "
-                  "WHERE unixepoch(ts) >= unixepoch('now','-45 minutes') "
-                  "AND event IN ('prompt-sent','generation-started','generation-progress','generation-finished',"
-                  "'generation-not-started','awaiting-vps-dispatch','heartbeat','send-blocked') "
+                  "WHERE unixepoch(ts) >= unixepoch('now','-60 minutes') "
                   "ORDER BY id ASC"
               ).fetchall()]
 
-          by_worker={}
+          interesting={
+              "runner-started","prompt-sent","generation-started","generation-progress",
+              "generation-finished","generation-not-started","awaiting-vps-dispatch",
+              "conversation-adopted","conversation-reset-requested","runner-draining",
+              "runner-drained","send-blocked","quality-retry-scheduled",
+              "assignment-refresh-failed","userscript-config-unavailable"
+          }
+          by_worker=defaultdict(list)
           for row in rows:
+              if row.get("event") not in interesting:
+                  continue
               key=(str(row.get("project_id") or ""), int(row.get("worker_slot") or 1))
-              by_worker.setdefault(key,[]).append(row)
+              by_worker[key].append(row)
 
-          analyses=[]
           suspicious=[]
+          chains=[]
+          now=datetime.now(timezone.utc)
           for key, events in sorted(by_worker.items()):
-              for idx, row in enumerate(events):
-                  if row.get("event")!="prompt-sent":
+              active_prompt=None
+              start_count=0
+              progress_count=0
+              start_ts=None
+              base_chars=0
+              max_chars=0
+              chain=[]
+              for row in events:
+                  ev=row.get("event")
+                  ts=parse_ts(row.get("ts"))
+                  if ev=="prompt-sent":
+                      if active_prompt is not None:
+                          suspicious.append({
+                              "project_id":key[0],"worker_slot":key[1],
+                              "prompt_ts":active_prompt.get("ts"),
+                              "reason":"new-prompt-before-finish",
+                              "events":[x["event"] for x in chain[-12:]],
+                          })
+                      active_prompt=row
+                      start_count=0
+                      progress_count=0
+                      start_ts=None
+                      base_chars=int(row.get("assistant_chars") or 0)
+                      max_chars=base_chars
+                      chain=[{"event":ev,"ts":row.get("ts"),"reason":row.get("reason"),"chars":row.get("assistant_chars")}]
                       continue
-                  sent_at=parse_ts(row.get("ts"))
-                  window=[]
-                  for nxt in events[idx+1:]:
-                      if nxt.get("event")=="prompt-sent":
-                          break
-                      ts=parse_ts(nxt.get("ts"))
-                      if sent_at and ts and (ts-sent_at).total_seconds()>180:
-                          break
-                      window.append(nxt)
-                  started=next((x for x in window if x.get("event")=="generation-started"),None)
-                  finished=next((x for x in window if x.get("event")=="generation-finished"),None)
-                  progress=[x for x in window if x.get("event")=="generation-progress"]
-                  not_started=next((x for x in window if x.get("event")=="generation-not-started"),None)
-                  dispatch=next((x for x in window if x.get("event")=="awaiting-vps-dispatch"),None)
-                  start_finish_s=None
-                  if started and finished:
-                      a,b=parse_ts(started.get("ts")),parse_ts(finished.get("ts"))
-                      if a and b:
-                          start_finish_s=(b-a).total_seconds()
-                  sent_start_s=None
-                  if started and sent_at:
-                      a=parse_ts(started.get("ts"))
-                      if a:
-                          sent_start_s=(a-sent_at).total_seconds()
-                  base_chars=int(row.get("assistant_chars") or 0)
-                  max_chars=max([base_chars]+[int(x.get("assistant_chars") or 0) for x in window])
-                  chars_delta=max_chars-base_chars
-                  reasons=[]
-                  if not_started:
-                      reasons.append("generation-not-started")
-                  if started and finished and start_finish_s is not None and start_finish_s <= 4 and not progress and chars_delta <= 0:
-                      reasons.append("start-finish-under-4s-without-progress")
-                  if dispatch and finished and not progress and chars_delta <= 0:
-                      f,d=parse_ts(finished.get("ts")),parse_ts(dispatch.get("ts"))
-                      if f and d and (d-f).total_seconds() <= 3:
-                          reasons.append("cycle-dispatched-without-response-progress")
-                  item={
-                      "project_id":key[0],
-                      "worker_slot":key[1],
-                      "prompt_ts":row.get("ts"),
-                      "sent_start_seconds":sent_start_s,
-                      "start_finish_seconds":start_finish_s,
-                      "progress_events":len(progress),
-                      "assistant_chars_delta":chars_delta,
-                      "next_events":[x.get("event") for x in window[:10]],
-                      "reasons":reasons,
-                  }
-                  analyses.append(item)
-                  if reasons:
-                      suspicious.append(item)
+                  if active_prompt is None:
+                      continue
+                  max_chars=max(max_chars,int(row.get("assistant_chars") or 0))
+                  chain.append({"event":ev,"ts":row.get("ts"),"reason":row.get("reason"),"chars":row.get("assistant_chars")})
+                  if ev=="generation-started":
+                      start_count+=1
+                      if start_ts is None:
+                          start_ts=ts
+                      if start_count>1:
+                          suspicious.append({
+                              "project_id":key[0],"worker_slot":key[1],
+                              "prompt_ts":active_prompt.get("ts"),
+                              "reason":"duplicate-generation-start-before-finish",
+                              "events":[x["event"] for x in chain[-12:]],
+                          })
+                  elif ev=="generation-progress":
+                      progress_count+=1
+                  elif ev=="runner-started" and start_count>0:
+                      suspicious.append({
+                          "project_id":key[0],"worker_slot":key[1],
+                          "prompt_ts":active_prompt.get("ts"),
+                          "reason":"userscript-restarted-during-generation",
+                          "events":[x["event"] for x in chain[-12:]],
+                      })
+                  elif ev in {"generation-finished","generation-not-started"}:
+                      chains.append({
+                          "project_id":key[0],"worker_slot":key[1],
+                          "prompt_ts":active_prompt.get("ts"),
+                          "terminal_event":ev,
+                          "start_count":start_count,
+                          "progress_count":progress_count,
+                          "assistant_chars_delta":max_chars-base_chars,
+                          "events":[x["event"] for x in chain[-16:]],
+                      })
+                      active_prompt=None
+                      chain=[]
+              if active_prompt is not None:
+                  sent=parse_ts(active_prompt.get("ts"))
+                  age=(now-sent).total_seconds() if sent else None
+                  chains.append({
+                      "project_id":key[0],"worker_slot":key[1],
+                      "prompt_ts":active_prompt.get("ts"),
+                      "terminal_event":None,
+                      "age_seconds":age,
+                      "start_count":start_count,
+                      "progress_count":progress_count,
+                      "assistant_chars_delta":max_chars-base_chars,
+                      "events":[x["event"] for x in chain[-16:]],
+                  })
+                  if age is not None and age>=30 and start_count>0 and progress_count==0 and max_chars-base_chars<=0:
+                      suspicious.append({
+                          "project_id":key[0],"worker_slot":key[1],
+                          "prompt_ts":active_prompt.get("ts"),
+                          "reason":"generation-started-but-no-response-progress-30s",
+                          "age_seconds":round(age,1),
+                          "events":[x["event"] for x in chain[-16:]],
+                      })
 
-          print("PROMPT_WINDOWS="+json.dumps(analyses[-40:],sort_keys=True))
-          print("SUSPICIOUS_WINDOWS="+json.dumps(suspicious[-40:],sort_keys=True))
-          print("FIREFOX_GENERATION_START_RACE="+("1" if suspicious else "0"))
+          print("ACTIVE_AND_TERMINAL_CHAINS="+json.dumps(chains[-50:],sort_keys=True))
+          print("SUSPICIOUS_WINDOWS="+json.dumps(suspicious[-50:],sort_keys=True))
+          print("FIREFOX_GENERATION_STATE_BUG="+("1" if suspicious else "0"))
           PY
