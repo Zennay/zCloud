@@ -42,6 +42,7 @@ TOP_KEYS = {
 EVIDENCE_KEYS = {
     "kind",
     "policy",
+    "capability_id",
     "observed_at",
     "main_sha",
     "verdict",
@@ -160,6 +161,12 @@ def audit_snapshot(
             raise EvidenceError("evidence_kind_duplicate")
         seen.add(kind)
 
+        row_capability_id = _token(
+            row["capability_id"], "evidence_capability_id_invalid"
+        )
+        if row_capability_id != capability_id:
+            raise EvidenceError("evidence_capability_mismatch")
+
         policy = row["policy"]
         if not isinstance(policy, str) or not POLICY_RE.fullmatch(policy):
             raise EvidenceError("evidence_policy_invalid")
@@ -186,7 +193,12 @@ def audit_snapshot(
             blocked.append(kind)
 
         bounded_rows.append(
-            {"kind": kind, "policy": policy, "verdict": verdict}
+            {
+                "kind": kind,
+                "policy": policy,
+                "capability_id": row_capability_id,
+                "verdict": verdict,
+            }
         )
 
     if seen != set(REQUIRED_VERDICTS):
