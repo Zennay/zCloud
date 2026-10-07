@@ -121,7 +121,9 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('type: "runner-new-chat"', background)
         self.assertIn('event: "conversation-reset-requested"', background)
         self.assertIn('target.conversation_id = "";', background)
-        self.assertIn('target.url = "https://chatgpt.com/";', background)
+        self.assertIn('target.url = workerNewChatUrl(target);', background)
+        self.assertIn('return provider === "claude" ? "https://claude.ai/new" : "https://chatgpt.com/";', recovery)
+        self.assertNotIn('target.url = "https://chatgpt.com/";', background)
 
     def test_webextension_is_only_primary_tab_bridge(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
