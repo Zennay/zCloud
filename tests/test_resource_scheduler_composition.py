@@ -129,6 +129,41 @@ class ResourceSchedulerCompositionTests(unittest.TestCase):
             payload["host"]["capacity_cpu_cores"],
         )
 
+    def test_unused_protected_reserve_is_not_consumed_by_non_protected_work(self):
+        payload = base_payload()
+        payload["host"]["protected_reserve_cpu_cores"] = 2
+        payload["host"]["idle_borrowable_cpu_cores"] = 3
+
+        result = compose_scheduler_plan(payload)
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["totals"]["planned_cpu_cores"], 5.0)
+        self.assertEqual(result["totals"]["borrowed_cpu_cores"], 0.0)
+        self.assertEqual(result["borrow_admissions"], [])
+        self.assertEqual(
+            result["guardrails"]["protected_reserve_slack_cpu_cores"],
+            1.0,
+        )
+        self.assertTrue(result["guardrails"]["protected_reserve_preserved"])
+
+    def test_protected_normal_demand_can_consume_its_reserved_headroom(self):
+        payload = base_payload()
+        payload["host"]["protected_reserve_cpu_cores"] = 2
+        payload["projects"][0]["target_cpu_cores"] = 2
+        payload["projects"][0]["maximum_cpu_cores"] = 2
+        payload["projects"][0]["requested_cpu_cores"] = 2
+
+        result = compose_scheduler_plan(payload)
+
+        rows = {row["project_id"]: row for row in result["base_allocations"]}
+        self.assertEqual(rows["cloud"]["cpu_cores"], 2.0)
+        self.assertEqual(result["totals"]["planned_cpu_cores"], 6.0)
+        self.assertEqual(
+            result["guardrails"]["protected_reserve_slack_cpu_cores"],
+            0.0,
+        )
+        self.assertTrue(result["guardrails"]["protected_reserve_preserved"])
+
     def test_backpressure_holds_borrowing_but_keeps_safe_base_plan(self):
         payload = base_payload()
         payload["host"]["backpressure_required"] = True
