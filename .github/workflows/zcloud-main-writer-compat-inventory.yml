@@ -55,7 +55,14 @@ jobs:
           text = Path(".github/workflows/zcloud-main-writer-compat-inventory.yml").read_text()
           assert "permissions:\n  contents: read" in text
           assert "persist-credentials: false" in text
-          forbidden = ("git push", "systemctl", "sudo ", "sqlite3", "/dispatches", "actions: write")
+          forbidden = (
+              "git " + "push",
+              "system" + "ctl",
+              "su" + "do ",
+              "sqlite" + "3",
+              "/dis" + "patches",
+              "actions" + ": write",
+          )
           for token in forbidden:
               assert token not in text, token
           PY
