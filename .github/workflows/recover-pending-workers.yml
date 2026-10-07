@@ -2,98 +2,196 @@
 name: Recover pending zCloud workers
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-pending-workers.yml"
+      - "tests/test_recover_pending_workers_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
-      - .github/workflows/recover-pending-workers.yml
+      - ".github/workflows/recover-pending-workers.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-recover-pending-workers-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
+
 jobs:
-  recover:
-    runs-on: self-hosted
-    timeout-minutes: 6
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate pending-worker recovery trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_recover_pending_workers_workflow
+
+  recover:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact recovery source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Inspect allocation and recover inactive workers
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json,time,urllib.request
-          BASE="http://127.0.0.1:8765"
+          import json
+          import time
+          import urllib.request
 
-          def call(method,path,payload=None,retries=8):
-              last=None
+          BASE = "http://127.0.0.1:8765"
+
+          def call(method, path, payload=None, retries=8):
+              last_type = "unknown"
               for attempt in range(retries):
                   try:
-                      body=None
-                      headers={"User-Agent":"zcloud-recover-pending-workers/1"}
+                      body = None
+                      headers = {"User-Agent": "zcloud-recover-pending-workers/2"}
                       if payload is not None:
-                          body=json.dumps(payload).encode()
-                          headers["Content-Type"]="application/json"
-                      req=urllib.request.Request(BASE+path,data=body,headers=headers,method=method)
-                      with urllib.request.urlopen(req,timeout=15) as r:
-                          return json.load(r)
+                          body = json.dumps(payload).encode()
+                          headers["Content-Type"] = "application/json"
+                      req = urllib.request.Request(
+                          BASE + path,
+                          data=body,
+                          headers=headers,
+                          method=method,
+                      )
+                      with urllib.request.urlopen(req, timeout=15) as response:
+                          return json.load(response)
                   except Exception as exc:
-                      last=exc
-                      time.sleep(min(2+attempt,8))
-              raise RuntimeError(f"{method} {path} unavailable: {last}")
+                      last_type = type(exc).__name__
+                      time.sleep(min(2 + attempt, 8))
+              raise RuntimeError(
+                  f"{method} {path} unavailable after {retries} attempts: {last_type}"
+              )
 
-          targets=call("GET","/api/runner-targets")
-          allocation=(targets.get("global_allocation") or {}).get("workers") or []
-          print("TARGETS_BEFORE",json.dumps({
-              "dynamic_workers":targets.get("dynamic_workers"),
-              "allocation":allocation,
-              "projects":targets.get("projects"),
-          },sort_keys=True))
+          def worker_key(item):
+              key = str(item.get("worker_key") or "").strip()
+              if key:
+                  return key
+              base = str(item.get("project_id") or "").strip()
+              return f"{base}::w{int(item.get('worker_slot') or 1)}"
+
+          def command_summary(payload):
+              payload = payload or {}
+              return {
+                  "ok": bool(payload.get("ok")),
+                  "command_id": int(payload.get("command_id") or 0),
+              }
+
+          targets = call("GET", "/api/runner-targets")
+          allocation = (targets.get("global_allocation") or {}).get("workers") or []
+          projects = targets.get("projects") or {}
+          selected = [worker_key(item) for item in allocation]
+          print("TARGETS_BEFORE=" + json.dumps({
+              "selected_workers": selected,
+              "active_workers": [
+                  key for key in selected if bool((projects.get(key) or {}).get("active"))
+              ],
+              "worker_limit": (targets.get("global_allocation") or {}).get("max_workers"),
+          }, sort_keys=True))
 
           if not allocation:
               raise SystemExit("no allocated workers")
 
-          recovered=[]
+          recovered = []
           for item in allocation:
-              key=str(item.get("worker_key") or "").strip()
-              if not key:
-                  base=str(item.get("project_id") or "").strip()
-                  key=f"{base}::w{int(item.get('worker_slot') or 1)}"
-              project=(targets.get("projects") or {}).get(key) or {}
+              key = worker_key(item)
+              project = (targets.get("projects") or {}).get(key) or {}
               if bool(project.get("active")):
                   continue
-              start=call("POST","/api/runner-control",{"project_id":key,"action":"start"})
+              start = call("POST", "/api/runner-control", {
+                  "project_id": key,
+                  "action": "start",
+              })
               time.sleep(2)
-              fresh=call("GET","/api/runner-targets")
-              project=(fresh.get("projects") or {}).get(key) or {}
+              fresh = call("GET", "/api/runner-targets")
+              project = (fresh.get("projects") or {}).get(key) or {}
               if not bool(project.get("active")):
-                  newchat=call("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
-                  recovered.append({"worker":key,"start":start,"new_chat":newchat})
+                  newchat = call("POST", "/api/runner-control", {
+                      "project_id": key,
+                      "action": "new_chat",
+                  })
+                  recovered.append({
+                      "worker": key,
+                      "start": command_summary(start),
+                      "new_chat": command_summary(newchat),
+                  })
               else:
-                  recovered.append({"worker":key,"start":start,"new_chat":None})
-          print("RECOVERY_COMMANDS",json.dumps(recovered,sort_keys=True))
+                  recovered.append({
+                      "worker": key,
+                      "start": command_summary(start),
+                      "new_chat": None,
+                  })
+          print("RECOVERY_COMMANDS=" + json.dumps(recovered, sort_keys=True))
 
-          final=None
+          final = None
           for _ in range(18):
               time.sleep(5)
-              final=call("GET","/api/runner-targets")
-              projects=final.get("projects") or {}
-              active=[]
-              for item in allocation:
-                  key=str(item.get("worker_key") or "").strip()
-                  if not key:
-                      base=str(item.get("project_id") or "").strip()
-                      key=f"{base}::w{int(item.get('worker_slot') or 1)}"
-                  if bool((projects.get(key) or {}).get("active")):
-                      active.append(key)
-              print("ACTIVE_CHECK",json.dumps({"active":active,"needed":len(allocation)},sort_keys=True))
-              if len(active)==len(allocation):
-                  print("WORKERS_ACTIVE",json.dumps({
-                      "workers":active,
-                      "allocation":final.get("global_allocation"),
-                      "dynamic_workers":final.get("dynamic_workers"),
-                  },sort_keys=True))
+              final = call("GET", "/api/runner-targets")
+              projects = final.get("projects") or {}
+              active = [
+                  worker_key(item)
+                  for item in allocation
+                  if bool((projects.get(worker_key(item)) or {}).get("active"))
+              ]
+              print("ACTIVE_CHECK=" + json.dumps({
+                  "active_workers": active,
+                  "needed": len(allocation),
+              }, sort_keys=True))
+              if len(active) == len(allocation):
+                  print("WORKERS_ACTIVE=" + json.dumps({
+                      "workers": active,
+                      "worker_limit": (final.get("global_allocation") or {}).get("max_workers"),
+                  }, sort_keys=True))
+                  print("ZCLOUD_PENDING_WORKER_RECOVERY_GREEN=1")
                   raise SystemExit(0)
 
-          print("TARGETS_FINAL",json.dumps(final,sort_keys=True))
+          final_projects = (final or {}).get("projects") or {}
+          active = [
+              worker_key(item)
+              for item in allocation
+              if bool((final_projects.get(worker_key(item)) or {}).get("active"))
+          ]
+          print("RECOVERY_FINAL_SUMMARY=" + json.dumps({
+              "selected_workers": selected,
+              "active_workers": active,
+              "missing_workers": [key for key in selected if key not in active],
+          }, sort_keys=True))
           raise SystemExit("not all allocated workers became active")
           PY
