@@ -1,0 +1,82 @@
+name: zCloud throughput baseline dry-run proof
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/zcloud_throughput_tracking_baseline.py"
+      - "tests/test_throughput_tracking_baseline.py"
+      - "tests/test_throughput_tracking_baseline_workflow.py"
+      - ".github/workflows/zcloud-throughput-baseline-proof.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_throughput_tracking_baseline.py"
+      - "tests/test_throughput_tracking_baseline.py"
+      - "tests/test_throughput_tracking_baseline_workflow.py"
+      - ".github/workflows/zcloud-throughput-baseline-proof.yml"
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-throughput-baseline-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-vps-dry-run:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Zennay')
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Prove permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        run: python3 -m unittest -v tests.test_throughput_tracking_baseline tests.test_throughput_tracking_baseline_workflow
+
+      - name: Prove live baseline plan is read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_DB=/home/ubuntu/zennay-cloud/history.db
+          LIVE_PROJECTS=/home/ubuntu/zennay-cloud/projects.json
+          test -f "$LIVE_DB"
+          test -f "$LIVE_PROJECTS"
+          before_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
+          python3 scripts/zcloud_throughput_tracking_baseline.py             --db "$LIVE_DB"             --projects "$LIVE_PROJECTS"             --started-at "now"             --production-sha "55aef90793cbc6236a37d90f623c48f569be96e3"             --source "github-actions:zcloud-vps-deploy:37448947435"             > /tmp/zcloud-throughput-baseline-plan.json
+          python3 - <<'PY'
+          import json
+          from datetime import datetime
+          from pathlib import Path
+
+          payload=json.loads(Path("/tmp/zcloud-throughput-baseline-plan.json").read_text())
+          assert payload["schema_version"] == 1
+          assert payload["dry_run"] is True
+          assert payload["project_count"] > 0
+          assert not payload["conflicts"], payload
+          receipt=payload["production_receipt"]
+          assert receipt["workflow_run_id"] == "37448947435"
+          assert receipt["commit_sha"] == "55aef90793cbc6236a37d90f623c48f569be96e3"
+          assert receipt["observed_at"] == "2026-10-06T10:29:27.005194+00:00"
+          assert datetime.fromisoformat(payload["started_at"]) >= datetime.fromisoformat(receipt["observed_at"])
+          print("ZCLOUD_THROUGHPUT_BASELINE_PLAN=" + json.dumps({
+              "table_exists": payload["table_exists"],
+              "project_count": payload["project_count"],
+              "planned": payload["planned"],
+              "unchanged": payload["unchanged"],
+              "started_at": payload["started_at"],
+              "production_sha": payload["production_sha"],
+              "production_receipt": receipt,
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          after_fingerprint="$(stat -c '%s|%y' "$LIVE_DB")"
+          test "$before_fingerprint" = "$after_fingerprint"
+          echo "ZCLOUD_THROUGHPUT_BASELINE_DRY_RUN_GREEN"
