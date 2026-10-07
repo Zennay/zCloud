@@ -1,6 +1,12 @@
 name: zCloud extension fallback push canary
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-extension-fallback-canary.yml"
+      - "tests/test_extension_fallback_canary_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
@@ -12,28 +18,60 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-browser-consumer-repair
+  group: zcloud-browser-consumer-repair-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
   cancel-in-progress: false
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate canary safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_extension_fallback_canary_workflow
+
   canary:
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     env:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact canary source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           clean: true
           fetch-depth: 64
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Validate extension fallback source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
           node --check firefox-extension/background.js
           grep -Fq 'function portfolioAssignmentReady(target)' firefox-extension/background.js
           grep -Fq 'prompt.startsWith("Werk verder aan ")' firefox-extension/background.js
@@ -54,6 +92,20 @@ jobs:
           if [[ -d /home/ubuntu/zennay-cloud/firefox-extension ]]; then
             cp -a /home/ubuntu/zennay-cloud/firefox-extension "$backup/firefox-extension"
           fi
+          service_unit="$HOME/.config/systemd/user/chatgpt-firefox.service"
+          prestart="$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          if [[ -f "$service_unit" ]]; then
+            cp -a "$service_unit" "$backup/chatgpt-firefox.service"
+            echo "had_service=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "had_service=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ -f "$prestart" ]]; then
+            cp -a "$prestart" "$backup/chatgpt-firefox-prestart.sh"
+            echo "had_prestart=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "had_prestart=false" >> "$GITHUB_OUTPUT"
+          fi
           dropin="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
           if [[ -f "$dropin" ]]; then
             mkdir -p "$backup/dropin"
@@ -63,7 +115,9 @@ jobs:
             echo "had_dropin=false" >> "$GITHUB_OUTPUT"
           fi
           enabled="$(systemctl --user is-enabled chatgpt-firefox.service 2>/dev/null || true)"
+          active="$(systemctl --user is-active chatgpt-firefox.service 2>/dev/null || true)"
           echo "was_enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "was_active=$active" >> "$GITHUB_OUTPUT"
           echo "BROWSER_RUNTIME_SNAPSHOT=$backup"
 
       - name: Install current extension source and switch consumer
@@ -138,14 +192,16 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import sqlite3,time,json
-          db="/home/ubuntu/zennay-cloud/history.db"
+          from pathlib import Path
+          db=Path("/home/ubuntu/zennay-cloud/history.db")
+          db_uri=f"{db.resolve().as_uri()}?mode=ro"
           deadline=time.time()+90
           last=[]
           while time.time()<deadline:
-              with sqlite3.connect(db,timeout=5) as con:
+              with sqlite3.connect(db_uri,uri=True,timeout=5) as con:
                   con.row_factory=sqlite3.Row
                   rows=con.execute(
-                      "SELECT ts,event,project_id,worker_slot,reason,error "
+                      "SELECT ts,event,project_id,worker_slot "
                       "FROM runner_events WHERE project_id='cloud' "
                       "ORDER BY id DESC LIMIT 20"
                   ).fetchall()
@@ -167,11 +223,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json,sqlite3,time,urllib.request
+          import hashlib,json,sqlite3,time,urllib.request
           from datetime import datetime,timezone
+          from pathlib import Path
 
           API="http://127.0.0.1:8765"
-          DB="/home/ubuntu/zennay-cloud/history.db"
+          DB=Path("/home/ubuntu/zennay-cloud/history.db")
+          DB_URI=f"{DB.resolve().as_uri()}?mode=ro"
 
           def get(path):
               with urllib.request.urlopen(API+path,timeout=8) as r:
@@ -194,7 +252,8 @@ jobs:
               "global_worker_count": cfg.get("global_worker_count"),
               "queue_id": str((cfg.get("queue_item") or {}).get("queue_id") or ""),
               "queue_worker_slot": (cfg.get("queue_item") or {}).get("worker_slot"),
-              "prompt": cfg.get("prompt"),
+              "prompt_sha256": hashlib.sha256(str(cfg.get("prompt") or "").encode("utf-8")).hexdigest(),
+              "prompt_length": len(str(cfg.get("prompt") or "")),
           }
           print("CANARY_ASSIGNMENT="+json.dumps(required,ensure_ascii=False,sort_keys=True))
           if cfg.get("active") is not True or cfg.get("assignment_ready") is not True:
@@ -210,19 +269,26 @@ jobs:
           deadline=time.time()+120
           last={}
           while time.time()<deadline:
-              with sqlite3.connect(DB,timeout=5) as con:
+              with sqlite3.connect(DB_URI,uri=True,timeout=5) as con:
                   con.row_factory=sqlite3.Row
                   cmd=con.execute(
                       "SELECT id,status,result,updated_at FROM runner_commands WHERE id=?",
                       (command_id,),
                   ).fetchone()
                   events=con.execute(
-                      "SELECT ts,event,reason,error FROM runner_events "
+                      "SELECT ts,event FROM runner_events "
                       "WHERE project_id='cloud' AND worker_slot=1 AND ts>=? "
                       "ORDER BY id DESC LIMIT 12",
                       (before,),
                   ).fetchall()
-              last={"command":dict(cmd) if cmd else None,"events":[dict(e) for e in events]}
+              safe_command = None
+              if cmd:
+                  safe_command = {
+                      "id": cmd["id"],
+                      "status": cmd["status"],
+                      "updated_at": cmd["updated_at"],
+                  }
+              last={"command":safe_command,"events":[dict(e) for e in events]}
               for e in events:
                   if e["event"]=="send-blocked":
                       raise SystemExit("CANARY_SEND_BLOCKED "+json.dumps(last,ensure_ascii=False,sort_keys=True))
@@ -256,12 +322,15 @@ jobs:
           echo "EXTENSION_FALLBACK_PERSISTENT_GREEN=1"
 
       - name: Roll back browser consumer on failure
-        if: failure()
+        if: failure() && steps.snapshot.outcome == 'success'
         shell: bash
         env:
           BACKUP: ${{ steps.snapshot.outputs.path }}
           HAD_DROPIN: ${{ steps.snapshot.outputs.had_dropin }}
+          HAD_SERVICE: ${{ steps.snapshot.outputs.had_service }}
+          HAD_PRESTART: ${{ steps.snapshot.outputs.had_prestart }}
           WAS_ENABLED: ${{ steps.snapshot.outputs.was_enabled }}
+          WAS_ACTIVE: ${{ steps.snapshot.outputs.was_active }}
         run: |
           set -euo pipefail
           systemctl --user stop chatgpt-firefox.service || true
@@ -269,12 +338,34 @@ jobs:
             rm -rf /home/ubuntu/zennay-cloud/firefox-extension
             cp -a "$BACKUP/firefox-extension" /home/ubuntu/zennay-cloud/firefox-extension
           fi
+          service_unit="$HOME/.config/systemd/user/chatgpt-firefox.service"
+          prestart="$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          if [[ "$HAD_SERVICE" == "true" ]]; then
+            install -D -m 0644 "$BACKUP/chatgpt-firefox.service" "$service_unit"
+          else
+            rm -f "$service_unit"
+          fi
+          if [[ "$HAD_PRESTART" == "true" ]]; then
+            install -D -m 0755 "$BACKUP/chatgpt-firefox-prestart.sh" "$prestart"
+          else
+            rm -f "$prestart"
+          fi
           dropin="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
           if [[ "$HAD_DROPIN" == "true" ]]; then
             install -D -m 0644 "$BACKUP/dropin/10-legacy-disabled.conf" "$dropin"
+          else
+            rm -f "$dropin"
           fi
           systemctl --user daemon-reload
-          if [[ "$WAS_ENABLED" != "enabled" ]]; then
+          if [[ "$WAS_ENABLED" == "enabled" ]]; then
+            systemctl --user enable chatgpt-firefox.service || true
+          else
             systemctl --user disable chatgpt-firefox.service || true
+          fi
+          if [[ "$WAS_ACTIVE" == "active" ]]; then
+            systemctl --user reset-failed chatgpt-firefox.service || true
+            systemctl --user start chatgpt-firefox.service || true
+          else
+            systemctl --user stop chatgpt-firefox.service || true
           fi
           echo "EXTENSION_FALLBACK_ROLLED_BACK=1"
