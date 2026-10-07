@@ -6,6 +6,7 @@ on:
     paths:
       - scripts/zcloud_resource_scheduler_composition.py
       - tests/test_resource_scheduler_composition.py
+      - tests/test_resource_scheduler_composition_cli.py
       - tests/test_resource_scheduler_composition_workflow.py
       - docs/resource-scheduler-composition.md
       - .github/workflows/zcloud-resource-scheduler-composition-proof.yml
@@ -53,9 +54,11 @@ jobs:
           python3 -m py_compile \
             scripts/zcloud_resource_scheduler_composition.py \
             tests/test_resource_scheduler_composition.py \
+            tests/test_resource_scheduler_composition_cli.py \
             tests/test_resource_scheduler_composition_workflow.py
           python3 -m unittest -v \
             tests.test_resource_scheduler_composition \
+            tests.test_resource_scheduler_composition_cli \
             tests.test_resource_scheduler_composition_workflow
 
       - name: Prove bounded ready plan
