@@ -8,7 +8,7 @@ The serialized integration window is owned by:
 - PR #580 / PWQ-41
 - PR #576
 
-Do not merge, deploy, recover, cancel Actions runs, mutate services, or write queue/SQLite state from a parallel deploy-ops lane while either owner remains active.
+Do not merge, deploy, recover, cancel Actions runs, mutate services, or write queue/SQLite state from a parallel deploy-ops lane while either owner remains active.\n\nThis owner list is a current checkpoint, not an exhaustive allowlist. The complete #920 blocker inventory is authoritative: any additional active serialized writer keeps the window blocked even when #580 and #576 are terminal.
 
 ## Release prerequisites
 
