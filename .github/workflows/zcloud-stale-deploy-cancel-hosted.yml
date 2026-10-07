@@ -16,10 +16,15 @@ permissions:
 
 jobs:
   cancel-stale:
-    if: >
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -33,6 +38,35 @@ jobs:
           current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
           test -n "$current_main"
           echo "ZCLOUD_STALE_DEPLOY_CURRENT_MAIN=$current_main"
+
+          trigger_sha=""
+          trigger_branch=""
+          trigger_conclusion=""
+          trigger_event=""
+          trigger_repository=""
+          if [[ "$GITHUB_EVENT_NAME" == "push" || "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_SHA" != "$current_main" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_REJECT_MAIN_EVENT event=$GITHUB_EVENT_NAME sha=$GITHUB_SHA current_main=$current_main"
+              exit 0
+            fi
+            echo "ZCLOUD_STALE_DEPLOY_ACCEPT_MAIN_EVENT event=$GITHUB_EVENT_NAME sha=$GITHUB_SHA"
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            trigger_sha="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
+            trigger_branch="$(jq -r '.workflow_run.head_branch // empty' "$GITHUB_EVENT_PATH")"
+            trigger_conclusion="$(jq -r '.workflow_run.conclusion // empty' "$GITHUB_EVENT_PATH")"
+            trigger_event="$(jq -r '.workflow_run.event // empty' "$GITHUB_EVENT_PATH")"
+            trigger_repository="$(jq -r '.workflow_run.head_repository.full_name // empty' "$GITHUB_EVENT_PATH")"
+            if [[ "$trigger_sha" != "$current_main" ||
+                  "$trigger_branch" != "main" ||
+                  "$trigger_conclusion" != "success" ||
+                  "$trigger_event" != "push" ||
+                  "$trigger_repository" != "$GITHUB_REPOSITORY" ]]; then
+              echo "ZCLOUD_STALE_DEPLOY_REJECT_TRIGGER sha=$trigger_sha branch=$trigger_branch conclusion=$trigger_conclusion event=$trigger_event repository=$trigger_repository current_main=$current_main"
+              exit 0
+            fi
+            echo "ZCLOUD_STALE_DEPLOY_ACCEPT_TRIGGER sha=$trigger_sha repository=$trigger_repository"
+          fi
 
           mapfile -t deploy_runs < <(
             gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=100" \
@@ -66,16 +100,8 @@ jobs:
           guardless_superseded_cleanup=false
           if [[ "${#current_guard_ids[@]}" -eq 0 ]]; then
             if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
-              trigger_sha="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
-              trigger_branch="$(jq -r '.workflow_run.head_branch // empty' "$GITHUB_EVENT_PATH")"
-              trigger_conclusion="$(jq -r '.workflow_run.conclusion // empty' "$GITHUB_EVENT_PATH")"
-              if [[ "$trigger_sha" == "$current_main" && "$trigger_branch" == "main" && "$trigger_conclusion" == "success" ]]; then
-                guardless_superseded_cleanup=true
-                echo "ZCLOUD_STALE_DEPLOY_GREEN_TRIGGER_GUARDLESS sha=$current_main"
-              else
-                echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
-                exit 0
-              fi
+              guardless_superseded_cleanup=true
+              echo "ZCLOUD_STALE_DEPLOY_GREEN_TRIGGER_GUARDLESS sha=$current_main"
             else
               echo "ZCLOUD_STALE_DEPLOY_NO_CURRENT_GUARD sha=$current_main"
               exit 0
