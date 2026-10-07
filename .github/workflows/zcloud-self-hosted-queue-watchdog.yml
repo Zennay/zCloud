@@ -14,13 +14,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
   observe:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      actions: write
+      contents: read
     concurrency:
       group: zcloud-self-hosted-queue-watchdog-observe
       cancel-in-progress: false
@@ -113,14 +122,45 @@ jobs:
   recover:
     needs: observe
     if: needs.observe.outputs.recover == 'true'
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    permissions:
+      contents: read
     concurrency:
       group: zcloud-self-hosted-queue-watchdog-recover
       cancel-in-progress: false
     env:
       QUEUE_EVIDENCE: ${{ needs.observe.outputs.evidence }}
+      EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     steps:
+      - name: Checkout exact watchdog revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+
+      - name: Verify permanent VPS runner before recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json > "$RUNNER_TEMP/zcloud-queue-watchdog-runner-guard.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(
+              Path(os.environ["RUNNER_TEMP"], "zcloud-queue-watchdog-runner-guard.json").read_text()
+          )
+          if payload.get("ok") is not True:
+              raise SystemExit("permanent VPS runner guard rejected recovery")
+          print("ZCLOUD_QUEUE_WATCHDOG_RUNNER_GUARD_GREEN=1")
+          PY
+
       - name: Recover idle zCloud listener and push work
         shell: bash
         run: |
@@ -149,7 +189,18 @@ jobs:
           state="$(systemctl is-active "$service" || true)"
           mapfile -t listeners < <(listener_pids)
           mapfile -t workers < <(worker_pids)
-          echo "QUEUE_EVIDENCE=$QUEUE_EVIDENCE"
+          python3 - <<'PY'
+          import json
+          import os
+
+          evidence = json.loads(os.environ["QUEUE_EVIDENCE"])
+          print(
+              "ZCLOUD_QUEUE_EVIDENCE "
+              f"queued_count={len(evidence.get('queued_self_hosted_jobs') or [])} "
+              f"stale_count={len(evidence.get('stale_self_hosted_jobs') or [])} "
+              f"cancelled_superseded_count={len(evidence.get('cancelled_superseded_runs') or [])}"
+          )
+          PY
           echo "ZCLOUD_RUNNER_PRE state=$state listeners=${#listeners[@]} workers=${#workers[@]} listener_pids=${listeners[*]:-none} worker_pids=${workers[*]:-none}"
 
           if [[ "${#workers[@]}" -eq 0 ]]; then
@@ -202,9 +253,13 @@ jobs:
           }
           desired["chatgpt_count"]=7
           reconciled=call("POST","/api/dynamic-workers",desired)
-          print("WORKER_CAPACITY_RECONCILED",json.dumps(reconciled,sort_keys=True))
           pushed=call("POST","/api/dynamic-workers/force-push",{})
-          print("WORKERS_FORCE_PUSHED",json.dumps(pushed,sort_keys=True))
+          print(
+              "WORKER_CAPACITY_RECONCILED "
+              f"ok={bool(reconciled.get('ok'))} "
+              f"chatgpt_count={desired.get('chatgpt_count')}"
+          )
+          print("WORKERS_FORCE_PUSHED ok=" + str(bool(pushed.get("ok"))))
           if not reconciled.get("ok"):
               raise SystemExit("dynamic worker reconcile returned ok=false")
           if not pushed.get("ok"):
