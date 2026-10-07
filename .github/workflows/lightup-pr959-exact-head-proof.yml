@@ -1,0 +1,123 @@
+name: LightUp PR959 exact-head VPS validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-pr959-exact-head-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-pr959-exact-head-proof
+  cancel-in-progress: false
+
+env:
+  LIGHTUP_EXPECTED_SHA: f26cd5ff4e3ca941af62ccf6e539a6d084297898
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    name: CSV export exact-head permanent VPS proof
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent runner and snapshot pinned head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch origin refs/pull/959/head
+          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse FETCH_HEAD^{commit})"
+          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
+          SNAPSHOT="$(mktemp -d "${RUNNER_TEMP}/lightup-pr959.XXXXXX")"
+          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
+          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python 3.11
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -p test_finding_export*.py -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+          echo "LIGHTUP_PR959_PASS sha=${LIGHTUP_ACTUAL_SHA} python=3.11 host=$(hostname)"
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Validate Python 3.14
+        shell: bash
+        env:
+          PYTHONPATH: src:tests
+        run: |
+          set -euo pipefail
+          cd "${LIGHTUP_SNAPSHOT}"
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -p test_finding_export*.py -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/integration -v
+          python scripts/check_safety_canaries.py
+          echo "LIGHTUP_PR959_PASS sha=${LIGHTUP_ACTUAL_SHA} python=3.14 host=$(hostname)"
+
+      - name: Write success receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          receipt = {
+              "project": "LightUp", "pull_request": 959,
+              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
+              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "host": os.uname().nodename,
+              "runner": os.environ["RUNNER_NAME"],
+              "python_versions": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "compile+focused-export+unit+integration+safety-canaries",
+              "status": "success",
+          }
+          root = Path(os.environ["RUNNER_TEMP"]) / ("lightup-pr959-receipt-" + os.environ["GITHUB_RUN_ID"])
+          root.mkdir()
+          (root / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(receipt, sort_keys=True))
+          PY
+
+      - name: Upload success receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-pr959-permanent-vps-proof
+          path: ${{ runner.temp }}/lightup-pr959-receipt-${{ github.run_id }}/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup isolated snapshot
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${LIGHTUP_SNAPSHOT:-}" && "${LIGHTUP_SNAPSHOT}" == "${RUNNER_TEMP}"/lightup-pr959.* ]]; then
+            rm -rf -- "${LIGHTUP_SNAPSHOT}"
+          fi
