@@ -119,6 +119,19 @@ class ZCloudSelfTelemetryReportTests(unittest.TestCase):
         self.assertEqual("github_commit_status_exact_head", ci["source"])
         self.assertEqual(1, ci["status_context_count"])
 
+    def test_commit_status_wins_over_historical_cancelled_actions(self):
+        github = FakeGitHub(
+            runs=[{"head_sha": SHA, "status": "completed", "conclusion": "cancelled"}],
+            status={
+                "state": "success",
+                "statuses": [{"context": "zcloud/vps-production", "state": "success"}],
+            },
+        )
+        ci = self.build(github)["github"]["ci"]
+        self.assertEqual("success", ci["status"])
+        self.assertEqual("github_commit_status_exact_head", ci["source"])
+        self.assertEqual(1, ci["run_count"])
+
     def test_malformed_scorecard_fails_closed(self):
         raw = json.loads(self.projects.read_text(encoding="utf-8"))
         raw[0]["milestones"][0]["progress"] = True
