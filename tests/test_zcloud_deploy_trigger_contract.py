@@ -46,5 +46,17 @@ class DeployTriggerContractTest(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", self.source)
 
 
+    def test_static_validation_workflow_is_read_only_and_hosted(self):
+        validator = (ROOT / ".github" / "workflows" /
+                     "zcloud-deploy-trigger-static-contract.yml").read_text(encoding="utf-8")
+        self.assertRegex(validator, r"(?m)^permissions:\\s*$")
+        self.assertRegex(validator, r"(?m)^\\s*contents:\\s*read\\s*$")
+        self.assertRegex(validator, r"(?m)^\\s*runs-on:\\s*ubuntu-latest\\s*$")
+        self.assertRegex(validator, r"(?m)^\\s*persist-credentials:\\s*false\\s*$")
+        self.assertIn("python3 -m unittest discover -s tests -p 'test_zcloud_deploy_trigger_contract.py' -v", validator)
+        self.assertNotIn("self-hosted", validator)
+        self.assertNotIn("sudo ", validator)
+        self.assertNotIn("deploy.yml", validator.split("jobs:", 1)[-1])
+
 if __name__ == "__main__":
     unittest.main()
