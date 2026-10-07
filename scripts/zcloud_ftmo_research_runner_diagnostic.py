@@ -8,7 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
-POLICY = "zcloud-ftmo-research-runner-diagnostic-v1"
+POLICY = "zcloud-ftmo-research-runner-diagnostic-v2"
 MAX_UNITS = 32
 UNIT_RE = re.compile(r"^actions\.runner\.[A-Za-z0-9_.@-]+\.service$")
 
@@ -78,17 +78,29 @@ def _count_cgroup_processes(control_group: str) -> tuple[int, int]:
     return listeners, workers
 
 
-def classify_unit(unit: str, show: dict[str, str], listeners: int, workers: int) -> dict[str, object]:
+def classify_unit(
+    unit: str,
+    show: dict[str, str],
+    listeners: int,
+    workers: int,
+) -> dict[str, object]:
     active = show.get("ActiveState", "unknown")
     sub = show.get("SubState", "unknown")
-    if active != "active":
+    if active != "active" and (listeners > 0 or workers > 0):
+        status = "orphaned_processes"
+        recovery_advice = "reconcile_orphans_before_service_start"
+    elif active != "active":
         status = "offline"
+        recovery_advice = "service_start_candidate"
     elif listeners != 1:
         status = "degraded"
+        recovery_advice = "inspect_listener_state"
     elif workers > 0:
         status = "busy"
+        recovery_advice = "leave_inflight_work_untouched"
     else:
         status = "idle"
+        recovery_advice = "runner_ready"
     return {
         "unit": unit,
         "active_state": active,
@@ -98,6 +110,7 @@ def classify_unit(unit: str, show: dict[str, str], listeners: int, workers: int)
         "listener_count": listeners,
         "worker_count": workers,
         "status": status,
+        "recovery_advice": recovery_advice,
     }
 
 
