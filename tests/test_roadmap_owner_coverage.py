@@ -165,6 +165,38 @@ class RoadmapOwnerCoverageTests(unittest.TestCase):
                 now=self.now(),
             )
 
+    def test_rejects_non_string_capability_state_cleanly(self):
+        capability = self.capability("bad-state")
+        capability["state"] = []
+        with self.assertRaisesRegex(SnapshotError, "capability_state_invalid"):
+            audit_snapshot(self.snapshot([capability]), now=self.now())
+
+    def test_rejects_non_string_owner_enums_cleanly(self):
+        for field, value, code in (
+            ("kind", [], "owner_kind_invalid"),
+            ("state", {}, "owner_state_invalid"),
+        ):
+            with self.subTest(field=field):
+                owner = self.owner("known")
+                owner[field] = value
+                with self.assertRaisesRegex(SnapshotError, code):
+                    audit_snapshot(
+                        self.snapshot([self.capability("known")], [owner]),
+                        now=self.now(),
+                    )
+
+    def test_rejects_boolean_schema_version_and_invalid_age_bound(self):
+        snap = self.snapshot([self.capability("known")])
+        snap["schema_version"] = True
+        with self.assertRaisesRegex(SnapshotError, "schema_version_unsupported"):
+            audit_snapshot(snap, now=self.now())
+        with self.assertRaisesRegex(SnapshotError, "max_age_invalid"):
+            audit_snapshot(
+                self.snapshot([self.capability("known")]),
+                now=self.now(),
+                max_age_seconds=True,
+            )
+
     def test_closed_owner_does_not_block_candidate(self):
         result = audit_snapshot(
             self.snapshot(
