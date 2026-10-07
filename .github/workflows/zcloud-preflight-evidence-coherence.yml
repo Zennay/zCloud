@@ -79,7 +79,7 @@ jobs:
               "unpr_branch_ownership": "clear",
           }
           payload = {
-              "schema_version": 1,
+              "schema_version": 2,
               "captured_at": os.environ["NOW"],
               "main_sha": os.environ["MAIN_SHA"],
               "candidate_base_sha": os.environ["MAIN_SHA"],
