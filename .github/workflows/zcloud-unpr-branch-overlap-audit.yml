@@ -1,0 +1,66 @@
+name: zCloud un-PR branch overlap audit
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_unpr_branch_overlap_audit.py"
+      - "scripts/zcloud_unpr_branch_snapshot.py"
+      - "tests/test_zcloud_unpr_branch_overlap_audit.py"
+      - "tests/test_zcloud_unpr_branch_snapshot.py"
+      - ".github/workflows/zcloud-unpr-branch-overlap-audit.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-unpr-branch-overlap-audit-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Prove exact permanent VPS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused overlap regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest             tests.test_zcloud_unpr_branch_overlap_audit             tests.test_zcloud_unpr_branch_snapshot             -v
+
+      - name: Snapshot current PR-less branch ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          open_prs="$RUNNER_TEMP/zcloud-open-pr-heads-${GITHUB_RUN_ID}.json"
+          snapshot="$RUNNER_TEMP/zcloud-unpr-branches-${GITHUB_RUN_ID}.json"
+          trap 'rm -f "$open_prs" "$snapshot"' EXIT
+
+          gh pr list             --repo "$GITHUB_REPOSITORY"             --state open             --limit 501             --json headRefName,isCrossRepository > "$open_prs"
+
+          git fetch --quiet --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+
+          python3 scripts/zcloud_unpr_branch_snapshot.py             --repo-root "$GITHUB_WORKSPACE"             --open-prs "$open_prs"             --output "$snapshot"
+
+          python3 scripts/zcloud_unpr_branch_overlap_audit.py             --snapshot "$snapshot"             --candidate-path ".github/workflows/zcloud-unpr-branch-overlap-audit.yml"             --candidate-path "scripts/zcloud_unpr_branch_overlap_audit.py"             --candidate-path "scripts/zcloud_unpr_branch_snapshot.py"             --candidate-path "tests/test_zcloud_unpr_branch_overlap_audit.py"             --candidate-path "tests/test_zcloud_unpr_branch_snapshot.py"             --require-clear
+
+          echo "ZCLOUD_UNPR_BRANCH_OVERLAP_LIVE_GREEN=1"
