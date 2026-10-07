@@ -62,6 +62,7 @@ jobs:
           set -Eeuo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_REF_NAME" = "main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-caddy-topology-runner-guard.json"
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
