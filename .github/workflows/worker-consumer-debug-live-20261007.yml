@@ -1,0 +1,77 @@
+name: Live worker consumer debug after recovery failure
+
+on:
+  push:
+    branches:
+      - "ops/zguard-targeted-recovery-live-20261007"
+    paths:
+      - ".github/workflows/worker-consumer-debug-live-20261007.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: self-hosted
+    timeout-minutes: 2
+    steps:
+      - name: Capture bounded live consumer evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, sqlite3, urllib.request
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          AFFECTED=("ftmo::w1","supa::w1","supa::w2","zguard::w1")
+          def get(path):
+              with urllib.request.urlopen(BASE+path,timeout=10) as r:
+                  return json.load(r)
+
+          debug=get("/api/worker-debug")
+          live=get("/api/runner-live")
+          targets=get("/api/runner-targets")
+          print("WORKER_DEBUG="+json.dumps(debug,sort_keys=True))
+          print("ALLOCATION="+json.dumps([
+              {
+                  "worker_key":r.get("worker_key"),
+                  "project_id":r.get("project_id"),
+                  "worker_slot":r.get("worker_slot"),
+                  "provider":r.get("provider"),
+                  "queue_id":r.get("queue_id"),
+              }
+              for r in ((targets.get("global_allocation") or {}).get("workers") or [])
+          ],sort_keys=True))
+          compact={}
+          for base, group in (live.get("chatgpt_runners") or {}).items():
+              for row in (group or {}).get("workers") or []:
+                  wid=str(row.get("worker_id") or "")
+                  if wid in AFFECTED:
+                      compact[wid]={
+                          "state":row.get("state"),
+                          "generating":bool(row.get("generating")),
+                          "sending":bool(row.get("sending")),
+                          "progress_age_seconds":row.get("progress_age_seconds"),
+                          "conversation_id":bool(row.get("conversation_id")),
+                          "tab_id":row.get("tab_id"),
+                          "last_error":row.get("last_error"),
+                      }
+          print("AFFECTED_LIVE="+json.dumps(compact,sort_keys=True))
+
+          with sqlite3.connect(DB,timeout=10) as c:
+              c.row_factory=sqlite3.Row
+              commands=[dict(r) for r in c.execute(
+                  "SELECT id,project_id,action,status,created_at,updated_at "
+                  "FROM runner_commands WHERE project_id IN (?,?,?,?) "
+                  "ORDER BY id DESC LIMIT 48", AFFECTED
+              ).fetchall()]
+              events=[dict(r) for r in c.execute(
+                  "SELECT id,ts,event,project_id,worker_slot,target,reason,error,generating,sending "
+                  "FROM runner_events WHERE project_id IN ('ftmo','supa','zguard') "
+                  "ORDER BY id DESC LIMIT 120"
+              ).fetchall()]
+          print("AFFECTED_COMMANDS="+json.dumps(commands,sort_keys=True,default=str))
+          print("AFFECTED_EVENTS="+json.dumps(events,sort_keys=True,default=str))
+          PY
