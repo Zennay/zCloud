@@ -21,7 +21,9 @@ HEAD2 = "3" * 40
 
 
 def plan(numbers=None):
-    numbers = list(numbers or [10, 11])
+    if numbers is None:
+        numbers = [10, 11]
+    numbers = list(numbers)
     return {
         "schema": "zcloud-serialized-gate-metadata-remediation-plan-v1",
         "repository": "Zennay/zCloud",
