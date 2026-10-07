@@ -1,0 +1,79 @@
+name: zCloud correlation coverage read-only proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_correlation_coverage.py
+      - tests/test_correlation_coverage.py
+      - tests/test_correlation_coverage_workflow.py
+      - .github/workflows/zcloud-correlation-coverage-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-correlation-coverage-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact requested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "ZCLOUD_CORRELATION_EXACT_CHECKOUT_GREEN=$actual"
+
+      - name: Run focused correlation regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_correlation_coverage tests.test_correlation_coverage_workflow
+
+      - name: Audit live correlation coverage without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from scripts.zcloud_correlation_coverage import audit_correlation_coverage
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          before = (db.stat().st_size, db.stat().st_mtime_ns)
+          report = audit_correlation_coverage(db)
+          after = (db.stat().st_size, db.stat().st_mtime_ns)
+          if before != after:
+              raise SystemExit("live history.db changed during read-only correlation audit")
+          if not report.get("database_fingerprint_unchanged"):
+              raise SystemExit("audit did not prove database fingerprint immutability")
+
+          print(
+              "ZCLOUD_CORRELATION_COVERAGE="
+              + json.dumps(report, sort_keys=True, separators=(",", ":"))
+          )
+          print("ZCLOUD_CORRELATION_COVERAGE_READONLY_GREEN=1")
+          PY
