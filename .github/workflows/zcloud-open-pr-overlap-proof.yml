@@ -64,7 +64,7 @@ jobs:
           gh pr list \
             --repo "$GITHUB_REPOSITORY" \
             --state open \
-            --limit 500 \
+            --limit 501 \
             --json number,headRefName,isDraft,updatedAt,changedFiles,files > "$snapshot"
           python3 scripts/zcloud_open_pr_overlap_audit.py \
             --input "$snapshot" \
@@ -82,7 +82,7 @@ jobs:
           gh pr list \
             --repo "$GITHUB_REPOSITORY" \
             --state open \
-            --limit 500 \
+            --limit 501 \
             --json number,headRefName,isDraft,updatedAt,changedFiles,files > "$snapshot"
           python3 scripts/zcloud_open_pr_overlap_audit.py --input "$snapshot"
           rm -f "$snapshot"
