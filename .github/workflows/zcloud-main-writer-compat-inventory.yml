@@ -1,0 +1,68 @@
+name: zCloud main writer compatibility inventory
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_main_writer_compat_inventory.py"
+      - "tests/test_zcloud_main_writer_compat_inventory.py"
+      - ".github/workflows/zcloud-main-writer-compat-inventory.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-main-writer-compat-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused compatibility regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_main_writer_compat_inventory
+          python3 -m py_compile scripts/zcloud_main_writer_compat_inventory.py
+
+      - name: Emit bounded read-only inventory
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_main_writer_compat_inventory.py --json
+
+      - name: Prove workflow remains read only
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path(".github/workflows/zcloud-main-writer-compat-inventory.yml").read_text()
+          assert "permissions:\n  contents: read" in text
+          assert "persist-credentials: false" in text
+          forbidden = (
+              "git " + "push",
+              "system" + "ctl",
+              "su" + "do ",
+              "sqlite" + "3",
+              "/dis" + "patches",
+              "actions" + ": write",
+          )
+          for token in forbidden:
+              assert token not in text, token
+          PY
