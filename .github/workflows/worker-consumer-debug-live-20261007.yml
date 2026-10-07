@@ -34,7 +34,7 @@ jobs:
           live=get("/api/runner-live")
           targets=get("/api/runner-targets")
           print("WORKER_DEBUG="+json.dumps(debug,sort_keys=True))
-          print("ALLOCATION="+json.dumps([
+          print("TARGETS="+json.dumps({k:{\n              "active":v.get("active"),"assignment_ready":v.get("assignment_ready"),\n              "global_worker_slot":v.get("global_worker_slot"),"desired_state":v.get("desired_state"),\n              "queue_item":{kk:(v.get("queue_item") or {}).get(kk) for kk in ("queue_id","project_id","status","worker_slot","claimed_by","claim_expires_at")},\n              "prompt_prefix":str(v.get("prompt") or "")[:120]\n          } for k,v in (targets.get("projects") or {}).items() if k in AFFECTED or k=="raiseai::w1"},sort_keys=True))\n          print("ALLOCATION="+json.dumps([
               {
                   "worker_key":r.get("worker_key"),
                   "project_id":r.get("project_id"),
