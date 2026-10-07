@@ -23,6 +23,22 @@ const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
 
+function workerProvider(target) {
+  return Recovery.providerForTarget ? Recovery.providerForTarget(target) : "chatgpt";
+}
+
+function workerNewChatUrl(target) {
+  return Recovery.newChatUrl ? Recovery.newChatUrl(target) :
+    (workerProvider(target) === "claude" ? "https://claude.ai/new" : "https://chatgpt.com/");
+}
+
+function workerConversationUrl(target, conversationId) {
+  return Recovery.conversationUrl ? Recovery.conversationUrl(target, conversationId) :
+    (workerProvider(target) === "claude"
+      ? "https://claude.ai/chat/" + encodeURIComponent(String(conversationId || ""))
+      : "https://chatgpt.com/c/" + encodeURIComponent(String(conversationId || "")));
+}
+
 function portfolioAssignmentReady(target) {
   if (!target || target.assignment_ready !== true) return false;
   const baseProject = String(target.base_project_id || target.project_id || "").split("::w", 1)[0];
@@ -362,7 +378,7 @@ async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
     at: new Date().toISOString()
   });
   try {
-    const opened = await browser.tabs.create({url: target.url || "https://chatgpt.com/", active: true});
+    const opened = await browser.tabs.create({url: target.url || workerNewChatUrl(target), active: true});
     tabTargets[opened.id] = target;
     projectTabs[target.project_id] = opened.id;
     await setRecoveryTag(opened.id, target.project_id);
@@ -449,7 +465,7 @@ async function adoptConversation(tabId, target, url) {
   const conversationId = Recovery.conversationFromUrl(url);
   if (!conversationId || !target || projectTabs[target.project_id] !== tabId) return false;
   target.conversation_id = conversationId;
-  target.url = "https://chatgpt.com/c/" + conversationId;
+  target.url = workerConversationUrl(target, conversationId);
   targets[target.project_id] = target;
   delete pendingAdoptions[tabId];
   await setRecoveryTag(tabId, target.project_id);
@@ -1461,7 +1477,11 @@ async function refreshTargets() {
       targets[id] = {...target, projectId: target.project_id || id, projectName: target.name || id};
     }
     postStatus({event: "targets-loaded", at: new Date().toISOString(), reason: Object.keys(targets).join(",")});
-    const tabs = await browser.tabs.query({url: "https://chatgpt.com/*"});
+    const tabs = await browser.tabs.query({url: [
+      "https://chatgpt.com/*",
+      "https://claude.ai/*",
+      "https://claude.com/*"
+    ]});
     const restoredAssignments = await sessionAssignments(tabs);
     const recoveryTabs = await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming);
     const claimedTabIds = new Set(
@@ -1723,7 +1743,7 @@ async function inject(tabId, target) {
           workerSlot: target.worker_slot,
           globalWorkerSlot: target.global_worker_slot,
           projectName: target.name,
-          target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+          target: target.url || workerConversationUrl(target, target.conversation_id),
           targetConversation: target.conversation_id,
           event: "violentmonkey-version-mismatch",
           reason: ("required=" + VIOLENTMONKEY_REQUIRED_VERSION + ";found=" + vmVersions.join(",")).slice(0, 240),
@@ -1751,7 +1771,7 @@ async function inject(tabId, target) {
           workerSlot: target.worker_slot,
           globalWorkerSlot: target.global_worker_slot,
           projectName: target.name,
-          target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+          target: target.url || workerConversationUrl(target, target.conversation_id),
           targetConversation: target.conversation_id,
           event: "violentmonkey-binding-ready",
           reason: "webextension-tab-bridge-only",
@@ -1761,13 +1781,29 @@ async function inject(tabId, target) {
         return {mode: "violentmonkey"};
       }
       violentmonkeyReadyProjects.delete(effectiveTarget.project_id);
+      if (workerProvider(effectiveTarget) === "claude") {
+        postStatus({
+          projectId: target.project_id,
+          baseProjectId: target.base_project_id,
+          workerSlot: target.worker_slot,
+          globalWorkerSlot: target.global_worker_slot,
+          projectName: target.name,
+          target: target.url || workerNewChatUrl(target),
+          targetConversation: target.conversation_id,
+          event: "provider-fallback-blocked",
+          reason: "claude-requires-violentmonkey-primary-runner",
+          at: new Date().toISOString(),
+          tabId
+        });
+        throw new Error("Claude worker requires the Violentmonkey primary runner");
+      }
       postStatus({
         projectId: target.project_id,
         baseProjectId: target.base_project_id,
         workerSlot: target.worker_slot,
         globalWorkerSlot: target.global_worker_slot,
         projectName: target.name,
-        target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+        target: target.url || workerConversationUrl(target, target.conversation_id),
         targetConversation: target.conversation_id,
         event: "violentmonkey-missing-fallback",
         reason: "legacy-extension-runner-temporarily-retained",
@@ -1778,11 +1814,11 @@ async function inject(tabId, target) {
 
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
     if (effectiveTarget.force_initial_dispatch) pendingInitialDispatches.delete(effectiveTarget.project_id);
-    postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+    postStatus({projectId: target.project_id, projectName: target.name, target: target.url || workerConversationUrl(target, target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-success", at: new Date().toISOString(), tabId: tabId});
     return {mode: "legacy"};
   } catch (error) {
-    postStatus({projectId: target.project_id, projectName: target.name, target: target.url || ("https://chatgpt.com/c/" + target.conversation_id),
+    postStatus({projectId: target.project_id, projectName: target.name, target: target.url || workerConversationUrl(target, target.conversation_id),
       targetConversation: target.conversation_id, event: "injection-failed", error: String(error?.message || error),
       at: new Date().toISOString(), tabId: tabId});
   }
@@ -1851,12 +1887,12 @@ async function newProjectChat(projectId, reason, commandId) {
       at: new Date().toISOString()
     });
     target.conversation_id = "";
-    target.url = "https://chatgpt.com/";
+    target.url = workerNewChatUrl(target);
 
     pendingInitialDispatches.add(projectId);
     target.active = true;
     target.replacement_handoff = handoff;
-    const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: true});
+    const tab = await browser.tabs.create({url: target.url, active: true});
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
     await setRecoveryTag(tab.id, projectId);
@@ -2236,7 +2272,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!tab.url || !tab.url.includes("chatgpt.com")) return;
+  if (!tab.url || !Recovery.providerFromUrl(tab.url)) return;
   const assigned = tabTargets[tabId];
   if (assigned) {
     if (pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {
@@ -2247,7 +2283,7 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       recoverConversationLoadFailure(tabId, assigned).catch(() => {});
     }
   } else if (changeInfo.status === "complete") {
-    const target = Object.values(targets).find(t => tab.url.includes("/c/" + t.conversation_id));
+    const target = Object.values(targets).find(t => Recovery.matchesConversation(tab, t));
     if (target) inject(tabId, target);
   }
 });

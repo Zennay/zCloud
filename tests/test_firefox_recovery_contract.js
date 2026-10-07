@@ -122,7 +122,7 @@ assert.ok(
 const drainIndex = replacementBlock.indexOf("await drainRunnerBeforeReplacement(oldTab, target, reason)");
 const verifyIndex = replacementBlock.indexOf("await verifyReplacementHandoffStillCurrent(target, handoff)");
 const closeIndex = replacementBlock.indexOf("await closeRunnerTab(oldTab)");
-const openIndex = replacementBlock.indexOf("browser.tabs.create({url: \"https://chatgpt.com/\"");
+const openIndex = replacementBlock.indexOf("browser.tabs.create({url: target.url, active: true})");
 assert.ok(drainIndex >= 0 && verifyIndex > drainIndex, "replacement must drain before revalidating ownership");
 assert.ok(closeIndex > verifyIndex, "old tab may close only after drain + handoff revalidation");
 const pendingDispatchIndex = replacementBlock.indexOf("pendingInitialDispatches.add(projectId)");
@@ -309,7 +309,7 @@ assert.ok(freshChatStart >= 0 && freshChatEnd > freshChatStart, "fresh-chat repl
 const freshChatBlock = background.slice(freshChatStart, freshChatEnd);
 const resetBindingIndex = freshChatBlock.indexOf('event: "conversation-reset-requested"');
 const clearBindingIndex = freshChatBlock.indexOf('target.conversation_id = ""');
-const openFreshChatIndex = freshChatBlock.indexOf('browser.tabs.create({url: "https://chatgpt.com/"');
+const openFreshChatIndex = freshChatBlock.indexOf('browser.tabs.create({url: target.url, active: true})');
 assert.ok(resetBindingIndex >= 0, "fresh chat must reset the durable conversation binding");
 assert.ok(clearBindingIndex > resetBindingIndex, "local stale conversation id must clear after backend reset request");
 assert.ok(openFreshChatIndex > clearBindingIndex, "fresh tab must open after stale binding is cleared");
