@@ -1,0 +1,203 @@
+name: LightUp ST5 bundle/authoring cross-item expected-RED VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-st5-bundle-authoring-cross-item-red-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-st5-bundle-authoring-cross-item-red-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  BUNDLE_BRANCH: chatgpt/st5-remediation-evidence-bundle-cross-item-lineage-red-20261007
+  BUNDLE_EXPECTED_SHA: 8ec358f45db969997e77c285d2f913872a54512d
+  AUTHORING_BRANCH: chatgpt/st5-remediation-authoring-request-cross-item-lineage-red-20261007
+  AUTHORING_EXPECTED_SHA: 5f7190483b0c6a7e766e57da6c503171e1491303
+
+jobs:
+  prove-red:
+    name: Exact #429/#431 expected-RED contracts on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp acceptance heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${BUNDLE_BRANCH}:refs/remotes/origin/lightup-bundle-cross-item-red"             "+refs/heads/${AUTHORING_BRANCH}:refs/remotes/origin/lightup-authoring-cross-item-red"
+
+          BUNDLE_ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-bundle-cross-item-red^{commit})"
+          AUTHORING_ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-authoring-cross-item-red^{commit})"
+          test "${BUNDLE_ACTUAL_SHA}" = "${BUNDLE_EXPECTED_SHA}"
+          test "${AUTHORING_ACTUAL_SHA}" = "${AUTHORING_EXPECTED_SHA}"
+
+          BUNDLE_SNAPSHOT="${RUNNER_TEMP}/lightup-bundle-cross-item-${GITHUB_RUN_ID}"
+          AUTHORING_SNAPSHOT="${RUNNER_TEMP}/lightup-authoring-cross-item-${GITHUB_RUN_ID}"
+          rm -rf "${BUNDLE_SNAPSHOT}" "${AUTHORING_SNAPSHOT}"
+          mkdir -p "${BUNDLE_SNAPSHOT}" "${AUTHORING_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${BUNDLE_ACTUAL_SHA}" | tar -x -C "${BUNDLE_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${AUTHORING_ACTUAL_SHA}" | tar -x -C "${AUTHORING_SNAPSHOT}"
+
+          echo "BUNDLE_SNAPSHOT=${BUNDLE_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "AUTHORING_SNAPSHOT=${AUTHORING_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "BUNDLE_ACTUAL_SHA=${BUNDLE_ACTUAL_SHA}" >> "${GITHUB_ENV}"
+          echo "AUTHORING_ACTUAL_SHA=${AUTHORING_ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python 3.11 bundle parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${BUNDLE_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_remediation_evidence_bundle_handoff
+          LOG="${RUNNER_TEMP}/lightup-bundle-cross-item-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_evidence_bundle_cross_item_lineage             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.11 authoring parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${AUTHORING_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_remediation_authoring_request_handoff
+          LOG="${RUNNER_TEMP}/lightup-authoring-cross-item-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_authoring_request_cross_item_lineage             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Python 3.14 bundle parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${BUNDLE_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_remediation_evidence_bundle_handoff
+          LOG="${RUNNER_TEMP}/lightup-bundle-cross-item-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_evidence_bundle_cross_item_lineage             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.14 authoring parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${AUTHORING_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v test_future_remediation_authoring_request_handoff
+          LOG="${RUNNER_TEMP}/lightup-authoring-cross-item-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_authoring_request_cross_item_lineage             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Write exact-head expected-RED receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-bundle-authoring-cross-item-red-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "issues": [429, 431],
+              "pull_requests": [430, 433],
+              "bundle": {
+                  "branch": os.environ["BUNDLE_BRANCH"],
+                  "target_sha": os.environ["BUNDLE_ACTUAL_SHA"],
+                  "expected_sha": os.environ["BUNDLE_EXPECTED_SHA"],
+                  "parent_handoff": "green",
+                  "expected_failures_per_python": 3,
+              },
+              "authoring_request": {
+                  "branch": os.environ["AUTHORING_BRANCH"],
+                  "target_sha": os.environ["AUTHORING_ACTUAL_SHA"],
+                  "expected_sha": os.environ["AUTHORING_EXPECTED_SHA"],
+                  "parent_handoff": "green",
+                  "expected_failures_per_python": 3,
+              },
+              "host": os.uname().nodename,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "python": ["3.11", "3.14"],
+              "acceptance_contract": "cross_item_lineage_expected_red",
+              "production_source_changes": 0,
+              "safety_canaries": "green",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-bundle-authoring-cross-item-red-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head expected-RED receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-st5-bundle-authoring-cross-item-red-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-bundle-authoring-cross-item-red-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: rm -rf "${BUNDLE_SNAPSHOT:-}" "${AUTHORING_SNAPSHOT:-}"
