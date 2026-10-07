@@ -98,6 +98,7 @@ jobs:
           PYTHONPATH=src:tests python -m unittest -v \
             test_future_remediation_authoring_request_positive_versions_acceptance \
             test_future_remediation_authoring_request_path_semantics_acceptance \
+            test_future_remediation_authoring_request_resolution_effect_lineage_acceptance \
             >"${LOG}" 2>&1
           RC=$?
           set -e
