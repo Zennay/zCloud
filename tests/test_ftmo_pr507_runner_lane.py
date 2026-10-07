@@ -3,6 +3,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/ftmo-runner-self-health-proof-20261002.yml"
+PROOF_WORKFLOW = ROOT / ".github/workflows/ftmo-runner-self-health-contract.yml"
 
 
 class FtmoDedicatedRunnerLaneTests(unittest.TestCase):
@@ -47,6 +48,48 @@ class FtmoDedicatedRunnerLaneTests(unittest.TestCase):
         self.assertLess(host_guard, first_live_observation)
         self.assertLess(runner_guard, first_live_observation)
         self.assertIn("action=preserve-active-runner", text)
+
+    def test_contract_proof_is_same_repo_read_only_and_guarded(self):
+        text = PROOF_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("pull_request:", text)
+        self.assertNotIn("workflow_dispatch:", text)
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("github.actor == github.repository_owner", text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertIn(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
+            text,
+        )
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn('test "$(id -un)" = "ubuntu"', text)
+        self.assertIn("needs: validate", text)
+        self.assertIn(
+            "python3 -m unittest -v tests.test_ftmo_pr507_runner_lane",
+            text,
+        )
+
+        for forbidden in (
+            "contents: write",
+            "actions: write",
+            "git push",
+            "sqlite3",
+            "server.py",
+            "systemctl start",
+            "systemctl restart",
+            "systemctl stop",
+            "systemctl enable",
+            "systemctl disable",
+            "systemctl daemon-reload",
+        ):
+            self.assertNotIn(forbidden, text)
 
 
 if __name__ == "__main__":
