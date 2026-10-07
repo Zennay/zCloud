@@ -13,6 +13,7 @@ SCRIPT = ROOT / "scripts" / "zcloud_main_writer_compat_inventory.py"
 
 spec = importlib.util.spec_from_file_location("writer_inventory", SCRIPT)
 module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
 assert spec.loader is not None
 spec.loader.exec_module(module)
 
