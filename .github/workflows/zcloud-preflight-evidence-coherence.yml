@@ -64,6 +64,13 @@ jobs:
           import os
           from pathlib import Path
 
+          policies = {
+              "dependency": "zcloud-capability-dependency-dag-v1",
+              "owner_coverage": "zcloud-roadmap-owner-coverage-v1",
+              "writer_window": "zcloud-serialized-writer-window-audit-v1",
+              "open_pr_ownership": "zcloud-open-pr-overlap-audit-v1",
+              "unpr_branch_ownership": "zcloud-unpr-branch-overlap-audit-v1",
+          }
           verdicts = {
               "dependency": "ready",
               "owner_coverage": "ready",
@@ -80,7 +87,7 @@ jobs:
               "evidence": [
                   {
                       "kind": kind,
-                      "policy": kind.replace("_", "-") + "-v1",
+                      "policy": policies[kind],
                       "observed_at": os.environ["NOW"],
                       "main_sha": os.environ["MAIN_SHA"],
                       "verdict": verdict,

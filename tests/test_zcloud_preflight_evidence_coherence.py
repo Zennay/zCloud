@@ -30,7 +30,7 @@ def snapshot(now: dt.datetime) -> dict:
         rows.append(
             {
                 "kind": kind,
-                "policy": f"{kind.replace('_', '-')}-v1",
+                "policy": audit.REQUIRED_POLICIES[kind],
                 "observed_at": captured,
                 "main_sha": SHA,
                 "verdict": verdict,
@@ -80,6 +80,12 @@ class PreflightEvidenceCoherenceTests(unittest.TestCase):
         payload = snapshot(self.now)
         payload["evidence"].pop()
         with self.assertRaisesRegex(audit.EvidenceError, "evidence_count_invalid"):
+            audit.audit_snapshot(payload, now=self.now)
+
+    def test_wrong_classifier_identity_fails_closed(self):
+        payload = snapshot(self.now)
+        payload["evidence"][0]["policy"] = "generic-green-label-v1"
+        with self.assertRaisesRegex(audit.EvidenceError, "evidence_policy_mismatch"):
             audit.audit_snapshot(payload, now=self.now)
 
     def test_incomplete_evidence_is_never_approval(self):

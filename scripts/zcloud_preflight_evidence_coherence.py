@@ -24,6 +24,13 @@ REQUIRED_VERDICTS = {
     "open_pr_ownership": "clear",
     "unpr_branch_ownership": "clear",
 }
+REQUIRED_POLICIES = {
+    "dependency": "zcloud-capability-dependency-dag-v1",
+    "owner_coverage": "zcloud-roadmap-owner-coverage-v1",
+    "writer_window": "zcloud-serialized-writer-window-audit-v1",
+    "open_pr_ownership": "zcloud-open-pr-overlap-audit-v1",
+    "unpr_branch_ownership": "zcloud-unpr-branch-overlap-audit-v1",
+}
 TOP_KEYS = {
     "schema_version",
     "captured_at",
@@ -156,6 +163,8 @@ def audit_snapshot(
         policy = row["policy"]
         if not isinstance(policy, str) or not POLICY_RE.fullmatch(policy):
             raise EvidenceError("evidence_policy_invalid")
+        if policy != REQUIRED_POLICIES[kind]:
+            raise EvidenceError("evidence_policy_mismatch")
         if row["complete"] is not True:
             raise EvidenceError("evidence_incomplete")
 
