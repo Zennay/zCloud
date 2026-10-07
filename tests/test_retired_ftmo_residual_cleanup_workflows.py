@@ -12,7 +12,7 @@ RETIRED = (
 
 UNIQUE_TERMINAL_MARKERS = (
     "CANCELLED_STALE_PR471_RUN",
-,)
+)
 
 
 class RetiredFtmoResidualCleanupWorkflowsTests(unittest.TestCase):
