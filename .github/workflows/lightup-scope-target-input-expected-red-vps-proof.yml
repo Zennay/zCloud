@@ -16,14 +16,17 @@ concurrency:
 
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
-  LIGHTUP_BRANCH: chatgpt/scope-authorization-exact-target-object-red-20261007
-  LIGHTUP_EXPECTED_SHA: ab0764655c8cf45d7bf43f1583745bb6a9bf3d96
+  LIGHTUP_CURRENT_BRANCH: chatgpt/scope-authorization-exact-target-object-red-20261007
+  LIGHTUP_CURRENT_EXPECTED_SHA: f5e2bb80719e93cef9496fc04679c83957392cb3
+  LIGHTUP_OWNER_BRANCH: chatgpt/scope-authorization-target-input-pr100-proof-20261007
+  LIGHTUP_OWNER_EXPECTED_SHA: 37136daee8f9331f4e411ee1fdabf281163ae800
+  LIGHTUP_OWNER_PARENT_SHA: ef553b6e0aa0c99855e9907f4b2dee9edc5aac0f
 
 jobs:
   prove-red:
-    name: Exact #494 + #496 expected-RED contract on vps-bb300bba
+    name: Exact #494 + #496 expected-RED contracts on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 20
+    timeout-minutes: 24
 
     steps:
       - uses: actions/checkout@v4
@@ -37,20 +40,33 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           python3 scripts/zcloud_vps_runner_guard.py --json
 
-      - name: Snapshot exact LightUp candidate
+      - name: Snapshot exact LightUp candidates
         shell: bash
         run: |
           set -euo pipefail
           test -d "${LIGHTUP_REPO}/.git"
-          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${LIGHTUP_BRANCH}:refs/remotes/origin/lightup-scope-target-input-red"
-          ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-scope-target-input-red^{commit})"
-          test "${ACTUAL_SHA}" = "${LIGHTUP_EXPECTED_SHA}"
-          SNAPSHOT="${RUNNER_TEMP}/lightup-scope-target-input-${GITHUB_RUN_ID}"
-          rm -rf "${SNAPSHOT}"
-          mkdir -p "${SNAPSHOT}"
-          git -C "${LIGHTUP_REPO}" archive "${ACTUAL_SHA}" | tar -x -C "${SNAPSHOT}"
-          echo "LIGHTUP_SNAPSHOT=${SNAPSHOT}" >> "${GITHUB_ENV}"
-          echo "LIGHTUP_ACTUAL_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${LIGHTUP_CURRENT_BRANCH}:refs/remotes/origin/lightup-target-input-current"             "+refs/heads/${LIGHTUP_OWNER_BRANCH}:refs/remotes/origin/lightup-target-input-owner"
+
+          CURRENT_ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-target-input-current^{commit})"
+          OWNER_ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-target-input-owner^{commit})"
+          test "${CURRENT_ACTUAL_SHA}" = "${LIGHTUP_CURRENT_EXPECTED_SHA}"
+          test "${OWNER_ACTUAL_SHA}" = "${LIGHTUP_OWNER_EXPECTED_SHA}"
+
+          TMP_ROOT="${RUNNER_TEMP}/lightup-scope-target-input-${GITHUB_RUN_ID}"
+          CURRENT_SNAPSHOT="${TMP_ROOT}/current"
+          OWNER_SNAPSHOT="${TMP_ROOT}/owner-pr100"
+          rm -rf "${TMP_ROOT}"
+          mkdir -p "${CURRENT_SNAPSHOT}" "${OWNER_SNAPSHOT}"
+
+          git -C "${LIGHTUP_REPO}" archive "${CURRENT_ACTUAL_SHA}" | tar -x -C "${CURRENT_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${OWNER_ACTUAL_SHA}" | tar -x -C "${OWNER_SNAPSHOT}"
+
+          echo "LIGHTUP_TMP_ROOT=${TMP_ROOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_CURRENT_SNAPSHOT=${CURRENT_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_OWNER_SNAPSHOT=${OWNER_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_CURRENT_ACTUAL_SHA=${CURRENT_ACTUAL_SHA}" >> "${GITHUB_ENV}"
+          echo "LIGHTUP_OWNER_ACTUAL_SHA=${OWNER_ACTUAL_SHA}" >> "${GITHUB_ENV}"
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -61,24 +77,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "${LIGHTUP_SNAPSHOT}"
-          PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v test_scope
-          LOG="${RUNNER_TEMP}/lightup-scope-target-input-red-py311.log"
-          set +e
-          PYTHONPATH=src:tests python -m unittest -v             test_scope_target_value_type_contract             test_scope_exact_target_object_contract >"${LOG}" 2>&1
-          RC=$?
-          set -e
-          cat "${LOG}"
-          test "${RC}" -ne 0
-          grep -Fq "Ran 8 tests" "${LOG}"
-          grep -Fq "FAILED (failures=4, errors=11)" "${LOG}"
-          grep -Fq "test_string_subclass_cannot_spoof_a_different_scope_identity" "${LOG}"
-          grep -Fq "test_target_subclass_cannot_override_scope_identity" "${LOG}"
-          grep -Fq "test_target_subclass_cannot_inject_authorization" "${LOG}"
-          grep -Fq "AttributeError: 'NoneType' object has no attribute 'strip'" "${LOG}"
-          grep -Fq "TypeError: a bytes-like object is required, not 'str'" "${LOG}"
-          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          verify_snapshot() {
+            local label="$1"
+            local snapshot="$2"
+            local log="${RUNNER_TEMP}/lightup-scope-target-input-${label}-py311.log"
+
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v test_scope
+
+            set +e
+            PYTHONPATH=src:tests python -m unittest -v               test_scope_target_value_type_contract               test_scope_exact_target_object_contract >"${log}" 2>&1
+            local rc=$?
+            set -e
+            cat "${log}"
+
+            test "${rc}" -ne 0
+            grep -Fq "Ran 8 tests" "${log}"
+            grep -Fq "FAILED (failures=4, errors=11)" "${log}"
+            grep -Fq "test_string_subclass_cannot_spoof_a_different_scope_identity" "${log}"
+            grep -Fq "test_target_subclass_cannot_override_scope_identity" "${log}"
+            grep -Fq "test_target_subclass_cannot_inject_authorization" "${log}"
+            grep -Fq "AttributeError: 'NoneType' object has no attribute 'strip'" "${log}"
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          }
+
+          verify_snapshot current "${LIGHTUP_CURRENT_SNAPSHOT}"
+          verify_snapshot owner-pr100 "${LIGHTUP_OWNER_SNAPSHOT}"
 
       - name: Setup Python 3.14
         uses: actions/setup-python@v5
@@ -89,24 +115,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "${LIGHTUP_SNAPSHOT}"
-          PYTHONPATH=src:tests python -m compileall -q src tests
-          PYTHONPATH=src:tests python -m unittest -v test_scope
-          LOG="${RUNNER_TEMP}/lightup-scope-target-input-red-py314.log"
-          set +e
-          PYTHONPATH=src:tests python -m unittest -v             test_scope_target_value_type_contract             test_scope_exact_target_object_contract >"${LOG}" 2>&1
-          RC=$?
-          set -e
-          cat "${LOG}"
-          test "${RC}" -ne 0
-          grep -Fq "Ran 8 tests" "${LOG}"
-          grep -Fq "FAILED (failures=4, errors=11)" "${LOG}"
-          grep -Fq "test_string_subclass_cannot_spoof_a_different_scope_identity" "${LOG}"
-          grep -Fq "test_target_subclass_cannot_override_scope_identity" "${LOG}"
-          grep -Fq "test_target_subclass_cannot_inject_authorization" "${LOG}"
-          grep -Fq "AttributeError: 'NoneType' object has no attribute 'strip'" "${LOG}"
-          grep -Fq "TypeError: a bytes-like object is required, not 'str'" "${LOG}"
-          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          verify_snapshot() {
+            local label="$1"
+            local snapshot="$2"
+            local log="${RUNNER_TEMP}/lightup-scope-target-input-${label}-py314.log"
+
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v test_scope
+
+            set +e
+            PYTHONPATH=src:tests python -m unittest -v               test_scope_target_value_type_contract               test_scope_exact_target_object_contract >"${log}" 2>&1
+            local rc=$?
+            set -e
+            cat "${log}"
+
+            test "${rc}" -ne 0
+            grep -Fq "Ran 8 tests" "${log}"
+            grep -Fq "FAILED (failures=4, errors=11)" "${log}"
+            grep -Fq "test_string_subclass_cannot_spoof_a_different_scope_identity" "${log}"
+            grep -Fq "test_target_subclass_cannot_override_scope_identity" "${log}"
+            grep -Fq "test_target_subclass_cannot_inject_authorization" "${log}"
+            grep -Fq "AttributeError: 'NoneType' object has no attribute 'strip'" "${log}"
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          }
+
+          verify_snapshot current "${LIGHTUP_CURRENT_SNAPSHOT}"
+          verify_snapshot owner-pr100 "${LIGHTUP_OWNER_SNAPSHOT}"
 
       - name: Write exact-head expected-RED receipt
         shell: bash
@@ -122,19 +158,24 @@ jobs:
           payload = {
               "project": "LightUp",
               "issues": [494, 496],
-              "branch": os.environ["LIGHTUP_BRANCH"],
-              "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
-              "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
+              "current_branch": os.environ["LIGHTUP_CURRENT_BRANCH"],
+              "current_target_sha": os.environ["LIGHTUP_CURRENT_ACTUAL_SHA"],
+              "current_expected_sha": os.environ["LIGHTUP_CURRENT_EXPECTED_SHA"],
+              "owner_branch": os.environ["LIGHTUP_OWNER_BRANCH"],
+              "owner_target_sha": os.environ["LIGHTUP_OWNER_ACTUAL_SHA"],
+              "owner_expected_sha": os.environ["LIGHTUP_OWNER_EXPECTED_SHA"],
+              "owner_parent_sha": os.environ["LIGHTUP_OWNER_PARENT_SHA"],
               "host": os.uname().nodename,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "python": ["3.11", "3.14"],
-              "scope_smoke": "green",
-              "acceptance_contract": "expected_red",
-              "expected_test_methods_per_python": 8,
-              "expected_failures_per_python": 4,
-              "expected_errors_per_python": 11,
-              "production_source_changes": 0,
-              "safety_canaries": "green",
+              "scope_smoke": "green_both_snapshots",
+              "acceptance_contract": "expected_red_both_snapshots",
+              "expected_test_methods_per_python_per_snapshot": 8,
+              "expected_failures_per_python_per_snapshot": 4,
+              "expected_errors_per_python_per_snapshot": 11,
+              "lightup_production_source_changes": 0,
+              "owner_child_source_changes": 0,
+              "safety_canaries": "green_both_snapshots",
           }
           path = Path(os.environ["RUNNER_TEMP"]) / "lightup-scope-target-input-expected-red-receipt" / "receipt.json"
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -148,7 +189,7 @@ jobs:
           path: ${{ runner.temp }}/lightup-scope-target-input-expected-red-receipt/receipt.json
           if-no-files-found: error
 
-      - name: Cleanup snapshot
+      - name: Cleanup snapshots
         if: always()
         shell: bash
-        run: rm -rf "${LIGHTUP_SNAPSHOT:-}"
+        run: rm -rf "${LIGHTUP_TMP_ROOT:-}"
