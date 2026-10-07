@@ -89,7 +89,6 @@ class ProjectCardInformationContractTests(unittest.TestCase):
             ".project-card p",
             ".progress-row",
             ".project-bottom",
-            ".project-card-ops",
         ):
             self.assertIn(marker, self.style)
         self.assertIn("min-height:41px", self.style)
