@@ -1,0 +1,121 @@
+name: zCloud resource scheduler composition proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_resource_scheduler_composition.py
+      - tests/test_resource_scheduler_composition.py
+      - tests/test_resource_scheduler_composition_cli.py
+      - tests/test_resource_scheduler_composition_workflow.py
+      - docs/resource-scheduler-composition.md
+      - .github/workflows/zcloud-resource-scheduler-composition-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-resource-scheduler-composition-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact head and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused composition regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            scripts/zcloud_resource_scheduler_composition.py \
+            tests/test_resource_scheduler_composition.py \
+            tests/test_resource_scheduler_composition_cli.py \
+            tests/test_resource_scheduler_composition_workflow.py
+          python3 -m unittest -v \
+            tests.test_resource_scheduler_composition \
+            tests.test_resource_scheduler_composition_cli \
+            tests.test_resource_scheduler_composition_workflow
+
+      - name: Prove bounded ready plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/resource-scheduler-composition.json" <<'JSON'
+          {
+            "schema_version": 1,
+            "host": {
+              "capacity_cpu_cores": 6,
+              "protected_reserve_cpu_cores": 1,
+              "idle_borrowable_cpu_cores": 2,
+              "backpressure_required": false,
+              "queue_pressure_state": "healthy",
+              "source_complete": true
+            },
+            "projects": [
+              {
+                "project_id": "cloud",
+                "scheduler_rank": 0,
+                "runnable": true,
+                "safety_admitted": true,
+                "allow_idle_capacity_borrow": false,
+                "protected": true,
+                "minimum_cpu_cores": 1,
+                "target_cpu_cores": 1,
+                "maximum_cpu_cores": 1,
+                "requested_cpu_cores": 1,
+                "safe_parallel_jobs": 0,
+                "current_parallel_jobs": 1,
+                "project_parallel_cap": 1,
+                "cpu_per_job_cores": 1
+              },
+              {
+                "project_id": "ftmo",
+                "scheduler_rank": 1,
+                "runnable": true,
+                "safety_admitted": true,
+                "allow_idle_capacity_borrow": true,
+                "protected": false,
+                "minimum_cpu_cores": 0,
+                "target_cpu_cores": 3,
+                "maximum_cpu_cores": 5,
+                "requested_cpu_cores": 3,
+                "safe_parallel_jobs": 2,
+                "current_parallel_jobs": 1,
+                "project_parallel_cap": 4,
+                "cpu_per_job_cores": 1
+              }
+            ]
+          }
+          JSON
+
+          python3 scripts/zcloud_resource_scheduler_composition.py             --input "$RUNNER_TEMP/resource-scheduler-composition.json"             --json --require-ready             | tee "$RUNNER_TEMP/resource-scheduler-composition-result.json"
+
+          grep -q '"status":"ready"' "$RUNNER_TEMP/resource-scheduler-composition-result.json"
+          grep -q '"runtime_mutation":false' "$RUNNER_TEMP/resource-scheduler-composition-result.json"
+          grep -q '"mutation_performed":false' "$RUNNER_TEMP/resource-scheduler-composition-result.json"
+          echo ZCLOUD_RESOURCE_SCHEDULER_COMPOSITION_VPS_GREEN=1
