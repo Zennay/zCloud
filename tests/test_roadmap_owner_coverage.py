@@ -213,6 +213,9 @@ class RoadmapOwnerCoverageTests(unittest.TestCase):
             [self.capability("owned")],
             [self.owner("owned")],
         )
+        # CLI uses the real wall clock; keep this fixture fresh so this test
+        # reaches the require-candidate gate instead of the stale-snapshot gate.
+        snap["observed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "snapshot.json"
             path.write_text(json.dumps(snap), encoding="utf-8")
