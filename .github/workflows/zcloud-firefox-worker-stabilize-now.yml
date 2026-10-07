@@ -1,0 +1,108 @@
+name: Stabilize zCloud Firefox worker pool
+
+on:
+  push:
+    branches:
+      - ops/firefox-generation-start-race-debug-20261007-w1
+    paths:
+      - .github/workflows/zcloud-firefox-worker-stabilize-now.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-firefox-worker-stabilize-now
+  cancel-in-progress: false
+
+jobs:
+  stabilize:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Reduce ChatGPT worker pressure without Firefox restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE="http://127.0.0.1:8765"
+
+          def api(method, path, payload=None, timeout=20):
+              data=None
+              headers={"User-Agent":"zcloud-firefox-worker-stabilize/1"}
+              if payload is not None:
+                  data=json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"]="application/json"
+              req=urllib.request.Request(BASE+path,data=data,headers=headers,method=method)
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      body=json.load(r)
+                      return int(r.status), body if isinstance(body,dict) else {}
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read().decode("utf-8","replace")
+                  try: body=json.loads(raw)
+                  except Exception: body={"error":raw[:1000]}
+                  return int(exc.code), body if isinstance(body,dict) else {}
+
+          settings_status, current=api("GET","/api/dynamic-workers")
+          if settings_status >= 300:
+              raise SystemExit(f"dynamic worker settings unavailable: HTTP {settings_status} {current}")
+          settings=current.get("dynamic_workers") or {}
+          before_status, before=api("GET","/api/status")
+          before_targets_status, before_targets=api("GET","/api/runner-targets")
+
+          preserve=(
+              "chatgpt_count",
+              "claude_count",
+              "chatgpt_cooldown_seconds",
+              "claude_cooldown_seconds",
+              "check_interval_ms",
+              "tick_interval_ms",
+              "heartbeat_interval_ms",
+              "generation_start_timeout_ms",
+              "scheduler_interval_seconds",
+          )
+          payload={k:settings[k] for k in preserve if k in settings}
+          payload["chatgpt_count"]=4
+
+          print("BEFORE="+json.dumps({
+              "settings":settings,
+              "firefox":before.get("chatgpt_firefox") if before_status < 300 else None,
+              "memory_guard":((before.get("dynamic_workers") or {}).get("memory_guard") if before_status < 300 else None),
+              "allocated":((before_targets.get("global_allocation") or {}).get("workers") if before_targets_status < 300 else None),
+          },sort_keys=True))
+
+          update_status, updated=api("POST","/api/dynamic-workers",payload)
+          if update_status >= 300 or not updated.get("ok"):
+              raise SystemExit(f"worker stabilization rejected: HTTP {update_status} {updated}")
+
+          effective=updated.get("dynamic_workers") or {}
+          if int(effective.get("chatgpt_count") or 0) != 4:
+              raise SystemExit(f"expected chatgpt_count=4, got {effective}")
+
+          # Give allocator a short reconciliation window. Do not issue any
+          # runner-control or browser restart action from this lane.
+          time.sleep(12)
+
+          after_status_code, after=api("GET","/api/status")
+          targets_status, targets=api("GET","/api/runner-targets")
+          if after_status_code >= 300 or targets_status >= 300:
+              raise SystemExit(f"post-stabilization readback unavailable: status={after_status_code} targets={targets_status}")
+
+          allocation=(targets.get("global_allocation") or {}).get("workers") or []
+          chatgpt_allocated=[w for w in allocation if str(w.get("provider") or "chatgpt").lower()=="chatgpt"]
+          if len(chatgpt_allocated) > 4:
+              raise SystemExit(f"allocator still has {len(chatgpt_allocated)} ChatGPT workers: {chatgpt_allocated}")
+
+          print("AFTER="+json.dumps({
+              "settings":after.get("dynamic_workers"),
+              "firefox":after.get("chatgpt_firefox"),
+              "memory_guard":((after.get("dynamic_workers") or {}).get("memory_guard")),
+              "allocated":allocation,
+          },sort_keys=True))
+          print("ZCLOUD_FIREFOX_POOL_STABILIZED=1")
+          PY
