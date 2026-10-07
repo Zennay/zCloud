@@ -49,6 +49,29 @@ class UnprBranchOverlapAuditTests(unittest.TestCase):
         )
         self.assertFalse(result["mutation_performed"])
 
+    def test_overlap_output_is_deterministic(self):
+        payload = snapshot(
+            [
+                {
+                    "name": "ops/z-last",
+                    "has_open_pr": False,
+                    "changed_files_complete": True,
+                    "changed_files": ["scripts/shared.py"],
+                },
+                {
+                    "name": "ops/a-first",
+                    "has_open_pr": False,
+                    "changed_files_complete": True,
+                    "changed_files": ["scripts/shared.py"],
+                },
+            ]
+        )
+        result = audit.audit(payload, ["scripts/shared.py"], NOW)
+        self.assertEqual(
+            ["ops/a-first", "ops/z-last"],
+            [row["branch"] for row in result["overlaps"]],
+        )
+
     def test_clear_when_unpr_branches_are_file_disjoint(self):
         payload = snapshot(
             [
@@ -96,6 +119,22 @@ class UnprBranchOverlapAuditTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(audit.AuditError, "branch_duplicate"):
             audit.audit(duplicate, ["scripts/new.py"], NOW)
+
+    def test_rejects_control_characters_in_paths_and_branches(self):
+        with self.assertRaisesRegex(audit.AuditError, "path_invalid"):
+            audit.audit(snapshot([]), ["scripts/bad\nname.py"], NOW)
+        bad_branch = snapshot(
+            [
+                {
+                    "name": "ops/bad\tname",
+                    "has_open_pr": False,
+                    "changed_files_complete": True,
+                    "changed_files": [],
+                }
+            ]
+        )
+        with self.assertRaisesRegex(audit.AuditError, "branch_invalid"):
+            audit.audit(bad_branch, ["scripts/new.py"], NOW)
 
     def test_cli_require_clear_returns_two_for_overlap(self):
         payload = snapshot(
