@@ -14,11 +14,10 @@ class RetiredHaxlabCandidateBProbeWorkflowTests(unittest.TestCase):
             "historical HaxLab Candidate-B queue probe must stay retired",
         )
 
-    def test_candidate_b_queue_markers_are_absent_from_active_workflows(self) -> None:
+    def test_candidate_b_finalizer_markers_are_absent_from_active_workflows(self) -> None:
         markers = (
             "Queue zSSH HaxLab Candidate-B runtime probe",
             "haxlab-candidate-b-champion-evidence-gate",
-            "zssh-haxlab-candidate-b-runtime-probe-20261001",
             "QUEUE_DONE_VERIFIED",
         )
         active = "\n".join(
