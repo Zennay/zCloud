@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import stat
-import sys
 from pathlib import Path
 
 MAX_SOURCE_BYTES = 512 * 1024
@@ -50,47 +48,60 @@ def _ordered(text: str, *needles: str) -> bool:
     return True
 
 
+def _resource_handler(text: str) -> str:
+    marker = "document.addEventListener('change',async function(e){"
+    if text.count(marker) != 1:
+        return ""
+    start = text.index(marker)
+    end_marker = "\n  },true);"
+    end = text.find(end_marker, start)
+    if end < 0:
+        return ""
+    return text[start : end + len(end_marker)]
+
+
 def audit_source(text: str) -> dict[str, object]:
-    control_present = all(
-        marker in text
-        for marker in (
-            'data-resource-priority="',
-            'data-previous-value="',
-            "document.addEventListener('change'",
-            "fetch('/api/resource-priority'",
-        )
+    handler = _resource_handler(text)
+    control_present = (
+        bool(handler)
+        and 'data-resource-priority="' in text
+        and 'data-previous-value="' in text
+        and "e.target.closest('[data-resource-priority]')" in handler
+        and "fetch('/api/resource-priority'" in handler
     )
 
     pending_disable = _ordered(
-        text,
+        handler,
         "var previous=el.dataset.previousValue||'normal';",
         "el.disabled=true;",
         "fetch('/api/resource-priority'",
     )
     backend_confirmation = _ordered(
-        text,
+        handler,
         "fetch('/api/resource-priority'",
         "if(!response.ok)",
         "el.dataset.previousValue=saved;",
     )
     failure_feedback = all(
-        marker in text
+        marker in handler
         for marker in (
             "el.value=previous;",
             "$('notice').hidden=false;",
             "Project priority could not be saved:",
         )
     )
-    degraded_feedback = "Priority saved. The live VPS weight could not be applied yet" in text
-    reenabled = _ordered(text, "}finally{", "el.disabled=false;")
+    degraded_feedback = (
+        "Priority saved. The live VPS weight could not be applied yet" in handler
+    )
+    reenabled = _ordered(handler, "}finally{", "el.disabled=false;")
     confirmed_refresh = _ordered(
-        text,
+        handler,
         "el.dataset.previousValue=saved;",
         "await refresh(true);",
     )
 
     pending_feedback = any(
-        marker in text
+        marker in handler
         for marker in (
             "Saving priority",
             "Saving…",
@@ -99,23 +110,12 @@ def audit_source(text: str) -> dict[str, object]:
         )
     )
     success_feedback = any(
-        marker in text
+        marker in handler
         for marker in (
-            "Priority saved.",
             "Priority updated.",
             "resource-priority-saved",
         )
     )
-    # The degraded warning is not a generic success signal: it is only shown
-    # when persistence succeeded but live application did not.
-    if degraded_feedback and success_feedback:
-        success_feedback = any(
-            marker in text
-            for marker in (
-                "Priority updated.",
-                "resource-priority-saved",
-            )
-        )
 
     checks = {
         "control_present": control_present,
