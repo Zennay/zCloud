@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -13,8 +14,6 @@ from typing import Any, Callable, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-import enhancements
 
 SCHEMA_VERSION = 1
 MAX_REGISTRY_BYTES = 2 * 1024 * 1024
@@ -52,11 +51,25 @@ def load_registry(path: Path) -> list[dict[str, Any]]:
     return raw
 
 
+def _load_adapter_projects_reader() -> Callable[[], Iterable[str]]:
+    module_path = ROOT / "enhancements.py"
+    spec = importlib.util.spec_from_file_location("_zcloud_adapter_coverage_enhancements", module_path)
+    if spec is None or spec.loader is None:
+        raise AdapterCoverageError("telemetry adapter registry cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    reader = getattr(module, "telemetry_adapter_projects", None)
+    if not callable(reader):
+        raise AdapterCoverageError("telemetry adapter registry is unavailable")
+    return reader
+
+
 def build_report(
     registry: list[dict[str, Any]],
     *,
-    adapter_projects_reader: Callable[[], Iterable[str]] = enhancements.telemetry_adapter_projects,
+    adapter_projects_reader: Callable[[], Iterable[str]] | None = None,
 ) -> dict[str, Any]:
+    adapter_projects_reader = adapter_projects_reader or _load_adapter_projects_reader()
     adapters = {_project_id(value) for value in adapter_projects_reader()}
 
     projects: list[dict[str, Any]] = []
