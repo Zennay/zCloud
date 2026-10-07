@@ -10,12 +10,12 @@ RETIRED_WORKFLOWS = (
     WORKFLOW_DIR / "ftmo-pr475-exact-head-proof.yml",
 )
 
-# Both source PRs are closed and explicitly superseded. These exact-head proof
-# authorities must not be recreated under a different workflow name.
+# Both source PRs are closed and explicitly superseded. Guard only the
+# workflow-specific success authority here: historical target SHAs may remain
+# valid evidence in other composite proofs and must not be claimed by this
+# retirement slice.
 SUPERSEDED_PROOF_FINGERPRINTS = (
-    "65eec5273ab1d7bad8892b20b2900c73759b8664",
     "FTMO_PR469_ZCLOUD_PROOF_GREEN",
-    "df912b152218952023d184a84204dcad7a72e305",
     "FTMO_PR475_ZCLOUD_PROOF_GREEN",
 )
 
