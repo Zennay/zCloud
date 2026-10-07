@@ -20,11 +20,6 @@ MAIN_PUSH_RE = re.compile(
     r"(?i)(?:git\s+push[^\n]*(?:refs/heads/main|\bmain\b)|"
     r"git\s+push[^\n]*HEAD:main)"
 )
-REFS_API_RE = re.compile(r"(?i)/git/refs/(?:heads/)?main\\b")
-WRITE_API_RE = re.compile(
-    r"(?i)(?:\\b(?:POST|PUT|PATCH|DELETE)\\b|"
-    r"(?:--method|-X)\\s+(?:POST|PUT|PATCH|DELETE))"
-)
 CHECKOUT_CREDS_RE = re.compile(r"(?m)^\s*persist-credentials\s*:\s*true\s*(?:#.*)?$")
 
 
@@ -46,12 +41,33 @@ def _is_regular_safe_file(path: Path) -> bool:
 
 def _has_main_refs_write_api(text: str) -> bool:
     lines = text.splitlines()
+    write_markers = (
+        'method="post"',
+        "method='post'",
+        'method="put"',
+        "method='put'",
+        'method="patch"',
+        "method='patch'",
+        'method="delete"',
+        "method='delete'",
+        "--method post",
+        "--method put",
+        "--method patch",
+        "--method delete",
+        "-x post",
+        "-x put",
+        "-x patch",
+        "-x delete",
+    )
     for index, line in enumerate(lines):
-        if not REFS_API_RE.search(line):
+        lower_line = line.lower()
+        if (
+            "/git/refs/heads/main" not in lower_line
+            and "/git/refs/main" not in lower_line
+        ):
             continue
-        start = max(0, index - 6)
-        end = min(len(lines), index + 7)
-        if WRITE_API_RE.search("\n".join(lines[start:end])):
+        window = "\n".join(lines[max(0, index - 6) : min(len(lines), index + 7)]).lower()
+        if any(marker in window for marker in write_markers):
             return True
     return False
 
