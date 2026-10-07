@@ -24,12 +24,12 @@ Current priority weights are deliberately simple and monotonic:
 
 | Declared priority | Relative weight |
 | --- | ---: |
-| background | 10 |
-| normal | 20 |
-| high | 30 |
-| turbo | 40 |
+| background | 100 |
+| normal | 400 |
+| high | 800 |
+| turbo | 3000 |
 
-These weights have no meaning outside the already-admitted candidate set.
+These values intentionally match the existing `enhancements.PRIORITY_WEIGHTS` resource-control contract. They still have no admission meaning outside the already-admitted candidate set: a blocked or idle project always receives effective weight zero.
 
 ## Non-negotiable guardrails
 
