@@ -67,8 +67,30 @@ jobs:
           if not reconciled.get("ok"):
               raise SystemExit("failed to reconcile seven-worker desired capacity")
 
-          before = call("GET", "/api/runner-targets")
-          allocation = (before.get("global_allocation") or {}).get("workers") or []
+          desired_total = int(
+              ((reconciled.get("dynamic_workers") or {}).get("count") or 0)
+          )
+          allocation_deadline = time.time() + 20
+          before = {}
+          allocation = []
+          while time.time() < allocation_deadline:
+              before = call("GET", "/api/runner-targets")
+              allocation = (before.get("global_allocation") or {}).get("workers") or []
+              if desired_total <= 0 or len(allocation) >= desired_total:
+                  break
+              time.sleep(2)
+
+          print("ALLOCATION_CONVERGENCE=" + json.dumps({
+              "desired": desired_total,
+              "allocated": len(allocation),
+              "workers": [str(item.get("worker_key") or "") for item in allocation],
+          }, sort_keys=True))
+          if desired_total > 0 and len(allocation) < desired_total:
+              raise SystemExit(
+                  f"worker allocation did not converge to desired capacity: "
+                  f"{len(allocation)}/{desired_total}"
+              )
+
           active = []
           for item in allocation:
               key = str(item.get("worker_key") or "").strip()
