@@ -1,0 +1,12 @@
+[Unit]
+Description=zCloud standalone Firefox fast supervisor
+After=network-online.target zennay-cloud.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcloud-firefox-supervisor
+User=root
+Group=root
+CapabilityBoundingSet=CAP_SYS_NICE CAP_DAC_READ_SEARCH
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

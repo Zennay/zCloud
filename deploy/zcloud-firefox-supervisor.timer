@@ -1,0 +1,12 @@
+[Unit]
+Description=Run zCloud Firefox supervisor every 5 seconds
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=zcloud-firefox-supervisor.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

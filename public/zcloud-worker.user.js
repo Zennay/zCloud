@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.16
+// @version      1.3.17
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.16";
+  const SCRIPT_VERSION = "1.3.17";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -47,6 +47,7 @@
     generationStartTimeoutMs: 120000
   });
   const TAB_CLAIM_LEASE_MS = 90000;
+  const STALE_GENERATION_RECOVERY_MS = 10 * 60 * 1000;
   const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
   let timing = {...DEFAULT_TIMING};
 
@@ -290,7 +291,15 @@
   }
 
   async function requestFreshConversation(reason, commandId = 0) {
-    if (freshConversationPending || !target?.project_id || generationActive() || sending || awaitingGeneration) return false;
+    const generating = generationActive();
+    const staleGeneration = generating && generationStaleForRecovery();
+    if (freshConversationPending || !target?.project_id || (generating && !staleGeneration) || sending || awaitingGeneration) return false;
+    if (staleGeneration) {
+      await status("stale-generation-forced-recovery", {
+        reason: String(reason || "fresh-chat-policy").slice(0, 120),
+        stalledMs: Math.max(0, Date.now() - lastProgressAt)
+      });
+    }
     freshConversationPending = true;
     const queueId = String(target?.queue_item?.queue_id || "").trim();
     if (queueId) rememberQueueId(target.project_id, queueId);
@@ -580,6 +589,10 @@
   function generationActive() {
     if (!isWorkerProvider()) return false;
     return !!stopButton() || !!streamingNode();
+  }
+
+  function generationStaleForRecovery() {
+    return generationActive() && Date.now() - lastProgressAt >= STALE_GENERATION_RECOVERY_MS;
   }
 
   function composer() {
@@ -1262,9 +1275,11 @@
         );
         if (acknowledged) lastHandledCommandId = Math.max(lastHandledCommandId, id);
       } else if (command.action === "new_chat") {
-        // Fresh-chat recovery belongs to the primary userscript too. This makes
-        // recovery independent from the legacy WebExtension command consumer.
-        if (generationActive() || sending || awaitingGeneration || sawGeneration) {
+        // Fresh-chat recovery belongs to the primary userscript too. A stale DOM
+        // "generating" marker must not defer recovery forever after real output
+        // progress has stopped.
+        const staleGeneration = generationStaleForRecovery();
+        if ((generationActive() && !staleGeneration) || sending || awaitingGeneration || (sawGeneration && !staleGeneration)) {
           await reportSendBlocked("new-chat-deferred-busy");
           continue;
         }
@@ -1300,6 +1315,11 @@
     }
 
     await handleCommands();
+
+    if (generationStaleForRecovery()) {
+      const recovered = await requestFreshConversation("stale-generation-no-progress");
+      if (recovered) return;
+    }
 
     const generating = generationActive();
     const text = assistantText();

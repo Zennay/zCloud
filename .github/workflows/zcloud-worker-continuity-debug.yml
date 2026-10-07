@@ -1,0 +1,131 @@
+name: zCloud two-hour worker continuity debug
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - debug/worker-continuity-20261006
+    paths:
+      - "scripts/zcloud_worker_continuity_debug.py"
+      - "scripts/zcloud_firefox_supervisor.py"
+      - "deploy/zcloud-firefox-supervisor.service"
+      - "deploy/zcloud-firefox-supervisor.timer"
+      - "tests/test_worker_continuity_debug.py"
+      - "tests/test_firefox_supervisor.py"
+      - "public/zcloud-worker.user.js"
+      - "firefox-extension/background.js"
+      - "tests/test_violentmonkey_runner.py"
+      - ".github/workflows/zcloud-worker-continuity-debug.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-continuity-debug
+  cancel-in-progress: true
+
+jobs:
+  launch:
+    runs-on: self-hosted
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          fetch-depth: 1
+
+      - name: Validate continuity debugger
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_worker_continuity_debug.py scripts/zcloud_firefox_supervisor.py
+          python3 -m unittest \
+            tests.test_worker_continuity_debug \
+            tests.test_firefox_supervisor \
+            tests.test_violentmonkey_runner
+          node --check public/zcloud-worker.user.js
+          node --check firefox-extension/background.js
+
+      - name: Install fast Firefox supervisor
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n install -m 0755 scripts/zcloud_firefox_supervisor.py /usr/local/sbin/zcloud-firefox-supervisor
+          sudo -n install -m 0644 deploy/zcloud-firefox-supervisor.service /etc/systemd/system/zcloud-firefox-supervisor.service
+          sudo -n install -m 0644 deploy/zcloud-firefox-supervisor.timer /etc/systemd/system/zcloud-firefox-supervisor.timer
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable --now zcloud-firefox-supervisor.timer
+          sudo -n systemctl start zcloud-firefox-supervisor.service
+          sudo -n systemctl is-active --quiet zcloud-firefox-supervisor.timer
+          sudo -n journalctl -u zcloud-firefox-supervisor.service -n 8 --no-pager
+
+      - name: Install and launch bounded two-hour monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0755 /home/ubuntu/.local/bin /home/ubuntu/.local/state/zcloud
+          install -m 0755 scripts/zcloud_worker_continuity_debug.py             /home/ubuntu/.local/bin/zcloud-worker-continuity-debug
+
+          if sudo -n systemctl is-active --quiet zcloud-worker-continuity-debug.service; then
+            echo "Existing continuity monitor is active; preserving its original observation window."
+          else
+            sudo -n systemctl stop zcloud-worker-continuity-debug.service 2>/dev/null || true
+            sudo -n systemctl reset-failed zcloud-worker-continuity-debug.service 2>/dev/null || true
+            rm -f /home/ubuntu/.local/state/zcloud/worker-continuity-last.json                   /home/ubuntu/.local/state/zcloud/worker-continuity-last.json.tmp
+
+            sudo -n systemd-run               --unit=zcloud-worker-continuity-debug               --description="zCloud bounded two-hour worker continuity debugger"               --property=User=ubuntu               --property=Group=ubuntu               --property=WorkingDirectory=/home/ubuntu/zennay-cloud               --property=Environment=HOME=/home/ubuntu               --property=RuntimeMaxSec=7500s               /usr/bin/python3 /home/ubuntu/.local/bin/zcloud-worker-continuity-debug                 --duration-seconds 7200                 --interval-seconds 15                 --min-workers 8                 --remediate                 --output /home/ubuntu/.local/state/zcloud/worker-continuity-last.json
+          fi
+
+          for _ in {1..12}; do
+            if test -s /home/ubuntu/.local/state/zcloud/worker-continuity-last.json; then
+              break
+            fi
+            sleep 5
+          done
+          if ! sudo -n systemctl is-active --quiet zcloud-worker-continuity-debug.service; then
+            sudo -n journalctl -u zcloud-worker-continuity-debug.service -n 80 --no-pager || true
+            exit 1
+          fi
+          if ! test -s /home/ubuntu/.local/state/zcloud/worker-continuity-last.json; then
+            sudo -n journalctl -u zcloud-worker-continuity-debug.service -n 80 --no-pager || true
+            echo "continuity evidence did not appear within bounded startup window" >&2
+            exit 1
+          fi
+
+      - name: Show initial live evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path=Path("/home/ubuntu/.local/state/zcloud/worker-continuity-last.json")
+          data=json.loads(path.read_text())
+          latest=data.get("latest") or {}
+          summary={
+              "running":data.get("running"),
+              "samples":data.get("samples"),
+              "desired_total":latest.get("desired_total"),
+              "allocated_count":latest.get("allocated_count"),
+              "live_count":latest.get("live_count"),
+              "missing_live_keys":latest.get("missing_live_keys"),
+              "ghost_generating_keys":latest.get("ghost_generating_keys"),
+              "diagnosis":latest.get("diagnosis"),
+              "memory":latest.get("memory"),
+              "load":latest.get("load"),
+              "firefox":latest.get("firefox"),
+              "remediation":latest.get("remediation"),
+          }
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+          sudo -n journalctl -u zcloud-worker-continuity-debug.service -n 12 --no-pager
+
+      - name: Upload initial monitor evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-worker-continuity-initial-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: /home/ubuntu/.local/state/zcloud/worker-continuity-last.json
