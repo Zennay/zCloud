@@ -8,6 +8,8 @@ WORKFLOW_DIR = ROOT / ".github" / "workflows"
 RETIRED_WORKFLOWS = (
     WORKFLOW_DIR / "ftmo-pr405-hour-cache-proof.yml",
     WORKFLOW_DIR / "ftmo-pr408-provider-boundary-proof.yml",
+    WORKFLOW_DIR / "ftmo-pr414-exact-head-proof.yml",
+    WORKFLOW_DIR / "ftmo-pr457-exact-head-proof.yml",
 )
 
 # These authorities were tied to terminal FTMO PR-specific proof/cleanup work.
@@ -21,6 +23,12 @@ HISTORICAL_AUTHORITY_FINGERPRINTS = (
     # PR408 exact-head proof authority.
     "98c033b2b571cea2313f20bee31820286132226f",
     "FTMO_PR408_TARGETED_GREEN",
+    # PR416 exact-head proof + receipt-write authority.
+    "6ffd703a5acaa97e09a66a15df478e5f7125cb64",
+    "FTMO_PR416_PUBLICATION_TESTS_GREEN",
+    # PR457 exact-head provider-provenance proof authority.
+    "16d758c5dad6c2ada93e327c895ca2f57c1a186a",
+    "FTMO_PR457_ZCLOUD_PROOF_GREEN",
 )
 
 
