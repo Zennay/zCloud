@@ -1,0 +1,83 @@
+name: zCloud hosted resilience simulation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-hosted-resilience-simulation.yml
+      - tests/test_hosted_resilience_simulation_workflow.py
+      - tests/test_runner_smoke.py
+      - tests/test_task_claims.py
+      - tests/test_project_runtime.py
+      - tests/test_firefox_recovery.js
+      - tests/test_firefox_recovery_contract.js
+      - server.py
+      - project_runtime.py
+      - firefox-extension/recovery.js
+      - firefox-extension/background.js
+      - public/zcloud-worker.user.js
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-hosted-resilience-simulation.yml
+      - tests/test_hosted_resilience_simulation_workflow.py
+      - tests/test_runner_smoke.py
+      - tests/test_task_claims.py
+      - tests/test_project_runtime.py
+      - tests/test_firefox_recovery.js
+      - tests/test_firefox_recovery_contract.js
+      - server.py
+      - project_runtime.py
+      - firefox-extension/recovery.js
+      - firefox-extension/background.js
+      - public/zcloud-worker.user.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-hosted-resilience-simulation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact zCloud simulation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_ZCLOUD_SHA"
+          printf 'ZCLOUD_RESILIENCE_EXACT_CHECKOUT_GREEN sha=%s\n' "$actual"
+
+      - name: Simulate durable mapping across service bootstrap
+        run: |
+          python3 -m unittest -v \
+            tests.test_runner_smoke.RunnerSmokeTests.test_reconnect_adopts_and_persists_conversation
+
+      - name: Simulate stale task and resource lease recovery
+        run: |
+          python3 -m unittest -v \
+            tests.test_task_claims.TaskClaimTests.test_stale_claim_is_automatically_recovered \
+            tests.test_project_runtime.ProjectRuntimeTests.test_expired_heavy_lease_is_recovered_after_owner_crash
+
+      - name: Simulate Firefox worker recovery after lost tab state
+        run: |
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+
+      - name: Mark bounded resilience simulation green
+        run: echo "ZCLOUD_HOSTED_RESILIENCE_SIMULATION_GREEN=1"
