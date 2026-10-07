@@ -79,3 +79,21 @@ window is free and a separate integration change:
 This slice therefore advances the roadmap from independent policies toward one
 coherent scheduler decision contract without taking over any active runtime
 owner.
+
+
+## CLI contract
+
+The command-line interface is intended for a later scheduler wrapper and uses
+distinct fail-closed exit semantics:
+
+- exit `0`: the evidence was valid and the result is decision-ready. This
+  includes `status=ready` and pressure-driven `status=held`; a held plan may
+  keep the bounded base allocation but must not perform opportunistic expansion.
+- exit `2`: input/schema/coherence validation failed. The emitted JSON has
+  `status=invalid` and remains non-mutating.
+- exit `3` with `--require-ready`: evidence parsed but is not safe to use as
+  a scheduler decision, for example `source_complete=false`.
+
+Inputs must be regular files; symlink evidence is refused. Consumers should use
+`--json --require-ready` and treat every non-zero exit as a denied scheduler
+decision rather than falling back to permissive defaults.
