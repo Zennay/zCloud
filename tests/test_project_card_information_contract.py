@@ -78,9 +78,9 @@ class ProjectCardInformationContractTests(unittest.TestCase):
             r"\.project-card\{[^}]*padding:21px",
         )
         self.assertIn("@media(max-width:760px)", self.style)
-        self.assertRegex(
+        self.assertIn(
+            ".project-grid{grid-template-columns:1fr;gap:13px;margin-bottom:22px}",
             self.style,
-            r"@media\(max-width:760px\)\{[^}]*\.project-grid\{[^}]*grid-template-columns:1fr",
         )
 
     def test_card_has_bounded_visual_hierarchy_instead_of_full_detail_panels(self):
