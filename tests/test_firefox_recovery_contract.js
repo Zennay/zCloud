@@ -122,7 +122,7 @@ assert.ok(
 const drainIndex = replacementBlock.indexOf("await drainRunnerBeforeReplacement(oldTab, target, reason)");
 const verifyIndex = replacementBlock.indexOf("await verifyReplacementHandoffStillCurrent(target, handoff)");
 const closeIndex = replacementBlock.indexOf("await closeRunnerTab(oldTab)");
-const openIndex = replacementBlock.indexOf("browser.tabs.create({url: \"https://chatgpt.com/\"");
+const openIndex = replacementBlock.indexOf("browser.tabs.create({url: target.url, active: true})");
 assert.ok(drainIndex >= 0 && verifyIndex > drainIndex, "replacement must drain before revalidating ownership");
 assert.ok(closeIndex > verifyIndex, "old tab may close only after drain + handoff revalidation");
 const pendingDispatchIndex = replacementBlock.indexOf("pendingInitialDispatches.add(projectId)");
