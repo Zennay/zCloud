@@ -103,7 +103,7 @@ jobs:
 
           gh pr view "$CURRENT_PR" \
             --repo "$GITHUB_REPOSITORY" \
-            --json changedFiles,files > "$current"
+            --json headRefOid,changedFiles,files > "$current"
 
           gh pr list \
             --repo "$GITHUB_REPOSITORY" \
@@ -119,6 +119,7 @@ jobs:
           python3 scripts/zcloud_recent_branch_ownership_audit.py \
             --snapshot "$snapshot" \
             --current-pr-json "$current" \
+            --expected-current-head "$EXPECTED_ZCLOUD_SHA" \
             --require-clear
 
           rm -f "$snapshot" "$current" "$open_prs"
