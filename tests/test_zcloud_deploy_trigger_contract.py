@@ -37,7 +37,7 @@ class DeployTriggerContractTest(unittest.TestCase):
         source = self.source
         self.assertIn("needs: preflight", source)
         self.assertIn("needs.preflight.outputs.deploy == 'true'", source)
-        self.assertIn('context") == "zcloud/vps-production"', source)
+        self.assertIn('status.get("context") or "") == "zcloud/vps-production"', source)
         self.assertIn('already_green = bool(', source)
         self.assertIn('decision = "false" if already_green else "true"', source)
 
