@@ -51,11 +51,7 @@ def _read_source(path: Path) -> str:
 
 
 def _function_end(source: str, match: re.Match[str]) -> int:
-    """Return the exact closing brace for a named function.
-
-    The scanner ignores quoted strings, template literals and comments so a final
-    top-level function cannot accidentally absorb following event-listener code.
-    """
+    """Return the exact closing brace for a named function."""
     brace_at = source.find("{", match.end())
     if brace_at < 0:
         raise AuditError(f"function_body_missing:{match.group(1)}")
@@ -115,21 +111,27 @@ def _function_end(source: str, match: re.Match[str]) -> int:
     raise AuditError(f"function_unclosed:{match.group(1)}")
 
 
-def _function_blocks(source: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
+def _function_spans(source: str) -> list[tuple[str, int, int, str]]:
+    spans: list[tuple[str, int, int, str]] = []
     for match in _FUNCTION_RE.finditer(source):
         end = _function_end(source, match)
-        blocks.append((match.group(1), source[match.start():end]))
-    return blocks
+        spans.append((match.group(1), match.start(), end, source[match.start():end]))
+    return spans
+
+
+def _function_blocks(source: str) -> list[tuple[str, str]]:
+    return [(name, block) for name, _start, _end, block in _function_spans(source)]
+
+
+def _write_offsets(text: str) -> list[int]:
+    offsets = [match.start() for match in _AWAIT_POST_RE.finditer(text)]
+    offsets.extend(match.start() for match in _AWAIT_FETCH_POST_RE.finditer(text))
+    return sorted(set(offsets))
 
 
 def _first_write_offset(block: str) -> int | None:
-    offsets: list[int] = []
-    for regex in (_AWAIT_POST_RE, _AWAIT_FETCH_POST_RE):
-        match = regex.search(block)
-        if match:
-            offsets.append(match.start())
-    return min(offsets) if offsets else None
+    offsets = _write_offsets(block)
+    return offsets[0] if offsets else None
 
 
 def _guard_state(block: str) -> tuple[bool, bool]:
@@ -141,9 +143,10 @@ def _guard_state(block: str) -> tuple[bool, bool]:
 
 
 def audit(source: str) -> dict[str, Any]:
+    spans = _function_spans(source)
     mutators: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for name, block in _function_blocks(source):
+    for name, _start, _end, block in spans:
         if name in WRITE_HELPERS:
             continue
         if _first_write_offset(block) is None:
@@ -163,8 +166,17 @@ def audit(source: str) -> dict[str, Any]:
     if not mutators:
         raise AuditError("no_mutating_dashboard_functions")
 
+    inline_writes: list[bool] = []
+    for offset in _write_offsets(source):
+        if any(start <= offset < end for _name, start, end, _block in spans):
+            continue
+        prefix = source[max(0, offset - 600):offset]
+        inline_writes.append(bool(_DISABLED_RE.search(prefix)))
+
     unguarded = sorted(item["name"] for item in mutators if not item["inflight_guard"])
     unexpected = sorted(set(unguarded) - KNOWN_BASELINE_DEBT)
+    if any(not guarded for guarded in inline_writes):
+        unexpected.append("inline_write_without_guard")
     baseline = sorted(set(unguarded) & KNOWN_BASELINE_DEBT)
     status = "regressed" if unexpected else ("baseline_bounded" if baseline else "complete")
     return {
@@ -173,8 +185,10 @@ def audit(source: str) -> dict[str, Any]:
         "mutator_count": len(mutators),
         "guarded_count": sum(1 for item in mutators if item["inflight_guard"]),
         "visible_pending_count": sum(1 for item in mutators if item["visible_pending"]),
+        "inline_write_count": len(inline_writes),
+        "inline_guarded_count": sum(1 for guarded in inline_writes if guarded),
         "remaining_baseline_debt": baseline,
-        "unexpected_debt": unexpected,
+        "unexpected_debt": sorted(set(unexpected)),
         "mutation_performed": False,
     }
 
@@ -204,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"status={result['status']}")
         print(f"mutator_count={result['mutator_count']}")
         print(f"guarded_count={result['guarded_count']}")
+        print(f"inline_write_count={result['inline_write_count']}")
+        print(f"inline_guarded_count={result['inline_guarded_count']}")
         print("remaining_baseline_debt=" + ",".join(result["remaining_baseline_debt"]))
         print("unexpected_debt=" + ",".join(result["unexpected_debt"]))
 
