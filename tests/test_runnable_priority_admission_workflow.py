@@ -44,6 +44,9 @@ class RunnablePriorityAdmissionWorkflowTests(unittest.TestCase):
         self.assertIn('excluded["lightup"]["priority_weight"] == 0', text)
         self.assertIn('["ftmo", "haxlab"]', text)
         self.assertIn("ZCLOUD_RUNNABLE_PRIORITY_VPS_GREEN=1", text)
+        self.assertIn("/home/ubuntu/zennay-cloud/resource-policy.json", text)
+        self.assertIn("--resource-policy", text)
+        self.assertIn("ZCLOUD_RUNNABLE_PRIORITY_LIVE_POLICY_READ_GREEN=1", text)
 
 
 if __name__ == "__main__":
