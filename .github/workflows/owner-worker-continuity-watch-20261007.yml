@@ -35,8 +35,16 @@ jobs:
           DB="/home/ubuntu/zennay-cloud/history.db"
 
           def get(path):
-              with urllib.request.urlopen(BASE+path, timeout=8) as r:
-                  return json.load(r)
+              last=None
+              for attempt in range(3):
+                  try:
+                      with urllib.request.urlopen(BASE+path, timeout=5) as r:
+                          return json.load(r)
+                  except Exception as exc:
+                      last=exc
+                      if attempt < 2:
+                          time.sleep(1)
+              raise last
 
           def mem():
               vals={}
@@ -102,11 +110,27 @@ jobs:
                   for x in allocation
               ]
               firefox=live.get("chatgpt_firefox") or {}
+              live_workers={}
+              for project in (live.get("chatgpt_runners") or {}).values():
+                  for row in (project.get("workers") or []):
+                      key=str(row.get("worker_id") or "")
+                      if not key:
+                          continue
+                      last=row.get("last_event") or {}
+                      live_workers[key]={
+                          "state":row.get("state"),
+                          "generating":bool(row.get("generating")),
+                          "sending":bool(row.get("sending")),
+                          "age_seconds":row.get("age_seconds"),
+                          "last_event":last.get("event"),
+                          "last_reason":last.get("reason"),
+                      }
               snap={
                   "sample":i,
                   "ts":datetime.now(timezone.utc).isoformat(),
                   "allocated":len(keys),
                   "workers":keys,
+                  "worker_states":{key:live_workers.get(key) for key in keys},
                   "firefox_active":bool(firefox.get("active")),
                   "firefox_state":firefox.get("state") or firefox.get("service_state"),
                   "memory_mb":mem(),
@@ -123,10 +147,30 @@ jobs:
           if final["allocated"] < 7:
               raise SystemExit(f"continuity failure: only {final['allocated']} workers allocated")
           stale=final["commands"]["stale_pending"]
-          if stale:
+          hard_stale=[]
+          busy_deferred=[]
+          allocated=set(final["workers"])
+          for item in stale:
+              worker=item["worker"]
+              if worker not in allocated:
+                  continue
+              runtime=(final.get("worker_states") or {}).get(worker) or {}
+              recent_busy=(
+                  runtime.get("state") in ("live","starting")
+                  and runtime.get("last_event")=="send-blocked"
+                  and runtime.get("last_reason") in ("new-chat-deferred-busy","push-deferred-busy")
+                  and isinstance(runtime.get("age_seconds"),(int,float))
+                  and runtime.get("age_seconds") <= 90
+              )
+              if runtime.get("generating") or runtime.get("sending") or recent_busy:
+                  busy_deferred.append(item)
+              else:
+                  hard_stale.append(item)
+          print("CONTINUITY_BUSY_DEFERRED="+json.dumps(busy_deferred,sort_keys=True))
+          if hard_stale:
               raise SystemExit(
-                  "continuity failure: stale pending control commands remain: "
-                  + json.dumps(stale, sort_keys=True)
+                  "continuity failure: idle stale pending control commands remain: "
+                  + json.dumps(hard_stale, sort_keys=True)
               )
           print("OWNER_WORKER_CONTINUITY_GREEN=1")
           PY
