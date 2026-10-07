@@ -76,6 +76,8 @@ class ProductionStatusRecoveryWorkflowTests(unittest.TestCase):
         self.assertIn('event_ref != "refs/heads/main"', text)
         self.assertIn('if event_name == "workflow_run":', text)
         self.assertIn('trigger_repo_name == CANONICAL_REPOSITORY', text)
+        self.assertIn('str(trigger.get("path") or "")', text)
+        self.assertIn('== ".github/workflows/zcloud-vps-deploy.yml"', text)
         self.assertIn('str(trigger.get("head_branch") or "") == "main"', text)
         self.assertIn('str(trigger.get("conclusion") or "") == "success"', text)
         self.assertIn('str(trigger.get("event") or "") in TRUSTED_DEPLOY_EVENTS', text)
@@ -94,6 +96,7 @@ class ProductionStatusRecoveryWorkflowTests(unittest.TestCase):
         self.assertIn('TRUSTED_DEPLOY_EVENTS = {"workflow_run"}', recovery)
         self.assertIn('workflow_run:', deploy)
         self.assertIn('workflows: ["zCloud regression smoke"]', deploy)
+        self.assertIn('== ".github/workflows/zcloud-vps-deploy.yml"', recovery)
         self.assertNotIn('TRUSTED_DEPLOY_EVENTS = {"push", "workflow_dispatch"}', recovery)
 
     def test_provenance_gate_runs_before_any_actions_write_dispatch(self):
