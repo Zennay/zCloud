@@ -33,7 +33,10 @@ class EvidenceProgressTests(unittest.TestCase):
             {"trial_hash": "validated-17"},
             {"result": {"total_pnl": 0.0018, "cost_1_5x_pnl": 0.0010, "win_rate": 0.52}},
         )
-        with patch.object(enhancements, "_ftmo_candidate", return_value=cand),              patch.object(enhancements, "_ftmo_release", return_value=release),              patch.object(enhancements, "_ftmo_readiness", return_value={"available": True}):
+        with patch.object(enhancements, "_ftmo_candidate", return_value=cand), \
+             patch.object(enhancements, "_ftmo_release", return_value=release), \
+             patch.object(enhancements, "_ftmo_lifecycle", return_value={}), \
+             patch.object(enhancements, "_ftmo_readiness", return_value={"available": True}):
             quality = enhancements.quality_for("ftmo")
         cmp = quality["comparison"]
         self.assertEqual("Generation 18", cmp["latest"]["value"])
@@ -52,6 +55,7 @@ class EvidenceProgressTests(unittest.TestCase):
         )
         with patch.object(enhancements, "_ftmo_candidate", return_value=cand), \
              patch.object(enhancements, "_ftmo_release", return_value=None), \
+             patch.object(enhancements, "_ftmo_lifecycle", return_value={}), \
              patch.object(enhancements, "_ftmo_readiness", return_value={"available": False}):
             quality = enhancements.quality_for("ftmo")
 
@@ -61,6 +65,90 @@ class EvidenceProgressTests(unittest.TestCase):
             ["1.5× cost PnL"],
             [item["label"] for item in quality["items"]],
         )
+
+    def test_ftmo_lifecycle_uses_runtime_status_and_bounded_generation_summaries(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            research_root = root / "research_outcomes"
+            status_path = root / "status.json"
+            for generation, reviews in (
+                (28, [{"outcome": "rejected"}, {"outcome": "candidate", "selected_variant": "v2"}]),
+                (29, [{"outcome": "candidate", "selected_variant": "v3"}]),
+                (30, [{"outcome": "rejected"}]),
+            ):
+                generation_dir = research_root / f"generation-{generation}"
+                generation_dir.mkdir(parents=True)
+                (generation_dir / "development-review-summary.json").write_text(
+                    json.dumps({
+                        "generation_id": f"generation-{generation}",
+                        "reviews": reviews,
+                    }),
+                    encoding="utf-8",
+                )
+            status_path.write_text(
+                json.dumps({
+                    "ok": True,
+                    "research": {
+                        "generation_number": 30,
+                        "generation_id": "generation-30",
+                        "next_stage": "provider_foundation",
+                    },
+                    "research_controller": {
+                        "action": "continue",
+                        "generation_loop": {
+                            "stage": "provider_foundation",
+                            "action": "provider_foundation_window_not_elapsed",
+                        },
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(enhancements, "FTMO_RESEARCH_ROOT", research_root), \
+                 patch.object(enhancements, "FTMO_RUNTIME_STATUS_FILE", status_path):
+                lifecycle = enhancements._ftmo_lifecycle()
+
+        self.assertEqual(30, lifecycle["generation_number"])
+        self.assertEqual("generation-30", lifecycle["generation_id"])
+        self.assertEqual([30, 29, 28], lifecycle["recent_generations"])
+        self.assertEqual("provider_foundation", lifecycle["next_stage"])
+        self.assertEqual("provider_foundation_window_not_elapsed", lifecycle["controller_action"])
+        self.assertEqual(4, lifecycle["reviewed_experiments"])
+        self.assertEqual(2, lifecycle["selected_candidates"])
+        self.assertTrue(lifecycle["runtime_ok"])
+        self.assertEqual(str(status_path), lifecycle["source"])
+
+    def test_ftmo_quality_surfaces_lifecycle_without_inventing_best_release(self):
+        lifecycle = {
+            "generation_number": 30,
+            "generation_id": "generation-30",
+            "recent_generations": [30, 29, 28],
+            "next_stage": "provider_foundation",
+            "controller_action": "provider_foundation_window_not_elapsed",
+            "reviewed_experiments": 14,
+            "selected_candidates": 3,
+            "runtime_ok": True,
+            "source": "/tmp/ftmo-status.json",
+        }
+        with patch.object(enhancements, "_ftmo_candidate", return_value=None), \
+             patch.object(enhancements, "_ftmo_release", return_value=None), \
+             patch.object(enhancements, "_ftmo_lifecycle", return_value=lifecycle), \
+             patch.object(enhancements, "_ftmo_readiness", return_value={"available": False}):
+            quality = enhancements.quality_for("ftmo")
+
+        metrics = {item["label"]: item for item in quality["items"]}
+        self.assertEqual(30, metrics["Runtime generation"]["value"])
+        self.assertEqual("30 · 29 · 28", metrics["Recent generations"]["value"])
+        self.assertEqual("provider_foundation", metrics["Lifecycle stage"]["value"])
+        self.assertEqual(14, metrics["Reviewed experiments"]["value"])
+        self.assertEqual(3, metrics["Selected candidates"]["value"])
+        self.assertEqual(30, quality["meta"]["runtime_generation"])
+        self.assertEqual("provider_foundation", quality["meta"]["runtime_stage"])
+        self.assertEqual(
+            "not_available_without_comparable_validated_rank",
+            quality["meta"]["best_validated_policy"],
+        )
+        self.assertIsNone(quality["comparison"]["best"])
 
     def test_registered_project_adapters_are_explicit(self):
         self.assertEqual(("ftmo", "haxlab", "ulab"), enhancements.telemetry_adapter_projects())
@@ -149,6 +237,7 @@ class EvidenceProgressTests(unittest.TestCase):
             )
             with patch.object(enhancements, "_ftmo_candidate", return_value=cand), \
                  patch.object(enhancements, "_ftmo_release", return_value=release), \
+                 patch.object(enhancements, "_ftmo_lifecycle", return_value={}), \
                  patch.object(enhancements, "_ftmo_readiness", return_value={"available": True}):
                 comparison = enhancements.quality_for("ftmo")["comparison"]
 
@@ -197,6 +286,10 @@ class EvidenceProgressTests(unittest.TestCase):
             'test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"',
             workflow,
         )
+        self.assertIn("Prove live FTMO lifecycle telemetry is read-only", workflow)
+        self.assertIn("ZCLOUD_FTMO_LIFECYCLE_TELEMETRY_READONLY_GREEN=1", workflow)
+        self.assertIn("status_path.stat().st_mtime_ns", workflow)
+        self.assertNotIn("status_path.write_", workflow)
 
     def test_renderer_is_project_agnostic(self):
         js = Path("public/enhancements.js").read_text(encoding="utf-8")
