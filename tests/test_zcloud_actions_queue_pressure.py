@@ -98,6 +98,14 @@ class ActionsQueuePressureTests(unittest.TestCase):
         self.assertEqual(result["state"], "healthy")
         self.assertEqual(result["waiting_self_hosted_jobs"], 0)
 
+    def test_small_clock_skew_is_tolerated(self):
+        payload = snapshot(job("queued", age=0))
+        payload["runs"][0]["jobs"][0]["created_at"] = (
+            NOW + timedelta(seconds=30)
+        ).isoformat()
+        result = classify_pressure(payload)
+        self.assertEqual(result["state"], "saturated")
+
     def test_unknown_fields_and_unsafe_workflow_paths_fail_closed(self):
         bad = snapshot()
         bad["hidden"] = True
@@ -115,7 +123,7 @@ class ActionsQueuePressureTests(unittest.TestCase):
 
         bad = snapshot(job("queued", age=0))
         bad["runs"][0]["jobs"][0]["created_at"] = (
-            NOW + timedelta(seconds=1)
+            NOW + timedelta(seconds=61)
         ).isoformat()
         with self.assertRaisesRegex(PressureInputError, "job_created_after_capture"):
             classify_pressure(bad)
