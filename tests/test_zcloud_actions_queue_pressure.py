@@ -65,6 +65,17 @@ class ActionsQueuePressureTests(unittest.TestCase):
         self.assertEqual(result["state"], "saturated")
         self.assertIn("NO_IMMEDIATE_RUNNER_HEADROOM", result["reasons"])
 
+    def test_running_over_declared_capacity_is_fail_visible(self):
+        result = classify_pressure(
+            snapshot(
+                job("in_progress", age=80),
+                job("in_progress", age=40),
+                capacity=1,
+            )
+        )
+        self.assertEqual(result["state"], "incomplete")
+        self.assertIn("RUNNING_EXCEEDS_CAPACITY", result["reasons"])
+
     def test_stalled_queue_takes_precedence_after_fifteen_minutes(self):
         result = classify_pressure(snapshot(job("queued", age=901)))
         self.assertEqual(result["state"], "stalled")
