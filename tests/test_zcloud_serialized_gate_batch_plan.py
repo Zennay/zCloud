@@ -137,11 +137,22 @@ class SerializedGateBatchPlanTests(unittest.TestCase):
     def test_workflow_is_read_only_exact_head_and_never_merges(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read\n  pull-requests: read", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("needs: validate", text)
         self.assertIn(
             "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
             text,
         )
+        self.assertIn(
+            "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+            text,
+        )
+        self.assertIn("node-version: 24", text)
+        self.assertIn("python3 -m unittest discover -v", text)
+        self.assertIn("tests/test_birds_eye_review.sh", text)
+        self.assertIn("tests.test_transactional_promote", text)
+        self.assertIn("scripts/zcloud_config_validate.py", text)
         self.assertIn("persist-credentials: false", text)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn("merge_authorized", text)
