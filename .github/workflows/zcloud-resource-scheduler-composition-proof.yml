@@ -6,6 +6,7 @@ on:
     paths:
       - scripts/zcloud_resource_scheduler_composition.py
       - tests/test_resource_scheduler_composition.py
+      - tests/test_resource_scheduler_composition_workflow.py
       - docs/resource-scheduler-composition.md
       - .github/workflows/zcloud-resource-scheduler-composition-proof.yml
   workflow_dispatch:
@@ -49,8 +50,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile             scripts/zcloud_resource_scheduler_composition.py             tests/test_resource_scheduler_composition.py
-          python3 -m unittest -v tests.test_resource_scheduler_composition
+          python3 -m py_compile \
+            scripts/zcloud_resource_scheduler_composition.py \
+            tests/test_resource_scheduler_composition.py \
+            tests/test_resource_scheduler_composition_workflow.py
+          python3 -m unittest -v \
+            tests.test_resource_scheduler_composition \
+            tests.test_resource_scheduler_composition_workflow
 
       - name: Prove bounded ready plan
         shell: bash
