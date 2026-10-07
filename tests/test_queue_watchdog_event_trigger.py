@@ -14,8 +14,10 @@ class QueueWatchdogEventTriggerTests(unittest.TestCase):
         self.assertIn("workflow_run:", self.text)
         self.assertIn('workflows: ["zCloud regression smoke"]', self.text)
         self.assertIn("types: [completed]", self.text)
-        self.assertIn("observe:\n    runs-on: ubuntu-latest", self.text)
-        self.assertIn("timeout-minutes: 3", self.text)
+        observe = self.text.split("  observe:", 1)[1].split("  recover:", 1)[0]
+        self.assertIn("runs-on: ubuntu-latest", observe)
+        self.assertIn("github.event_name != 'workflow_run'", observe)
+        self.assertIn("timeout-minutes: 3", observe)
 
     def test_hosted_observe_and_vps_recover_have_separate_concurrency(self):
         self.assertNotIn("\nconcurrency:\n  group: zcloud-self-hosted-queue-watchdog\n", self.text)
