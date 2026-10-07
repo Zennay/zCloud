@@ -87,16 +87,21 @@ def _load_open_pr_heads(path: Path) -> set[str]:
 def _origin_branches(repo_root: Path, remote: str) -> list[str]:
     if remote != "origin":
         raise SnapshotError("remote_invalid")
+    base_ref = f"refs/remotes/{remote}/main"
+    base_sha = _run_git(repo_root, "rev-parse", "--verify", base_ref).strip()
+    if len(base_sha) != 40 or any(ch not in "0123456789abcdef" for ch in base_sha.lower()):
+        raise SnapshotError("base_branch_missing")
     raw = _run_git(
         repo_root,
         "for-each-ref",
+        f"--no-merged={base_ref}",
         "--format=%(refname:strip=3)",
         f"refs/remotes/{remote}",
     )
     branches: list[str] = []
     seen: set[str] = set()
     for line in raw.splitlines():
-        if not line or line == "HEAD":
+        if not line or line == "HEAD" or line == "main":
             continue
         name = _safe_branch(line)
         if name in seen:
@@ -106,8 +111,6 @@ def _origin_branches(repo_root: Path, remote: str) -> list[str]:
     branches.sort()
     if len(branches) > MAX_BRANCHES:
         raise SnapshotError("remote_branch_inventory_too_large")
-    if "main" not in seen:
-        raise SnapshotError("base_branch_missing")
     return branches
 
 
