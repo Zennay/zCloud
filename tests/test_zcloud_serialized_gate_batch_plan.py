@@ -19,6 +19,7 @@ MAIN = "1" * 40
 
 
 def backlog(*, released=False, dependents=None):
+    dependents = dependents or []
     return {
         "schema": "zcloud-serialized-gate-backlog-audit-v1",
         "repository": "Zennay/zCloud",
@@ -27,14 +28,19 @@ def backlog(*, released=False, dependents=None):
         "status": "released_with_backlog" if released else "blocked",
         "gate_open": not released,
         "integration_released": released,
-        "gates": [],
-        "dependent_pr_count": len(dependents or []),
+        "gates": [
+            {"number": 580, "open": not released},
+            {"number": 576, "open": not released},
+        ],
+        "dependent_pr_count": len(dependents),
         "review_ready_current_main_count": sum(
-            1 for item in (dependents or []) if item.get("review_ready_current_main")
+            1 for item in dependents if item.get("review_ready_current_main")
         ),
-        "stale_base_count": 0,
-        "draft_count": 0,
-        "dependents": dependents or [],
+        "stale_base_count": sum(
+            1 for item in dependents if item.get("base_is_current_main") is False
+        ),
+        "draft_count": sum(1 for item in dependents if item.get("draft") is True),
+        "dependents": dependents,
         "mutation_performed": False,
     }
 
@@ -102,6 +108,23 @@ class SerializedGateBatchPlanTests(unittest.TestCase):
         self.assertFalse(result["preview_only"])
         self.assertFalse(result["merge_authorized"])
         self.assertTrue(result["ci_revalidation_required"])
+
+    def test_incoherent_gate_release_state_fails_closed(self):
+        data = payload([dep(1)], {1: ["a"]}, released=False)
+        data["backlog"]["integration_released"] = True
+        with self.assertRaisesRegex(plan.PlanError, "incoherent gate release"):
+            plan.build_plan(data)
+
+    def test_summary_count_mismatch_fails_closed(self):
+        data = payload([dep(1)], {1: ["a"]})
+        data["backlog"]["dependent_pr_count"] = 2
+        with self.assertRaisesRegex(plan.PlanError, "dependent PR count mismatch"):
+            plan.build_plan(data)
+
+    def test_extra_changed_file_evidence_fails_closed(self):
+        data = payload([dep(1)], {1: ["a"], 2: ["b"]})
+        with self.assertRaisesRegex(plan.PlanError, "key set mismatch"):
+            plan.build_plan(data)
 
     def test_incomplete_changed_file_evidence_fails_closed(self):
         data = payload([dep(1)], {1: ["a"]})
