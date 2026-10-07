@@ -2272,7 +2272,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!tab.url || !tab.url.includes("chatgpt.com")) return;
+  if (!tab.url || !Recovery.providerFromUrl(tab.url)) return;
   const assigned = tabTargets[tabId];
   if (assigned) {
     if (pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {
@@ -2283,7 +2283,7 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       recoverConversationLoadFailure(tabId, assigned).catch(() => {});
     }
   } else if (changeInfo.status === "complete") {
-    const target = Object.values(targets).find(t => tab.url.includes("/c/" + t.conversation_id));
+    const target = Object.values(targets).find(t => Recovery.matchesConversation(tab, t));
     if (target) inject(tabId, target);
   }
 });
