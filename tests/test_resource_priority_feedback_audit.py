@@ -43,7 +43,7 @@ document.addEventListener('change',async function(e){
     el.disabled=false;
     el.removeAttribute('aria-busy');
   }
-});
+  },true);
 </script>
 """
 
@@ -87,6 +87,19 @@ class ResourcePriorityFeedbackAuditTests(unittest.TestCase):
         source = COMPLETE.replace("el.disabled=false;", "")
         report = audit.audit_source(source)
         self.assertIn("reenabled", report["missing"])
+
+    def test_unrelated_feedback_copy_cannot_satisfy_resource_handler(self):
+        source = COMPLETE.replace(
+            "$('notice').textContent='Saving priority…';", ""
+        ).replace(
+            "$('notice').textContent='Priority updated.';", ""
+        ).replace("el.setAttribute('aria-busy','true');", "")
+        source += "\n<div>Saving… Priority updated.</div>\n"
+        report = audit.audit_source(source)
+        self.assertEqual(
+            ["pending_feedback", "success_feedback"],
+            report["missing"],
+        )
 
     def test_current_repo_baseline_is_bounded_known_debt(self):
         report = audit.audit_source(SOURCE.read_text(encoding="utf-8"))
