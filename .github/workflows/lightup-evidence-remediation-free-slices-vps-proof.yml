@@ -1,0 +1,166 @@
+name: LightUp evidence-remediation free-slices VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-evidence-remediation-free-slices-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-evidence-remediation-free-slices-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    if: github.event_name == 'pull_request'
+    name: Eleven exact LightUp evidence-remediation heads on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 55
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          cat > "${RUNNER_TEMP}/lightup-evidence-remediation-targets.tsv" <<'EOF'
+          review_request_live|459|chatgpt/st5-remediation-review-request-live-validation-atomicity-20261007|99e2f83277b3510f33e39bd372d207bdf52d9411|test_future_remediation_text_review_request_live_validation_atomicity|test_future_remediation_text_review_request_handoff
+          revision_request_live|460|chatgpt/st5-remediation-revision-request-live-validation-atomicity-20261007|bc6718965ac2d7b5c32a6e6137d5bc30581d1cff|test_future_remediation_text_revision_request_live_validation_atomicity|test_future_remediation_text_revision_request_handoff
+          revised_review_request_live|461|chatgpt/st5-revised-review-request-live-validation-atomicity-20261007|389e7543686f5a42f6fdb71fc6884ef4e8c97d6f|test_future_remediation_text_revision_review_request_live_validation_atomicity|test_future_remediation_text_revision_review_request_handoff
+          review_request_builder|462|chatgpt/st5-remediation-review-request-builder-input-atomicity-20261007|8d6588eb2b1bcb5c06532abd894ea0b329722b65|test_future_remediation_text_review_request_builder_input_atomicity|test_future_remediation_text_review_request
+          revision_request_builder|463|chatgpt/st5-remediation-revision-request-builder-input-atomicity-20261007|7e66e274d931452a88207db9fb950fab596bd9fe|test_future_remediation_text_revision_request_builder_input_atomicity|test_future_remediation_text_revision_request
+          revised_review_request_builder|464|chatgpt/st5-revised-review-request-builder-input-atomicity-20261007|2cbdf1f069ea1b530cde07c6c48980b33c330042|test_future_remediation_text_revision_review_request_builder_input_atomicity|test_future_remediation_text_revision_review_request
+          review_producer|465|chatgpt/st5-remediation-review-producer-input-atomicity-20261007|3546b258f24553cf3e610ab252ff253afb1fd4ac|test_future_remediation_text_review_producer_input_atomicity|test_future_remediation_text_review
+          revised_review_producer|466|chatgpt/st5-revised-review-producer-input-atomicity-20261007|45e3035713747512452d2ef9a14bd28649b3f679|test_future_remediation_text_revision_review_producer_input_atomicity|test_future_remediation_text_revision_review
+          proposal_producer|467|chatgpt/st5-remediation-proposal-producer-input-atomicity-20261007|3a392d827c35d6a3e88a89570035d0b2e19ef671|test_future_remediation_text_proposal_producer_input_atomicity|test_future_remediation_text_proposal
+          revision_proposal_producer|468|chatgpt/st5-revision-proposal-producer-input-atomicity-20261007|aae5a8ecbb134011ac0301a095c78b90a06b6cc6|test_future_remediation_text_revision_proposal_producer_input_atomicity|test_future_remediation_text_revision_proposal
+          authoring_request_builder|469|chatgpt/st5-authoring-request-builder-input-atomicity-20261007|9dca1eaa50a53015559be5c051241316504767c5|test_future_remediation_authoring_request_builder_input_atomicity|test_future_remediation_authoring_request
+          EOF
+
+          while IFS='|' read -r key pr branch expected dedicated parent; do
+            remote_ref="refs/remotes/origin/lightup-proof-${key}"
+            snapshot="${RUNNER_TEMP}/lightup-${key}-${GITHUB_RUN_ID}"
+            git -C "${LIGHTUP_REPO}" fetch --prune origin "+refs/heads/${branch}:${remote_ref}"
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+          done < "${RUNNER_TEMP}/lightup-evidence-remediation-targets.tsv"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove eleven heads on Python 3.11
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS='|' read -r key pr branch expected dedicated parent; do
+            snapshot="${RUNNER_TEMP}/lightup-${key}-${GITHUB_RUN_ID}"
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v "${dedicated}" "${parent}"
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          done < "${RUNNER_TEMP}/lightup-evidence-remediation-targets.tsv"
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove eleven heads on Python 3.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS='|' read -r key pr branch expected dedicated parent; do
+            snapshot="${RUNNER_TEMP}/lightup-${key}-${GITHUB_RUN_ID}"
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v "${dedicated}" "${parent}"
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          done < "${RUNNER_TEMP}/lightup-evidence-remediation-targets.tsv"
+
+      - name: Write exact-head proof receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-evidence-remediation-free-slices-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          targets = []
+          tsv = Path(os.environ["RUNNER_TEMP"]) / "lightup-evidence-remediation-targets.tsv"
+          for line in tsv.read_text().splitlines():
+              key, pr, branch, sha, dedicated, parent = line.split("|")
+              targets.append(
+                  {
+                      "key": key,
+                      "pull_request": int(pr),
+                      "branch": branch,
+                      "head_sha": sha,
+                      "dedicated_test": dedicated,
+                      "parent_test": parent,
+                  }
+              )
+
+          payload = {
+              "project": "LightUp",
+              "focus": "evidence-remediation",
+              "pull_requests": [item["pull_request"] for item in targets],
+              "targets": targets,
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "exact-sha+dedicated-atomicity+parent-control+safety-canaries",
+              "production_source_changes": 0,
+              "authority_widening": False,
+          }
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-evidence-remediation-free-slices-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head proof receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-evidence-remediation-free-slices-vps-proof
+          path: ${{ runner.temp }}/lightup-evidence-remediation-free-slices-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "${RUNNER_TEMP}/lightup-evidence-remediation-targets.tsv" ]; then
+            while IFS='|' read -r key pr branch expected dedicated parent; do
+              rm -rf "${RUNNER_TEMP}/lightup-${key}-${GITHUB_RUN_ID}"
+            done < "${RUNNER_TEMP}/lightup-evidence-remediation-targets.tsv"
+          fi
