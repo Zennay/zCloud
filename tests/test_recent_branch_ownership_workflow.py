@@ -37,12 +37,31 @@ class RecentBranchOwnershipWorkflowContractTests(unittest.TestCase):
         text = self.text
         identity = text.index("Prove permanent runner and exact checkout")
         regressions = text.index("Run recent-branch ownership regressions")
+        full = text.index("Run full zCloud regression parity suite")
         live = text.index("Prove current PR has no recent un-PR branch conflict")
         self.assertLess(identity, regressions)
-        self.assertLess(identity, live)
+        self.assertLess(regressions, full)
+        self.assertLess(full, live)
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
         self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", text)
+
+    def test_stacked_proof_runs_full_regression_parity(self):
+        text = self.text
+        required = (
+            "python3 -m unittest discover -v",
+            "bash tests/test_birds_eye_review.sh",
+            "bash tests/test_improvement_stopgate_js.sh",
+            "bash tests/test_autonomy_runner_js.sh",
+            "node tests/test_reload_extension.mjs",
+            "node tests/test_firefox_recovery_contract.js",
+            "python3 -m unittest -v tests.test_prechange_guard",
+            "python3 -m unittest -v tests.test_config_validation",
+            "python3 scripts/zcloud_config_validate.py",
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, text)
 
     def test_current_pr_evidence_has_count_and_files(self):
         text = self.text
