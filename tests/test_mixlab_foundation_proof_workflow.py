@@ -57,6 +57,7 @@ class MixlabFoundationProofWorkflowTests(unittest.TestCase):
             '"project_id": "zssh", "priority": "P2"',
             'result.get("backend") != "sqlite"',
             "queue-receipt.json",
+            "ZCLOUD_MIXLAB_FOUNDATION_PROOF_GREEN=1",
             "retention-days: 14",
         ):
             with self.subTest(token=token):
