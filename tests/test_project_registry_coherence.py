@@ -104,6 +104,23 @@ class ProjectRegistryCoherenceTests(unittest.TestCase):
         self.assertEqual("incoherent", result["state"])
         self.assertEqual("duplicate_project_id", result["errors"][0]["code"])
 
+    def test_invalid_contract_defaults_fail_closed(self):
+        self.contracts = copy.deepcopy(self.contracts)
+        self.contracts["defaults"] = []
+        result = self.audit()
+        self.assertEqual("incoherent", result["state"])
+        self.assertIn({"code": "invalid_contract_defaults"}, result["errors"])
+
+    def test_invalid_ai_worker_cap_fails_closed(self):
+        self.contracts = copy.deepcopy(self.contracts)
+        self.contracts["projects"]["zguard"]["ai_worker_cap"] = True
+        result = self.audit()
+        self.assertEqual("incoherent", result["state"])
+        self.assertIn(
+            {"code": "invalid_ai_worker_cap", "project_ids": ["zguard"]},
+            result["errors"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
