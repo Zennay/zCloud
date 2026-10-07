@@ -65,6 +65,9 @@ class ZcloudMainProtectionPlanTests(unittest.TestCase):
             target["required_pull_request_reviews"]["required_approving_review_count"],
             0,
         )
+        self.assertFalse(target["required_pull_request_reviews"]["dismiss_stale_reviews"])
+        self.assertFalse(target["required_pull_request_reviews"]["require_code_owner_reviews"])
+        self.assertFalse(target["required_pull_request_reviews"]["require_last_push_approval"])
         self.assertTrue(target["required_conversation_resolution"])
         self.assertFalse(target["allow_force_pushes"])
         self.assertFalse(target["allow_deletions"])
