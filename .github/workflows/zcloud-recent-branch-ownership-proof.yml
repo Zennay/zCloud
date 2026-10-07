@@ -58,6 +58,33 @@ jobs:
             tests.test_recent_branch_ownership_audit \
             tests.test_recent_branch_ownership_workflow
 
+      - name: Run full zCloud regression parity suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node --check public/zcloud-worker.user.js
+          python3 -m unittest -v tests.test_prechange_guard
+          python3 -m unittest -v tests.test_postdeploy_canary
+          python3 -m unittest -v tests.test_transactional_promote
+          python3 -m unittest -v tests.test_zcloud_healthcheck
+          python3 -m unittest -v tests.test_config_validation
+          python3 scripts/zcloud_config_validate.py \
+            --projects projects.json \
+            --layout project-layout.json \
+            --resource-policy resource-policy.json \
+            --project-contracts project-contracts.json \
+            --server server.py \
+            --enhancements enhancements.py
+
       - name: Prove current PR has no recent un-PR branch conflict
         if: github.event_name == 'pull_request'
         shell: bash
