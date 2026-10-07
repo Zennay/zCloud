@@ -41,6 +41,7 @@ class ZsshGhAdminCapabilityProbeWorkflowTests(unittest.TestCase):
         guard = "python3 scripts/zcloud_vps_runner_guard.py --json"
         gh_read = "gh api repos/Zennay/zSSH --jq"
         self.assertIn(exact, probe)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', probe)
         self.assertIn('test "$(id -un)" = "ubuntu"', probe)
         self.assertIn(guard, probe)
         self.assertIn(gh_read, probe)
