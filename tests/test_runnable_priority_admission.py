@@ -78,12 +78,20 @@ class RunnablePriorityAdmissionTests(unittest.TestCase):
             ({"schema_version": 2, "projects": []}, "evidence_schema_invalid"),
             ({"schema_version": 1, "projects": {}}, "evidence_projects_missing"),
             (
+                {"schema_version": 1, "projects": [], "prompt": "do not accept"},
+                "evidence_unknown_top_level_field",
+            ),
+            (
                 evidence({"project_id": "ftmo", "runnable": 1, "safety_admitted": True}),
                 "runnable_invalid",
             ),
             (
                 evidence({"project_id": "ftmo", "runnable": True, "safety_admitted": "yes"}),
                 "safety_admitted_invalid",
+            ),
+            (
+                evidence({"project_id": " ftmo", "runnable": True, "safety_admitted": True}),
+                "project_id_invalid",
             ),
             (
                 evidence({"project_id": "missing", "runnable": True, "safety_admitted": True}),
