@@ -27,6 +27,21 @@ class FaultRecoveryMatrixTests(unittest.TestCase):
         self.assertEqual(3, report["scenario_count"])
         self.assertFalse(report["live_mutation"])
 
+    def test_execution_plan_keeps_scenario_id_bound_to_selector(self):
+        reordered = copy.deepcopy(self.matrix)
+        reordered["scenarios"].reverse()
+        report = MOD.validate(reordered, ROOT)
+        self.assertEqual(
+            [
+                (scenario["id"], scenario["selector"])
+                for scenario in reordered["scenarios"]
+            ],
+            [
+                (item["id"], item["selector"])
+                for item in report["execution_plan"]
+            ],
+        )
+
     def test_unknown_scenario_is_fail_closed(self):
         bad = copy.deepcopy(self.matrix)
         bad["scenarios"][0]["id"] = "kill_production_firefox"
