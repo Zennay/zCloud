@@ -76,6 +76,19 @@ class OneWorkerTestingActivationWorkflowTests(unittest.TestCase):
         self.assertNotIn("contents: write", self.text)
         self.assertNotIn("actions: write", self.text)
 
+    def test_newer_pending_command_can_supersede_activation_without_false_negative(self):
+        marker = 'if latest_command_id > int(command_id) and command_status == "pending":'
+        self.assertIn(marker, self.activate)
+        block = self.activate[
+            self.activate.index(marker):
+            self.activate.index('if command_status != "completed":', self.activate.index(marker))
+        ]
+        self.assertIn("return worker", block)
+        # The exact activation command itself must still complete; only a
+        # strictly newer scheduler/watchdog command may use live-heartbeat
+        # evidence as the activation proof.
+        self.assertNotIn("latest_command_id >= int(command_id)", self.activate)
+
     def test_existing_activation_contract_is_preserved(self):
         for marker in (
             'workflows: ["zCloud VPS deploy"]',
