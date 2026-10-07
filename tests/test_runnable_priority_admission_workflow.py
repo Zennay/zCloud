@@ -13,6 +13,8 @@ class RunnablePriorityAdmissionWorkflowTests(unittest.TestCase):
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("persist-credentials: false", text)
+        self.assertIn("resource-policy.json", text)
+        self.assertIn("project-contracts.json", text)
         self.assertIn("github.event.pull_request.head.sha || github.sha", text)
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"',
@@ -38,6 +40,7 @@ class RunnablePriorityAdmissionWorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('"project_id": "lightup", "runnable": false', text)
         self.assertIn('excluded["lightup"]["declared_priority"] == "turbo"', text)
+        self.assertIn('excluded["lightup"]["priority_source"] == "resource_policy"', text)
         self.assertIn('excluded["lightup"]["priority_weight"] == 0', text)
         self.assertIn('["ftmo", "haxlab"]', text)
         self.assertIn("ZCLOUD_RUNNABLE_PRIORITY_VPS_GREEN=1", text)
