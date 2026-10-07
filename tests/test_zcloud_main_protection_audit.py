@@ -228,6 +228,11 @@ class ZcloudMainProtectionAuditTests(unittest.TestCase):
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
         self.assertIn("unset GH_TOKEN GITHUB_TOKEN", text)
         self.assertIn(
+            "gh api repos/Zennay/zCloud --jq '.permissions.admin // false'",
+            text,
+        )
+        self.assertIn("ZCLOUD_MAIN_PROTECTION_ADMIN_CAPABLE=$admin", text)
+        self.assertIn(
             "gh api repos/Zennay/zCloud/branches/main --jq '.protected // false'",
             text,
         )
