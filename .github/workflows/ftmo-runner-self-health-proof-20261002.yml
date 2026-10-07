@@ -33,6 +33,13 @@ jobs:
           [[ "$pid" =~ ^[1-9][0-9]*$ ]]
           echo "FTMO_RUNNER_SELF_HEALTH service=$SERVICE state=$state pid=$pid result=$result restarts=$restarts action=preserve-active-runner runner=$RUNNER_NAME"
           systemctl show "$SERVICE" -p ActiveState -p SubState -p MainPID -p NRestarts -p Result --no-pager
+
+      - name: Capture failure-only runner diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -u
+          SERVICE=actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service
           echo "FTMO_RUNNER_PROCESSES_BEGIN"
           ps -o pid=,ppid=,lstart=,etime=,cmd= -u ftmo-runner | grep -E "Runner\\.(Worker|Listener)|runsvc\\.sh" || true
           echo "FTMO_RUNNER_PROCESSES_END"
