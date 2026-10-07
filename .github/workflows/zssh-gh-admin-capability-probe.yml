@@ -67,6 +67,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           python3 scripts/zcloud_vps_runner_guard.py --json \
             | tee "$RUNNER_TEMP/zssh-gh-admin-runner-guard.json"
