@@ -247,6 +247,12 @@ def collect_snapshot(
         compare = runner([
             "gh", "api",
             f"repos/{repo}/compare/{main_sha}...{row['sha']}",
+            "--jq",
+            (
+                "{ahead_by:.ahead_by,behind_by:.behind_by,"
+                "merge_base_commit:{sha:.merge_base_commit.sha},"
+                "files:[.files[]?|{filename:.filename}]}"
+            ),
         ])
         try:
             ahead_by = compare["ahead_by"]
