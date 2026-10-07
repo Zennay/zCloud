@@ -50,6 +50,7 @@ jobs:
             "pr476|chatgpt/st5-implementation-plan-producer-input-atomicity-20261007|2dae0661c7465667ac10520566f2081e45fdcbfc|test_future_remediation_implementation_plan_producer_input_atomicity test_future_remediation_implementation_plan"
             "pr480|chatgpt/st5-implementation-plan-review-request-builder-input-atomicity-20261007|083b510ea00758139b87224a658b795b089ca73d|test_future_remediation_implementation_plan_review_request_builder_input_atomicity test_future_remediation_implementation_plan_review_request"
             "pr483|chatgpt/st5-implementation-plan-reviewer-producer-input-atomicity-20261007|cb84ce2854aad9fd564e7079ca236bad556831fd|test_future_remediation_implementation_plan_reviewer_producer_input_atomicity test_future_remediation_implementation_plan_review"
+            "pr486|chatgpt/st5-implementation-plan-revision-request-builder-input-atomicity-20261007|a15bbc26b0ea331882e76e24d15622760e5f1ad2|test_future_remediation_implementation_plan_revision_request_builder_input_atomicity"
             "pr489|chatgpt/st5-implementation-plan-review-request-parser-input-purity-20261007|b7f261934d89eecdc1e62cf26d66ce6de6e97bdb|test_future_remediation_implementation_plan_review_request_parser_input_purity test_future_remediation_implementation_plan_review_request_handoff test_future_remediation_implementation_plan_review_request"
             "pr492|chatgpt/st5-implementation-planning-request-parser-input-purity-20261007|f422d1e7be89424abccdbb7c5c8507a1278e48ca|test_future_remediation_implementation_plan_request_parser_input_purity test_future_remediation_implementation_plan_request_handoff test_future_remediation_implementation_plan_request"
           )
@@ -83,6 +84,7 @@ jobs:
             "pr476|chatgpt/st5-implementation-plan-producer-input-atomicity-20261007|2dae0661c7465667ac10520566f2081e45fdcbfc|test_future_remediation_implementation_plan_producer_input_atomicity test_future_remediation_implementation_plan"
             "pr480|chatgpt/st5-implementation-plan-review-request-builder-input-atomicity-20261007|083b510ea00758139b87224a658b795b089ca73d|test_future_remediation_implementation_plan_review_request_builder_input_atomicity test_future_remediation_implementation_plan_review_request"
             "pr483|chatgpt/st5-implementation-plan-reviewer-producer-input-atomicity-20261007|cb84ce2854aad9fd564e7079ca236bad556831fd|test_future_remediation_implementation_plan_reviewer_producer_input_atomicity test_future_remediation_implementation_plan_review"
+            "pr486|chatgpt/st5-implementation-plan-revision-request-builder-input-atomicity-20261007|a15bbc26b0ea331882e76e24d15622760e5f1ad2|test_future_remediation_implementation_plan_revision_request_builder_input_atomicity"
             "pr489|chatgpt/st5-implementation-plan-review-request-parser-input-purity-20261007|b7f261934d89eecdc1e62cf26d66ce6de6e97bdb|test_future_remediation_implementation_plan_review_request_parser_input_purity test_future_remediation_implementation_plan_review_request_handoff test_future_remediation_implementation_plan_review_request"
             "pr492|chatgpt/st5-implementation-planning-request-parser-input-purity-20261007|f422d1e7be89424abccdbb7c5c8507a1278e48ca|test_future_remediation_implementation_plan_request_parser_input_purity test_future_remediation_implementation_plan_request_handoff test_future_remediation_implementation_plan_request"
           )
@@ -119,6 +121,7 @@ jobs:
               "476": "2dae0661c7465667ac10520566f2081e45fdcbfc",
               "480": "083b510ea00758139b87224a658b795b089ca73d",
               "483": "cb84ce2854aad9fd564e7079ca236bad556831fd",
+              "486": "a15bbc26b0ea331882e76e24d15622760e5f1ad2",
               "489": "b7f261934d89eecdc1e62cf26d66ce6de6e97bdb",
               "492": "f422d1e7be89424abccdbb7c5c8507a1278e48ca",
           }
@@ -129,7 +132,10 @@ jobs:
               "host": os.uname().nodename,
               "python": ["3.11", "3.14"],
               "github_run_id": os.environ["GITHUB_RUN_ID"],
-              "proof": "six-exact-head-dedicated-atomicity+parent-controls+safety-canaries",
+              "proof": "six-full-parent-control-heads+one-limited-child-head+safety-canaries",
+              "limited_proof": {
+                  "486": "dedicated-child-regression-only; inherited #283 full-suite tuple-mutation regression remains unresolved"
+              },
               "production_source_changes": 0,
               "authority_widening": False,
           }
@@ -150,4 +156,4 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -rf "${RUNNER_TEMP}"/lightup-pr473-*                  "${RUNNER_TEMP}"/lightup-pr476-*                  "${RUNNER_TEMP}"/lightup-pr480-*                  "${RUNNER_TEMP}"/lightup-pr483-*                  "${RUNNER_TEMP}"/lightup-pr489-*                  "${RUNNER_TEMP}"/lightup-pr492-*
+          rm -rf "${RUNNER_TEMP}"/lightup-pr473-*                  "${RUNNER_TEMP}"/lightup-pr476-*                  "${RUNNER_TEMP}"/lightup-pr480-*                  "${RUNNER_TEMP}"/lightup-pr483-*                  "${RUNNER_TEMP}"/lightup-pr486-*                  "${RUNNER_TEMP}"/lightup-pr489-*                  "${RUNNER_TEMP}"/lightup-pr492-*
