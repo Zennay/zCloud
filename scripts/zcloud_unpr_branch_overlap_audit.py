@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "zcloud-unpr-branch-overlap-audit-v1"
-MAX_BYTES = 512 * 1024
-MAX_BRANCHES = 500
+MAX_BYTES = 8 * 1024 * 1024
+MAX_BRANCHES = 2000
 MAX_FILES_PER_BRANCH = 500
 MAX_CANDIDATE_PATHS = 100
 MAX_AGE_SECONDS = 15 * 60
