@@ -1,0 +1,100 @@
+name: zCloud ADR composition audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ops/adr_guard_composition_requirements.json"
+      - "scripts/zcloud_adr_composition_audit.py"
+      - "tests/test_zcloud_adr_composition_audit.py"
+      - ".github/workflows/zcloud-adr-composition-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-adr-composition-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout and focused tests
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_adr_composition_audit
+          python3 -m py_compile scripts/zcloud_adr_composition_audit.py
+
+      - name: Materialize both active ADR owners read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin             '+refs/pull/589/head:refs/remotes/origin/pr-589'             '+refs/pull/709/head:refs/remotes/origin/pr-709'
+          mkdir -p "$RUNNER_TEMP/pr589" "$RUNNER_TEMP/pr709"
+          git archive refs/remotes/origin/pr-589 | tar -x -C "$RUNNER_TEMP/pr589"
+          git archive refs/remotes/origin/pr-709 | tar -x -C "$RUNNER_TEMP/pr709"
+
+      - name: Require non-lossy ADR guard composition
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_adr_composition_audit.py             --source-root-589 "$RUNNER_TEMP/pr589"             --source-root-709 "$RUNNER_TEMP/pr709"             --require-complete             --json
+
+  prove:
+    needs: validate
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Materialize both active ADR owners read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin             '+refs/pull/589/head:refs/remotes/origin/pr-589'             '+refs/pull/709/head:refs/remotes/origin/pr-709'
+          mkdir -p "$RUNNER_TEMP/pr589" "$RUNNER_TEMP/pr709"
+          git archive refs/remotes/origin/pr-589 | tar -x -C "$RUNNER_TEMP/pr589"
+          git archive refs/remotes/origin/pr-709 | tar -x -C "$RUNNER_TEMP/pr709"
+
+      - name: Re-run focused regressions and composition proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_adr_composition_audit
+          python3 -m py_compile scripts/zcloud_adr_composition_audit.py
+          python3 scripts/zcloud_adr_composition_audit.py             --source-root-589 "$RUNNER_TEMP/pr589"             --source-root-709 "$RUNNER_TEMP/pr709"             --require-complete             --json
