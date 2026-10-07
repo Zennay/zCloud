@@ -64,6 +64,8 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_remediation_implementation_plan_revision_review_request
           LOG="${RUNNER_TEMP}/lightup-pr527-py311.log"
           set +e
           PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_implementation_plan_revision_review_request_metadata_types >"${LOG}" 2>&1
@@ -93,6 +95,8 @@ jobs:
           set -euo pipefail
           cd "${LIGHTUP_SNAPSHOT}"
           PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_remediation_implementation_plan_revision_review_request
           LOG="${RUNNER_TEMP}/lightup-pr527-py314.log"
           set +e
           PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_implementation_plan_revision_review_request_metadata_types >"${LOG}" 2>&1
@@ -127,6 +131,7 @@ jobs:
               "lightup_pr": 527,
               "lightup_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "contract": "revised_plan_review_request_exact_metadata_types",
+              "parent_control_tests": 8,
               "targeted_tests": 5,
               "expected_failures": 4,
               "result": "expected_red_targeted_both",
