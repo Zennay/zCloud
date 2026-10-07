@@ -60,6 +60,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_resource_priority_feedback_audit
+          python3 -m unittest -v tests.test_resource_priority_feedback_audit tests.test_resource_priority_feedback_audit_workflow
           python3 scripts/zcloud_resource_priority_feedback_audit.py --json
           echo ZCLOUD_RESOURCE_PRIORITY_FEEDBACK_AUDIT_VPS_GREEN=1
