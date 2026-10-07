@@ -15,6 +15,17 @@ class ZsshFtmoPr434Pr437RecoveryRetirementTests(unittest.TestCase):
         present = [str(path.relative_to(ROOT)) for path in RETIRED if path.exists()]
         self.assertEqual([], present, "terminal FTMO PR434/PR437 recovery authority returned")
 
+    def test_retired_workflow_filenames_are_not_referenced_by_active_workflows(self):
+        retired_names = {path.name for path in RETIRED}
+        hits = []
+        workflow_files = sorted(set(WORKFLOWS.glob("*.yml")) | set(WORKFLOWS.glob("*.yaml")))
+        for path in workflow_files:
+            body = path.read_text(encoding="utf-8")
+            for retired_name in retired_names:
+                if retired_name in body:
+                    hits.append(f"{path.name}: {retired_name}")
+        self.assertEqual([], hits, "active workflow still references a retired recovery entrypoint")
+
     def test_unique_live_recovery_markers_are_not_reintroduced(self):
         forbidden = (
             "name: Recover FTMO runner for PR434 exact head",
