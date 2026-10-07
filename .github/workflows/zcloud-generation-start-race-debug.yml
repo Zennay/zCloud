@@ -28,7 +28,41 @@ jobs:
           echo "=== FIREFOX SERVICE ==="
           export XDG_RUNTIME_DIR=/run/user/1000
           export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
-          systemctl --user show chatgpt-firefox.service -p LoadState -p ActiveState -p SubState -p Result || true
+          systemctl --user show chatgpt-firefox.service \
+            -p LoadState -p ActiveState -p SubState -p Result \
+            -p MainPID -p NRestarts -p ExecMainStartTimestamp -p ActiveEnterTimestamp || true
+          echo "=== FIREFOX JOURNAL LAST 25 MIN ==="
+          journalctl --user -u chatgpt-firefox.service --since "-25 min" --no-pager -o short-iso 2>/dev/null | tail -n 160 || true
+          echo "=== ZCLOUD HEAL/WATCHDOG JOURNAL LAST 25 MIN ==="
+          journalctl --since "-25 min" --no-pager -o short-iso 2>/dev/null \
+            | grep -E 'zcloud-runner-heal|worker-progress-watchdog|restart_firefox|chatgpt-firefox' \
+            | tail -n 200 || true
+          echo "=== WATCHDOG STATE ==="
+          if sudo -n test -r /var/lib/zcloud/worker-progress-watchdog.json 2>/dev/null; then
+            sudo -n python3 - <<'PY_STATE'
+import json
+p="/var/lib/zcloud/worker-progress-watchdog.json"
+try:
+    data=json.load(open(p,encoding="utf-8"))
+except Exception as exc:
+    print("WATCHDOG_STATE_ERROR="+repr(exc))
+else:
+    workers=data.get("workers") or {}
+    print("WATCHDOG_STATE="+json.dumps({
+        "updated_at":data.get("updated_at"),
+        "global":data.get("global"),
+        "workers":{k:{
+            "last_action":v.get("last_action"),
+            "last_action_at":v.get("last_action_at"),
+            "last_new_chat_at":v.get("last_new_chat_at"),
+            "last_progress_at":v.get("last_progress_at"),
+            "stalled_since":v.get("stalled_since"),
+        } for k,v in workers.items()}
+    },sort_keys=True))
+PY_STATE
+          else
+            echo "WATCHDOG_STATE=unreadable"
+          fi
           echo "=== WORKER RACE ANALYSIS ==="
           python3 - <<'PY'
           import json, sqlite3, urllib.request
