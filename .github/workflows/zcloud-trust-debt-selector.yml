@@ -1,0 +1,70 @@
+name: zCloud trust-debt selector
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_trust_debt_selector.py"
+      - "tests/test_trust_debt_selector.py"
+      - ".github/workflows/zcloud-trust-debt-selector.yml"
+  push:
+    branches: [main, "worker/**", "feature/control-plane-trust-debt-selector-*"]
+    paths:
+      - "scripts/zcloud_trust_debt_selector.py"
+      - "tests/test_trust_debt_selector.py"
+      - ".github/workflows/zcloud-trust-debt-selector.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-trust-debt-selector-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Run focused selector tests
+        run: python3 -m unittest -v tests.test_trust_debt_selector
+      - name: Exercise bounded selector against repository
+        run: |
+          python3 scripts/zcloud_trust_debt_selector.py \
+            --repo-root . \
+            --limit 10 \
+            > "$RUNNER_TEMP/zcloud-trust-debt-candidates.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "zcloud-trust-debt-candidates.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          assert isinstance(payload["candidate_count"], int)
+          assert isinstance(payload["candidates"], list)
+          assert len(payload["candidates"]) <= 10
+          for candidate in payload["candidates"]:
+              assert candidate["path"].startswith(".github/workflows/")
+              assert candidate["findings"]
+          print(
+              "ZCLOUD_TRUST_DEBT_SELECTOR_GREEN="
+              f"{payload['candidate_count']}:{len(payload['candidates'])}"
+          )
+          PY
