@@ -86,6 +86,26 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn('diagnostic: diagnostic', background)
         self.assertNotIn('"high-thinking-required|" + diagnostic', background)
 
+    def test_extension_fallback_prefers_dedicated_model_picker_before_switch_mode(self):
+        background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+
+        start = background.index("function modelPickerButton()")
+        end = background.index("function highSelectionVerified()", start)
+        block = background[start:end]
+
+        self.assertIn('button[aria-label="Select ChatGPT model"]', block)
+        self.assertIn('button[title="Select ChatGPT model"]', block)
+        self.assertIn("for (const selector of preferredSelectors)", block)
+        self.assertIn("document.querySelector(selector)", block)
+        self.assertLess(
+            block.index('button[aria-label="Select ChatGPT model"]'),
+            block.index("const explicitPicker ="),
+        )
+        self.assertLess(
+            block.index("for (const selector of preferredSelectors)"),
+            block.index("const explicitPicker ="),
+        )
+
     def test_bridge_required_version_matches_userscript_metadata_and_runtime(self):
         import re
 
