@@ -3,7 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.zcloud_roadmap_owner_coverage import SnapshotError, audit_snapshot
@@ -83,6 +83,28 @@ class RoadmapOwnerCoverageTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual("saturated", result["state"])
         self.assertEqual([], result["candidate_capability_ids"])
+
+    def test_same_owner_can_cover_multiple_capabilities(self):
+        result = audit_snapshot(
+            self.snapshot(
+                [self.capability("one"), self.capability("two")],
+                [self.owner("one", "10"), self.owner("two", "10")],
+            ),
+            now=self.now(),
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual("saturated", result["state"])
+        self.assertEqual(["one", "two"], result["owned_capability_ids"])
+
+    def test_duplicate_owner_row_for_same_capability_is_rejected(self):
+        with self.assertRaisesRegex(SnapshotError, "owner_duplicate"):
+            audit_snapshot(
+                self.snapshot(
+                    [self.capability("one")],
+                    [self.owner("one", "10"), self.owner("one", "10")],
+                ),
+                now=self.now(),
+            )
 
     def test_fails_visible_on_multiple_active_owners(self):
         result = audit_snapshot(
@@ -194,7 +216,13 @@ class RoadmapOwnerCoverageTests(unittest.TestCase):
             text,
         )
         self.assertIn("persist-credentials: false", text)
-        for forbidden in ("actions: write", "contents: write", "systemctl", "sudo ", "curl -X"):
+        for forbidden in (
+            "actions: write",
+            "contents: write",
+            "systemctl",
+            "sudo ",
+            "curl -X",
+        ):
             self.assertNotIn(forbidden, text)
 
 
