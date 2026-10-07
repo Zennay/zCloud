@@ -1,0 +1,55 @@
+name: Cancel stale owner permission promotion 2026-10-07
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/owner-cancel-stale-promotion-20261007.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel exact stale promotion run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STALE_RUN_ID: "37562484060"
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          repo=os.environ["REPO"]
+          run_id=os.environ["STALE_RUN_ID"]
+          token=os.environ["GH_TOKEN"]
+          headers={
+              "Authorization":f"Bearer {token}",
+              "Accept":"application/vnd.github+json",
+              "X-GitHub-Api-Version":"2022-11-28",
+              "User-Agent":"zcloud-owner-stale-promotion-cancel/1",
+          }
+
+          def request(path, method="GET"):
+              req=urllib.request.Request("https://api.github.com"+path,headers=headers,method=method)
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  raw=r.read()
+                  return json.loads(raw) if raw else {}
+
+          run=request(f"/repos/{repo}/actions/runs/{run_id}")
+          expected_name="Owner promote Claude worker permission and verify recovery"
+          expected_path=".github/workflows/owner-promote-worker-permission-20261007.yml"
+          if run.get("name") != expected_name or run.get("path") != expected_path:
+              raise SystemExit("refusing to cancel unexpected workflow run")
+          if run.get("status") == "completed":
+              print("STALE_PROMOTION_ALREADY_TERMINAL=1")
+          else:
+              request(f"/repos/{repo}/actions/runs/{run_id}/cancel","POST")
+              print("STALE_PROMOTION_CANCEL_REQUESTED=1")
+          PY
