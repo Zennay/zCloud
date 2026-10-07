@@ -1,0 +1,130 @@
+name: LightUp revised-plan live-validation VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-revised-plan-live-validation-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-revised-plan-live-validation-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  LIGHTUP_BRANCH: chatgpt/st5-revised-implementation-plan-live-validation-atomicity-20261007
+  LIGHTUP_HEAD: 83c552dcee99dd443e0780d228b3d94a7641dfbf
+
+jobs:
+  prove:
+    if: github.event_name == 'pull_request'
+    name: Exact LightUp #514 head on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove exact revised-plan consumer atomicity on Python 3.11
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_ref="refs/remotes/origin/lightup-pr514-proof"
+          snapshot="${RUNNER_TEMP}/lightup-pr514-py311-${GITHUB_RUN_ID}"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin "+refs/heads/${LIGHTUP_BRANCH}:${remote_ref}"
+          actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+          test "${actual}" = "${LIGHTUP_HEAD}"
+          rm -rf "${snapshot}"
+          mkdir -p "${snapshot}"
+          git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+          cd "${snapshot}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_remediation_implementation_plan_revision_proposal_handoff \
+            test_future_remediation_implementation_plan_revision_proposal_live_validation_atomicity
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove exact revised-plan consumer atomicity on Python 3.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_ref="refs/remotes/origin/lightup-pr514-proof"
+          snapshot="${RUNNER_TEMP}/lightup-pr514-py314-${GITHUB_RUN_ID}"
+          actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+          test "${actual}" = "${LIGHTUP_HEAD}"
+          rm -rf "${snapshot}"
+          mkdir -p "${snapshot}"
+          git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+          cd "${snapshot}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v \
+            test_future_remediation_implementation_plan_revision_proposal_handoff \
+            test_future_remediation_implementation_plan_revision_proposal_live_validation_atomicity
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Write exact-head proof receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_dir="${RUNNER_TEMP}/lightup-revised-plan-live-validation-receipt"
+          mkdir -p "${receipt_dir}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "focus": "evidence-remediation",
+              "pull_request": 514,
+              "lightup_head": os.environ["LIGHTUP_HEAD"],
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "revised-plan-live-validation-atomicity+parent-handoff+compileall+safety-canaries",
+              "limited_proof": "full inherited suite separately blocked only by known #283 tuple-mutation test bug",
+              "production_source_modifications_to_parent_chain": 0,
+              "authority_widening": False,
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-revised-plan-live-validation-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head proof receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-revised-plan-live-validation-vps-proof
+          path: ${{ runner.temp }}/lightup-revised-plan-live-validation-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshot
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}"/lightup-pr514-*
