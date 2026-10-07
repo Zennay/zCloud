@@ -63,6 +63,11 @@ A pressure hold is itself a valid scheduler decision: the normal base plan
 remains usable, while opportunistic expansion is held. An incomplete evidence
 snapshot is not decision-ready.
 
+The result also exposes a bounded `planned_allocations` read model per project:
+minimum/target/maximum, requested CPU, base CPU, borrowed CPU, final planned CPU
+and whether the request is satisfied. Dashboard/telemetry consumers should use
+this output directly rather than reproducing allocation math in JavaScript.
+
 ## Safety boundary
 
 The output always reports `runtime_mutation=false`. This contract must not be
