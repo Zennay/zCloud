@@ -1,0 +1,81 @@
+name: zCloud GitHub artifact retention audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_artifact_retention_audit.py"
+      - "tests/test_zcloud_artifact_retention_audit.py"
+      - ".github/workflows/zcloud-artifact-retention-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-artifact-retention-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused artifact-retention regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_artifact_retention_audit
+          python3 -m py_compile scripts/zcloud_artifact_retention_audit.py
+
+      - name: Audit repository artifact retention read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zcloud-artifact-retention-audit.json"
+          python3 scripts/zcloud_artifact_retention_audit.py --repo-root . --max-days 30 | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "github-actions-artifact-retention-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["upload_count"] >= 1
+          assert payload["finding_count"] >= 0
+          print(
+              "ZCLOUD_ARTIFACT_RETENTION_AUDIT_GREEN="
+              f"uploads:{payload['upload_count']}:findings:{payload['finding_count']}"
+          )
+          PY
+
+      - name: Upload bounded audit evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-artifact-retention-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-artifact-retention-audit.json
+          if-no-files-found: error
+          retention-days: 14
