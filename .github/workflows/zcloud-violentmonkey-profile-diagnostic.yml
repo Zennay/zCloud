@@ -317,6 +317,7 @@ jobs:
             systemctl --user start chatgpt-firefox.service || true
           }
           trap restore_managed_firefox EXIT
+          systemctl --user stop chatgpt-firefox.service || true
           python3 - <<'PY'
           import json, os, shutil, signal, sqlite3, subprocess, time
           from pathlib import Path
