@@ -129,7 +129,7 @@ def audit_snapshot(
         }
 
     active_owners: dict[str, list[str]] = {key: [] for key in capability_map}
-    owner_identities: set[tuple[str, str]] = set()
+    owner_identities: set[tuple[str, str, str]] = set()
     for row in owners:
         if not isinstance(row, dict) or set(row) != {
             "capability_id",
@@ -148,7 +148,7 @@ def audit_snapshot(
             raise SnapshotError("owner_kind_invalid")
         if state not in OWNER_STATE:
             raise SnapshotError("owner_state_invalid")
-        identity = (kind, owner_id)
+        identity = (capability_id, kind, owner_id)
         if identity in owner_identities:
             raise SnapshotError("owner_duplicate")
         owner_identities.add(identity)
@@ -216,7 +216,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not 1 <= args.max_age_seconds <= 3600:
-        print(json.dumps({"ok": False, "state": "incomplete", "errors": ["max_age_invalid"]}, sort_keys=True))
+        print(
+            json.dumps(
+                {"ok": False, "state": "incomplete", "errors": ["max_age_invalid"]},
+                sort_keys=True,
+            )
+        )
         return 1
 
     try:
