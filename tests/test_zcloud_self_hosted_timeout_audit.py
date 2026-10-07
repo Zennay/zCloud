@@ -98,6 +98,68 @@ jobs:
             set(payload["findings"][0]),
         )
 
+    def test_new_debt_ignores_existing_debt_and_flags_new_job(self):
+        base = [
+            audit.TimeoutFinding(".github/workflows/a.yml", "legacy", 35, "over_limit"),
+            audit.TimeoutFinding(".github/workflows/a.yml", "bounded", 10, "bounded"),
+        ]
+        head = [
+            audit.TimeoutFinding(".github/workflows/a.yml", "legacy", 60, "over_limit"),
+            audit.TimeoutFinding(".github/workflows/a.yml", "bounded", 10, "bounded"),
+            audit.TimeoutFinding(".github/workflows/b.yml", "new", None, "missing"),
+        ]
+        introduced = audit.new_debt(base, head)
+        self.assertEqual(
+            [(".github/workflows/b.yml", "new", "missing")],
+            [(row.path, row.job, row.status) for row in introduced],
+        )
+
+    def test_scan_git_ref_reads_committed_workflow_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "audit@example.invalid"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.name", "Audit Test"],
+                check=True,
+            )
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            path = workflows / "demo.yml"
+            path.write_text(
+                "jobs:\n  proof:\n    runs-on: self-hosted\n    timeout-minutes: 10\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-q", "-m", "baseline"],
+                check=True,
+            )
+            base = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            path.write_text(
+                "jobs:\n"
+                "  proof:\n    runs-on: self-hosted\n    timeout-minutes: 10\n"
+                "  new_job:\n    runs-on: self-hosted\n",
+                encoding="utf-8",
+            )
+
+            base_rows = audit.scan_git_ref(root, base, max_minutes=30)
+            head_rows = audit.scan_repository(root, max_minutes=30)
+            self.assertEqual([("proof", "bounded")], [(r.job, r.status) for r in base_rows])
+            self.assertEqual(
+                [("new_job", "missing")],
+                [(r.job, r.status) for r in audit.new_debt(base_rows, head_rows)],
+            )
+
     def test_repository_scan_rejects_symlink_workflow(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -171,6 +233,10 @@ jobs:
         )
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("retention-days: 14", text)
+        self.assertIn("BASE_SHA:", text)
+        self.assertIn('git fetch --no-tags --depth=1 origin "$BASE_SHA"', text)
+        self.assertIn("--base-ref \"$BASE_SHA\"", text)
+        self.assertIn("--require-no-new-debt", text)
         for forbidden in (
             "contents: write",
             "actions: write",
