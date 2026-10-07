@@ -188,6 +188,14 @@ jobs:
                   )
               if command_status == "failed":
                   raise SystemExit(f"worker command failed for {key}: {command}")
+              # A newer pending command can legitimately supersede the exact
+              # activation command after the browser is already live. The
+              # worker's live state + <=90s heartbeat is the activation proof;
+              # requiring that newer scheduler/watchdog command to complete
+              # turns healthy workers into false negatives and causes a
+              # needless new_chat recovery loop.
+              if latest_command_id > int(command_id) and command_status == "pending":
+                  return worker
               if command_status != "completed":
                   return None
               if not worker.get("generating") and event not in DISPATCH_EVENTS:
