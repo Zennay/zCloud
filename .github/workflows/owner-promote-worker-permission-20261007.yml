@@ -1,0 +1,188 @@
+name: Owner promote Claude worker permission and verify recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/owner-promote-worker-permission-20261007.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-promote-worker-permission-20261007
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate provider permissions
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_firefox_extension_provider_permissions
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path("firefox-extension/manifest.json").read_text())
+          required={"https://chatgpt.com/*","https://claude.ai/*","https://claude.com/*"}
+          missing=sorted(required-set(p.get("permissions") or []))
+          if missing:
+              raise SystemExit("missing provider permissions: "+",".join(missing))
+          print("PROVIDER_PERMISSION_VALIDATION_GREEN=1")
+          PY
+
+  promote-and-prove:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Enforce permanent VPS identity
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Guardedly promote and reload extension manifest
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path firefox-extension/manifest.json \
+            --preserve-schema-validated-runtime-config \
+            --actor "owner-worker-recovery-20261007" \
+            --json
+
+      - name: Re-open every currently allocated worker and classify safe deferrals
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+
+          def call(method,path,body=None,timeout=15):
+              data=None if body is None else json.dumps(body).encode()
+              req=urllib.request.Request(
+                  BASE+path,
+                  data=data,
+                  method=method,
+                  headers={"Content-Type":"application/json"} if data is not None else {},
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      return r.status,json.load(r)
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read().decode("utf-8","replace")
+                  try: payload=json.loads(raw)
+                  except Exception: payload={"error":raw[:400]}
+                  return exc.code,payload
+
+          status,targets=call("GET","/api/runner-targets")
+          if status >= 300:
+              raise SystemExit(f"runner-targets unavailable: {status} {targets}")
+          allocation=(targets.get("global_allocation") or {}).get("workers") or []
+          workers=[
+              str(row.get("worker_key") or f"{row.get('project_id')}::w{int(row.get('worker_slot') or 1)}")
+              for row in allocation
+          ]
+          if not workers:
+              raise SystemExit("no allocated workers")
+          print("RECOVERY_WORKERS="+json.dumps(workers))
+
+          command_ids={}
+          for worker in workers:
+              code,payload=call("POST","/api/runner-control",{"project_id":worker,"action":"new_chat"})
+              if code >= 300 or not payload.get("ok"):
+                  raise SystemExit(f"new_chat admission failed for {worker}: {code} {payload}")
+              command_ids[worker]=int(payload["command_id"])
+          print("RECOVERY_COMMAND_IDS="+json.dumps(command_ids,sort_keys=True))
+
+          def command_states():
+              ids=list(command_ids.values())
+              marks=",".join("?" for _ in ids)
+              uri="file:"+DB+"?mode=ro"
+              with sqlite3.connect(uri,uri=True,timeout=5) as c:
+                  c.row_factory=sqlite3.Row
+                  c.execute("PRAGMA query_only=ON")
+                  rows=c.execute(
+                      f"SELECT id,project_id,status,result,updated_at FROM runner_commands WHERE id IN ({marks})",
+                      ids,
+                  ).fetchall()
+              return {str(r["project_id"]):dict(r) for r in rows}
+
+          deadline=time.time()+120
+          states={}
+          while time.time() < deadline:
+              states=command_states()
+              if len(states)==len(command_ids) and all(
+                  row["status"] in ("completed","failed") for row in states.values()
+              ):
+                  break
+              time.sleep(3)
+
+          live_code,live=call("GET","/api/runner-live")
+          live_workers={}
+          if live_code < 300:
+              for project in (live.get("chatgpt_runners") or {}).values():
+                  for row in (project.get("workers") or []):
+                      key=str(row.get("worker_id") or "")
+                      if key:
+                          live_workers[key]=row
+
+          completed=[]
+          failed=[]
+          deferred=[]
+          stuck=[]
+          for worker in workers:
+              row=states.get(worker) or {}
+              state=str(row.get("status") or "missing")
+              if state=="completed":
+                  completed.append(worker)
+                  continue
+              if state=="failed":
+                  failed.append({"worker":worker,"result":str(row.get("result") or "")[:200]})
+                  continue
+              runtime=live_workers.get(worker) or {}
+              last=runtime.get("last_event") or {}
+              age=runtime.get("age_seconds")
+              recent_busy=(
+                  str(runtime.get("state") or "") in ("live","starting")
+                  and str(last.get("event") or "")=="send-blocked"
+                  and str(last.get("reason") or "")=="new-chat-deferred-busy"
+                  and isinstance(age,(int,float)) and age<=90
+              )
+              if runtime.get("generating") or runtime.get("sending") or recent_busy:
+                  deferred.append(worker)
+              else:
+                  stuck.append(worker)
+
+          print("RECOVERY_RESULT="+json.dumps({
+              "completed":completed,
+              "deferred_busy":deferred,
+              "failed":failed,
+              "stuck":stuck,
+          },sort_keys=True))
+          if failed:
+              raise SystemExit("worker recovery hard failures: "+json.dumps(failed,sort_keys=True))
+          if stuck:
+              raise SystemExit("worker recovery idle pending/missing: "+",".join(stuck))
+          if len(completed)+len(deferred) != len(workers):
+              raise SystemExit("worker recovery accounting incomplete")
+          print("OWNER_ALL_WORKER_RECOVERY_GREEN=1")
+          PY
