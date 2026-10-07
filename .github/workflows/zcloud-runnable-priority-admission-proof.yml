@@ -8,6 +8,8 @@ on:
       - tests/test_runnable_priority_admission.py
       - tests/test_runnable_priority_admission_workflow.py
       - docs/runnable-priority-admission.md
+      - resource-policy.json
+      - project-contracts.json
       - .github/workflows/zcloud-runnable-priority-admission-proof.yml
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -74,6 +76,7 @@ jobs:
           assert [row["project_id"] for row in result["candidates"]] == ["ftmo", "haxlab"], result
           excluded = {row["project_id"]: row for row in result["excluded"]}
           assert excluded["lightup"]["declared_priority"] == "turbo", result
+          assert excluded["lightup"]["priority_source"] == "resource_policy", result
           assert excluded["lightup"]["priority_weight"] == 0, result
           assert excluded["lightup"]["priority_effective"] is False, result
           assert result["guardrails"]["priority_may_create_runnable_work"] is False, result
