@@ -123,6 +123,8 @@ class ResourcePriorityFeedbackAuditTests(unittest.TestCase):
         source = COMPLETE.replace(
             "  el.setAttribute('aria-busy','true');\n", ""
         ).replace(
+            "  $('notice').textContent='Saving priority…';\n", ""
+        ).replace(
             "    $('notice').textContent='Priority updated.';\n", ""
         )
         source = source.replace(
