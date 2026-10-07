@@ -13,10 +13,12 @@ A future scheduler integration must apply these decisions in this order:
 1. Determine whether the project has canonical runnable work from current queue /
    claim / dependency evidence.
 2. Apply the existing safety and resource admission gates.
-3. Only for rows where both `runnable=true` and `safety_admitted=true`, map the
-   project's declared `compute.priority` to a relative ordering weight.
-4. Break equal-priority ties deterministically without inventing urgency.
-5. Keep excluded projects visible as excluded evidence with effective weight zero.
+3. Resolve the current resource priority from `resource-policy.json`, falling
+   back to the project's `compute.priority` only when no persisted override exists.
+4. Only for rows where both `runnable=true` and `safety_admitted=true`, map that
+   resolved priority to a relative ordering weight.
+5. Break equal-priority ties deterministically without inventing urgency.
+6. Keep excluded projects visible as excluded evidence with effective weight zero.
 
 Current priority weights are deliberately simple and monotonic:
 
@@ -42,7 +44,9 @@ Priority MUST NOT:
 
 Malformed or ambiguous evidence fails closed. Unknown project IDs, unknown
 priority values, loose booleans, duplicate rows and unknown evidence fields are
-rejected instead of guessed.
+rejected instead of guessed. The persisted resource-policy input is validated
+against the project catalog as well: unknown projects, extra per-project keys or
+invalid priority values fail closed rather than silently overriding a contract.
 
 ## Evidence boundary
 
@@ -64,6 +68,11 @@ The v1 input is intentionally small and structured:
 The policy does not accept task text, prompts, conversation IDs or arbitrary
 reason strings. This keeps the output suitable for scheduler/debug observability
 without copying sensitive or high-cardinality payloads.
+
+Each output row includes `priority_source` as either `resource_policy` or
+`project_contract`. This prevents a later scheduler integration from silently
+using a static default after the dashboard has persisted a different resource
+priority.
 
 ## Integration boundary
 
