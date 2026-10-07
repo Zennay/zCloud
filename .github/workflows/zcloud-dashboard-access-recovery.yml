@@ -13,6 +13,9 @@ on:
 
 jobs:
   recover:
+    # PR validation must never restart or rewrite the live zCloud control-plane.
+    # Production recovery remains manual/push-only; PRs use external_verify below.
+    if: github.event_name != 'pull_request'
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
