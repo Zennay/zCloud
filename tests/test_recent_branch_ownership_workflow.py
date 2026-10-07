@@ -65,8 +65,9 @@ class RecentBranchOwnershipWorkflowContractTests(unittest.TestCase):
 
     def test_current_pr_evidence_has_count_and_files(self):
         text = self.text
-        self.assertRegex(text, r"--json changedFiles,files")
+        self.assertRegex(text, r"--json headRefOid,changedFiles,files")
         self.assertIn("--current-pr-json", text)
+        self.assertIn('--expected-current-head "$EXPECTED_ZCLOUD_SHA"', text)
         self.assertIn("--require-clear", text)
         self.assertIn("ZCLOUD_RECENT_BRANCH_OWNERSHIP_GREEN=1", text)
 
