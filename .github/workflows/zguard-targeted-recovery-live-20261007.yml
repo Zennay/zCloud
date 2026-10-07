@@ -1,0 +1,176 @@
+name: One-shot zGuard worker targeted recovery
+
+on:
+  push:
+    branches:
+      - "ops/zguard-targeted-recovery-live-20261007"
+    paths:
+      - ".github/workflows/zguard-targeted-recovery-live-20261007.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-targeted-recovery-live-20261007
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Recover only idle zguard worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+          DB = "/home/ubuntu/zennay-cloud/history.db"
+          WORKER = "zguard::w1"
+
+          def call(method, path, payload=None):
+              data = None
+              headers = {"User-Agent": "zcloud-zguard-targeted-recovery/1"}
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=15) as response:
+                  return json.load(response)
+
+          def live_worker():
+              live = call("GET", "/api/runner-live")
+              rows = ((live.get("chatgpt_runners") or {}).get("zguard") or {}).get("workers") or []
+              return next((r for r in rows if str(r.get("worker_id") or "") == WORKER), None)
+
+          targets = call("GET", "/api/runner-targets")
+          allocation = (targets.get("global_allocation") or {}).get("workers") or []
+          assigned = next(
+              (r for r in allocation if str(r.get("worker_key") or "") == WORKER),
+              None,
+          )
+          if not assigned:
+              raise SystemExit("zguard::w1 is not in current global allocation")
+
+          state = live_worker() or {}
+          print("INITIAL=" + json.dumps({
+              "state": state.get("state"),
+              "generating": bool(state.get("generating")),
+              "sending": bool(state.get("sending")),
+              "progress_age_seconds": state.get("progress_age_seconds"),
+              "queue_id": assigned.get("queue_id"),
+          }, sort_keys=True))
+          if bool(state.get("generating")) or bool(state.get("sending")):
+              print("ZGUARD_WORKER_RECOVERY_GREEN=already-active")
+              raise SystemExit(0)
+
+          now = dt.datetime.now(dt.timezone.utc).isoformat()
+          with sqlite3.connect(DB, timeout=10) as conn:
+              conn.row_factory = sqlite3.Row
+              conn.execute("PRAGMA busy_timeout=10000")
+              conn.execute("BEGIN IMMEDIATE")
+              pending = conn.execute(
+                  "SELECT id FROM runner_commands "
+                  "WHERE project_id=? AND action='push' AND status='pending' ORDER BY id",
+                  (WORKER,),
+              ).fetchall()
+              pending_ids = [int(row["id"]) for row in pending]
+              for command_id in pending_ids:
+                  conn.execute(
+                      "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                      "WHERE id=? AND status='pending'",
+                      (now, "targeted zguard recovery superseded idle pending push", command_id),
+                  )
+          print("SUPERSEDED_PUSH_IDS=" + json.dumps(pending_ids))
+
+          fresh = call("POST", "/api/runner-control", {
+              "project_id": WORKER,
+              "action": "new_chat",
+          })
+          if not fresh.get("ok") or not fresh.get("command_id"):
+              raise SystemExit("new_chat not admitted: " + json.dumps(fresh, sort_keys=True))
+          fresh_id = int(fresh["command_id"])
+          print("NEW_CHAT_ID=" + str(fresh_id))
+
+          def command(command_id):
+              with sqlite3.connect(DB, timeout=5) as conn:
+                  conn.row_factory = sqlite3.Row
+                  row = conn.execute(
+                      "SELECT id,action,status,result,created_at,updated_at "
+                      "FROM runner_commands WHERE id=?",
+                      (command_id,),
+                  ).fetchone()
+                  return dict(row) if row else {"status": "missing"}
+
+          deadline = time.time() + 35
+          fresh_state = {}
+          while time.time() < deadline:
+              fresh_state = command(fresh_id)
+              runtime = live_worker() or {}
+              if (
+                  fresh_state.get("status") in ("completed", "failed")
+                  or bool(runtime.get("generating"))
+                  or bool(runtime.get("sending"))
+              ):
+                  break
+              time.sleep(2)
+          print("NEW_CHAT_RESULT=" + json.dumps(fresh_state, sort_keys=True, default=str))
+          if fresh_state.get("status") in ("failed", "missing"):
+              raise SystemExit("targeted new_chat failed")
+
+          runtime = live_worker() or {}
+          if bool(runtime.get("generating")) or bool(runtime.get("sending")):
+              print("ZGUARD_WORKER_RECOVERY_GREEN=new-chat-active")
+              raise SystemExit(0)
+          if fresh_state.get("status") != "completed":
+              raise SystemExit("new_chat remained pending while worker stayed idle")
+
+          retry = call("POST", "/api/runner-control", {
+              "project_id": WORKER,
+              "action": "push",
+          })
+          if not retry.get("ok") or not retry.get("command_id"):
+              raise SystemExit("targeted push not admitted: " + json.dumps(retry, sort_keys=True))
+          retry_id = int(retry["command_id"])
+          print("PUSH_ID=" + str(retry_id))
+
+          deadline = time.time() + 40
+          retry_state = {}
+          final = {}
+          while time.time() < deadline:
+              retry_state = command(retry_id)
+              final = live_worker() or {}
+              if (
+                  retry_state.get("status") in ("completed", "failed")
+                  or bool(final.get("generating"))
+                  or bool(final.get("sending"))
+              ):
+                  break
+              time.sleep(2)
+
+          evidence = {
+              "push_status": retry_state.get("status"),
+              "state": final.get("state"),
+              "generating": bool(final.get("generating")),
+              "sending": bool(final.get("sending")),
+              "progress_age_seconds": final.get("progress_age_seconds"),
+          }
+          print("FINAL=" + json.dumps(evidence, sort_keys=True))
+          if retry_state.get("status") == "failed":
+              raise SystemExit("targeted push failed")
+          if not (
+              retry_state.get("status") == "completed"
+              or evidence["generating"]
+              or evidence["sending"]
+          ):
+              raise SystemExit("zguard worker remained idle after targeted recovery")
+          print("ZGUARD_WORKER_RECOVERY_GREEN=1")
+          PY
