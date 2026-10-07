@@ -49,6 +49,7 @@ class ProjectResultSummaryTests(unittest.TestCase):
 
         self.assertTrue(result["available"])
         self.assertEqual("project_adapter", result["source_mode"])
+        self.assertEqual("available", result["evidence_state"])
         self.assertEqual(3, result["result_count"])
         self.assertEqual("Generation 21", result["results"]["latest"]["value"])
         self.assertFalse(result["results"]["latest"]["validated"])
@@ -57,7 +58,7 @@ class ProjectResultSummaryTests(unittest.TestCase):
         self.assertNotIn("/opt/private", encoded)
         self.assertNotIn('"source"', encoded)
 
-    def test_missing_adapter_data_is_explicit_generic_only(self):
+    def test_missing_adapter_data_is_explicit_generic_only_when_unregistered(self):
         result = summary.project_summary(
             "supa",
             {
@@ -65,11 +66,28 @@ class ProjectResultSummaryTests(unittest.TestCase):
                 "headline": None,
                 "comparison": {"available": False, "latest": None, "current": None, "best": None},
             },
+            adapter_backed=False,
         )
 
         self.assertFalse(result["available"])
         self.assertEqual("generic_only", result["source_mode"])
+        self.assertEqual("missing", result["evidence_state"])
         self.assertEqual({}, result["results"])
+
+    def test_registered_adapter_with_missing_evidence_remains_project_adapter(self):
+        result = summary.build_report(
+            ["ftmo"],
+            quality_reader=lambda _project_id: {
+                "available": False,
+                "comparison": {"available": False, "latest": None, "current": None, "best": None},
+            },
+            adapter_projects_reader=lambda: ("ftmo",),
+        )
+
+        project = result["projects"][0]
+        self.assertEqual("project_adapter", project["source_mode"])
+        self.assertEqual("missing", project["evidence_state"])
+        self.assertFalse(project["available"])
 
     def test_non_scalar_result_value_is_omitted_fail_closed(self):
         result = summary.project_summary(
@@ -96,7 +114,7 @@ class ProjectResultSummaryTests(unittest.TestCase):
         result = summary.build_report(
             ["ftmo", "haxlab", "ftmo"],
             quality_reader=lambda project_id: qualities[project_id],
-            adapter_projects_reader=lambda: (),
+            adapter_projects_reader=lambda: ("ftmo", "haxlab"),
         )
 
         self.assertEqual(["ftmo", "haxlab"], [item["project_id"] for item in result["projects"]])
@@ -107,6 +125,14 @@ class ProjectResultSummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(summary.ProjectResultSummaryError, "invalid project id"):
             summary.build_report(
                 ["../secret"],
+                quality_reader=lambda _project_id: {},
+                adapter_projects_reader=lambda: (),
+            )
+
+    def test_oversize_project_id_is_rejected_instead_of_truncated(self):
+        with self.assertRaisesRegex(summary.ProjectResultSummaryError, "invalid project id"):
+            summary.build_report(
+                ["a" * 33],
                 quality_reader=lambda _project_id: {},
                 adapter_projects_reader=lambda: (),
             )
@@ -131,7 +157,7 @@ class ProjectResultSummaryTests(unittest.TestCase):
 
         self.assertEqual(1, payload["project_count"])
         self.assertEqual("supa", payload["projects"][0]["project_id"])
-        self.assertIn(payload["projects"][0]["source_mode"], {"generic_only", "project_adapter"})
+        self.assertEqual("generic_only", payload["projects"][0]["source_mode"])
 
     def test_require_data_returns_three_for_missing_comparison(self):
         completed = subprocess.run(
@@ -142,10 +168,8 @@ class ProjectResultSummaryTests(unittest.TestCase):
         )
         payload = json.loads(completed.stdout)
 
-        if payload["available_count"] == payload["project_count"]:
-            self.assertEqual(0, completed.returncode)
-        else:
-            self.assertEqual(3, completed.returncode)
+        self.assertEqual(0, payload["available_count"])
+        self.assertEqual(3, completed.returncode)
 
 
 if __name__ == "__main__":
