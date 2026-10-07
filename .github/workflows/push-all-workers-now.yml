@@ -17,7 +17,7 @@ permissions:
 jobs:
   push-all:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 3
+    timeout-minutes: 6
     steps:
       - name: Force push every saved running worker
         shell: bash
@@ -245,7 +245,9 @@ jobs:
                       recovery_ids[worker] = int(recovery["command_id"])
                   print("TARGETED_NEW_CHAT=" + json.dumps(recovery_ids, sort_keys=True))
 
-                  recovery_deadline = time.time() + 30
+                  recovery_wait_seconds = min(150, max(90, 30 * len(recovery_ids)))
+                  recovery_deadline = time.time() + recovery_wait_seconds
+                  print("TARGETED_NEW_CHAT_WAIT_SECONDS=" + str(recovery_wait_seconds))
                   recovery_states = {}
                   while time.time() < recovery_deadline:
                       with sqlite3.connect(DB, timeout=5) as conn:
@@ -302,7 +304,9 @@ jobs:
                   print("TARGETED_PUSH=" + json.dumps(targeted_push_ids, sort_keys=True))
 
                   targeted_states = {}
-                  targeted_deadline = time.time() + 35
+                  targeted_wait_seconds = min(120, max(60, 20 * len(targeted_push_ids)))
+                  targeted_deadline = time.time() + targeted_wait_seconds
+                  print("TARGETED_PUSH_WAIT_SECONDS=" + str(targeted_wait_seconds))
                   while targeted_push_ids and time.time() < targeted_deadline:
                       with sqlite3.connect(DB, timeout=5) as conn:
                           conn.row_factory = sqlite3.Row
