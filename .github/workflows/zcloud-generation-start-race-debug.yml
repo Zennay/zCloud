@@ -1,0 +1,161 @@
+name: Debug zCloud Firefox generation-start race
+
+on:
+  push:
+    branches:
+      - ops/firefox-generation-start-race-debug-20261007-w1
+    paths:
+      - .github/workflows/zcloud-generation-start-race-debug.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-firefox-generation-start-race-debug
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Capture Firefox worker generation transitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== FIREFOX PROCESS ==="
+          pgrep -af 'firefox|web-ext' || true
+          echo "=== FIREFOX SERVICE ==="
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+          systemctl --user show chatgpt-firefox.service -p LoadState -p ActiveState -p SubState -p Result || true
+          echo "=== WORKER RACE ANALYSIS ==="
+          python3 - <<'PY'
+          import json, sqlite3, urllib.request
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8765"
+          DB="file:/home/ubuntu/zennay-cloud/history.db?mode=ro"
+
+          def get(path):
+              try:
+                  with urllib.request.urlopen(BASE+path, timeout=8) as r:
+                      return json.load(r)
+              except Exception as exc:
+                  return {"error": type(exc).__name__ + ":" + str(exc)[:160]}
+
+          def parse_ts(value):
+              text=str(value or "").strip().replace("Z","+00:00")
+              try:
+                  dt=datetime.fromisoformat(text)
+                  if dt.tzinfo is None:
+                      dt=dt.replace(tzinfo=timezone.utc)
+                  return dt
+              except Exception:
+                  return None
+
+          debug=get("/api/worker-debug")
+          status=get("/api/status")
+          targets=get("/api/runner-targets")
+          workers=debug.get("workers") if isinstance(debug,dict) else None
+          print("WORKER_DEBUG_SUMMARY="+json.dumps({
+              "worker_count": len(workers or []),
+              "workers": [
+                  {
+                      "project_id": w.get("project_id"),
+                      "worker_slot": w.get("worker_slot"),
+                      "state": w.get("state"),
+                      "generating": w.get("generating"),
+                      "sending": w.get("sending"),
+                      "event": w.get("event"),
+                      "event_age_seconds": w.get("event_age_seconds"),
+                      "heartbeat_age_seconds": w.get("heartbeat_age_seconds"),
+                  }
+                  for w in (workers or [])
+              ]
+          }, sort_keys=True))
+          print("STATUS_SUMMARY="+json.dumps({
+              "dynamic_workers": status.get("dynamic_workers") if isinstance(status,dict) else None,
+              "chatgpt_firefox": status.get("chatgpt_firefox") if isinstance(status,dict) else None,
+              "errors": status.get("errors") if isinstance(status,dict) else None,
+              "allocated_workers": ((targets.get("global_allocation") or {}).get("workers") if isinstance(targets,dict) else None),
+          }, sort_keys=True))
+
+          with sqlite3.connect(DB, uri=True, timeout=5) as conn:
+              conn.row_factory=sqlite3.Row
+              conn.execute("PRAGMA query_only=ON")
+              rows=[dict(r) for r in conn.execute(
+                  "SELECT id,ts,event,project_id,worker_slot,reason,generating,sending,assistant_chars,progress_at "
+                  "FROM runner_events "
+                  "WHERE unixepoch(ts) >= unixepoch('now','-45 minutes') "
+                  "AND event IN ('prompt-sent','generation-started','generation-progress','generation-finished',"
+                  "'generation-not-started','awaiting-vps-dispatch','heartbeat','send-blocked') "
+                  "ORDER BY id ASC"
+              ).fetchall()]
+
+          by_worker={}
+          for row in rows:
+              key=(str(row.get("project_id") or ""), int(row.get("worker_slot") or 1))
+              by_worker.setdefault(key,[]).append(row)
+
+          analyses=[]
+          suspicious=[]
+          for key, events in sorted(by_worker.items()):
+              for idx, row in enumerate(events):
+                  if row.get("event")!="prompt-sent":
+                      continue
+                  sent_at=parse_ts(row.get("ts"))
+                  window=[]
+                  for nxt in events[idx+1:]:
+                      if nxt.get("event")=="prompt-sent":
+                          break
+                      ts=parse_ts(nxt.get("ts"))
+                      if sent_at and ts and (ts-sent_at).total_seconds()>180:
+                          break
+                      window.append(nxt)
+                  started=next((x for x in window if x.get("event")=="generation-started"),None)
+                  finished=next((x for x in window if x.get("event")=="generation-finished"),None)
+                  progress=[x for x in window if x.get("event")=="generation-progress"]
+                  not_started=next((x for x in window if x.get("event")=="generation-not-started"),None)
+                  dispatch=next((x for x in window if x.get("event")=="awaiting-vps-dispatch"),None)
+                  start_finish_s=None
+                  if started and finished:
+                      a,b=parse_ts(started.get("ts")),parse_ts(finished.get("ts"))
+                      if a and b:
+                          start_finish_s=(b-a).total_seconds()
+                  sent_start_s=None
+                  if started and sent_at:
+                      a=parse_ts(started.get("ts"))
+                      if a:
+                          sent_start_s=(a-sent_at).total_seconds()
+                  base_chars=int(row.get("assistant_chars") or 0)
+                  max_chars=max([base_chars]+[int(x.get("assistant_chars") or 0) for x in window])
+                  chars_delta=max_chars-base_chars
+                  reasons=[]
+                  if not_started:
+                      reasons.append("generation-not-started")
+                  if started and finished and start_finish_s is not None and start_finish_s <= 4 and not progress and chars_delta <= 0:
+                      reasons.append("start-finish-under-4s-without-progress")
+                  if dispatch and finished and not progress and chars_delta <= 0:
+                      f,d=parse_ts(finished.get("ts")),parse_ts(dispatch.get("ts"))
+                      if f and d and (d-f).total_seconds() <= 3:
+                          reasons.append("cycle-dispatched-without-response-progress")
+                  item={
+                      "project_id":key[0],
+                      "worker_slot":key[1],
+                      "prompt_ts":row.get("ts"),
+                      "sent_start_seconds":sent_start_s,
+                      "start_finish_seconds":start_finish_s,
+                      "progress_events":len(progress),
+                      "assistant_chars_delta":chars_delta,
+                      "next_events":[x.get("event") for x in window[:10]],
+                      "reasons":reasons,
+                  }
+                  analyses.append(item)
+                  if reasons:
+                      suspicious.append(item)
+
+          print("PROMPT_WINDOWS="+json.dumps(analyses[-40:],sort_keys=True))
+          print("SUSPICIOUS_WINDOWS="+json.dumps(suspicious[-40:],sort_keys=True))
+          print("FIREFOX_GENERATION_START_RACE="+("1" if suspicious else "0"))
+          PY
