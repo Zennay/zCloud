@@ -1,4 +1,5 @@
 name: Stabilize zCloud Firefox worker pool
+# post-quarantine retrigger
 
 on:
   push:
