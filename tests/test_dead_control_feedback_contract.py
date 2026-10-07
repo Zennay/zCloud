@@ -58,7 +58,7 @@ class DeadControlFeedbackContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, push)
 
-        force = section(self.app, "async function forceStartProject", "async function restartRunner")
+        force = section(self.app, "async function forceStartProject", "async function pushRunner")
         for marker in (
             "button.disabled=true",
             "button.textContent='Force starting…'",
@@ -95,7 +95,7 @@ class DeadControlFeedbackContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, count)
 
-        dynamic = section(self.app, "async function saveDynamicWorkerSettings", "async function setRunnerActive")
+        dynamic = section(self.app, "async function saveDynamicWorkerSettings", "async function restartFirefoxInitiator")
         for marker in (
             "button.disabled=true",
             "button.textContent='Saving…'",
