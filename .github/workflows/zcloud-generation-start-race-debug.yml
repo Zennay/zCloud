@@ -218,7 +218,33 @@ jobs:
                           "events":[x["event"] for x in chain[-16:]],
                       })
 
+          cutoff=parse_ts("2026-10-07T21:55:57Z")
+          post_rows=[
+              row for row in rows
+              if (parse_ts(row.get("ts")) and cutoff and parse_ts(row.get("ts")) >= cutoff)
+          ]
+          post_counts={}
+          for row in post_rows:
+              ev=str(row.get("event") or "")
+              post_counts[ev]=post_counts.get(ev,0)+1
+          post_workers={}
+          for row in post_rows:
+              key=f"{row.get('project_id') or ''}::w{int(row.get('worker_slot') or 1)}"
+              item=post_workers.setdefault(key,{
+                  "events":[],"max_assistant_chars":0,"generation_progress":0,
+                  "generation_started":0,"generation_finished":0,"prompt_sent":0,
+              })
+              item["events"].append(row.get("event"))
+              item["max_assistant_chars"]=max(item["max_assistant_chars"],int(row.get("assistant_chars") or 0))
+              if row.get("event")=="generation-progress": item["generation_progress"]+=1
+              if row.get("event")=="generation-started": item["generation_started"]+=1
+              if row.get("event")=="generation-finished": item["generation_finished"]+=1
+              if row.get("event")=="prompt-sent": item["prompt_sent"]+=1
+              item["events"]=item["events"][-20:]
+
           print("ACTIVE_AND_TERMINAL_CHAINS="+json.dumps(chains[-50:],sort_keys=True))
           print("SUSPICIOUS_WINDOWS="+json.dumps(suspicious[-50:],sort_keys=True))
+          print("POST_STABILIZATION_COUNTS="+json.dumps(post_counts,sort_keys=True))
+          print("POST_STABILIZATION_WORKERS="+json.dumps(post_workers,sort_keys=True))
           print("FIREFOX_GENERATION_STATE_BUG="+("1" if suspicious else "0"))
           PY
