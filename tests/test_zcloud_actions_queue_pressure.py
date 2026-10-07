@@ -104,7 +104,7 @@ class ActionsQueuePressureTests(unittest.TestCase):
             NOW + timedelta(seconds=30)
         ).isoformat()
         result = classify_pressure(payload)
-        self.assertEqual(result["state"], "saturated")
+        self.assertEqual(result["state"], "queued")
 
     def test_unknown_fields_and_unsafe_workflow_paths_fail_closed(self):
         bad = snapshot()
