@@ -50,11 +50,75 @@ def _read_source(path: Path) -> str:
         raise AuditError(f"source_invalid_utf8:{path.name}") from exc
 
 
+def _function_end(source: str, match: re.Match[str]) -> int:
+    """Return the exact closing brace for a named function.
+
+    The scanner ignores quoted strings, template literals and comments so a final
+    top-level function cannot accidentally absorb following event-listener code.
+    """
+    brace_at = source.find("{", match.end())
+    if brace_at < 0:
+        raise AuditError(f"function_body_missing:{match.group(1)}")
+
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = brace_at
+    while index < len(source):
+        char = source[index]
+        nxt = source[index + 1] if index + 1 < len(source) else ""
+
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if char == "*" and nxt == "/":
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+
+        if char == "/" and nxt == "/":
+            line_comment = True
+            index += 2
+            continue
+        if char == "/" and nxt == "*":
+            block_comment = True
+            index += 2
+            continue
+        if char in ("'", '"', "`"):
+            quote = char
+            index += 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+
+    raise AuditError(f"function_unclosed:{match.group(1)}")
+
+
 def _function_blocks(source: str) -> list[tuple[str, str]]:
-    matches = list(_FUNCTION_RE.finditer(source))
     blocks: list[tuple[str, str]] = []
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+    for match in _FUNCTION_RE.finditer(source):
+        end = _function_end(source, match)
         blocks.append((match.group(1), source[match.start():end]))
     return blocks
 
