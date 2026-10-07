@@ -1,0 +1,106 @@
+name: zCloud recent un-PR branch ownership proof
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_recent_branch_snapshot.py"
+      - "scripts/zcloud_recent_branch_ownership_audit.py"
+      - "tests/test_recent_branch_ownership_audit.py"
+      - "tests/test_recent_branch_ownership_workflow.py"
+      - ".github/workflows/zcloud-recent-branch-ownership-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-recent-branch-ownership-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CURRENT_PR: ${{ github.event.pull_request.number || '' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact trusted zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove permanent runner and exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run recent-branch ownership regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_recent_branch_ownership_audit \
+            tests.test_recent_branch_ownership_workflow
+
+      - name: Prove current PR has no recent un-PR branch conflict
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/zcloud-recent-branches-${GITHUB_RUN_ID}.json"
+          current="$RUNNER_TEMP/zcloud-current-pr-${GITHUB_RUN_ID}.json"
+          as_of="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          python3 scripts/zcloud_recent_branch_snapshot.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --as-of "$as_of" \
+            --recent-hours 72 \
+            --output "$snapshot"
+
+          gh pr view "$CURRENT_PR" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json changedFiles,files > "$current"
+
+          python3 scripts/zcloud_recent_branch_ownership_audit.py \
+            --snapshot "$snapshot" \
+            --current-pr-json "$current" \
+            --require-clear
+
+          rm -f "$snapshot" "$current"
+          echo "ZCLOUD_RECENT_BRANCH_OWNERSHIP_GREEN=1"
+
+      - name: Audit global recent branch ownership on manual runs
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/zcloud-recent-branches-${GITHUB_RUN_ID}.json"
+          as_of="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          python3 scripts/zcloud_recent_branch_snapshot.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --as-of "$as_of" \
+            --recent-hours 72 \
+            --output "$snapshot"
+
+          python3 scripts/zcloud_recent_branch_ownership_audit.py \
+            --snapshot "$snapshot"
+
+          rm -f "$snapshot"
+          echo "ZCLOUD_RECENT_BRANCH_OWNERSHIP_GLOBAL_GREEN=1"
