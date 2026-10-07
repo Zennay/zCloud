@@ -1,0 +1,89 @@
+name: zCloud open PR ownership overlap proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_open_pr_overlap_audit.py"
+      - "tests/test_open_pr_overlap_audit.py"
+      - ".github/workflows/zcloud-open-pr-overlap-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-open-pr-overlap-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CURRENT_PR: ${{ github.event.pull_request.number || '' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact trusted zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove permanent runner and exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused ownership-audit regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_open_pr_overlap_audit
+
+      - name: Audit current open PR file ownership
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/zcloud-open-prs-${GITHUB_RUN_ID}.json"
+          gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --limit 500 \
+            --json number,headRefName,isDraft,updatedAt,files > "$snapshot"
+          python3 scripts/zcloud_open_pr_overlap_audit.py \
+            --input "$snapshot" \
+            --current-pr "$CURRENT_PR" \
+            --require-clear
+          rm -f "$snapshot"
+          echo "ZCLOUD_OPEN_PR_OVERLAP_AUDIT_GREEN=1"
+
+      - name: Validate global snapshot shape on manual runs
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/zcloud-open-prs-${GITHUB_RUN_ID}.json"
+          gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --limit 500 \
+            --json number,headRefName,isDraft,updatedAt,files > "$snapshot"
+          python3 scripts/zcloud_open_pr_overlap_audit.py --input "$snapshot"
+          rm -f "$snapshot"
+          echo "ZCLOUD_OPEN_PR_OVERLAP_AUDIT_GLOBAL_GREEN=1"
