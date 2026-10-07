@@ -1,0 +1,200 @@
+name: LightUp evidence-remediation live-validation atomicity VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-evidence-remediation-live-validation-atomicity-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-evidence-remediation-live-validation-atomicity-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  BUNDLE_BRANCH: chatgpt/st5-remediation-bundle-live-validation-atomicity-20261007
+  BUNDLE_EXPECTED_SHA: 9f31ebc0c9aaa847695b40ca3c42907ba2b1a3fa
+  AUTHORING_BRANCH: chatgpt/st5-authoring-request-live-validation-atomicity-20261007
+  AUTHORING_EXPECTED_SHA: 20f41f76ff9e481756b347d694f5012a971c8894
+  PROPOSAL_BRANCH: chatgpt/st5-remediation-text-proposal-live-validation-atomicity-20261007
+  PROPOSAL_EXPECTED_SHA: eebe58e48d8f8b3713e67546bd0acebf78d8d9ed
+  REVIEW_BRANCH: chatgpt/st5-remediation-review-live-validation-atomicity-20261007
+  REVIEW_EXPECTED_SHA: 589b1ce788b28b90007f7913673085e6d7099c83
+  REVISION_PROPOSAL_BRANCH: chatgpt/st5-revision-proposal-live-validation-atomicity-20261007
+  REVISION_PROPOSAL_EXPECTED_SHA: 23da76bed4de4a4908be2574ad05fb9c19f98d64
+  REVISED_REVIEW_BRANCH: chatgpt/st5-revised-review-live-validation-atomicity-20261007
+  REVISED_REVIEW_EXPECTED_SHA: 6f35d6003846da842b115aa83a3db299a4be0fe9
+
+jobs:
+  prove:
+    if: github.event_name == 'pull_request'
+    name: Six exact LightUp atomicity heads on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout zCloud proof harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          snapshot_head() {
+            local key="$1"
+            local branch="$2"
+            local expected="$3"
+            local remote_ref="refs/remotes/origin/lightup-atomicity-${key}"
+            local snapshot="${RUNNER_TEMP}/lightup-atomicity-${key}-${GITHUB_RUN_ID}"
+
+            git -C "${LIGHTUP_REPO}" fetch --prune origin               "+refs/heads/${branch}:${remote_ref}"
+            local actual
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+
+            rm -rf "${snapshot}"
+            mkdir -p "${snapshot}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${snapshot}"
+
+            echo "${key}_SNAPSHOT=${snapshot}" >> "${GITHUB_ENV}"
+            echo "${key}_ACTUAL_SHA=${actual}" >> "${GITHUB_ENV}"
+          }
+
+          snapshot_head BUNDLE "${BUNDLE_BRANCH}" "${BUNDLE_EXPECTED_SHA}"
+          snapshot_head AUTHORING "${AUTHORING_BRANCH}" "${AUTHORING_EXPECTED_SHA}"
+          snapshot_head PROPOSAL "${PROPOSAL_BRANCH}" "${PROPOSAL_EXPECTED_SHA}"
+          snapshot_head REVIEW "${REVIEW_BRANCH}" "${REVIEW_EXPECTED_SHA}"
+          snapshot_head REVISION_PROPOSAL "${REVISION_PROPOSAL_BRANCH}" "${REVISION_PROPOSAL_EXPECTED_SHA}"
+          snapshot_head REVISED_REVIEW "${REVISED_REVIEW_BRANCH}" "${REVISED_REVIEW_EXPECTED_SHA}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prove all six heads on Python 3.11
+        shell: bash
+        run: |
+          set -euo pipefail
+          prove() {
+            local snapshot="$1"
+            local dedicated="$2"
+            shift 2
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v "${dedicated}" "$@"
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          }
+
+          prove "${BUNDLE_SNAPSHOT}"             test_future_remediation_evidence_bundle_live_validation_atomicity             test_future_remediation_evidence_bundle             test_future_remediation_evidence_bundle_handoff
+          prove "${AUTHORING_SNAPSHOT}"             test_future_remediation_authoring_request_live_validation_atomicity             test_future_remediation_authoring_request             test_future_remediation_authoring_request_handoff
+          prove "${PROPOSAL_SNAPSHOT}"             test_future_remediation_text_proposal_live_validation_atomicity             test_future_remediation_text_proposal             test_future_remediation_text_proposal_handoff
+          prove "${REVIEW_SNAPSHOT}"             test_future_remediation_text_review_live_validation_atomicity             test_future_remediation_text_review             test_future_remediation_text_review_handoff
+          prove "${REVISION_PROPOSAL_SNAPSHOT}"             test_future_remediation_text_revision_proposal_live_validation_atomicity             test_future_remediation_text_revision_proposal             test_future_remediation_text_revision_proposal_handoff
+          prove "${REVISED_REVIEW_SNAPSHOT}"             test_future_remediation_text_revision_review_live_validation_atomicity             test_future_remediation_text_revision_review             test_future_remediation_text_revision_review_handoff
+
+          cd "${REVISED_REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Prove all six heads on Python 3.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          prove() {
+            local snapshot="$1"
+            local dedicated="$2"
+            shift 2
+            cd "${snapshot}"
+            PYTHONPATH=src:tests python -m compileall -q src tests
+            PYTHONPATH=src:tests python -m unittest -v "${dedicated}" "$@"
+            PYTHONPATH=src python scripts/check_safety_canaries.py
+          }
+
+          prove "${BUNDLE_SNAPSHOT}"             test_future_remediation_evidence_bundle_live_validation_atomicity             test_future_remediation_evidence_bundle             test_future_remediation_evidence_bundle_handoff
+          prove "${AUTHORING_SNAPSHOT}"             test_future_remediation_authoring_request_live_validation_atomicity             test_future_remediation_authoring_request             test_future_remediation_authoring_request_handoff
+          prove "${PROPOSAL_SNAPSHOT}"             test_future_remediation_text_proposal_live_validation_atomicity             test_future_remediation_text_proposal             test_future_remediation_text_proposal_handoff
+          prove "${REVIEW_SNAPSHOT}"             test_future_remediation_text_review_live_validation_atomicity             test_future_remediation_text_review             test_future_remediation_text_review_handoff
+          prove "${REVISION_PROPOSAL_SNAPSHOT}"             test_future_remediation_text_revision_proposal_live_validation_atomicity             test_future_remediation_text_revision_proposal             test_future_remediation_text_revision_proposal_handoff
+          prove "${REVISED_REVIEW_SNAPSHOT}"             test_future_remediation_text_revision_review_live_validation_atomicity             test_future_remediation_text_revision_review             test_future_remediation_text_revision_review_handoff
+
+          cd "${REVISED_REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m unittest discover -s tests/integration -v
+
+      - name: Write exact-head atomicity receipt
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-evidence-remediation-atomicity-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "focus": "evidence-remediation",
+              "issues": [447, 449, 451, 453, 455, 457],
+              "pull_requests": [448, 450, 452, 454, 456, 458],
+              "heads": {
+                  "bundle": os.environ["BUNDLE_ACTUAL_SHA"],
+                  "authoring_request": os.environ["AUTHORING_ACTUAL_SHA"],
+                  "proposal": os.environ["PROPOSAL_ACTUAL_SHA"],
+                  "review": os.environ["REVIEW_ACTUAL_SHA"],
+                  "revision_proposal": os.environ["REVISION_PROPOSAL_ACTUAL_SHA"],
+                  "revised_review": os.environ["REVISED_REVIEW_ACTUAL_SHA"],
+              },
+              "expected_heads": {
+                  "bundle": os.environ["BUNDLE_EXPECTED_SHA"],
+                  "authoring_request": os.environ["AUTHORING_EXPECTED_SHA"],
+                  "proposal": os.environ["PROPOSAL_EXPECTED_SHA"],
+                  "review": os.environ["REVIEW_EXPECTED_SHA"],
+                  "revision_proposal": os.environ["REVISION_PROPOSAL_EXPECTED_SHA"],
+                  "revised_review": os.environ["REVISED_REVIEW_EXPECTED_SHA"],
+              },
+              "host": os.uname().nodename,
+              "python": ["3.11", "3.14"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "proof": "six-dedicated-atomicity+parent-handoffs+final-integration+safety-canaries",
+              "production_source_changes": 0,
+              "authority_widening": False,
+          }
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-evidence-remediation-atomicity-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head atomicity receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-evidence-remediation-live-validation-atomicity-vps-proof
+          path: ${{ runner.temp }}/lightup-evidence-remediation-atomicity-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          rm -rf             "${BUNDLE_SNAPSHOT:-}"             "${AUTHORING_SNAPSHOT:-}"             "${PROPOSAL_SNAPSHOT:-}"             "${REVIEW_SNAPSHOT:-}"             "${REVISION_PROPOSAL_SNAPSHOT:-}"             "${REVISED_REVIEW_SNAPSHOT:-}"
