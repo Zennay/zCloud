@@ -1,4 +1,4 @@
-name: Cancel superseded zCloud deploy 37614704407
+name: Cancel own recovery queue watchdog 37616327098
 
 on:
   push:
@@ -16,77 +16,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Cancel exact superseded guarded deploy
+      - name: Cancel exact owner-created pending watchdog
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_RUN_ID: "37614704407"
-          TARGET_SHA: "cb0df01298eaee048e94e1208993369d20c64703"
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, time, urllib.request
-
+          import json, os, time, urllib.request, urllib.error
           repo=os.environ["GITHUB_REPOSITORY"]
           token=os.environ["GH_TOKEN"]
-          run_id=os.environ["TARGET_RUN_ID"]
-          expected_sha=os.environ["TARGET_SHA"]
+          run_id=37616327098
+          expected_sha="4a2167f5611eb4d321fd56b6a6b499c573f765c2"
           base=f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
           headers={
-              "Authorization": f"Bearer {token}",
-              "Accept": "application/vnd.github+json",
-              "X-GitHub-Api-Version": "2022-11-28",
-              "User-Agent": "zcloud-cancel-superseded-deploy",
+              "Authorization":f"Bearer {token}",
+              "Accept":"application/vnd.github+json",
+              "X-GitHub-Api-Version":"2022-11-28",
+              "User-Agent":"zcloud-owner-watchdog-cancel",
           }
           def get():
-              with urllib.request.urlopen(urllib.request.Request(base, headers=headers), timeout=15) as r:
+              with urllib.request.urlopen(urllib.request.Request(base,headers=headers),timeout=15) as r:
                   return json.load(r)
-
           before=get()
-          evidence={
-              "id": before.get("id"),
-              "name": before.get("name"),
-              "event": before.get("event"),
-              "head_branch": before.get("head_branch"),
-              "head_sha": before.get("head_sha"),
-              "status": before.get("status"),
-              "run_attempt": before.get("run_attempt"),
-          }
-          print("BEFORE="+json.dumps(evidence, sort_keys=True))
+          print("BEFORE="+json.dumps({k:before.get(k) for k in ("id","name","status","head_sha","head_branch","event")},sort_keys=True))
           if (
-              before.get("name") != "zCloud VPS deploy"
-              or before.get("event") != "workflow_run"
-              or before.get("head_branch") != "main"
-              or before.get("head_sha") != expected_sha
-              or int(before.get("run_attempt") or 0) != 1
+              before.get("name")!="zCloud self-hosted queue watchdog"
+              or before.get("head_sha")!=expected_sha
+              or before.get("head_branch")!="main"
           ):
-              raise SystemExit("refusing to cancel: exact run identity mismatch")
-
-          if before.get("status") == "completed":
-              print("CANCEL_NOT_NEEDED=already-completed")
-              raise SystemExit(0)
-          req=urllib.request.Request(
-              base+"/cancel",
-              data=b"{}",
-              headers={**headers, "Content-Type":"application/json"},
-              method="POST",
-          )
-          with urllib.request.urlopen(req, timeout=15) as r:
-              print("CANCEL_HTTP="+str(r.status))
-
+              raise SystemExit("exact watchdog identity mismatch")
+          if before.get("status")!="completed":
+              req=urllib.request.Request(
+                  base+"/cancel",data=b"{}",headers={**headers,"Content-Type":"application/json"},method="POST"
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=15) as r:
+                      print("CANCEL_HTTP="+str(r.status))
+              except urllib.error.HTTPError as exc:
+                  if exc.code!=409:
+                      raise
           deadline=time.time()+45
-          after={}
+          after=before
           while time.time()<deadline:
               after=get()
               if after.get("status")=="completed":
                   break
               time.sleep(2)
-          print("AFTER="+json.dumps({
-              "status":after.get("status"),
-              "conclusion":after.get("conclusion"),
-              "head_sha":after.get("head_sha"),
-          },sort_keys=True))
-          if after.get("status")!="completed" or after.get("conclusion")!="cancelled":
-              raise SystemExit("superseded deploy did not reach cancelled state")
-          print("SUPERSEDED_DEPLOY_CANCELLED_GREEN=1")
+          print("AFTER="+json.dumps({"status":after.get("status"),"conclusion":after.get("conclusion")},sort_keys=True))
+          if after.get("status")!="completed":
+              raise SystemExit("watchdog did not become terminal")
+          print("OWNER_WATCHDOG_TERMINAL_GREEN=1")
           PY
