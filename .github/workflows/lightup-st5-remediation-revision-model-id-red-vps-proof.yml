@@ -1,0 +1,199 @@
+name: LightUp ST5 remediation revision model-id expected-RED VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-st5-remediation-revision-model-id-red-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-st5-remediation-revision-model-id-red-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  REVISION_PROPOSAL_BRANCH: chatgpt/st5-remediation-revision-proposal-model-id-red-20261007
+  REVISION_PROPOSAL_EXPECTED_SHA: cda1dafefad0c8ecead8e0b2fc68527f8046347f
+  REVISION_REVIEW_BRANCH: chatgpt/st5-remediation-revision-review-model-id-red-20261007
+  REVISION_REVIEW_EXPECTED_SHA: 30b50a1fdb9b601476716ca5c2569d1fb6f0f445
+
+jobs:
+  prove-red:
+    name: Exact #435/#437 expected-RED contracts on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp revision acceptance heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${REVISION_PROPOSAL_BRANCH}:refs/remotes/origin/lightup-revision-proposal-model-id"             "+refs/heads/${REVISION_REVIEW_BRANCH}:refs/remotes/origin/lightup-revision-review-model-id"
+          PROPOSAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-revision-proposal-model-id^{commit})"
+          REVIEW_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-revision-review-model-id^{commit})"
+          test "${PROPOSAL_SHA}" = "${REVISION_PROPOSAL_EXPECTED_SHA}"
+          test "${REVIEW_SHA}" = "${REVISION_REVIEW_EXPECTED_SHA}"
+
+          PROPOSAL_SNAPSHOT="${RUNNER_TEMP}/lightup-revision-proposal-model-id-${GITHUB_RUN_ID}"
+          REVIEW_SNAPSHOT="${RUNNER_TEMP}/lightup-revision-review-model-id-${GITHUB_RUN_ID}"
+          rm -rf "${PROPOSAL_SNAPSHOT}" "${REVIEW_SNAPSHOT}"
+          mkdir -p "${PROPOSAL_SNAPSHOT}" "${REVIEW_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${PROPOSAL_SHA}" | tar -x -C "${PROPOSAL_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${REVIEW_SHA}" | tar -x -C "${REVIEW_SNAPSHOT}"
+          echo "PROPOSAL_SNAPSHOT=${PROPOSAL_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "REVIEW_SNAPSHOT=${REVIEW_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "PROPOSAL_ACTUAL_SHA=${PROPOSAL_SHA}" >> "${GITHUB_ENV}"
+          echo "REVIEW_ACTUAL_SHA=${REVIEW_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python 3.11 revision proposal parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${PROPOSAL_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal             test_future_remediation_text_revision_proposal_handoff
+          LOG="${RUNNER_TEMP}/lightup-revision-proposal-model-id-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal_model_identity_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.11 revised review parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review             test_future_remediation_text_revision_review_handoff
+          LOG="${RUNNER_TEMP}/lightup-revision-review-model-id-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review_model_identity_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Python 3.14 revision proposal parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${PROPOSAL_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal             test_future_remediation_text_revision_proposal_handoff
+          LOG="${RUNNER_TEMP}/lightup-revision-proposal-model-id-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal_model_identity_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.14 revised review parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review             test_future_remediation_text_revision_review_handoff
+          LOG="${RUNNER_TEMP}/lightup-revision-review-model-id-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review_model_identity_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Write exact-head expected-RED receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-remediation-revision-model-id-red-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          payload = {
+              "project": "LightUp",
+              "issues": [435, 437],
+              "pull_requests": [436, 438],
+              "revision_proposal": {
+                  "branch": os.environ["REVISION_PROPOSAL_BRANCH"],
+                  "target_sha": os.environ["PROPOSAL_ACTUAL_SHA"],
+                  "expected_sha": os.environ["REVISION_PROPOSAL_EXPECTED_SHA"],
+                  "expected_failures_per_python": 3,
+              },
+              "revision_review": {
+                  "branch": os.environ["REVISION_REVIEW_BRANCH"],
+                  "target_sha": os.environ["REVIEW_ACTUAL_SHA"],
+                  "expected_sha": os.environ["REVISION_REVIEW_EXPECTED_SHA"],
+                  "expected_failures_per_python": 3,
+              },
+              "host": os.uname().nodename,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "python": ["3.11", "3.14"],
+              "parent_producers_and_handoffs": "green",
+              "acceptance_contract": "revision_model_id_outer_whitespace_expected_red",
+              "production_source_changes": 0,
+              "safety_canaries": "green",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-revision-model-id-red-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head expected-RED receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-st5-remediation-revision-model-id-red-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-remediation-revision-model-id-red-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: rm -rf "${PROPOSAL_SNAPSHOT:-}" "${REVIEW_SNAPSHOT:-}"
