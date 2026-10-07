@@ -18,6 +18,16 @@ class LightUpPr52ExactHeadProofTrustTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", text)
         self.assertIn("clean: true", text)
         self.assertIn("fetch-depth: 1", text)
+        self.assertIn(
+            "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5",
+            text,
+        )
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4",
+            text,
+        )
+        self.assertNotIn("actions/setup-python@v5", text)
+        self.assertNotIn("actions/upload-artifact@v4", text)
 
     def test_active_proof_keeps_read_only_permanent_runner_boundary(self):
         text = WORKFLOW.read_text(encoding="utf-8")
