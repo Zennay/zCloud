@@ -30,6 +30,8 @@ A write-capable deploy-ops claim is admissible only after all of the following a
 9. The intended paths are checked against that PR-less branch snapshot and must report `status=clear`.
 10. Any stale-main result, changed-file overlap, incomplete inventory, active owner, PR-less branch owner, or returned blocker aborts the claim before any write-capable action.
 
+All admission evidence belongs to one exact-main transaction. Record the exact `main` SHA used to create the candidate and never compose a writer-window or ownership result from another main revision into that transaction.
+
 ## Safe order for #712
 
 Only after the release prerequisites pass:
@@ -39,11 +41,12 @@ Only after the release prerequisites pass:
 3. Re-run the PR-less branch ownership snapshot and require complete evidence plus `status=clear` for that path.
 4. Build the hosted-only contract change on a fresh branch from that exact `main`.
 5. Run exact-head regression.
-6. Re-run the serialized-writer snapshot immediately before any live dispatch.
-7. Re-run both #866 open-PR and #924 PR-less branch ownership checks against the exact candidate paths.
-8. Require `inventory_complete=true` and `status=clear` again for every admission layer.
-9. Perform only the bounded cancellation proof described by #712.
-10. Read back the result and record the exact run/commit evidence.
+6. Re-fetch canonical `main` after exact-head regression and require it to equal the candidate base SHA. If `main` advanced, abandon this admission transaction and restart from the new exact `main`; do not dispatch from the stale candidate.
+7. Re-run the serialized-writer snapshot immediately before any live dispatch.
+8. Re-run both #866 open-PR and #924 PR-less branch ownership checks against the exact candidate paths.
+9. Require `inventory_complete=true` and `status=clear` again for every admission layer.
+10. Perform only the bounded cancellation proof described by #712.
+11. Read back the result and record the exact run/commit evidence.
 
 A blocker or path owner that reappears between the final checks and live dispatch cancels the claim. Never fall back to a stale earlier `clear` result.
 
