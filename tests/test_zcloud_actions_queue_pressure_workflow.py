@@ -26,12 +26,14 @@ class ActionsQueuePressureWorkflowTests(unittest.TestCase):
     def test_workflow_only_reads_actions_and_runs_bounded_snapshot(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("/actions/runs?per_page=100", text)
+        self.assertIn('/actions/runs?status={status}&per_page=100', text)
+        self.assertIn('active_statuses = ("queued", "in_progress", "waiting", "pending", "requested")', text)
+        self.assertIn('int(payload.get("total_count") or 0) > len(rows)', text)
         self.assertIn("active = active[:30]", text)
         self.assertIn("/jobs?per_page=100", text)
         self.assertIn("jobs[:100]", text)
         self.assertIn('"capacity": 1', text)
-        self.assertIn("--require-complete", text)
+        self.assertNotIn("--require-complete", text)
         self.assertNotIn("/cancel", text)
         self.assertNotIn("/rerun", text)
         self.assertNotIn("systemctl", text)
