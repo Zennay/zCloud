@@ -1,0 +1,80 @@
+name: zCloud high blast-radius ADR guard
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-high-blast-radius-adr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact candidate
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "$BASE_SHA^{commit}"
+
+      - name: Run focused ADR guard regressions
+        run: python3 -m unittest -v tests.test_high_blast_radius_adr_guard tests.test_high_blast_radius_adr_guard_workflow
+
+      - name: Enforce ADR coverage for high-blast-radius changes
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_high_blast_radius_adr_guard.py             --base-sha "$BASE_SHA"             --head-sha "$HEAD_SHA"             --require-covered             --json
+
+
+  permanent-vps-proof:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "$BASE_SHA^{commit}"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove ADR policy on permanent VPS
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_high_blast_radius_adr_guard tests.test_high_blast_radius_adr_guard_workflow
+          python3 scripts/zcloud_high_blast_radius_adr_guard.py \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --require-covered \
+            --json
+          echo "ZCLOUD_HIGH_BLAST_RADIUS_ADR_VPS_GREEN=1"
