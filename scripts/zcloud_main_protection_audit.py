@@ -46,6 +46,10 @@ def _enabled(value: Any) -> bool:
     return isinstance(value, dict) and value.get("enabled") is True
 
 
+def _disabled(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("enabled") is False
+
+
 def audit_protection(
     *,
     branch_protected: bool,
@@ -114,8 +118,8 @@ def audit_protection(
         "admins_enforced": _enabled(protection.get("enforce_admins")),
         "pull_request_required": isinstance(reviews, dict),
         "bypass_allowances_empty": bypass_empty,
-        "force_pushes_disabled": not _enabled(protection.get("allow_force_pushes")),
-        "deletions_disabled": not _enabled(protection.get("allow_deletions")),
+        "force_pushes_disabled": _disabled(protection.get("allow_force_pushes")),
+        "deletions_disabled": _disabled(protection.get("allow_deletions")),
         "conversation_resolution_required": _enabled(
             protection.get("required_conversation_resolution")
         ),
