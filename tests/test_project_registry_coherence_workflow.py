@@ -31,6 +31,13 @@ class ProjectRegistryCoherenceWorkflowTests(unittest.TestCase):
             self.text.count('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'),
         )
 
+    def test_checkout_is_immutable_and_shared_by_both_proof_jobs(self):
+        checkout = "uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"
+        self.assertEqual(2, self.text.count(checkout))
+        self.assertNotIn("actions/checkout@v4", self.text)
+        self.assertNotIn("actions/checkout@v5", self.text)
+        self.assertNotIn("actions/checkout@v6", self.text)
+
     def test_superseded_proofs_are_concurrency_bounded(self):
         self.assertIn(
             "group: zcloud-project-registry-coherence-${{ github.event.pull_request.number || github.ref }}",
