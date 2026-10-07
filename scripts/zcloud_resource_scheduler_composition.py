@@ -239,14 +239,29 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
         for row in projects
     }
     remaining = capacity - minimum_total
+    protected_minimum = sum(
+        row["minimum_cpu_cores"] for row in projects if row["protected"]
+    )
+    protected_reserve_slack = max(
+        0.0,
+        host["protected_reserve_cpu_cores"] - protected_minimum,
+    )
 
     # First satisfy bounded normal demand up to each project's target in scheduler order.
+    # Unused protected reserve is unavailable to non-protected projects. Protected
+    # projects may consume that slack themselves; doing so reduces the withheld
+    # reserve one-for-one before they use general capacity.
     for row in projects:
         if not (row["runnable"] and row["safety_admitted"]):
             continue
         desired = max(row["minimum_cpu_cores"], min(row["requested_cpu_cores"], row["target_cpu_cores"]))
         need = max(0.0, desired - allocations[row["project_id"]])
-        grant = min(need, remaining)
+        if row["protected"]:
+            grant = min(need, remaining)
+            reserve_consumed = min(grant, protected_reserve_slack)
+            protected_reserve_slack -= reserve_consumed
+        else:
+            grant = min(need, max(0.0, remaining - protected_reserve_slack))
         allocations[row["project_id"]] += grant
         remaining -= grant
 
@@ -274,7 +289,14 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
     admitted_jobs = 0
 
     if blocked_reason is None:
-        borrow_budget = min(host["idle_borrowable_cpu_cores"], remaining)
+        # idle_borrowable_cpu_cores is expected to be measured after protected
+        # headroom, but we independently cap non-protected borrowing at the
+        # still-unreserved host capacity so bad upstream accounting cannot eat
+        # control-plane reserve.
+        borrow_budget = min(
+            host["idle_borrowable_cpu_cores"],
+            max(0.0, remaining - protected_reserve_slack),
+        )
         for row in projects:
             if borrow_budget <= 1e-9:
                 break
@@ -292,15 +314,29 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
             if safe_jobs <= 0 or cpu_room + 1e-9 < row["cpu_per_job_cores"]:
                 continue
 
+            row_budget = borrow_budget
+            if row["protected"]:
+                row_budget = min(
+                    host["idle_borrowable_cpu_cores"] - borrowed,
+                    remaining,
+                )
             fit_by_project = int((cpu_room + 1e-9) // row["cpu_per_job_cores"])
-            fit_by_host = int((borrow_budget + 1e-9) // row["cpu_per_job_cores"])
+            fit_by_host = int((row_budget + 1e-9) // row["cpu_per_job_cores"])
             grant_jobs = min(safe_jobs, fit_by_project, fit_by_host)
             if grant_jobs <= 0:
                 continue
 
             grant_cpu = grant_jobs * row["cpu_per_job_cores"]
             allocations[row["project_id"]] += grant_cpu
-            borrow_budget -= grant_cpu
+            if row["protected"]:
+                reserve_consumed = min(grant_cpu, protected_reserve_slack)
+                protected_reserve_slack -= reserve_consumed
+                borrow_budget = min(
+                    max(0.0, host["idle_borrowable_cpu_cores"] - borrowed - grant_cpu),
+                    max(0.0, remaining - grant_cpu - protected_reserve_slack),
+                )
+            else:
+                borrow_budget -= grant_cpu
             remaining -= grant_cpu
             borrowed += grant_cpu
             admitted_jobs += grant_jobs
@@ -347,7 +383,8 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
             "source_complete": host["source_complete"],
             "backpressure_required": host["backpressure_required"],
             "queue_pressure_state": host["queue_pressure_state"],
-            "protected_reserve_preserved": True,
+            "protected_reserve_preserved": protected_reserve_slack >= -1e-9,
+            "protected_reserve_slack_cpu_cores": round(max(0.0, protected_reserve_slack), 6),
             "capacity_exceeded": False,
             "mutation_performed": False,
         },
