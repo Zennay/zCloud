@@ -1,0 +1,82 @@
+name: zCloud scheduler decision report validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_scheduler_decision_report.py
+      - tests/test_scheduler_decision_report.py
+      - tests/test_scheduler_decision_report_workflow.py
+      - .github/workflows/zcloud-scheduler-decision-report.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-scheduler-decision-report-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Enforce permanent zCloud VPS runner identity
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run scheduler decision report regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_scheduler_decision_report \
+            tests.test_scheduler_decision_report_workflow
+
+      - name: Prove live-schema diagnostic is read-only and parseable
+        shell: bash
+        run: |
+          set -euo pipefail
+          live_db=/home/ubuntu/zennay-cloud/history.db
+          if [[ ! -r "$live_db" ]]; then
+            echo "Live history.db is not readable; unit-level read-only proof already passed."
+            exit 0
+          fi
+          snapshot="$RUNNER_TEMP/zcloud-scheduler-decision-history.db"
+          out="$RUNNER_TEMP/zcloud-scheduler-decision-report.json"
+          python3 - "$live_db" "$snapshot" <<'PY'
+          import sqlite3, sys
+          source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True, timeout=15)
+          target=sqlite3.connect(sys.argv[2])
+          try:
+              source.backup(target)
+          finally:
+              target.close()
+              source.close()
+          PY
+          before=$(sha256sum "$snapshot" | awk '{print $1}')
+          python3 scripts/zcloud_scheduler_decision_report.py \
+            --db "$snapshot" \
+            --contracts project-contracts.json \
+            --meminfo /proc/meminfo \
+            > "$out"
+          python3 - "$out" <<'PY'
+          import json, pathlib, sys
+          payload=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert payload["scope"] == "current_snapshot_only"
+          assert "pool" in payload and "projects" in payload
+          print(json.dumps({
+              "scope": payload["scope"],
+              "pool": payload["pool"],
+              "memory_pressure": payload["memory_admission"].get("pressure"),
+              "projects": len(payload["projects"]),
+          }, sort_keys=True))
+          PY
+          after=$(sha256sum "$snapshot" | awk '{print $1}')
+          test "$before" = "$after"
