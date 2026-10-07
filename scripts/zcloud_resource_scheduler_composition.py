@@ -314,29 +314,15 @@ def compose_scheduler_plan(payload: dict[str, Any]) -> dict[str, Any]:
             if safe_jobs <= 0 or cpu_room + 1e-9 < row["cpu_per_job_cores"]:
                 continue
 
-            row_budget = borrow_budget
-            if row["protected"]:
-                row_budget = min(
-                    host["idle_borrowable_cpu_cores"] - borrowed,
-                    remaining,
-                )
             fit_by_project = int((cpu_room + 1e-9) // row["cpu_per_job_cores"])
-            fit_by_host = int((row_budget + 1e-9) // row["cpu_per_job_cores"])
+            fit_by_host = int((borrow_budget + 1e-9) // row["cpu_per_job_cores"])
             grant_jobs = min(safe_jobs, fit_by_project, fit_by_host)
             if grant_jobs <= 0:
                 continue
 
             grant_cpu = grant_jobs * row["cpu_per_job_cores"]
             allocations[row["project_id"]] += grant_cpu
-            if row["protected"]:
-                reserve_consumed = min(grant_cpu, protected_reserve_slack)
-                protected_reserve_slack -= reserve_consumed
-                borrow_budget = min(
-                    max(0.0, host["idle_borrowable_cpu_cores"] - borrowed - grant_cpu),
-                    max(0.0, remaining - grant_cpu - protected_reserve_slack),
-                )
-            else:
-                borrow_budget -= grant_cpu
+            borrow_budget -= grant_cpu
             remaining -= grant_cpu
             borrowed += grant_cpu
             admitted_jobs += grant_jobs
