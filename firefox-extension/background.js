@@ -1177,6 +1177,19 @@ function runProject(cfg) {
         generationDeadlineMs: 120000
       });
       status("generation-not-started", {reason: "no-generation-after-send", weakCycleStreak, retryScheduled});
+      // A VPS-dispatch-only worker cannot rely on the idle startup path here:
+      // that path deliberately stays closed unless the backend dispatches again.
+      // After the full 120s generation deadline, replay the exact same canonical
+      // assignment locally so a submitted-but-never-started ChatGPT turn cannot
+      // strand the worker indefinitely. This retry does not widen scope or change
+      // the assignment and still respects the per-worker anti-spam interval.
+      if (retryScheduled) {
+        if (await canAutoContinue()) {
+          await send("no-generation-retry");
+        } else {
+          status("auto-continue-blocked", {reason: "no-generation-retry-policy-closed"});
+        }
+      }
       return;
     }
     if (sawGeneration) {
