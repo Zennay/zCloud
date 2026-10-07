@@ -36,6 +36,7 @@ TOP_KEYS = {
     "captured_at",
     "main_sha",
     "candidate_base_sha",
+    "candidate_head_sha",
     "capability_id",
     "evidence",
 }
@@ -43,6 +44,7 @@ EVIDENCE_KEYS = {
     "kind",
     "policy",
     "capability_id",
+    "candidate_head_sha",
     "observed_at",
     "main_sha",
     "verdict",
@@ -114,6 +116,7 @@ def audit_snapshot(
     now: dt.datetime | None = None,
     max_age_seconds: int = 300,
     max_evidence_span_seconds: int = 60,
+    expected_candidate_head_sha: str | None = None,
 ) -> dict[str, Any]:
     if not 1 <= max_age_seconds <= 900:
         raise EvidenceError("max_age_invalid")
@@ -138,6 +141,16 @@ def audit_snapshot(
     )
     if candidate_base_sha != main_sha:
         raise EvidenceError("candidate_base_mismatch")
+
+    candidate_head_sha = _sha(
+        snapshot["candidate_head_sha"], "candidate_head_sha_invalid"
+    )
+    if expected_candidate_head_sha is not None:
+        expected_head = _sha(
+            expected_candidate_head_sha, "expected_candidate_head_sha_invalid"
+        )
+        if candidate_head_sha != expected_head:
+            raise EvidenceError("candidate_head_mismatch")
 
     capability_id = _token(snapshot["capability_id"], "capability_id_invalid")
     rows = snapshot["evidence"]
@@ -166,6 +179,12 @@ def audit_snapshot(
         )
         if row_capability_id != capability_id:
             raise EvidenceError("evidence_capability_mismatch")
+
+        row_candidate_head_sha = _sha(
+            row["candidate_head_sha"], "evidence_candidate_head_sha_invalid"
+        )
+        if row_candidate_head_sha != candidate_head_sha:
+            raise EvidenceError("evidence_candidate_head_mismatch")
 
         policy = row["policy"]
         if not isinstance(policy, str) or not POLICY_RE.fullmatch(policy):
@@ -197,6 +216,7 @@ def audit_snapshot(
                 "kind": kind,
                 "policy": policy,
                 "capability_id": row_capability_id,
+                "candidate_head_sha": row_candidate_head_sha,
                 "verdict": verdict,
             }
         )
@@ -218,6 +238,7 @@ def audit_snapshot(
         "policy": POLICY,
         "status": status,
         "main_sha": main_sha,
+        "candidate_head_sha": candidate_head_sha,
         "capability_id": capability_id,
         "required_kinds": sorted(REQUIRED_VERDICTS),
         "blocked_kinds": blocked,
@@ -232,14 +253,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("snapshot", type=Path)
     parser.add_argument("--max-age-seconds", type=int, default=300)
     parser.add_argument("--max-evidence-span-seconds", type=int, default=60)
+    parser.add_argument("--expected-candidate-head-sha")
     parser.add_argument("--require-admit", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.require_admit and args.expected_candidate_head_sha is None:
+        payload = {
+            "ok": False,
+            "policy": POLICY,
+            "status": "incomplete",
+            "errors": ["expected_candidate_head_required"],
+            "mutation_performed": False,
+        }
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return 2
 
     try:
         payload = audit_snapshot(
             load_snapshot(args.snapshot),
             max_age_seconds=args.max_age_seconds,
             max_evidence_span_seconds=args.max_evidence_span_seconds,
+            expected_candidate_head_sha=args.expected_candidate_head_sha,
         )
     except EvidenceError as exc:
         payload = {
