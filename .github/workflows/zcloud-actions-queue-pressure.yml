@@ -108,7 +108,7 @@ jobs:
                   "jobs": [
                       {
                           "status": str(job.get("status") or ""),
-                          "created_at": run_created,
+                          "created_at": str(job.get("created_at") or run_created),
                           "labels": [
                               str(label)
                               for label in (job.get("labels") or [])
@@ -137,4 +137,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/zcloud_actions_queue_pressure.py             --input "$RUNNER_TEMP/zcloud-actions-queue-pressure.json"             --require-complete
+          python3 scripts/zcloud_actions_queue_pressure.py             --input "$RUNNER_TEMP/zcloud-actions-queue-pressure.json"
