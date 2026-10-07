@@ -12,7 +12,7 @@ ExecStartPre=/bin/sleep 2
 ExecStart=/home/ubuntu/.local/bin/web-ext run --source-dir %h/snap/firefox/common/chatgpt-project-extension --firefox /usr/bin/firefox --firefox-profile %h/snap/firefox/common/chatgpt-webext-profile --keep-profile-changes --no-reload --no-input
 ExecStartPost=/home/ubuntu/.local/bin/chatgpt-window-layout.sh
 ExecStopPost=/home/ubuntu/.local/bin/chatgpt-firefox-stop.sh
-Nice=10
+Nice=0
 CPUWeight=100
 
 Restart=always
