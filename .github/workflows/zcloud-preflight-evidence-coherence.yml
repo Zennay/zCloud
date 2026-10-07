@@ -108,7 +108,7 @@ jobs:
           from pathlib import Path
 
           payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
-          assert payload["policy"] == "control-plane-preflight-evidence-coherence-v1"
+          assert payload["policy"] == "control-plane-preflight-evidence-coherence-v2"
           assert payload["status"] == "admit"
           assert payload["mutation_performed"] is False
           assert len(payload["evidence"]) == 5
