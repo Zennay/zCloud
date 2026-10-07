@@ -80,11 +80,32 @@ def _validate_backlog(backlog: Any) -> dict[str, Any]:
     sha = str(backlog.get("current_main_sha") or "").strip().lower()
     if not SHA_RE.fullmatch(sha):
         raise PlanError("invalid current main SHA")
-    if not isinstance(backlog.get("integration_released"), bool):
+    gate_open = backlog.get("gate_open")
+    integration_released = backlog.get("integration_released")
+    if not isinstance(gate_open, bool) or not isinstance(integration_released, bool):
         raise PlanError("invalid gate release state")
+    if integration_released != (not gate_open):
+        raise PlanError("incoherent gate release state")
+    gates = backlog.get("gates")
+    if not isinstance(gates, list) or len(gates) != 2:
+        raise PlanError("expected exactly two gate records")
+    gate_numbers = {int(item.get("number") or 0) for item in gates if isinstance(item, dict)}
+    if gate_numbers != {576, 580}:
+        raise PlanError("unexpected serialized gate identities")
     dependents = backlog.get("dependents")
     if not isinstance(dependents, list):
         raise PlanError("dependent PR evidence missing")
+    if backlog.get("dependent_pr_count") != len(dependents):
+        raise PlanError("dependent PR count mismatch")
+    expected_ready = sum(1 for item in dependents if isinstance(item, dict) and item.get("review_ready_current_main") is True)
+    expected_drafts = sum(1 for item in dependents if isinstance(item, dict) and item.get("draft") is True)
+    expected_stale = sum(1 for item in dependents if isinstance(item, dict) and item.get("base_is_current_main") is False)
+    if backlog.get("review_ready_current_main_count") != expected_ready:
+        raise PlanError("review-ready count mismatch")
+    if backlog.get("draft_count") != expected_drafts:
+        raise PlanError("draft count mismatch")
+    if backlog.get("stale_base_count") != expected_stale:
+        raise PlanError("stale-base count mismatch")
     return backlog
 
 
@@ -127,6 +148,9 @@ def build_plan(payload: dict[str, Any], *, batch_limit: int = 10) -> dict[str, A
 
     if len(candidate_rows) > MAX_CANDIDATES:
         raise PlanError("candidate inventory exceeds bounded limit")
+    expected_file_keys = {str(row["number"]) for row in candidate_rows}
+    if set(files_by_pr) != expected_file_keys:
+        raise PlanError("changed-file evidence key set mismatch")
 
     candidate_rows.sort(key=lambda row: (len(row["files"]), row["number"]))
     selected: list[dict[str, Any]] = []
