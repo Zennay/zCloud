@@ -142,6 +142,7 @@ def audit_snapshot(
             or len(dependencies) > MAX_DEPENDENCIES_PER_CAPABILITY
         ):
             raise SnapshotError("dependencies_invalid")
+
         normalized_dependencies: list[str] = []
         seen: set[str] = set()
         for value in dependencies:
@@ -152,17 +153,18 @@ def audit_snapshot(
                 raise SnapshotError("dependency_duplicate")
             seen.add(dependency_id)
             normalized_dependencies.append(dependency_id)
+        canonical_dependencies = tuple(sorted(normalized_dependencies))
 
         if capability_id in capabilities:
             raise SnapshotError("capability_duplicate")
         capabilities[capability_id] = {
             "lane": capability_lane,
             "state": state,
-            "dependencies": tuple(normalized_dependencies),
+            "dependencies": canonical_dependencies,
         }
-        graph[capability_id] = tuple(normalized_dependencies)
+        graph[capability_id] = canonical_dependencies
 
-    for capability_id, dependencies in graph.items():
+    for dependencies in graph.values():
         for dependency_id in dependencies:
             if dependency_id not in capabilities:
                 raise SnapshotError("dependency_unknown")
