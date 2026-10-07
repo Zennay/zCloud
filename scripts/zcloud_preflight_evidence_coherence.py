@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-POLICY = "control-plane-preflight-evidence-coherence-v1"
+POLICY = "control-plane-preflight-evidence-coherence-v2"
 MAX_BYTES = 64 * 1024
 FUTURE_SKEW_SECONDS = 5
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
