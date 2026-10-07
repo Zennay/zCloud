@@ -178,6 +178,25 @@ def _classify_ci(runs: list[dict], status_payload: dict) -> dict:
     contexts = status_payload.get("statuses") if isinstance(status_payload, dict) else None
     contexts = contexts if isinstance(contexts, list) else []
 
+    # An explicit exact-head commit-status context is the durable CI/deploy
+    # signal for zCloud. The Actions endpoint also contains hundreds of
+    # workflow_run/scheduled watchdog executions that reuse the same main SHA;
+    # historical cancellations there must not override the current status.
+    if contexts:
+        state = str(status_payload.get("state") or "").strip().lower()
+        mapped = {
+            "success": "success",
+            "failure": "failure",
+            "error": "failure",
+            "pending": "in_progress",
+        }.get(state, "unknown")
+        return {
+            "status": mapped,
+            "source": "github_commit_status_exact_head",
+            "run_count": len(exact),
+            "status_context_count": len(contexts),
+        }
+
     if exact:
         statuses = {str(row.get("status") or "").lower() for row in exact}
         conclusions = {
@@ -195,24 +214,9 @@ def _classify_ci(runs: list[dict], status_payload: dict) -> dict:
             state = "unknown"
         return {
             "status": state,
-            "source": "github_actions_exact_head",
+            "source": "github_actions_exact_head_fallback",
             "run_count": len(exact),
-            "status_context_count": len(contexts),
-        }
-
-    if contexts:
-        state = str(status_payload.get("state") or "").strip().lower()
-        mapped = {
-            "success": "success",
-            "failure": "failure",
-            "error": "failure",
-            "pending": "in_progress",
-        }.get(state, "unknown")
-        return {
-            "status": mapped,
-            "source": "github_commit_status_exact_head",
-            "run_count": 0,
-            "status_context_count": len(contexts),
+            "status_context_count": 0,
         }
 
     return {
@@ -221,7 +225,6 @@ def _classify_ci(runs: list[dict], status_payload: dict) -> dict:
         "run_count": 0,
         "status_context_count": 0,
     }
-
 
 def build_report(
     projects_path: Path,
