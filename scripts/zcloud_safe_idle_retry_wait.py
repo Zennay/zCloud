@@ -27,9 +27,18 @@ def parse_worker_key(value: str) -> tuple[str, int]:
 
 
 def connect_read_only(db: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+    if db.is_symlink():
+        raise RetryWaitError("history database path must not be a symlink")
+    if not db.exists() or not db.is_file():
+        raise RetryWaitError("history database path must be a regular file")
+    resolved = db.resolve(strict=True)
+    conn = sqlite3.connect(f"file:{resolved}?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.isolation_level = None
+    conn.execute("PRAGMA query_only=ON")
+    if int(conn.execute("PRAGMA query_only").fetchone()[0]) != 1:
+        conn.close()
+        raise RetryWaitError("failed to enable SQLite query_only mode")
     return conn
 
 
@@ -164,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(blockers, list) or not all(isinstance(item, str) for item in blockers):
             raise RetryWaitError("--blockers-json must be a JSON list of worker ids")
         result = wait_until_ready(
-            args.db.resolve(),
+            args.db,
             blockers,
             timeout_seconds=args.timeout_seconds,
             poll_seconds=args.poll_seconds,
