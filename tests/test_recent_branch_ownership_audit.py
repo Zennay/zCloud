@@ -85,6 +85,11 @@ class RecentBranchCollectorTests(unittest.TestCase):
         self.assertIsNone(rows["stale"]["compare"])
         compare_calls = [c for c in calls if "/compare/" in " ".join(c)]
         self.assertEqual(len(compare_calls), 1)
+        compare_args = " ".join(compare_calls[0])
+        self.assertIn("--jq", compare_args)
+        self.assertIn("merge_base_commit", compare_args)
+        for forbidden in ("message", "author", "committer", "verification"):
+            self.assertNotIn(forbidden, compare_args)
 
     def test_cross_repository_pr_does_not_claim_same_named_local_branch(self):
         def runner(args):
