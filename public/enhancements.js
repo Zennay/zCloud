@@ -1,6 +1,24 @@
 'use strict';
 (function(){
   const trText=value=>String(value??'').replace(/Needs attention/g,'Needs attention').replace(/Onbekend/g,'Unknown').replace(/Geen vaste VPS-worker/g,'No dedicated VPS worker').replace(/Geen herstelpunt/g,'No recovery point').replace(/Herstel getest/g,'Recovery tested').replace(/Herstelcontrole nodig/g,'Recovery check needed').replace(/Herstel loopt/g,'Recovery in progress').replace(/Herstelpunt klaar/g,'Recovery point ready').replace(/Controleer dit incident\./g,'Check this incident.');
+  const PREVIOUS_PROGRESS_CACHE_KEY='zcloud:last-status:v1';
+  const PREVIOUS_PROGRESS_MAX_AGE_MS=24*60*60*1000;
+  function previousProgressSnapshot(){
+    try{
+      var raw=JSON.parse(localStorage.getItem(PREVIOUS_PROGRESS_CACHE_KEY)||'null');
+      var savedAt=Number(raw&&raw.saved_at),age=Date.now()-savedAt,projects=raw&&raw.data&&raw.data.projects;
+      if(!Number.isFinite(savedAt)||savedAt<=0||age<0||age>PREVIOUS_PROGRESS_MAX_AGE_MS||!Array.isArray(projects)||projects.length>100)return {};
+      var out={};
+      projects.forEach(function(item){
+        if(!item||typeof item.id!=='string'||!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(item.id))return;
+        var value=Number(item.progress);
+        if(!Number.isFinite(value)||value<0||value>100)return;
+        out[item.id]={progress:value,saved_at:savedAt};
+      });
+      return out;
+    }catch(_){return {}}
+  }
+  const PREVIOUS_PROGRESS=previousProgressSnapshot();
   function qInline(p){
     var h=p&&p.quality&&p.quality.headline;
     if(!h)return '';
@@ -12,6 +30,19 @@
     var first=Number(rows[0].progress),last=Number(rows[rows.length-1].progress);
     if(!Number.isFinite(first)||!Number.isFinite(last))return null;
     return Math.round((last-first)*10)/10;
+  }
+  function previousSessionProgressDelta(p){
+    var prior=p&&PREVIOUS_PROGRESS[p.id],current=Number(p&&p.progress);
+    if(!prior||!Number.isFinite(current)||current<0||current>100)return null;
+    return Math.round((current-prior.progress)*10)/10;
+  }
+  function progressDeltaChipModel(p){
+    var delta=previousSessionProgressDelta(p);
+    if(delta!=null)return {value:delta,context:'last session',title:'Progress change since the previous dashboard session'};
+    delta=progressDelta(p);
+    if(delta==null)return null;
+    var context=({'24h':'24h','7d':'7d','30d':'30d','all':'all history'})[range]||String(range||'history');
+    return {value:delta,context:context,title:'Progress change across the loaded '+context};
   }
   function evidencePoint(slot,item){
     if(!item)return '';
@@ -113,8 +144,8 @@
   var baseProjectCard=projectCard;
   projectCard=function(p){
     var html=baseProjectCard(p);
-    var q=qInline(p),delta=progressDelta(p);
-    var deltaChip=delta==null?'':'<span class="progress-delta '+(delta>0?'up':delta<0?'down':'flat')+'">'+(delta>0?'+':'')+num(delta)+' pp</span>';
+    var q=qInline(p),deltaModel=progressDeltaChipModel(p),delta=deltaModel&&deltaModel.value;
+    var deltaChip=deltaModel==null?'':'<span class="progress-delta '+(delta>0?'up':delta<0?'down':'flat')+'" title="'+esc(deltaModel.title)+'">'+(delta>0?'+':'')+num(delta)+' pp · '+esc(deltaModel.context)+'</span>';
     if(deltaChip)html=html.replace('<div class="progress-row">','<div class="progress-row">'+deltaChip);
     return q?html.replace('<div class="progress-row">',q+'<div class="progress-row">'):html;
   };
