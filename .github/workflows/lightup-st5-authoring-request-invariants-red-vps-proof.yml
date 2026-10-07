@@ -17,11 +17,11 @@ concurrency:
 env:
   LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
   LIGHTUP_BRANCH: chatgpt/st5-remediation-authoring-request-invariants-pack-20261006
-  LIGHTUP_EXPECTED_SHA: 65e1fac544cc014dc797159893b825cd4b799390
+  LIGHTUP_EXPECTED_SHA: 6616b8a4dc2db8a9892e0c16717190f37ce7fe04
 
 jobs:
   prove-red:
-    name: Exact #415+#417 expected-RED contract on vps-bb300bba
+    name: Exact #415+#417+#419 expected-RED contract on vps-bb300bba
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
 
@@ -70,13 +70,14 @@ jobs:
           PYTHONPATH=src:tests python -m unittest -v \
             test_future_remediation_authoring_request_positive_versions_acceptance \
             test_future_remediation_authoring_request_path_semantics_acceptance \
+            test_future_remediation_authoring_request_resolution_effect_lineage_acceptance \
             >"${LOG}" 2>&1
           RC=$?
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 4
-          grep -Fq 'FAILED (failures=4)' "${LOG}"
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 11
+          grep -Fq 'FAILED (failures=11)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -102,8 +103,8 @@ jobs:
           set -e
           cat "${LOG}"
           test "${RC}" -ne 0
-          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 4
-          grep -Fq 'FAILED (failures=4)' "${LOG}"
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 11
+          grep -Fq 'FAILED (failures=11)' "${LOG}"
           ! grep -Fq 'errors=' "${LOG}"
           PYTHONPATH=src python scripts/check_safety_canaries.py
 
@@ -119,8 +120,8 @@ jobs:
           from pathlib import Path
           payload = {
               "project": "LightUp",
-              "issues": [415, 417],
-              "pull_requests": [416, 418],
+              "issues": [415, 417, 419],
+              "pull_requests": [416, 418, 420],
               "branch": os.environ["LIGHTUP_BRANCH"],
               "target_sha": os.environ["LIGHTUP_ACTUAL_SHA"],
               "expected_sha": os.environ["LIGHTUP_EXPECTED_SHA"],
@@ -129,7 +130,7 @@ jobs:
               "python": ["3.11", "3.14"],
               "parent_handoff": "green",
               "acceptance_contract": "combined_expected_red",
-              "expected_failures_per_python": 4,
+              "expected_failures_per_python": 11,
               "production_source_changes": 0,
               "safety_canaries": "green",
           }
