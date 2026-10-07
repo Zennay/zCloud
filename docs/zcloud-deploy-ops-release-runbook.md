@@ -32,17 +32,28 @@ A write-capable deploy-ops claim is admissible only after all of the following a
 
 All admission evidence belongs to one exact-main transaction. Record the exact `main` SHA used to create the candidate and never compose a writer-window or ownership result from another main revision into that transaction.
 
+## Canonical admission tools
+
+After #920, #866 and #924 are landed on the exact admission `main`, use their canonical repository tools rather than reimplementing or approximating their classifiers:
+
+- #920 writer-window classification: `scripts/zcloud_serialized_writer_window_audit.py`
+- #866 open-PR changed-file ownership: `scripts/zcloud_open_pr_overlap_audit.py`
+- #924 PR-less branch inventory: `scripts/zcloud_unpr_branch_snapshot.py`
+- #924 PR-less path ownership: `scripts/zcloud_unpr_branch_overlap_audit.py`
+
+A prose owner check, partial GitHub search, stale cached snapshot, or hand-built substitute is not equivalent admission evidence. If any canonical tool is missing from the exact `main` revision, the write-capable claim is inadmissible.
+
 ## Safe order for #712
 
 Only after the release prerequisites pass:
 
 1. Re-fetch canonical `main` and record the exact SHA.
-2. Re-run the #866 open-PR ownership audit for `.github/workflows/zssh-governance-runner-priority.yml`.
-3. Re-run the PR-less branch ownership snapshot and require complete evidence plus `status=clear` for that path.
+2. Re-run the #866 open-PR ownership audit for `.github/workflows/zssh-governance-runner-priority.yml` with `scripts/zcloud_open_pr_overlap_audit.py`.
+3. Re-run the PR-less branch ownership snapshot with `scripts/zcloud_unpr_branch_snapshot.py` and require complete evidence plus `status=clear` for that path via `scripts/zcloud_unpr_branch_overlap_audit.py`.
 4. Build the hosted-only contract change on a fresh branch from that exact `main`.
 5. Run exact-head regression.
 6. Re-fetch canonical `main` after exact-head regression and require it to equal the candidate base SHA. If `main` advanced, abandon this admission transaction and restart from the new exact `main`; do not dispatch from the stale candidate.
-7. Re-run the serialized-writer snapshot immediately before any live dispatch.
+7. Re-run the serialized-writer snapshot with `scripts/zcloud_serialized_writer_window_audit.py` immediately before any live dispatch.
 8. Re-run both #866 open-PR and #924 PR-less branch ownership checks against the exact candidate paths.
 9. Require `inventory_complete=true` and `status=clear` again for every admission layer.
 10. Perform only the bounded cancellation proof described by #712.
