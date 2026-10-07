@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -136,6 +137,54 @@ def scan_repository(root: Path, *, max_minutes: int) -> list[TimeoutFinding]:
     return findings
 
 
+def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFinding]:
+    """Read workflow blobs from an existing git commit without checking it out."""
+    proc = subprocess.run(
+        ["git", "-C", str(root), "ls-tree", "-r", ref, "--", WORKFLOW_DIR.as_posix()],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rows: list[TimeoutFinding] = []
+    for line in proc.stdout.splitlines():
+        metadata, sep, relative = line.partition("\t")
+        if not sep:
+            raise RuntimeError("unexpected git ls-tree output")
+        mode, object_type, _object_id = metadata.split(" ", 2)
+        path = Path(relative)
+        if path.suffix.lower() not in WORKFLOW_SUFFIXES:
+            continue
+        if mode == "120000":
+            raise RuntimeError(f"symlink workflow rejected at git ref: {relative}")
+        if object_type != "blob":
+            continue
+        blob = subprocess.run(
+            ["git", "-C", str(root), "show", f"{ref}:{relative}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        rows.extend(inspect_workflow(relative, blob, max_minutes=max_minutes))
+    return rows
+
+
+def new_debt(
+    base_rows: list[TimeoutFinding],
+    head_rows: list[TimeoutFinding],
+) -> list[TimeoutFinding]:
+    """Return debt introduced for job identities that were not already debt."""
+    base_debt = {
+        (row.path, row.job)
+        for row in base_rows
+        if row.status != "bounded"
+    }
+    return [
+        row
+        for row in head_rows
+        if row.status != "bounded" and (row.path, row.job) not in base_debt
+    ]
+
+
 def summarize(rows: list[TimeoutFinding], *, max_minutes: int) -> dict[str, object]:
     by_status = {
         status: sum(1 for row in rows if row.status == status)
@@ -158,6 +207,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--max-minutes", type=int, default=30)
     parser.add_argument("--require-bounded", action="store_true")
+    parser.add_argument(
+        "--base-ref",
+        help="Git ref to compare against for monotonic no-new-debt enforcement.",
+    )
+    parser.add_argument("--require-no-new-debt", action="store_true")
     args = parser.parse_args(argv)
 
     if not 1 <= args.max_minutes <= 360:
@@ -171,8 +225,33 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = summarize(rows, max_minutes=args.max_minutes)
     payload["ok"] = payload["finding_count"] == 0
+
+    if args.require_no_new_debt and not args.base_ref:
+        parser.error("--require-no-new-debt requires --base-ref")
+
+    if args.base_ref:
+        try:
+            base_rows = scan_git_ref(
+                args.repo_root.resolve(),
+                args.base_ref,
+                max_minutes=args.max_minutes,
+            )
+        except (OSError, UnicodeError, RuntimeError, subprocess.SubprocessError):
+            print(json.dumps({"ok": False, "error": "base_ref_unreadable"}, sort_keys=True))
+            return 2
+        introduced = new_debt(base_rows, rows)
+        payload["base_ref"] = args.base_ref
+        payload["base_self_hosted_job_count"] = len(base_rows)
+        payload["base_finding_count"] = sum(
+            1 for row in base_rows if row.status != "bounded"
+        )
+        payload["new_debt_count"] = len(introduced)
+        payload["new_debt"] = [row.bounded() for row in introduced]
+
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
     if args.require_bounded and payload["finding_count"]:
+        return 1
+    if args.require_no_new_debt and payload.get("new_debt_count", 0):
         return 1
     return 0
 
