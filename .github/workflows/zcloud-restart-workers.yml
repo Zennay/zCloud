@@ -7,7 +7,6 @@ on:
     paths:
       - ".github/workflows/zcloud-restart-workers.yml"
       - "tests/test_zcloud_restart_workers_workflow.py"
-      - "tests/test_zcloud_restart_workers_workflow.py"
   workflow_dispatch:
   schedule:
     # Forced hourly refresh for the seven ChatGPT workers. The workflow itself
@@ -17,6 +16,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/zcloud-restart-workers.yml"
+      - "tests/test_zcloud_restart_workers_workflow.py"
 
 permissions:
   contents: read
