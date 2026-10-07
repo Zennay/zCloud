@@ -37,6 +37,11 @@ jobs:
           journalctl --since "-25 min" --no-pager -o short-iso 2>/dev/null \
             | grep -E 'zcloud-self-heal|zcloud-runner-heal|zcloud-worker-watchdog|worker-progress-watchdog|restart_firefox|chatgpt-firefox' \
             | tail -n 260 || true
+          echo "=== INCIDENT WINDOW 21:34:30-21:36:30 UTC ==="
+          sudo -n journalctl --since "2026-10-07 21:34:30 UTC" --until "2026-10-07 21:36:30 UTC" \
+            --no-pager -o cat 2>/dev/null \
+            | grep -E 'zcloud-self-heal|restart_firefox|global_action|reason|memory|worker_count|generating|progress_age|runtime_state|chatgpt-firefox' \
+            | tail -n 500 || true
           echo "=== INSTALLED WATCHDOG IDENTITY ==="
           sha256sum /usr/local/sbin/zcloud-worker-watchdog /home/ubuntu/zennay-cloud/scripts/zcloud_worker_watchdog.py 2>/dev/null || true
           echo "=== WATCHDOG STATE ==="
