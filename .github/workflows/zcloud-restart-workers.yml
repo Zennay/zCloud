@@ -522,6 +522,39 @@ jobs:
               and worker not in superseded_workers
           ]
 
+          # The primary userscript intentionally leaves new_chat pending while a
+          # worker is generating/sending/awaiting a response. That is a safe
+          # deferred restart, not a dead consumer. Only excuse pending commands
+          # when fresh runner telemetry proves that exact worker is busy.
+          live_status, live_payload = api_call("GET", "/api/runner-live")
+          live_workers = {}
+          if live_status < 300:
+              for project in (live_payload.get("chatgpt_runners") or {}).values():
+                  for worker_state in (project.get("workers") or []):
+                      key = str(worker_state.get("worker_id") or "").strip()
+                      if key:
+                          live_workers[key] = worker_state
+
+          deferred_busy_workers = []
+          hard_pending_workers = []
+          for worker in pending_workers:
+              state = live_workers.get(worker) or {}
+              last_event = state.get("last_event") or {}
+              age = state.get("age_seconds")
+              recent_busy_defer = (
+                  str(state.get("state") or "") in ("live", "starting")
+                  and str(last_event.get("event") or "") == "send-blocked"
+                  and str(last_event.get("reason") or "") == "new-chat-deferred-busy"
+                  and isinstance(age, (int, float))
+                  and age <= 90
+              )
+              busy = bool(state.get("generating") or state.get("sending") or recent_busy_defer)
+              if busy:
+                  deferred_busy_workers.append(worker)
+              else:
+                  hard_pending_workers.append(worker)
+          pending_workers = hard_pending_workers
+
           replacement_push = None
           if allocation_changed or superseded_workers:
               push_status, replacement_push = api_call(
@@ -541,6 +574,7 @@ jobs:
               "superseded_workers": superseded_workers,
               "replacement_push": replacement_push,
               "pending_workers": pending_workers,
+              "deferred_busy_workers": deferred_busy_workers,
               "failed_workers": failed_workers,
           }, ensure_ascii=False, sort_keys=True))
           if pending_workers:
