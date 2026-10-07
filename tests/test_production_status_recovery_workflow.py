@@ -60,6 +60,73 @@ class ProductionStatusRecoveryWorkflowTests(unittest.TestCase):
         self.assertLess(regression_check, dispatch)
         self.assertIn("if deploy_active:", text)
 
+    def test_write_authority_is_bound_to_canonical_trusted_event_provenance(self):
+        text = (
+            ROOT / ".github/workflows/zcloud-production-status-recovery.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('CANONICAL_REPOSITORY = "Zennay/zCloud"', text)
+        self.assertIn('TRUSTED_DEPLOY_EVENTS = {"workflow_run"}', text)
+        self.assertIn('event_name = os.environ.get("GITHUB_EVENT_NAME", "")', text)
+        self.assertIn('event_ref = os.environ.get("GITHUB_REF", "")', text)
+        self.assertIn('event_sha = os.environ.get("GITHUB_SHA", "")', text)
+        self.assertIn('event_path = Path(os.environ["GITHUB_EVENT_PATH"])', text)
+        self.assertIn('repo != CANONICAL_REPOSITORY', text)
+        self.assertIn('event_name not in {"schedule", "workflow_run", "workflow_dispatch"}', text)
+        self.assertIn('event_ref != "refs/heads/main"', text)
+        self.assertIn('if event_name == "workflow_run":', text)
+        self.assertIn('trigger_repo_name == CANONICAL_REPOSITORY', text)
+        self.assertIn('str(trigger.get("path") or "")', text)
+        self.assertIn('== ".github/workflows/zcloud-vps-deploy.yml"', text)
+        self.assertIn('str(trigger.get("head_branch") or "") == "main"', text)
+        self.assertIn('str(trigger.get("conclusion") or "") == "success"', text)
+        self.assertIn('str(trigger.get("event") or "") in TRUSTED_DEPLOY_EVENTS', text)
+        self.assertIn('trigger_sha != sha', text)
+        self.assertIn('event_sha != sha', text)
+        self.assertIn("PRODUCTION_STATUS_RECOVERY_ADMISSION=accepted", text)
+
+    def test_trusted_trigger_matches_the_real_deploy_workflow_event(self):
+        recovery = (
+            ROOT / ".github/workflows/zcloud-production-status-recovery.yml"
+        ).read_text(encoding="utf-8")
+        deploy = (
+            ROOT / ".github/workflows/zcloud-vps-deploy.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('TRUSTED_DEPLOY_EVENTS = {"workflow_run"}', recovery)
+        self.assertIn('workflow_run:', deploy)
+        self.assertIn('workflows: ["zCloud regression smoke"]', deploy)
+        self.assertIn('== ".github/workflows/zcloud-vps-deploy.yml"', recovery)
+        self.assertNotIn('TRUSTED_DEPLOY_EVENTS = {"push", "workflow_dispatch"}', recovery)
+
+    def test_provenance_gate_runs_before_any_actions_write_dispatch(self):
+        text = (
+            ROOT / ".github/workflows/zcloud-production-status-recovery.yml"
+        ).read_text(encoding="utf-8")
+
+        repo_gate = text.index("if repo != CANONICAL_REPOSITORY:")
+        workflow_run_gate = text.index("if event_name == \"workflow_run\":")
+        current_main = text.index('main = get("/commits/main")')
+        stale_gate = text.index("trigger_sha != sha")
+        dispatch = text.index("zcloud-regression-smoke.yml/dispatches")
+
+        self.assertLess(repo_gate, current_main)
+        self.assertLess(workflow_run_gate, current_main)
+        self.assertLess(current_main, stale_gate)
+        self.assertLess(stale_gate, dispatch)
+        self.assertIn(
+            "PRODUCTION_STATUS_RECOVERY_REJECT reason=workflow_run_provenance",
+            text,
+        )
+        self.assertIn(
+            "PRODUCTION_STATUS_RECOVERY_REJECT reason=stale_workflow_run",
+            text,
+        )
+        self.assertIn(
+            "PRODUCTION_STATUS_RECOVERY_REJECT reason=stale_event_sha",
+            text,
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

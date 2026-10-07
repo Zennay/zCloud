@@ -31,10 +31,54 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          from pathlib import Path
           import urllib.request
+
+          CANONICAL_REPOSITORY = "Zennay/zCloud"
+          TRUSTED_DEPLOY_EVENTS = {"workflow_run"}
 
           repo = os.environ["GITHUB_REPOSITORY"]
           token = os.environ["GITHUB_TOKEN"]
+          event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+          event_ref = os.environ.get("GITHUB_REF", "")
+          event_sha = os.environ.get("GITHUB_SHA", "")
+          event_path = Path(os.environ["GITHUB_EVENT_PATH"])
+
+          if repo != CANONICAL_REPOSITORY:
+              print("PRODUCTION_STATUS_RECOVERY_REJECT reason=repository")
+              raise SystemExit(0)
+          if event_name not in {"schedule", "workflow_run", "workflow_dispatch"}:
+              print("PRODUCTION_STATUS_RECOVERY_REJECT reason=event")
+              raise SystemExit(0)
+          if event_name in {"schedule", "workflow_dispatch"} and event_ref != "refs/heads/main":
+              print("PRODUCTION_STATUS_RECOVERY_REJECT reason=non_main_ref")
+              raise SystemExit(0)
+
+          trigger = None
+          if event_name == "workflow_run":
+              event_payload = json.loads(event_path.read_text(encoding="utf-8"))
+              trigger = event_payload.get("workflow_run")
+              if not isinstance(trigger, dict):
+                  print("PRODUCTION_STATUS_RECOVERY_REJECT reason=missing_workflow_run")
+                  raise SystemExit(0)
+              trigger_repo = trigger.get("head_repository")
+              trigger_repo_name = (
+                  str(trigger_repo.get("full_name") or "")
+                  if isinstance(trigger_repo, dict)
+                  else ""
+              )
+              trigger_ok = (
+                  trigger_repo_name == CANONICAL_REPOSITORY
+                  and str(trigger.get("path") or "")
+                  == ".github/workflows/zcloud-vps-deploy.yml"
+                  and str(trigger.get("head_branch") or "") == "main"
+                  and str(trigger.get("conclusion") or "") == "success"
+                  and str(trigger.get("event") or "") in TRUSTED_DEPLOY_EVENTS
+              )
+              if not trigger_ok:
+                  print("PRODUCTION_STATUS_RECOVERY_REJECT reason=workflow_run_provenance")
+                  raise SystemExit(0)
+
           headers = {
               "Authorization": f"Bearer {token}",
               "Accept": "application/vnd.github+json",
@@ -54,6 +98,20 @@ jobs:
           sha = str(main.get("sha") or "")
           if not sha:
               raise SystemExit("could not resolve current main SHA")
+
+          if event_name == "workflow_run":
+              trigger_sha = str(trigger.get("head_sha") or "")
+              if trigger_sha != sha:
+                  print("PRODUCTION_STATUS_RECOVERY_REJECT reason=stale_workflow_run")
+                  raise SystemExit(0)
+          elif event_sha != sha:
+              print("PRODUCTION_STATUS_RECOVERY_REJECT reason=stale_event_sha")
+              raise SystemExit(0)
+
+          print(
+              "PRODUCTION_STATUS_RECOVERY_ADMISSION=accepted "
+              f"event={event_name} sha={sha}"
+          )
 
           status = get(f"/commits/{sha}/status")
           production = [
