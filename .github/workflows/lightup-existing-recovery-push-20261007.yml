@@ -1,4 +1,4 @@
-name: Push existing LightUp runner recovery to Claude
+name: Reconcile existing LightUp runner recovery lane
 
 on:
   push:
@@ -10,147 +10,182 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: lightup-existing-recovery-reconcile-20261007
+  cancel-in-progress: true
+
 jobs:
-  push:
+  reconcile:
     runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: Guard permanent VPS
+      - name: Guard canonical permanent VPS
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
 
-      - name: Push exact queued recovery only to a Claude zSSH slot
+      - name: Move exact recovery item to executable LightUp lane
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
-          import sqlite3
-          import time
+          import urllib.error
           import urllib.request
           from pathlib import Path
 
-          base = "http://127.0.0.1:8765"
-          db = Path("/home/ubuntu/zennay-cloud/history.db")
-          queue_id = "zssh-lightup-evidence-runner-recovery-20261006"
+          BASE = "http://127.0.0.1:8765"
+          QUEUE_ID = "zssh-lightup-evidence-runner-recovery-20261006"
+          CONTRACTS = Path("/home/ubuntu/zennay-cloud/project-contracts.json")
 
-          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
-          conn.row_factory = sqlite3.Row
-          conn.execute("PRAGMA query_only=ON")
+          contracts = json.loads(CONTRACTS.read_text(encoding="utf-8"))
+          projects = contracts.get("projects") or {}
+          zssh = projects.get("zssh") or {}
+          lightup = projects.get("lightup") or {}
+          if int(zssh.get("ai_worker_cap") or 0) != 0:
+              raise SystemExit("zSSH contract changed; refusing stale recovery migration")
+          if int(lightup.get("ai_worker_cap") or 0) < 1:
+              raise SystemExit("LightUp has no AI worker capacity")
+          autonomy = lightup.get("autonomy") or {}
+          if autonomy.get("mode") != "ai_worker" or autonomy.get("auto_start") is not True:
+              raise SystemExit("LightUp auto-worker contract is not enabled")
 
-          queue_cols = {r["name"] for r in conn.execute("PRAGMA table_info(portfolio_queue)")}
-          required_queue = {"queue_id", "project_id", "status", "eligible"}
-          if not required_queue.issubset(queue_cols):
-              raise SystemExit("portfolio_queue schema missing required identity/state columns")
-          q = conn.execute(
-              "SELECT queue_id,project_id,status,eligible,worker_slot "
-              "FROM portfolio_queue WHERE queue_id=? LIMIT 1",
-              (queue_id,),
-          ).fetchone()
-          if q is None:
-              raise SystemExit("exact existing LightUp recovery queue item is missing")
-          if str(q["project_id"]) != "zssh":
-              raise SystemExit("exact recovery queue item changed project owner")
-          if str(q["status"]).lower() != "queued" or int(q["eligible"] or 0) != 1:
-              print("LIGHTUP_RECOVERY_PUSH_NOOP=" + json.dumps({
-                  "reason": "queue-item-not-eligible-queued",
-                  "queue_id": queue_id,
-                  "status": q["status"],
-                  "eligible": q["eligible"],
-                  "worker_slot": q["worker_slot"],
-              }, sort_keys=True))
-              raise SystemExit(0)
+          def get(path):
+              with urllib.request.urlopen(BASE + path, timeout=15) as response:
+                  return json.load(response)
 
-          worker_cols = {r["name"] for r in conn.execute("PRAGMA table_info(runner_workers)")}
-          required_worker = {"project_id", "worker_slot", "provider"}
-          if not required_worker.issubset(worker_cols):
-              raise SystemExit("runner_workers schema lacks provider-bound slot identity")
-          select_cols = ["project_id", "worker_slot", "provider"]
-          if "desired_state" in worker_cols:
-              select_cols.append("desired_state")
-          workers = conn.execute(
-              "SELECT " + ",".join(select_cols)
-              + " FROM runner_workers WHERE project_id=? ORDER BY worker_slot",
-              ("zssh",),
-          ).fetchall()
-          candidates = []
-          for row in workers:
-              provider = str(row["provider"] or "").lower()
-              desired = str(row["desired_state"] or "").lower() if "desired_state" in select_cols else ""
-              if provider != "claude":
-                  continue
-              if desired in {"draining", "stopped", "paused"}:
-                  continue
-              candidates.append(int(row["worker_slot"]))
-          conn.close()
-
-          if not candidates:
-              print("LIGHTUP_RECOVERY_PUSH_NOOP=" + json.dumps({
-                  "reason": "no-runnable-claude-zssh-slot",
-                  "queue_id": queue_id,
-              }, sort_keys=True))
-              raise SystemExit(0)
-
-          slot = candidates[0]
-          worker_key = f"zssh::w{slot}"
-
-          def post(path, body):
+          def post(path, payload):
               req = urllib.request.Request(
-                  base + path,
-                  data=json.dumps(body).encode(),
+                  BASE + path,
+                  data=json.dumps(payload).encode(),
                   method="POST",
                   headers={"Content-Type": "application/json"},
               )
-              with urllib.request.urlopen(req, timeout=10) as response:
-                  payload = json.load(response)
-              if not payload.get("ok"):
-                  raise RuntimeError(f"{path} rejected request: {payload}")
-              return payload
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as response:
+                      body = json.load(response)
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", errors="replace")[:1200]
+                  raise RuntimeError(f"{path} HTTP {exc.code}: {detail}") from exc
+              if not body.get("ok"):
+                  raise RuntimeError(f"{path} rejected request: {body}")
+              return body
 
-          start = post("/api/runner-control", {"project_id": worker_key, "action": "start"})
-          push = post("/api/runner-control", {"project_id": worker_key, "action": "push"})
-          print("LIGHTUP_RECOVERY_CLAUDE_PUSH=" + json.dumps({
-              "queue_id": queue_id,
-              "worker": worker_key,
-              "provider": "claude",
-              "start_command_id": start.get("command_id"),
-              "push_command_id": push.get("command_id"),
+          queue = get("/api/portfolio-queue?all=1")
+          matches = [x for x in queue.get("items", []) if x.get("queue_id") == QUEUE_ID]
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one recovery queue item, found {len(matches)}")
+          item = matches[0]
+          if str(item.get("status") or "").lower() != "queued" or not item.get("eligible"):
+              print("LIGHTUP_RECOVERY_RECONCILE_NOOP=" + json.dumps({
+                  "reason": "item-no-longer-eligible-queued",
+                  "queue_id": QUEUE_ID,
+                  "status": item.get("status"),
+                  "project_id": item.get("project_id"),
+                  "worker_slot": item.get("worker_slot"),
+              }, sort_keys=True))
+              raise SystemExit(0)
+          if item.get("project_id") not in ("zssh", "lightup"):
+              raise SystemExit("recovery item ownership changed unexpectedly")
+
+          criteria = str(item.get("completion_criteria") or "")
+          clause = (
+              " Shell/VPS execution rule for this recovery: use a Claude Dynamic Worker "
+              "for concrete host commands. Preserve LightUp PLAN-LAB ONLY: runner "
+              "infrastructure recovery only; no target interaction, assessment collection, "
+              "remediation/retest execution, deployment, verdict, or attack-path mutation. "
+              "Do not cancel or duplicate protected canonical run 37385689475. "
+              "Completion requires a dedicated LightUp runner on vps-bb300bba with labels "
+              "self-hosted,zcloud,vps, a single listener/service, secret-safe registration, "
+              "and proof that the existing exact-head Python 3.11 job starts."
+          )
+          if "Shell/VPS execution rule for this recovery:" not in criteria:
+              criteria = (criteria.rstrip() + clause).strip()
+
+          migrated = post("/api/portfolio-queue", {
+              "action": "enqueue",
+              "queue_id": QUEUE_ID,
+              "project_id": "lightup",
+              "title": item.get("title") or "Restore missing LightUp canonical Actions runner",
+              "priority": "P0",
+              "completion_criteria": criteria,
+              "source_url": item.get("source_url") or "",
+              "parent_queue_id": item.get("parent_queue_id"),
+          })
+          print("LIGHTUP_RECOVERY_RECONCILED=" + json.dumps({
+              "queue_id": QUEUE_ID,
+              "from_project": item.get("project_id"),
+              "to_project": "lightup",
+              "result": migrated.get("item"),
           }, sort_keys=True))
 
-          command_ids = {
-              int(value)
-              for value in (start.get("command_id"), push.get("command_id"))
-              if value is not None
-          }
-          deadline = time.monotonic() + 90
-          pending = set(command_ids)
-          while pending and time.monotonic() < deadline:
-              with urllib.request.urlopen(base + "/api/runner-commands?limit=200", timeout=10) as response:
-                  rows = json.load(response).get("commands") or []
-              pending = {
-                  int(row["id"])
-                  for row in rows
-                  if row.get("id") is not None and int(row["id"]) in command_ids
-              }
-              if pending:
-                  time.sleep(5)
-          if pending:
-              raise RuntimeError("Claude zSSH worker did not consume runner commands: " + ",".join(map(str, sorted(pending))))
+          after = get("/api/portfolio-queue?all=1")
+          matches = [x for x in after.get("items", []) if x.get("queue_id") == QUEUE_ID]
+          if len(matches) != 1:
+              raise SystemExit("queue reconciliation created duplicate or lost exact item")
+          current = matches[0]
+          if current.get("project_id") != "lightup":
+              raise SystemExit("queue project migration did not persist")
+          if str(current.get("status") or "").lower() != "queued" or not current.get("eligible"):
+              raise SystemExit("queue item lost runnable queued state during migration")
 
-          with urllib.request.urlopen(base + "/api/portfolio-queue?all=1", timeout=10) as response:
-              live = json.load(response)
-          item = next(
-              (row for row in live.get("items", []) if row.get("queue_id") == queue_id),
-              None,
-          )
-          print("LIGHTUP_RECOVERY_QUEUE_AFTER_PUSH=" + json.dumps({
-              "queue_id": queue_id,
-              "status": None if item is None else item.get("status"),
-              "worker_slot": None if item is None else item.get("worker_slot"),
-              "provider_guard": "claude",
-              "commands_consumed": sorted(command_ids),
+          # Manual project Start is the canonical bounded admission override. It
+          # asks the allocator to claim this P0 without fabricating a worker key.
+          start = post("/api/runner-control", {
+              "project_id": "lightup",
+              "action": "start",
+              "force": True,
+          })
+          print("LIGHTUP_RECOVERY_PROJECT_START=" + json.dumps(start, sort_keys=True))
+
+          # Do not issue worker-level push unless runtime allocation proves the
+          # exact queue item is bound to a Claude-backed worker. A ChatGPT-bound
+          # allocation may remain claimed, but must not be manually pushed here.
+          targets = get("/api/runner-targets")
+          allocated = [
+              w for w in ((targets.get("global_allocation") or {}).get("workers") or [])
+              if w.get("queue_id") == QUEUE_ID
+          ]
+          projects_view = targets.get("projects") or {}
+          receipt = []
+          for row in allocated:
+              key = str(row.get("worker_key") or "")
+              cfg = projects_view.get(key) or {}
+              receipt.append({
+                  "worker_key": key,
+                  "global_worker_slot": row.get("global_worker_slot"),
+                  "provider": cfg.get("provider") or row.get("provider"),
+                  "queue_id": row.get("queue_id"),
+                  "assignment_ready": cfg.get("assignment_ready"),
+              })
+          print("LIGHTUP_RECOVERY_ALLOCATION_AFTER_START=" + json.dumps({
+              "max_workers": targets.get("max_workers"),
+              "dynamic_workers": targets.get("dynamic_workers"),
+              "allocated": receipt,
+          }, sort_keys=True))
+
+          claude = [
+              row for row in receipt
+              if row.get("provider") == "claude" and row.get("worker_key")
+          ]
+          if not claude:
+              print("LIGHTUP_RECOVERY_CLAUDE_PUSH_DEFERRED=" + json.dumps({
+                  "reason": "exact recovery not currently Claude-backed",
+                  "queue_id": QUEUE_ID,
+                  "allocated": receipt,
+              }, sort_keys=True))
+              raise SystemExit(0)
+
+          pushed = post("/api/runner-control", {
+              "project_id": claude[0]["worker_key"],
+              "action": "push",
+          })
+          print("LIGHTUP_RECOVERY_CLAUDE_PUSH=" + json.dumps({
+              "queue_id": QUEUE_ID,
+              "worker_key": claude[0]["worker_key"],
+              "provider": "claude",
+              "command_id": pushed.get("command_id"),
           }, sort_keys=True))
           PY
