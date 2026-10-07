@@ -97,6 +97,11 @@ class SerializedIntegrationWavePlanTests(unittest.TestCase):
         self.assertEqual([1, 2], [x["number"] for x in result["waves"][0]["pull_requests"]])
         self.assertEqual([3], [x["number"] for x in result["waves"][1]["pull_requests"]])
 
+    def test_primary_gate_only_reference_is_a_candidate(self):
+        primary_only = "Keep unmerged while #580/PWQ-41 owns the serialized control-plane window."
+        classified = plan.classify_snapshot(snapshot([pr(1090, body=primary_only)]))
+        self.assertEqual([1090], classified["ready_pull_requests"])
+
     def test_successor_reference_is_a_candidate(self):
         successor_body = "Keep unmerged behind #580/PWQ-41 + #1089 serialized live writer window."
         classified = plan.classify_snapshot(snapshot([pr(1090, body=successor_body)]))
