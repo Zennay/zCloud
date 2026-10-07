@@ -70,9 +70,12 @@ def _read_json_file(path: Path) -> Any:
         raise AuditError("input_json_invalid") from exc
 
 
-def parse_current_pr(payload: Any) -> tuple[str, ...]:
+def parse_current_pr(payload: Any, expected_head: str) -> tuple[str, ...]:
     if not isinstance(payload, dict):
         raise AuditError("current_pr_invalid")
+    head = _sha(payload.get("headRefOid"))
+    if head != _sha(expected_head):
+        raise AuditError("current_pr_head_mismatch")
     changed = payload.get("changedFiles")
     files = payload.get("files")
     if isinstance(changed, bool) or not isinstance(changed, int) or changed < 0:
@@ -298,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", required=True, type=Path)
     parser.add_argument("--current-pr-json", type=Path)
+    parser.add_argument("--expected-current-head")
     parser.add_argument("--require-clear", action="store_true")
     args = parser.parse_args(argv)
 
@@ -305,7 +309,14 @@ def main(argv: list[str] | None = None) -> int:
         snapshot = parse_snapshot(_read_json_file(args.snapshot))
         current_paths = None
         if args.current_pr_json:
-            current_paths = parse_current_pr(_read_json_file(args.current_pr_json))
+            if not args.expected_current_head:
+                raise AuditError("current_pr_expected_head_required")
+            current_paths = parse_current_pr(
+                _read_json_file(args.current_pr_json),
+                args.expected_current_head,
+            )
+        elif args.expected_current_head:
+            raise AuditError("expected_head_without_current_pr")
         if args.require_clear and current_paths is None:
             raise AuditError("require_clear_needs_current_pr")
         report = build_report(snapshot, current_paths)
