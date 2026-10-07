@@ -134,11 +134,20 @@ jobs:
               item["worker"]: int(by_worker[item["worker"]]["command_id"])
               for item in active
           }
+          def locate_live_worker(payload, worker_key):
+              base = worker_key.split("::w", 1)[0]
+              workers = ((payload.get("chatgpt_runners") or {}).get(base) or {}).get("workers") or []
+              return next(
+                  (item for item in workers if str(item.get("worker_id") or "") == worker_key),
+                  None,
+              )
+
           final = {}
-          # A push is successfully issued once every allocated worker has a fresh
-          # queued command. Workers already generating may intentionally consume it
-          # only after the current answer finishes, so do not treat pending as failure.
-          deadline = time.time() + 12
+          progressed = set()
+          # A fresh queue row is not material progress. Give the VPS browser
+          # consumer a bounded window to claim work. Pending is accepted only
+          # when that exact worker is demonstrably generating/sending already.
+          deadline = time.time() + 60
           while time.time() < deadline:
               with sqlite3.connect(DB, timeout=5) as conn:
                   conn.row_factory = sqlite3.Row
@@ -149,10 +158,13 @@ jobs:
                           "FROM runner_commands WHERE id=?",
                           (command_id,),
                       ).fetchone()
-                      final[worker] = dict(row) if row else {"status": "missing"}
-              if all(v.get("status") in ("completed", "failed") for v in final.values()):
+                      state = dict(row) if row else {"status": "missing"}
+                      final[worker] = state
+                      if state.get("status") != "pending":
+                          progressed.add(worker)
+              if len(progressed) == len(command_ids):
                   break
-              time.sleep(4)
+              time.sleep(5)
 
           print("PUSH_COMMANDS=" + json.dumps(final, sort_keys=True, default=str))
           failed = [w for w, v in final.items() if v.get("status") == "failed"]
@@ -161,6 +173,34 @@ jobs:
               raise SystemExit("fresh push failed for: " + ", ".join(failed))
           if missing_commands:
               raise SystemExit("fresh push command missing for: " + ", ".join(missing_commands))
+
+          pending = [w for w, v in final.items() if v.get("status") == "pending"]
+          if pending:
+              live = call("GET", "/api/runner-live")
+              unjustified_pending = []
+              pending_runtime = {}
+              for worker in pending:
+                  state = locate_live_worker(live, worker) or {}
+                  runtime = {
+                      "state": state.get("state"),
+                      "generating": bool(state.get("generating")),
+                      "sending": bool(state.get("sending")),
+                      "progress_age_seconds": state.get("progress_age_seconds"),
+                  }
+                  pending_runtime[worker] = runtime
+                  if not runtime["generating"] and not runtime["sending"]:
+                      unjustified_pending.append(worker)
+              print("PENDING_WORKER_RUNTIME=" + json.dumps(pending_runtime, sort_keys=True))
+              if unjustified_pending:
+                  raise SystemExit(
+                      "fresh push stayed pending without active generation/sending for: "
+                      + ", ".join(unjustified_pending)
+                  )
+
+          if not progressed and pending:
+              print("ALL_PENDING_JUSTIFIED_BY_ACTIVE_GENERATION=1")
+          else:
+              print("MATERIAL_PUSH_PROGRESS=" + json.dumps(sorted(progressed)))
 
           print("ALL_WORKERS_PUSHED_GREEN=1")
           PY
