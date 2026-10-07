@@ -114,21 +114,51 @@ def _origin_branches(repo_root: Path, remote: str) -> list[str]:
     return branches
 
 
+def _merge_base(repo_root: Path, base_ref: str, branch_ref: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "merge-base", base_ref, branch_ref],
+            cwd=repo_root,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SnapshotError(f"git_failed:merge-base:{exc.__class__.__name__}") from exc
+    if proc.returncode == 1:
+        return None
+    if proc.returncode != 0:
+        raise SnapshotError(f"git_failed:merge-base:exit_{proc.returncode}")
+    value = proc.stdout.strip()
+    if len(value) != 40 or any(ch not in "0123456789abcdef" for ch in value.lower()):
+        raise SnapshotError("merge_base_invalid")
+    return value
+
+
 def _branch_changed_files(repo_root: Path, remote: str, base: str, branch: str) -> list[str]:
     base_ref = f"refs/remotes/{remote}/{base}"
     branch_ref = f"refs/remotes/{remote}/{branch}"
-    merge_base = _run_git(repo_root, "merge-base", base_ref, branch_ref).strip()
-    if len(merge_base) != 40 or any(ch not in "0123456789abcdef" for ch in merge_base.lower()):
-        raise SnapshotError("merge_base_invalid")
-    raw = _run_git(
-        repo_root,
-        "diff",
-        "--name-only",
-        "--no-renames",
-        merge_base,
-        branch_ref,
-        "--",
-    )
+    merge_base = _merge_base(repo_root, base_ref, branch_ref)
+    if merge_base is None:
+        raw = _run_git(
+            repo_root,
+            "ls-tree",
+            "-r",
+            "--name-only",
+            branch_ref,
+        )
+    else:
+        raw = _run_git(
+            repo_root,
+            "diff",
+            "--name-only",
+            "--no-renames",
+            merge_base,
+            branch_ref,
+            "--",
+        )
     paths: list[str] = []
     seen: set[str] = set()
     for line in raw.splitlines():
