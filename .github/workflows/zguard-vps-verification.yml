@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/zguard-vps-verification.yml
+      - tests/test_zguard_vps_verification_trust.py
   workflow_dispatch:
     inputs:
       ref:
@@ -17,19 +18,35 @@ permissions:
 
 jobs:
   verify:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.owner.login == 'Zennay'))
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 15
     steps:
-      - name: Check out zCloud runner guard
-        uses: actions/checkout@v4
+      - name: Check out exact zCloud runner guard
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact zCloud checkout
+        shell: bash
+        env:
+          EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
 
       - name: Verify permanent zCloud VPS runner
         run: python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Check out zGuard history
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Zennay/zGuard
           ref: main
@@ -70,13 +87,15 @@ jobs:
             mkdir -p "${snapshot}"
             git -C zguard-source archive "${target_sha}" | tar -x -C "${snapshot}"
 
-            printf 'ZGUARD_VPS_TARGET mode=%s sha=%s host=%s runner=%s\n'               "${mode}" "${target_sha}" "$(hostname)" "${RUNNER_NAME:-unknown}"
+            printf 'ZGUARD_VPS_TARGET mode=%s sha=%s host=%s runner=%s\n' \
+              "${mode}" "${target_sha}" "$(hostname)" "${RUNNER_NAME:-unknown}"
 
             if [[ "${mode}" == "baseline" ]]; then
               main_sha="6908e315501c15f9bf18f3a1f85ca97f26d0f050"
               changed="$(git -C zguard-source diff --name-only "${main_sha}..${target_sha}")"
               test "${changed}" = "zbrowse/docker-compose.yml"
-              git -C zguard-source diff --quiet "${main_sha}..${target_sha}" --                 zbrowse/gateway/package.json zbrowse/gateway/package-lock.json
+              git -C zguard-source diff --quiet "${main_sha}..${target_sha}" -- \
+                zbrowse/gateway/package.json zbrowse/gateway/package-lock.json
             fi
 
             (
