@@ -109,6 +109,9 @@ def audit_snapshot(
     repository = str(payload.get("repository") or "").strip()
     if not repository or len(repository) > 200 or "/" not in repository:
         raise SnapshotError("invalid repository")
+    inventory_complete = _bool(payload.get("inventory_complete"), "inventory_complete")
+    if not inventory_complete:
+        raise SnapshotError("open PR inventory incomplete")
 
     raw_gates = payload.get("gates")
     if not isinstance(raw_gates, list):
@@ -210,6 +213,7 @@ def audit_snapshot(
         "schema": SCHEMA,
         "repository": repository,
         "current_main_sha": current_main_sha,
+        "inventory_complete": True,
         "status": status,
         "gate_open": gate_open,
         "integration_released": not gate_open,
@@ -244,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("invalid gate PR configuration")
 
     try:
-        payload = _load_json(args.snapshot.resolve())
+        payload = _load_json(args.snapshot)
         result = audit_snapshot(payload, gate_numbers=gate_numbers)
     except SnapshotError as exc:
         if args.json:
