@@ -50,6 +50,7 @@ class ProjectResultSummaryTests(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertEqual("project_adapter", result["source_mode"])
         self.assertEqual("available", result["evidence_state"])
+        self.assertEqual("Nieuw resultaat wacht op validatie", result["plain_status"])
         self.assertEqual(3, result["result_count"])
         self.assertEqual("Generation 21", result["results"]["latest"]["value"])
         self.assertFalse(result["results"]["latest"]["validated"])
@@ -72,6 +73,7 @@ class ProjectResultSummaryTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual("generic_only", result["source_mode"])
         self.assertEqual("missing", result["evidence_state"])
+        self.assertEqual("Geen projectspecifieke resultaatdata", result["plain_status"])
         self.assertEqual({}, result["results"])
 
     def test_registered_adapter_with_missing_evidence_remains_project_adapter(self):
@@ -88,6 +90,20 @@ class ProjectResultSummaryTests(unittest.TestCase):
         self.assertEqual("project_adapter", project["source_mode"])
         self.assertEqual("missing", project["evidence_state"])
         self.assertFalse(project["available"])
+
+    def test_plain_status_marks_current_best_as_validated(self):
+        result = summary.project_summary(
+            "haxlab",
+            {
+                "comparison": {
+                    "current": {"value": "champion-a", "validated": True},
+                    "best": {"value": "champion-a", "validated": True},
+                }
+            },
+            adapter_backed=True,
+        )
+
+        self.assertEqual("Huidig resultaat is gevalideerd", result["plain_status"])
 
     def test_non_scalar_result_value_is_omitted_fail_closed(self):
         result = summary.project_summary(
