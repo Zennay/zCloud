@@ -67,9 +67,14 @@ class ViolentmonkeyProfileDiagnosticWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_cannot_cancel_live_diagnostic(self):
         self.assertIn(
-            "group: zcloud-violentmonkey-profile-diagnostic-${{ github.event_name }}-${{ github.ref }}",
+            "group: zcloud-violentmonkey-profile-diagnostic-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}",
             self.text,
         )
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            self.text,
+        )
+        self.assertNotIn("cancel-in-progress: true", self.text)
 
 
 if __name__ == "__main__":
