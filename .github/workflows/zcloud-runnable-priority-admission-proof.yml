@@ -1,0 +1,81 @@
+name: zCloud runnable priority admission proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_runnable_priority_admission.py
+      - tests/test_runnable_priority_admission.py
+      - tests/test_runnable_priority_admission_workflow.py
+      - docs/runnable-priority-admission.md
+      - .github/workflows/zcloud-runnable-priority-admission-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runnable-priority-admission-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Prove priority cannot bypass runnable admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile             scripts/zcloud_runnable_priority_admission.py             tests/test_runnable_priority_admission.py             tests/test_runnable_priority_admission_workflow.py
+          python3 -m unittest -v             tests.test_runnable_priority_admission             tests.test_runnable_priority_admission_workflow
+
+          cat > "$RUNNER_TEMP/runnable-priority.json" <<'JSON'
+          {
+            "schema_version": 1,
+            "projects": [
+              {"project_id": "lightup", "runnable": false, "safety_admitted": true},
+              {"project_id": "ftmo", "runnable": true, "safety_admitted": true},
+              {"project_id": "haxlab", "runnable": true, "safety_admitted": true}
+            ]
+          }
+          JSON
+
+          python3 scripts/zcloud_runnable_priority_admission.py             --evidence "$RUNNER_TEMP/runnable-priority.json"             --json > "$RUNNER_TEMP/result.json"
+
+          python3 - "$RUNNER_TEMP/result.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          result = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["result"]
+          assert [row["project_id"] for row in result["candidates"]] == ["ftmo", "haxlab"], result
+          excluded = {row["project_id"]: row for row in result["excluded"]}
+          assert excluded["lightup"]["declared_priority"] == "turbo", result
+          assert excluded["lightup"]["priority_weight"] == 0, result
+          assert excluded["lightup"]["priority_effective"] is False, result
+          assert result["guardrails"]["priority_may_create_runnable_work"] is False, result
+          print("ZCLOUD_RUNNABLE_PRIORITY_VPS_GREEN=1")
+          PY
