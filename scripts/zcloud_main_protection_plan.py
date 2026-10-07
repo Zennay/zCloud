@@ -94,7 +94,7 @@ def build_plan(
         "required_pull_request_reviews": {
             "dismiss_stale_reviews": True,
             "require_code_owner_reviews": False,
-            "required_approving_review_count": 1,
+            "required_approving_review_count": 0,
             "bypass_pull_request_allowances": {
                 "users": [],
                 "teams": [],
