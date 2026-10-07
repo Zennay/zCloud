@@ -66,7 +66,7 @@ class ProductionStatusRecoveryWorkflowTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('CANONICAL_REPOSITORY = "Zennay/zCloud"', text)
-        self.assertIn('TRUSTED_EVENTS = {"push", "workflow_dispatch"}', text)
+        self.assertIn('TRUSTED_DEPLOY_EVENTS = {"workflow_run"}', text)
         self.assertIn('event_name = os.environ.get("GITHUB_EVENT_NAME", "")', text)
         self.assertIn('event_ref = os.environ.get("GITHUB_REF", "")', text)
         self.assertIn('event_sha = os.environ.get("GITHUB_SHA", "")', text)
@@ -78,10 +78,23 @@ class ProductionStatusRecoveryWorkflowTests(unittest.TestCase):
         self.assertIn('trigger_repo_name == CANONICAL_REPOSITORY', text)
         self.assertIn('str(trigger.get("head_branch") or "") == "main"', text)
         self.assertIn('str(trigger.get("conclusion") or "") == "success"', text)
-        self.assertIn('str(trigger.get("event") or "") in TRUSTED_EVENTS', text)
+        self.assertIn('str(trigger.get("event") or "") in TRUSTED_DEPLOY_EVENTS', text)
         self.assertIn('trigger_sha != sha', text)
         self.assertIn('event_sha != sha', text)
         self.assertIn("PRODUCTION_STATUS_RECOVERY_ADMISSION=accepted", text)
+
+    def test_trusted_trigger_matches_the_real_deploy_workflow_event(self):
+        recovery = (
+            ROOT / ".github/workflows/zcloud-production-status-recovery.yml"
+        ).read_text(encoding="utf-8")
+        deploy = (
+            ROOT / ".github/workflows/zcloud-vps-deploy.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('TRUSTED_DEPLOY_EVENTS = {"workflow_run"}', recovery)
+        self.assertIn('workflow_run:', deploy)
+        self.assertIn('workflows: ["zCloud regression smoke"]', deploy)
+        self.assertNotIn('TRUSTED_DEPLOY_EVENTS = {"push", "workflow_dispatch"}', recovery)
 
     def test_provenance_gate_runs_before_any_actions_write_dispatch(self):
         text = (
