@@ -257,7 +257,15 @@ class SerializedWriterWindowAuditTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("runs-on: ubuntu-latest", text)
-        self.assertNotIn("self-hosted", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn('test "$(id -un)" = "ubuntu"', text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn(
             "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
             text,
