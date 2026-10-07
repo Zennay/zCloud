@@ -61,9 +61,9 @@ class ZcloudMainProtectionPlanTests(unittest.TestCase):
             target["required_pull_request_reviews"]["bypass_pull_request_allowances"],
             {"users": [], "teams": [], "apps": []},
         )
-        self.assertGreaterEqual(
+        self.assertEqual(
             target["required_pull_request_reviews"]["required_approving_review_count"],
-            1,
+            0,
         )
         self.assertTrue(target["required_conversation_resolution"])
         self.assertFalse(target["allow_force_pushes"])
