@@ -13,6 +13,7 @@ from scripts.zcloud_runnable_priority_admission import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = json.loads((ROOT / "project-contracts.json").read_text(encoding="utf-8"))
+RESOURCE_POLICY = json.loads((ROOT / "resource-policy.json").read_text(encoding="utf-8"))
 
 
 def evidence(*rows):
@@ -123,6 +124,39 @@ class RunnablePriorityAdmissionTests(unittest.TestCase):
                 with self.assertRaisesRegex(AdmissionError, error):
                     rank_runnable_projects(payload, contracts=CONTRACTS)
 
+    def test_persisted_resource_policy_overrides_contract_priority(self):
+        policy = {
+            "ftmo": {"priority": "background"},
+            "haxlab": {"priority": "turbo"},
+        }
+        result = rank_runnable_projects(
+            evidence(
+                {"project_id": "ftmo", "runnable": True, "safety_admitted": True},
+                {"project_id": "haxlab", "runnable": True, "safety_admitted": True},
+            ),
+            contracts=CONTRACTS,
+            resource_policy=policy,
+        )
+        self.assertEqual(["haxlab", "ftmo"], [x["project_id"] for x in result["candidates"]])
+        self.assertTrue(result["guardrails"]["priority_source_is_runtime_persistent_policy"])
+        for row in result["candidates"]:
+            self.assertEqual("resource_policy", row["priority_source"])
+
+    def test_malformed_resource_policy_fails_closed(self):
+        cases = [
+            ({"ghost": {"priority": "high"}}, "resource_policy_project_unknown"),
+            ({"ftmo": {"priority": "high", "extra": True}}, "resource_policy_entry_invalid"),
+            ({"ftmo": {"priority": "urgent"}}, "resource_policy_priority_invalid"),
+        ]
+        for policy, error in cases:
+            with self.subTest(error=error):
+                with self.assertRaisesRegex(AdmissionError, error):
+                    rank_runnable_projects(
+                        evidence({"project_id": "ftmo", "runnable": True, "safety_admitted": True}),
+                        contracts=CONTRACTS,
+                        resource_policy=policy,
+                    )
+
     def test_unknown_priority_contract_fails_closed(self):
         contracts = copy.deepcopy(CONTRACTS)
         contracts["projects"]["ftmo"]["compute"]["priority"] = "urgent"
@@ -157,6 +191,10 @@ class RunnablePriorityAdmissionTests(unittest.TestCase):
         output = json.loads(proc.stdout)
         self.assertTrue(output["ok"])
         self.assertEqual("ftmo", output["result"]["candidates"][0]["project_id"])
+        self.assertEqual(
+            "resource_policy",
+            output["result"]["candidates"][0]["priority_source"],
+        )
         rendered = json.dumps(output)
         self.assertNotIn("task", rendered)
         self.assertNotIn("prompt", rendered)
