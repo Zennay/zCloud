@@ -31,6 +31,13 @@ class ProjectRegistryCoherenceWorkflowTests(unittest.TestCase):
             self.text.count('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'),
         )
 
+    def test_superseded_proofs_are_concurrency_bounded(self):
+        self.assertIn(
+            "group: zcloud-project-registry-coherence-${{ github.event.pull_request.number || github.ref }}",
+            self.text,
+        )
+        self.assertIn("cancel-in-progress: true", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
