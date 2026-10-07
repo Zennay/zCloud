@@ -1,0 +1,116 @@
+name: zCloud main protection audit
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_main_protection_audit.py"
+      - "tests/test_zcloud_main_protection_audit.py"
+      - ".github/workflows/zcloud-main-protection-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_main_protection_audit.py"
+      - "tests/test_zcloud_main_protection_audit.py"
+      - ".github/workflows/zcloud-main-protection-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-main-protection-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused governance regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_main_protection_audit
+          python3 -m py_compile scripts/zcloud_main_protection_audit.py
+          echo "ZCLOUD_MAIN_PROTECTION_AUDIT_HOSTED_GREEN=1"
+
+  prove:
+    needs: validate
+    if: github.event_name == 'pull_request' && github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out exact trusted candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify permanent VPS identity
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Read live zCloud main protection
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN || true
+          gh auth status --hostname github.com >/dev/null 2>&1
+
+          protected="$(gh api repos/Zennay/zCloud/branches/main --jq '.protected // false')"
+          case "$protected" in
+            true)
+              gh api repos/Zennay/zCloud/branches/main/protection                 >"$RUNNER_TEMP/zcloud-main-protection-live.json"
+              python3 scripts/zcloud_main_protection_audit.py                 --branch-protected true                 --protection-json "$RUNNER_TEMP/zcloud-main-protection-live.json"                 | tee "$RUNNER_TEMP/zcloud-main-protection-audit.json"
+              ;;
+            false)
+              python3 scripts/zcloud_main_protection_audit.py                 --branch-protected false                 | tee "$RUNNER_TEMP/zcloud-main-protection-audit.json"
+              ;;
+            *)
+              echo "unexpected protected flag" >&2
+              exit 1
+              ;;
+          esac
+
+          AUDIT="$RUNNER_TEMP/zcloud-main-protection-audit.json" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(Path(os.environ["AUDIT"]).read_text(encoding="utf-8"))
+          if result.get("mutation_performed") is not False:
+              raise SystemExit("audit unexpectedly reports mutation")
+          status = result.get("status")
+          if status not in {"protected", "needs_hardening", "unprotected"}:
+              raise SystemExit("unexpected bounded audit status")
+          print(f"ZCLOUD_MAIN_PROTECTION_LIVE_STATUS={status}")
+          PY
+
+      - name: Re-run focused tests on permanent VPS
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_main_protection_audit
+          python3 -m py_compile scripts/zcloud_main_protection_audit.py
+          echo "ZCLOUD_MAIN_PROTECTION_AUDIT_VPS_GREEN=1"
