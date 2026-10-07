@@ -64,13 +64,34 @@ jobs:
           from pathlib import Path
 
           payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
-          assert payload["policy"] == "zcloud-ftmo-research-runner-diagnostic-v1"
+          assert payload["policy"] == "zcloud-ftmo-research-runner-diagnostic-v2"
           assert payload["mutation_performed"] is False
           assert payload["runner_service_count"] >= 1
           assert payload["candidate_count"] >= 0
-          assert payload["status"] in {"missing", "ambiguous", "offline", "degraded", "busy", "idle"}
+          assert payload["status"] in {
+              "missing",
+              "ambiguous",
+              "offline",
+              "orphaned_processes",
+              "degraded",
+              "busy",
+              "idle",
+          }
           for item in payload["candidates"]:
-              assert item["status"] in {"offline", "degraded", "busy", "idle"}
+              assert item["status"] in {
+                  "offline",
+                  "orphaned_processes",
+                  "degraded",
+                  "busy",
+                  "idle",
+              }
+              assert item["recovery_advice"] in {
+                  "service_start_candidate",
+                  "reconcile_orphans_before_service_start",
+                  "inspect_listener_state",
+                  "leave_inflight_work_untouched",
+                  "runner_ready",
+              }
               assert item["listener_count"] >= 0
               assert item["worker_count"] >= 0
           print(
