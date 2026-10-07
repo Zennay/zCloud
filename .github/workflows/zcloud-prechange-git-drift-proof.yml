@@ -1,0 +1,53 @@
+name: zCloud pre-change git drift proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_prechange_evidence.py
+      - tests/test_prechange_evidence.py
+      - tests/test_prechange_git_drift_workflow.py
+      - .github/workflows/zcloud-prechange-git-drift-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-prechange-git-drift-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: github.actor == 'Zennay' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Check out exact candidate with bounded history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 513
+          persist-credentials: false
+          clean: true
+
+      - name: Fetch canonical main ref read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(git rev-parse HEAD)"
+          git fetch --no-tags --depth=513 origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$candidate"
+          test -n "$(git rev-parse origin/main)"
+
+      - name: Enforce permanent zCloud VPS runner identity
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove sanitized git drift implementation
+        run: python3 -m unittest -v tests.test_prechange_evidence
+
+      - name: Inspect live pre-change evidence read only
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_prechange_evidence.py \
+            --candidate "$GITHUB_WORKSPACE"
