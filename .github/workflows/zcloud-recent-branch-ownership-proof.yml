@@ -92,6 +92,7 @@ jobs:
           set -euo pipefail
           snapshot="$RUNNER_TEMP/zcloud-recent-branches-${GITHUB_RUN_ID}.json"
           current="$RUNNER_TEMP/zcloud-current-pr-${GITHUB_RUN_ID}.json"
+          open_prs="$RUNNER_TEMP/zcloud-open-prs-${GITHUB_RUN_ID}.json"
           as_of="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           python3 scripts/zcloud_recent_branch_snapshot.py \
@@ -104,12 +105,24 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --json changedFiles,files > "$current"
 
+          gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --limit 501 \
+            --json number,headRefName,isDraft,updatedAt,changedFiles,files > "$open_prs"
+
+          python3 scripts/zcloud_open_pr_overlap_audit.py \
+            --input "$open_prs" \
+            --current-pr "$CURRENT_PR" \
+            --require-clear
+
           python3 scripts/zcloud_recent_branch_ownership_audit.py \
             --snapshot "$snapshot" \
             --current-pr-json "$current" \
             --require-clear
 
-          rm -f "$snapshot" "$current"
+          rm -f "$snapshot" "$current" "$open_prs"
+          echo "ZCLOUD_COMPOSITE_OWNERSHIP_PREFLIGHT_GREEN=1"
           echo "ZCLOUD_RECENT_BRANCH_OWNERSHIP_GREEN=1"
 
       - name: Audit global recent branch ownership on manual runs
