@@ -1,0 +1,173 @@
+name: zCloud serialized gate backlog audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_serialized_gate_backlog_audit.py"
+      - "tests/test_zcloud_serialized_gate_backlog_audit.py"
+      - ".github/workflows/zcloud-serialized-gate-backlog-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-serialized-gate-backlog-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_serialized_gate_backlog_audit
+          python3 -m py_compile scripts/zcloud_serialized_gate_backlog_audit.py
+
+      - name: Capture bounded live open-PR snapshot
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-gate-backlog-snapshot.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          out = Path(os.environ["SNAPSHOT"])
+
+          def gh(path: str):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return json.loads(proc.stdout)
+
+          ref = gh(f"repos/{repo}/git/ref/heads/main")
+          current_main = str(ref["object"]["sha"])
+
+          open_pulls = []
+          for page in range(1, 7):
+              batch = gh(
+                  f"repos/{repo}/pulls?state=open&per_page=100&page={page}&sort=created&direction=asc"
+              )
+              if page == 6 and batch:
+                  raise SystemExit("open PR inventory exceeds bounded limit of 500")
+              open_pulls.extend(batch)
+              if len(batch) < 100:
+                  break
+
+          pulls = []
+          for item in open_pulls:
+              pulls.append(
+                  {
+                      "number": int(item["number"]),
+                      "state": str(item["state"]),
+                      "draft": bool(item.get("draft")),
+                      "head_sha": str(item["head"]["sha"]),
+                      "base_sha": str(item["base"]["sha"]),
+                      "body": str(item.get("body") or ""),
+                  }
+              )
+
+          gates = []
+          for number in (580, 1089):
+              item = gh(f"repos/{repo}/pulls/{number}")
+              gates.append(
+                  {
+                      "number": number,
+                      "state": str(item["state"]),
+                      "merged": bool(item.get("merged")),
+                      "draft": bool(item.get("draft")),
+                      "head_sha": str(item["head"]["sha"]),
+                      "base_sha": str(item["base"]["sha"]),
+                  }
+              )
+
+          payload = {
+              "repository": repo,
+              "current_main_sha": current_main,
+              "inventory_complete": True,
+              "gates": gates,
+              "pull_requests": pulls,
+          }
+          out.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+          print(
+              "SERIALIZED_GATE_SNAPSHOT="
+              f"main:{current_main}:open_pulls:{len(pulls)}"
+          )
+          PY
+
+      - name: Audit serialized backlog read only
+        shell: bash
+        env:
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-gate-backlog-snapshot.json
+          REPORT: ${{ runner.temp }}/zcloud-serialized-gate-backlog-audit.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_serialized_gate_backlog_audit.py             --snapshot "$SNAPSHOT"             --json | tee "$REPORT"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-serialized-gate-backlog-audit-v2"
+          assert payload["mutation_performed"] is False
+          assert payload["inventory_complete"] is True
+          assert len(payload["gates"]) == 2
+          assert payload["dependent_pr_count"] <= 500
+          print(
+              "ZCLOUD_SERIALIZED_GATE_BACKLOG="
+              f"status:{payload['status']}:"
+              f"dependents:{payload['dependent_pr_count']}:"
+              f"review_ready_current_main:{payload['review_ready_current_main_count']}:"
+              f"stale_base:{payload['stale_base_count']}:"
+              f"drafts:{payload['draft_count']}"
+          )
+          PY
+
+      - name: Upload bounded gate backlog evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-serialized-gate-backlog-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-serialized-gate-backlog-audit.json
+          if-no-files-found: error
+          retention-days: 14
