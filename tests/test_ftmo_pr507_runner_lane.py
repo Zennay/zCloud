@@ -49,6 +49,23 @@ class FtmoDedicatedRunnerLaneTests(unittest.TestCase):
         self.assertLess(runner_guard, first_live_observation)
         self.assertIn("action=preserve-active-runner", text)
 
+    def test_heavy_runner_diagnostics_are_failure_gated(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        failure_step = text.index("- name: Capture failure-only runner diagnostics")
+        failure_gate = text.index("if: failure()", failure_step)
+        success_path = text[:failure_step]
+        failure_path = text[failure_step:]
+
+        self.assertNotIn("journalctl", success_path)
+        self.assertNotIn("ps -o pid=,ppid=,lstart=,etime=,cmd=", success_path)
+        self.assertIn("journalctl", failure_path)
+        self.assertIn("ps -o pid=,ppid=,lstart=,etime=,cmd=", failure_path)
+        self.assertLess(failure_gate, text.index("journalctl", failure_step))
+        self.assertLess(
+            failure_gate,
+            text.index("ps -o pid=,ppid=,lstart=,etime=,cmd=", failure_step),
+        )
+
     def test_contract_proof_is_same_repo_read_only_and_guarded(self):
         text = PROOF_WORKFLOW.read_text(encoding="utf-8")
 
