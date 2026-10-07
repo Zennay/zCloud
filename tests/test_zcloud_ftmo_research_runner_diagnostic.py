@@ -53,6 +53,7 @@ actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service loaded active running FTMO
             workers=0,
         )
         self.assertEqual("idle", result["status"])
+        self.assertEqual("runner_ready", result["recovery_advice"])
         self.assertEqual(1, result["listener_count"])
         self.assertEqual(0, result["worker_count"])
 
@@ -64,6 +65,7 @@ actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service loaded active running FTMO
             workers=1,
         )
         self.assertEqual("busy", result["status"])
+        self.assertEqual("leave_inflight_work_untouched", result["recovery_advice"])
 
     def test_classify_degraded_when_listener_count_is_wrong(self):
         result = MODULE.classify_unit(
@@ -73,8 +75,9 @@ actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service loaded active running FTMO
             workers=0,
         )
         self.assertEqual("degraded", result["status"])
+        self.assertEqual("inspect_listener_state", result["recovery_advice"])
 
-    def test_classify_offline_when_service_is_not_active(self):
+    def test_classify_offline_when_service_is_not_active_and_no_processes_remain(self):
         result = MODULE.classify_unit(
             "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
             {"ActiveState": "inactive", "SubState": "dead", "NRestarts": "1"},
@@ -82,6 +85,33 @@ actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service loaded active running FTMO
             workers=0,
         )
         self.assertEqual("offline", result["status"])
+        self.assertEqual("service_start_candidate", result["recovery_advice"])
+
+    def test_inactive_service_with_listener_fails_closed_as_orphaned(self):
+        result = MODULE.classify_unit(
+            "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
+            {"ActiveState": "inactive", "SubState": "dead", "NRestarts": "0"},
+            listeners=1,
+            workers=0,
+        )
+        self.assertEqual("orphaned_processes", result["status"])
+        self.assertEqual(
+            "reconcile_orphans_before_service_start",
+            result["recovery_advice"],
+        )
+
+    def test_inactive_service_with_worker_fails_closed_as_orphaned(self):
+        result = MODULE.classify_unit(
+            "actions.runner.Zennay-Ftmo.vps-bb300bba-ftmo.service",
+            {"ActiveState": "inactive", "SubState": "dead", "NRestarts": "0"},
+            listeners=0,
+            workers=1,
+        )
+        self.assertEqual("orphaned_processes", result["status"])
+        self.assertEqual(
+            "reconcile_orphans_before_service_start",
+            result["recovery_advice"],
+        )
 
     def test_unit_inventory_is_bounded(self):
         lines = [
