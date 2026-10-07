@@ -183,7 +183,7 @@ class UnprBranchOverlapAuditTests(unittest.TestCase):
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("--limit 501", text)
         self.assertIn("--json headRefName,isCrossRepository", text)
-        self.assertIn("git fetch --no-tags --prune origin", text)
+        self.assertIn("git fetch --quiet --no-tags --prune origin", text)
         self.assertIn("scripts/zcloud_unpr_branch_snapshot.py", text)
         self.assertIn("--require-clear", text)
         self.assertIn("ZCLOUD_UNPR_BRANCH_OVERLAP_LIVE_GREEN=1", text)
