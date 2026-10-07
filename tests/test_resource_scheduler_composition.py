@@ -111,6 +111,24 @@ class ResourceSchedulerCompositionTests(unittest.TestCase):
         self.assertFalse(allocations["haxlab"]["target_satisfied"])
         self.assertEqual(result["totals"]["planned_cpu_cores"], 4.0)
 
+    def test_fractional_job_cost_never_creates_partial_job_or_oversubscription(self):
+        payload = base_payload()
+        payload["host"]["capacity_cpu_cores"] = 5.75
+        payload["host"]["idle_borrowable_cpu_cores"] = 0.75
+        payload["projects"][1]["cpu_per_job_cores"] = 0.5
+        payload["projects"][1]["safe_parallel_jobs"] = 4
+
+        result = compose_scheduler_plan(payload)
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["totals"]["planned_cpu_cores"], 5.5)
+        self.assertEqual(result["totals"]["borrowed_cpu_cores"], 0.5)
+        self.assertEqual(result["totals"]["admitted_parallel_jobs"], 1)
+        self.assertLessEqual(
+            result["totals"]["planned_cpu_cores"],
+            payload["host"]["capacity_cpu_cores"],
+        )
+
     def test_backpressure_holds_borrowing_but_keeps_safe_base_plan(self):
         payload = base_payload()
         payload["host"]["backpressure_required"] = True
@@ -192,6 +210,7 @@ class ResourceSchedulerCompositionTests(unittest.TestCase):
         payload = base_payload()
         payload["host"]["capacity_cpu_cores"] = 1
         payload["host"]["protected_reserve_cpu_cores"] = 1
+        payload["host"]["idle_borrowable_cpu_cores"] = 0
         payload["projects"][1]["minimum_cpu_cores"] = 1
         payload["projects"][1]["target_cpu_cores"] = 1
         payload["projects"][1]["requested_cpu_cores"] = 1
