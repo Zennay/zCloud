@@ -1,0 +1,85 @@
+name: zGuard quality batch VPS verification
+
+on:
+  push:
+    branches:
+      - qa/zguard-quality-batch-verify-20261007
+    paths:
+      - .github/workflows/zguard-quality-batch-vps-verify-20261007.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-quality-batch-vps-verify-20261007
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify isolated zGuard quality heads
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out zCloud runner guard
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Check out zGuard history
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: Zennay/zGuard
+          ref: main
+          fetch-depth: 0
+          path: zguard-source
+          persist-credentials: false
+
+      - name: Verify exact quality heads
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          targets=(
+            "security-headers|qa/zbrowse-security-headers-contract-20261006|7b3aac787a65b441098d283aadf304bc5cb4670e|tests/zbrowse.security-headers-contract.test.mjs"
+            "image-build-hygiene|qa/zbrowse-image-build-hygiene-20261006|e2609bcd6fa258071d7bd303cf0799e94a7222da|tests/zbrowse.image-build-hygiene.test.mjs"
+            "forwarded-ip|fix/zbrowse-forwarded-ip-validation-20261006|9ee8ea7a52008c9be58aefcfd1ebec233bf46d30|tests/zbrowse.request-ip.test.mjs"
+          )
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "${tmp_root}"' EXIT
+
+          for spec in "${targets[@]}"; do
+            IFS='|' read -r label branch expected extra_test <<<"${spec}"
+
+            remote_sha="$(git -C zguard-source ls-remote origin "refs/heads/${branch}" | awk 'NR == 1 {print $1}')"
+            if [[ "${remote_sha}" != "${expected}" ]]; then
+              echo "Expected ${branch} at ${expected}, got ${remote_sha:-missing}" >&2
+              exit 1
+            fi
+
+            git -C zguard-source fetch --no-tags origin "${branch}"
+            git -C zguard-source cat-file -e "${expected}^{commit}"
+
+            snapshot="${tmp_root}/${label}"
+            mkdir -p "${snapshot}"
+            git -C zguard-source archive "${expected}" | tar -x -C "${snapshot}"
+
+            printf 'ZGUARD_BATCH_TARGET label=%s branch=%s sha=%s host=%s runner=%s\n' \
+              "${label}" "${branch}" "${expected}" "$(hostname)" "${RUNNER_NAME:-unknown}"
+
+            (
+              cd "${snapshot}"
+              node tests/smoke.test.js
+              bash zbrowse/scripts/validate.sh
+              node "${extra_test}"
+              cd zbrowse/gateway
+              npm ci --omit=dev --ignore-scripts --no-audit
+              npm audit --omit=dev --audit-level=high
+            )
+          done
+
+          echo "All isolated zGuard quality heads passed exact-head VPS verification."
