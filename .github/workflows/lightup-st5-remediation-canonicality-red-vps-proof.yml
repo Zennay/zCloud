@@ -1,0 +1,256 @@
+name: LightUp ST5 persisted canonicality expected-RED VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-st5-remediation-canonicality-red-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-st5-remediation-canonicality-red-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  REVIEW_BRANCH: chatgpt/st5-remediation-review-summary-canonicality-20261007
+  REVIEW_EXPECTED_SHA: 6b01922d9bc1fd2f72b982bab761654e0dbe75c8
+  REVISION_PROPOSAL_BRANCH: chatgpt/st5-remediation-revision-content-canonicality-20261007
+  REVISION_PROPOSAL_EXPECTED_SHA: a2f0908590d36f52b2cf8d2151d6561888c7360d
+  REVISION_REVIEW_BRANCH: chatgpt/st5-remediation-revised-review-summary-canonicality-20261007
+  REVISION_REVIEW_EXPECTED_SHA: dc2d5b23fecf3ed5f9007d4866d63b1c6e14d12c
+
+jobs:
+  prove-red:
+    name: Exact #441/#443/#445 expected-RED contracts on vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp acceptance heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${REVIEW_BRANCH}:refs/remotes/origin/lightup-review-summary-canonicality"             "+refs/heads/${REVISION_PROPOSAL_BRANCH}:refs/remotes/origin/lightup-revision-content-canonicality"             "+refs/heads/${REVISION_REVIEW_BRANCH}:refs/remotes/origin/lightup-revised-review-summary-canonicality"
+
+          REVIEW_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-review-summary-canonicality^{commit})"
+          REVISION_PROPOSAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-revision-content-canonicality^{commit})"
+          REVISION_REVIEW_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-revised-review-summary-canonicality^{commit})"
+
+          test "${REVIEW_SHA}" = "${REVIEW_EXPECTED_SHA}"
+          test "${REVISION_PROPOSAL_SHA}" = "${REVISION_PROPOSAL_EXPECTED_SHA}"
+          test "${REVISION_REVIEW_SHA}" = "${REVISION_REVIEW_EXPECTED_SHA}"
+
+          REVIEW_SNAPSHOT="${RUNNER_TEMP}/lightup-review-summary-${GITHUB_RUN_ID}"
+          REVISION_PROPOSAL_SNAPSHOT="${RUNNER_TEMP}/lightup-revision-content-${GITHUB_RUN_ID}"
+          REVISION_REVIEW_SNAPSHOT="${RUNNER_TEMP}/lightup-revised-review-summary-${GITHUB_RUN_ID}"
+          rm -rf "${REVIEW_SNAPSHOT}" "${REVISION_PROPOSAL_SNAPSHOT}" "${REVISION_REVIEW_SNAPSHOT}"
+          mkdir -p "${REVIEW_SNAPSHOT}" "${REVISION_PROPOSAL_SNAPSHOT}" "${REVISION_REVIEW_SNAPSHOT}"
+
+          git -C "${LIGHTUP_REPO}" archive "${REVIEW_SHA}" | tar -x -C "${REVIEW_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${REVISION_PROPOSAL_SHA}" | tar -x -C "${REVISION_PROPOSAL_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${REVISION_REVIEW_SHA}" | tar -x -C "${REVISION_REVIEW_SNAPSHOT}"
+
+          echo "REVIEW_SNAPSHOT=${REVIEW_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "REVISION_PROPOSAL_SNAPSHOT=${REVISION_PROPOSAL_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "REVISION_REVIEW_SNAPSHOT=${REVISION_REVIEW_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "REVIEW_ACTUAL_SHA=${REVIEW_SHA}" >> "${GITHUB_ENV}"
+          echo "REVISION_PROPOSAL_ACTUAL_SHA=${REVISION_PROPOSAL_SHA}" >> "${GITHUB_ENV}"
+          echo "REVISION_REVIEW_ACTUAL_SHA=${REVISION_REVIEW_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python 3.11 review parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_review             test_future_remediation_text_review_handoff
+          LOG="${RUNNER_TEMP}/lightup-review-summary-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_review_summary_canonicality_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.11 revision proposal parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVISION_PROPOSAL_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal             test_future_remediation_text_revision_proposal_handoff
+          LOG="${RUNNER_TEMP}/lightup-revision-content-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal_content_canonicality_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.11 revised review parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVISION_REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review             test_future_remediation_text_revision_review_handoff
+          LOG="${RUNNER_TEMP}/lightup-revised-review-summary-red-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review_summary_canonicality_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Python 3.14 review parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_review             test_future_remediation_text_review_handoff
+          LOG="${RUNNER_TEMP}/lightup-review-summary-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_review_summary_canonicality_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.14 revision proposal parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVISION_PROPOSAL_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal             test_future_remediation_text_revision_proposal_handoff
+          LOG="${RUNNER_TEMP}/lightup-revision-content-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_proposal_content_canonicality_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Python 3.14 revised review parent green + exact expected RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REVISION_REVIEW_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review             test_future_remediation_text_revision_review_handoff
+          LOG="${RUNNER_TEMP}/lightup-revised-review-summary-red-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_text_revision_review_summary_canonicality_acceptance             >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          test "$(grep -c 'ValueError not raised' "${LOG}" || true)" -eq 3
+          grep -Fq 'FAILED (failures=3)' "${LOG}"
+          ! grep -Fq 'errors=' "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Write exact-head expected-RED receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-st5-remediation-canonicality-red-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "issues": [441, 443, 445],
+              "pull_requests": [442, 444, 446],
+              "review_summary": {
+                  "branch": os.environ["REVIEW_BRANCH"],
+                  "target_sha": os.environ["REVIEW_ACTUAL_SHA"],
+                  "expected_sha": os.environ["REVIEW_EXPECTED_SHA"],
+                  "expected_failures_per_python": 3,
+              },
+              "revision_content": {
+                  "branch": os.environ["REVISION_PROPOSAL_BRANCH"],
+                  "target_sha": os.environ["REVISION_PROPOSAL_ACTUAL_SHA"],
+                  "expected_sha": os.environ["REVISION_PROPOSAL_EXPECTED_SHA"],
+                  "expected_failures_per_python": 3,
+              },
+              "revised_review_summary": {
+                  "branch": os.environ["REVISION_REVIEW_BRANCH"],
+                  "target_sha": os.environ["REVISION_REVIEW_ACTUAL_SHA"],
+                  "expected_sha": os.environ["REVISION_REVIEW_EXPECTED_SHA"],
+                  "expected_failures_per_python": 3,
+              },
+              "host": os.uname().nodename,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "python": ["3.11", "3.14"],
+              "parent_producers_and_handoffs": "green",
+              "acceptance_contract": "persisted_outer_whitespace_expected_red",
+              "production_source_changes": 0,
+              "safety_canaries": "green",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-st5-remediation-canonicality-red-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head expected-RED receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-st5-remediation-canonicality-red-vps-proof
+          path: ${{ runner.temp }}/lightup-st5-remediation-canonicality-red-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: rm -rf "${REVIEW_SNAPSHOT:-}" "${REVISION_PROPOSAL_SNAPSHOT:-}" "${REVISION_REVIEW_SNAPSHOT:-}"
