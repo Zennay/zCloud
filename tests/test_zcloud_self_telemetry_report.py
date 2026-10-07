@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from scripts import zcloud_self_telemetry_report as report
 
@@ -12,8 +13,9 @@ SHA = "a" * 40
 
 
 class FakeGitHub:
-    def __init__(self, *, pulls=None, runs=None, status=None):
+    def __init__(self, *, pulls=None, pull_pages=None, runs=None, status=None):
         self.pulls = [] if pulls is None else pulls
+        self.pull_pages = pull_pages
         self.runs = [] if runs is None else runs
         self.status = {"state": "pending", "statuses": []} if status is None else status
         self.urls = []
@@ -23,7 +25,10 @@ class FakeGitHub:
         if url.endswith("/commits/main"):
             return {"sha": SHA}
         if "/pulls?" in url:
-            return self.pulls
+            if self.pull_pages is None:
+                return self.pulls
+            page = int(parse_qs(urlparse(url).query).get("page", ["1"])[0])
+            return self.pull_pages.get(page, [])
         if "/actions/runs?" in url:
             return {"workflow_runs": self.runs}
         if url.endswith(f"/commits/{SHA}/status"):
@@ -65,9 +70,21 @@ class ZCloudSelfTelemetryReportTests(unittest.TestCase):
         self.assertEqual(80.0, payload["scorecard"]["overall_progress"])
         self.assertEqual(2, len(payload["scorecard"]["milestones"]))
         self.assertEqual(SHA, payload["github"]["main_sha"])
-        self.assertEqual([7, 12], payload["github"]["open_pr_numbers"])
+        self.assertEqual(2, payload["github"]["open_pr_count"])
+        self.assertEqual([12, 7], payload["github"]["open_pr_numbers"])
+        self.assertFalse(payload["github"]["open_pr_numbers_truncated"])
         self.assertTrue(all(url.startswith("https://api.github.com/repos/Zennay/zCloud") for url in github.urls))
         self.assertTrue(payload["evidence_contract"]["runtime_state_is_not_mutated"])
+
+    def test_open_pr_inventory_paginates_but_emits_bounded_numbers(self):
+        first = [{"number": n} for n in range(300, 200, -1)]
+        second = [{"number": 200}, {"number": 199}]
+        payload = self.build(FakeGitHub(pull_pages={1: first, 2: second}))
+        github = payload["github"]
+        self.assertEqual(102, github["open_pr_count"])
+        self.assertEqual(report.MAX_PR_NUMBERS_EMITTED, len(github["open_pr_numbers"]))
+        self.assertTrue(github["open_pr_numbers_truncated"])
+        self.assertEqual(300, github["open_pr_numbers"][0])
 
     def test_missing_ci_is_explicitly_not_configured_never_green(self):
         payload = self.build(FakeGitHub(status={"state": "pending", "statuses": []}))
@@ -145,6 +162,10 @@ class ZCloudSelfTelemetryReportTests(unittest.TestCase):
     def test_invalid_github_shapes_fail_closed(self):
         with self.assertRaisesRegex(RuntimeError, "pull request row"):
             self.build(FakeGitHub(pulls=[{"number": True}]))
+
+        duplicate_page = [{"number": n} for n in range(100, 0, -1)]
+        with self.assertRaisesRegex(RuntimeError, "duplicate numbers"):
+            self.build(FakeGitHub(pull_pages={1: duplicate_page, 2: [{"number": 100}]}))
 
         def invalid_commit(url, token):
             if url.endswith("/commits/main"):
