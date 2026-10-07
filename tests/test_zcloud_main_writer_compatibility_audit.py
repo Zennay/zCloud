@@ -149,7 +149,7 @@ jobs:
             "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
             text,
         )
-        self.assertIn("ref: \${{ github.event.pull_request.head.sha || github.sha }}", text)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", text)
         self.assertIn("persist-credentials: false", text)
         self.assertIn("github.actor == 'Zennay'", text)
         self.assertIn(
