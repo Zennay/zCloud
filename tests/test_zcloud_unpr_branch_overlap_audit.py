@@ -7,6 +7,7 @@ from pathlib import Path
 from scripts import zcloud_unpr_branch_overlap_audit as audit
 
 
+ROOT = Path(__file__).resolve().parents[1]
 NOW = dt.datetime(2026, 10, 7, 7, 40, tzinfo=dt.timezone.utc)
 
 
@@ -121,6 +122,28 @@ class UnprBranchOverlapAuditTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(2, code)
+
+    def test_self_hosted_proof_is_exact_head_read_only_and_guarded(self):
+        text = (ROOT / ".github/workflows/zcloud-unpr-branch-overlap-audit.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn(
+            "github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertIn(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
+            text,
+        )
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", text)
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
+        self.assertIn('test "$(id -un)" = "ubuntu"', text)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertNotIn("contents: write", text)
+        self.assertNotIn("actions: write", text)
 
 
 if __name__ == "__main__":
