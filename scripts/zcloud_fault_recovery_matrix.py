@@ -66,7 +66,7 @@ def validate(matrix: dict[str, Any], root: Path) -> dict[str, Any]:
         raise MatrixError("exact canonical scenario set required")
 
     seen: set[str] = set()
-    selectors: list[str] = []
+    execution_plan: list[dict[str, str]] = []
     for scenario in scenarios:
         if not isinstance(scenario, dict) or set(scenario) != SCENARIO_KEYS:
             raise MatrixError("scenario keys must match the v1 contract exactly")
@@ -81,7 +81,7 @@ def validate(matrix: dict[str, Any], root: Path) -> dict[str, Any]:
             raise MatrixError(f"{scenario_id}: selector is not the canonical bounded simulation")
         if not isinstance(scenario.get("invariant"), str) or not scenario["invariant"].strip():
             raise MatrixError(f"{scenario_id}: invariant required")
-        selectors.append(scenario["selector"])
+        execution_plan.append({"id": scenario_id, "selector": scenario["selector"]})
 
     if seen != set(EXPECTED_SCENARIOS):
         raise MatrixError("canonical scenario coverage incomplete")
@@ -98,9 +98,9 @@ def validate(matrix: dict[str, Any], root: Path) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "contract": "fault-recovery-matrix-v1",
         "status": "valid",
-        "scenario_count": len(selectors),
+        "scenario_count": len(execution_plan),
         "scenario_ids": sorted(seen),
-        "selectors": selectors,
+        "execution_plan": execution_plan,
         "additional_contracts": list(additional),
         "live_mutation": False,
     }
@@ -108,16 +108,13 @@ def validate(matrix: dict[str, Any], root: Path) -> dict[str, Any]:
 
 def execute(report: dict[str, Any], root: Path) -> dict[str, Any]:
     completed: list[str] = []
-    for scenario_id, selector in zip(
-        [s["id"] for s in json.loads((root / "fault-recovery-matrix.v1.json").read_text(encoding="utf-8"))["scenarios"]],
-        report["selectors"],
-    ):
+    for item in report["execution_plan"]:
         subprocess.run(
-            [sys.executable, "-m", "unittest", "-v", selector],
+            [sys.executable, "-m", "unittest", "-v", item["selector"]],
             cwd=root,
             check=True,
         )
-        completed.append(scenario_id)
+        completed.append(item["id"])
     subprocess.run(["node", "tests/test_firefox_recovery_contract.js"], cwd=root, check=True)
     result = dict(report)
     result["status"] = "green"
