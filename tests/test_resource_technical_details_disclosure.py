@@ -28,11 +28,10 @@ class ResourceTechnicalDetailsDisclosureTests(unittest.TestCase):
             self.assertIn(technical, self.resource)
 
     def test_priority_controls_and_user_facing_state_stay_visible(self):
-        details_at = self.resource.index(
-            '<details class="section-details resource-details"><summary>Technical details</summary>'
+        self.assertIn(
+            '<div class="resource-grid">'+rows+'</div>'+details+'</div>',
+            self.resource,
         )
-        grid_at = self.resource.index('<div class="resource-grid">')
-        self.assertLess(grid_at, details_at)
         self.assertIn('data-resource-priority="', self.resource)
         self.assertIn("Running on the VPS", self.resource)
         self.assertIn("No dedicated VPS worker", self.resource)
