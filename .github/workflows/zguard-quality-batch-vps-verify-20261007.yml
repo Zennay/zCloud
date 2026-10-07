@@ -45,7 +45,7 @@ jobs:
 
           targets=(
             "security-headers|qa/zbrowse-security-headers-contract-20261006|7b3aac787a65b441098d283aadf304bc5cb4670e|tests/zbrowse.security-headers-contract.test.mjs"
-            "image-build-hygiene|qa/zbrowse-image-build-hygiene-20261006|e2609bcd6fa258071d7bd303cf0799e94a7222da|tests/zbrowse.image-build-hygiene.test.mjs"
+            "image-build-hygiene|qa/zbrowse-image-build-hygiene-20261006|4f5a18b61255d5af57b6f3e0af2f4fdc77ae01b1|tests/zbrowse.image-build-hygiene.test.mjs"
             "forwarded-ip|fix/zbrowse-forwarded-ip-validation-20261006|9ee8ea7a52008c9be58aefcfd1ebec233bf46d30|tests/zbrowse.request-ip.test.mjs"
           )
 
