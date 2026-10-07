@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -139,6 +140,44 @@ class GovernedExecTests(unittest.TestCase):
         )
 
         self.assertEqual(7, rc)
+        conn = self._connect()
+        self.assertEqual([], runtime.resource_status(conn)["leases"])
+        conn.close()
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg") and Path("/proc").exists(),
+        "Linux process groups and /proc required",
+    )
+    def test_background_descendant_is_stopped_before_lease_release(self):
+        marker = self.root / "descendant.pid"
+        code = (
+            "import subprocess,sys; from pathlib import Path; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+            f"Path({str(marker)!r}).write_text(str(child.pid))"
+        )
+
+        rc = governed.run_governed(
+            self.db,
+            "ftmo",
+            "process-tree",
+            [sys.executable, "-c", code],
+        )
+
+        self.assertEqual(0, rc)
+        pid = int(marker.read_text())
+        running = True
+        for _ in range(40):
+            stat = Path(f"/proc/{pid}/stat")
+            if not stat.exists():
+                running = False
+                break
+            fields = stat.read_text().split()
+            if len(fields) >= 3 and fields[2] == "Z":
+                running = False
+                break
+            time.sleep(0.05)
+        self.assertFalse(running, f"background descendant {pid} survived governed cleanup")
+
         conn = self._connect()
         self.assertEqual([], runtime.resource_status(conn)["leases"])
         conn.close()

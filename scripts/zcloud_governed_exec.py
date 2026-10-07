@@ -76,6 +76,40 @@ def _exit_code(returncode: int) -> int:
     return returncode if returncode >= 0 else 128 + abs(returncode)
 
 
+def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
+    if proc is None:
+        return
+    try:
+        os.killpg(proc.pid, signum)
+    except ProcessLookupError:
+        return
+
+
+def _stop_process_group(proc: subprocess.Popen | None, *, grace_seconds: float = 2.0) -> None:
+    """Boundedly terminate the governed process tree before releasing its lease."""
+    if proc is None:
+        return
+    _signal_process_group(proc, signal.SIGTERM)
+    deadline = time.monotonic() + max(0.1, float(grace_seconds))
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        _signal_process_group(proc, signal.SIGKILL)
+    if proc.poll() is None:
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            _signal_process_group(proc, signal.SIGKILL)
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+
+
 def run_governed(
     db_path: Path,
     project_id: str,
@@ -115,6 +149,7 @@ def run_governed(
             list(command),
             env=env,
             preexec_fn=lambda: _apply_process_limits(project_id),
+            start_new_session=True,
         )
 
         renewed = runtime.acquire_resource(
@@ -126,14 +161,13 @@ def run_governed(
         )
         conn.commit()
         if not renewed.get("acquired"):
-            proc.terminate()
-            proc.wait(timeout=10)
+            _stop_process_group(proc)
             print(json.dumps(renewed, ensure_ascii=False, sort_keys=True), file=sys.stderr)
             return 75
 
         def forward(signum, _frame):
-            if proc is not None and proc.poll() is None:
-                proc.send_signal(signum)
+            if proc is not None:
+                _signal_process_group(proc, signum)
 
         for signum in (signal.SIGTERM, signal.SIGINT):
             old_handlers[signum] = signal.getsignal(signum)
@@ -156,12 +190,7 @@ def run_governed(
                 )
                 conn.commit()
                 if not renewed.get("acquired"):
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=5)
+                    _stop_process_group(proc)
                     print(json.dumps(renewed, ensure_ascii=False, sort_keys=True), file=sys.stderr)
                     return 75
                 next_renewal = now + renew_seconds
@@ -169,6 +198,7 @@ def run_governed(
     finally:
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
+        _stop_process_group(proc)
         if acquired:
             try:
                 runtime.release_resource(conn, project_id, owner_id)
