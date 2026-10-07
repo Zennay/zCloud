@@ -1,0 +1,32 @@
+name: zCloud worker attention persistence foundation
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_worker_attention_store.py"
+      - "tests/test_zcloud_worker_attention_store.py"
+      - ".github/workflows/zcloud-worker-attention-persistence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-attention-persistence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Validate restart-safe bounded persistence
+        run: |
+          python3 -m unittest -v tests.test_zcloud_worker_attention_store
+          python3 -m py_compile scripts/zcloud_worker_attention_store.py
