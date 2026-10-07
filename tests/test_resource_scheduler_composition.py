@@ -164,6 +164,35 @@ class ResourceSchedulerCompositionTests(unittest.TestCase):
         )
         self.assertTrue(result["guardrails"]["protected_reserve_preserved"])
 
+    def test_exposes_requested_versus_planned_allocation_without_recomputing_in_ui(self):
+        result = compose_scheduler_plan(base_payload())
+
+        rows = {
+            row["project_id"]: row
+            for row in result["planned_allocations"]
+        }
+        self.assertEqual(
+            set(rows["ftmo"]),
+            {
+                "project_id",
+                "scheduler_rank",
+                "minimum_cpu_cores",
+                "target_cpu_cores",
+                "maximum_cpu_cores",
+                "requested_cpu_cores",
+                "base_cpu_cores",
+                "borrowed_cpu_cores",
+                "planned_cpu_cores",
+                "requested_satisfied",
+            },
+        )
+        self.assertEqual(rows["ftmo"]["requested_cpu_cores"], 3.0)
+        self.assertEqual(rows["ftmo"]["base_cpu_cores"], 3.0)
+        self.assertEqual(rows["ftmo"]["borrowed_cpu_cores"], 1.0)
+        self.assertEqual(rows["ftmo"]["planned_cpu_cores"], 4.0)
+        self.assertTrue(rows["ftmo"]["requested_satisfied"])
+        self.assertEqual(rows["haxlab"]["borrowed_cpu_cores"], 0.0)
+
     def test_backpressure_holds_borrowing_but_keeps_safe_base_plan(self):
         payload = base_payload()
         payload["host"]["backpressure_required"] = True
@@ -256,6 +285,7 @@ class ResourceSchedulerCompositionTests(unittest.TestCase):
         self.assertFalse(result["decision_ready"])
         self.assertEqual(result["reason"], "minimum_capacity_exceeded")
         self.assertEqual(result["base_allocations"], [])
+        self.assertEqual(result["planned_allocations"], [])
         self.assertEqual(result["borrow_admissions"], [])
         self.assertFalse(result["runtime_mutation"])
 
