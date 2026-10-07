@@ -13,7 +13,7 @@ from typing import Iterable
 WORKFLOW_DIR = Path(".github/workflows")
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
 UPLOAD_RE = re.compile(
-    r"^(?P<indent>\s*)-\s+uses:\s+actions/upload-artifact@[^\s#]+",
+    r"^(?P<indent>\s*)(?:-\s+)?uses:\s+actions/upload-artifact@[^\s#]+",
     re.MULTILINE,
 )
 RETENTION_RE = re.compile(r"(?m)^\s+retention-days:\s*(?P<value>[^#\n]+?)\s*$")
@@ -35,7 +35,7 @@ def _step_blocks(text: str) -> Iterable[tuple[int, str]]:
     lines = text.splitlines()
     for index, line in enumerate(lines):
         match = re.match(
-            r"^(?P<indent>\s*)-\s+uses:\s+actions/upload-artifact@[^\s#]+",
+            r"^(?P<indent>\s*)(?:-\s+)?uses:\s+actions/upload-artifact@[^\s#]+",
             line,
         )
         if not match:
