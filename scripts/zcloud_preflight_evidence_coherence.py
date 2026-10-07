@@ -121,7 +121,7 @@ def audit_snapshot(
         raise EvidenceError("max_evidence_span_invalid")
     if set(snapshot) != TOP_KEYS:
         raise EvidenceError("snapshot_keys_invalid")
-    if type(snapshot["schema_version"]) is not int or snapshot["schema_version"] != 1:
+    if type(snapshot["schema_version"]) is not int or snapshot["schema_version"] != 2:
         raise EvidenceError("schema_version_unsupported")
 
     now_utc = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
