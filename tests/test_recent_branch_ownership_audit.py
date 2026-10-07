@@ -114,6 +114,43 @@ class RecentBranchCollectorTests(unittest.TestCase):
         self.assertFalse(row["has_open_pr"])
         self.assertIsNotNone(row["compare"])
 
+    def test_rename_owns_both_old_and_new_paths(self):
+        def runner(args):
+            joined = " ".join(args)
+            if "/git/ref/heads/main" in joined:
+                return {"object": {"sha": MAIN}}
+            if args[:3] == ["gh", "pr", "list"]:
+                return []
+            if args[:3] == ["gh", "api", "graphql"]:
+                return graphql_page(
+                    [
+                        branch("main", MAIN, "2026-10-07T02:55:00Z"),
+                        branch("rename-owner", RECENT, "2026-10-07T02:30:00Z"),
+                    ]
+                )
+            if "/compare/" in joined:
+                return {
+                    "ahead_by": 1,
+                    "behind_by": 0,
+                    "merge_base_commit": {"sha": MAIN},
+                    "files": [
+                        {
+                            "filename": "scripts/new_name.py",
+                            "previous_filename": "scripts/old_name.py",
+                        }
+                    ],
+                }
+            raise AssertionError(args)
+
+        result = collector.collect_snapshot("Zennay/zCloud", AS_OF, 72, runner)
+        row = next(
+            item for item in result["branches"] if item["name"] == "rename-owner"
+        )
+        self.assertEqual(
+            row["compare"]["files"],
+            ["scripts/new_name.py", "scripts/old_name.py"],
+        )
+
     def test_exact_300_compare_files_is_marked_incomplete(self):
         files = [f"tests/f{i:03d}.py" for i in range(300)]
 
