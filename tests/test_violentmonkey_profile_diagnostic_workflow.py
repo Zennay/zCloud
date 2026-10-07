@@ -71,12 +71,15 @@ class ViolentmonkeyProfileDiagnosticWorkflowTests(unittest.TestCase):
         step = self.text[self.text.index(marker):]
         helper = "restore_managed_firefox() {"
         trap = "trap restore_managed_firefox EXIT"
+        stop = "systemctl --user stop chatgpt-firefox.service || true"
         python = "python3 - <<'PY'"
         self.assertIn(helper, step)
         self.assertIn(trap, step)
+        self.assertIn(stop, step)
         self.assertIn("trap - EXIT", step)
-        self.assertLess(step.index(helper), step.index(python))
-        self.assertLess(step.index(trap), step.index(python))
+        self.assertLess(step.index(helper), step.index(trap))
+        self.assertLess(step.index(trap), step.index(stop))
+        self.assertLess(step.index(stop), step.index(python))
         self.assertGreater(step.index("restore_managed_firefox\n", step.index(python)), step.index(python))
 
     def test_pr_checks_cannot_cancel_live_diagnostic(self):
