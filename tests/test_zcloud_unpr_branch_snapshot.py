@@ -96,17 +96,29 @@ class UnprBranchSnapshotTests(unittest.TestCase):
         )
 
     @mock.patch.object(snap, "_run_git")
-    def test_changed_files_are_sorted_and_bounded(self, run_git):
-        run_git.side_effect = [
-            "0123456789abcdef0123456789abcdef01234567\n",
-            "tests/z.py\nscripts/a.py\n",
-        ]
+    @mock.patch.object(snap, "_merge_base")
+    def test_changed_files_are_sorted_and_bounded(self, merge_base, run_git):
+        merge_base.return_value = "0123456789abcdef0123456789abcdef01234567"
+        run_git.return_value = "tests/z.py\nscripts/a.py\n"
         self.assertEqual(
             ["scripts/a.py", "tests/z.py"],
             snap._branch_changed_files(
                 Path("/repo"), "origin", "main", "feature/test"
             ),
         )
+
+    @mock.patch.object(snap, "_run_git")
+    @mock.patch.object(snap, "_merge_base")
+    def test_orphan_branch_owns_its_full_tree(self, merge_base, run_git):
+        merge_base.return_value = None
+        run_git.return_value = "docs/site.md\nassets/logo.svg\n"
+        self.assertEqual(
+            ["assets/logo.svg", "docs/site.md"],
+            snap._branch_changed_files(
+                Path("/repo"), "origin", "main", "orphan/site"
+            ),
+        )
+        self.assertEqual("ls-tree", run_git.call_args.args[1])
 
     def test_write_json_rejects_symlink_output(self):
         with tempfile.TemporaryDirectory() as tmp:
