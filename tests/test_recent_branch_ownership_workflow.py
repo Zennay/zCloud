@@ -70,6 +70,13 @@ class RecentBranchOwnershipWorkflowContractTests(unittest.TestCase):
         self.assertIn("--require-clear", text)
         self.assertIn("ZCLOUD_RECENT_BRANCH_OWNERSHIP_GREEN=1", text)
 
+    def test_composes_parent_open_pr_overlap_preflight(self):
+        text = self.text
+        self.assertIn("scripts/zcloud_open_pr_overlap_audit.py", text)
+        self.assertIn("--json number,headRefName,isDraft,updatedAt,changedFiles,files", text)
+        self.assertIn("--limit 501", text)
+        self.assertIn('echo "ZCLOUD_COMPOSITE_OWNERSHIP_PREFLIGHT_GREEN=1"', text)
+
     def test_branch_snapshot_has_explicit_bounded_recency(self):
         text = self.text
         self.assertIn("--recent-hours 72", text)
