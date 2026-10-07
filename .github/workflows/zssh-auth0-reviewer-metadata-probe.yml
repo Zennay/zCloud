@@ -18,14 +18,33 @@ concurrency:
 jobs:
   probe:
     name: Find reusable Auth0 and reviewer input metadata without reading values
-    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
+    env:
+      ZCLOUD_EXPECTED_SHA: ${{ github.sha }}
     steps:
-      - name: Check out zCloud control plane
-        uses: actions/checkout@v4
+      - name: Check out exact zCloud control plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.ZCLOUD_EXPECTED_SHA }}
           persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact reviewed revision
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"
 
       - name: Require reviewed merged-PR activation
         if: github.event_name == 'pull_request'
@@ -34,6 +53,7 @@ jobs:
           set -Eeuo pipefail
           test "${{ github.event.pull_request.merged }}" = "true"
           test "${{ github.event.pull_request.base.ref }}" = "main"
+          test "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}"
           test "$(cat .github/zssh-auth0-reviewer-probe-trigger)" = "PROBE_ZSSH_AUTH0_REVIEWER_METADATA"
           echo "ZSSH_AUTH0_REVIEWER_PROBE_MERGED_PR_ACTIVATION_GREEN pr=${{ github.event.pull_request.number }}"
 
@@ -183,12 +203,22 @@ jobs:
               json.dumps(result, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
-          print(json.dumps(result, indent=2, sort_keys=True))
+          print(
+              "ZSSH_AUTH0_REVIEWER_METADATA_INVENTORIED",
+              json.dumps({
+                  "locations_checked": len(locations),
+                  "auth0_missing_count": len(auth0_missing),
+                  "reviewer_missing_count": len(reviewer_missing),
+                  "auth0_ready": len(auth0_missing) == 0,
+                  "reviewer_ready": len(reviewer_missing) == 0,
+                  "mutation_attempted": False,
+              }, sort_keys=True),
+          )
           PY
 
       - name: Upload non-secret input metadata evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zssh-auth0-reviewer-input-metadata-${{ github.run_id }}
           path: |
