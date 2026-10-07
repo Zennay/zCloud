@@ -29,7 +29,7 @@ class ResourceTechnicalDetailsDisclosureTests(unittest.TestCase):
 
     def test_priority_controls_and_user_facing_state_stay_visible(self):
         self.assertIn(
-            '<div class="resource-grid">'+rows+'</div>'+details+'</div>',
+            "<div class=\"resource-grid\">'+rows+'</div>'+details+'</div>",
             self.resource,
         )
         self.assertIn('data-resource-priority="', self.resource)
