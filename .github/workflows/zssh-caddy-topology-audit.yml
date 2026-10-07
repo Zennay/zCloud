@@ -6,18 +6,42 @@ on:
     paths:
       - ".github/workflows/zssh-caddy-topology-audit.yml"
       - "tests/test_zssh_release_workflows.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-caddy-topology-audit.yml"
+      - "tests/test_zssh_caddy_topology_audit_workflow.py"
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zssh-caddy-topology-audit-zcloud
-  cancel-in-progress: true
+  group: zssh-caddy-topology-audit-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  validate:
+    name: Validate Caddy topology trust contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Run focused trust contract
+        run: python3 -m unittest -v tests.test_zssh_caddy_topology_audit_workflow
+
   audit:
     name: Audit Caddy topology for zSSH public ingress
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     env:
@@ -27,7 +51,10 @@ jobs:
       - name: Check out zCloud coordination
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
+          clean: true
+          fetch-depth: 1
 
       - name: Enforce canonical zCloud VPS runner
         shell: bash
