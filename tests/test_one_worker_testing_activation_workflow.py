@@ -26,6 +26,20 @@ class OneWorkerTestingActivationWorkflowTests(unittest.TestCase):
         )
         self.assertIn("persist-credentials: false", self.validate)
 
+    def test_pr_validation_cannot_cancel_live_activation(self):
+        self.assertIn(
+            "group: zcloud-dynamic-worker-pool-activation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}",
+            self.text,
+        )
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            self.text,
+        )
+        self.assertNotIn(
+            "group: zcloud-dynamic-worker-pool-activation\n  cancel-in-progress: true",
+            self.text,
+        )
+
     def test_live_activation_accepts_only_trusted_main_deploy_workflow_run(self):
         gate = (
             "github.event_name == 'workflow_run' "
