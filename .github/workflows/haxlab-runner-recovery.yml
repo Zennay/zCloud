@@ -1,3 +1,4 @@
+# Operational retrigger 2026-10-07 05:0x UTC for HaxLab serialized runner backlog recovery
 name: Recover HaxLab runner
 
 on:
