@@ -312,6 +312,11 @@ jobs:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
+          restore_managed_firefox() {
+            systemctl --user reset-failed chatgpt-firefox.service || true
+            systemctl --user start chatgpt-firefox.service || true
+          }
+          trap restore_managed_firefox EXIT
           python3 - <<'PY'
           import json, os, shutil, signal, sqlite3, subprocess, time
           from pathlib import Path
