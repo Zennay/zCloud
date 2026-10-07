@@ -66,7 +66,7 @@ class ComposerLocalRecoveryTests(unittest.TestCase):
     def test_tick_runs_recovery_without_extra_timer(self):
         tick = self.function_body("async function tick()")
         self.assertIn("if (await recoverMissingComposer()) return;", tick)
-        self.assertEqual(1, self.text.count("COMPOSER_RECOVERY_TIMEOUT_MS"))
+        self.assertEqual(2, self.text.count("COMPOSER_RECOVERY_TIMEOUT_MS"))
         self.assertNotIn("setInterval(recoverMissingComposer", self.text)
 
     def test_composer_blocked_telemetry_uses_existing_dedupe(self):
