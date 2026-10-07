@@ -7,8 +7,14 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
+from pathlib import Path
 import re
+import sys
 from typing import Any, Callable, Iterable
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import enhancements
 
@@ -29,6 +35,13 @@ class ProjectResultSummaryError(ValueError):
 def _bounded_text(value: Any, limit: int) -> str:
     text = str(value or "").strip()
     return text[:limit]
+
+
+def _normalize_project_id(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if len(text) > 32 or not PROJECT_RE.fullmatch(text):
+        raise ProjectResultSummaryError(f"invalid project id: {text!r}")
+    return text
 
 
 def _safe_scalar(value: Any) -> str | int | float | bool | None:
@@ -64,21 +77,29 @@ def _project_point(kind: str, point: Any) -> dict[str, Any] | None:
     }
 
 
-def project_summary(project_id: str, quality: dict[str, Any]) -> dict[str, Any]:
-    project_id = _bounded_text(project_id, 32).lower()
-    if not PROJECT_RE.fullmatch(project_id):
-        raise ProjectResultSummaryError(f"invalid project id: {project_id!r}")
+def project_summary(
+    project_id: str,
+    quality: dict[str, Any] | Any,
+    *,
+    adapter_backed: bool | None = None,
+) -> dict[str, Any]:
+    project_id = _normalize_project_id(project_id)
+    quality = quality if isinstance(quality, dict) else {}
 
-    comparison = quality.get("comparison") if isinstance(quality, dict) else None
+    comparison = quality.get("comparison")
     comparison = comparison if isinstance(comparison, dict) else {}
     points = {kind: _project_point(kind, comparison.get(kind)) for kind in KINDS}
     points = {kind: point for kind, point in points.items() if point is not None}
 
+    if adapter_backed is None:
+        adapter_backed = bool(quality.get("available") or comparison.get("available") or points)
+
     return {
         "project_id": project_id,
-        "source_mode": "project_adapter" if bool(quality.get("available") or points) else "generic_only",
+        "source_mode": "project_adapter" if adapter_backed else "generic_only",
         "stage": _bounded_text(quality.get("stage"), 120) or None,
         "available": bool(points),
+        "evidence_state": "available" if points else "missing",
         "results": points,
         "result_count": len(points),
     }
@@ -90,14 +111,13 @@ def build_report(
     quality_reader: Callable[[str], dict[str, Any]] = enhancements.quality_for,
     adapter_projects_reader: Callable[[], Iterable[str]] = enhancements.telemetry_adapter_projects,
 ) -> dict[str, Any]:
-    requested = list(adapter_projects_reader()) if project_ids is None else list(project_ids)
+    registered = {_normalize_project_id(item) for item in adapter_projects_reader()}
+    requested = sorted(registered) if project_ids is None else list(project_ids)
 
     normalized: list[str] = []
     seen: set[str] = set()
     for raw in requested:
-        project_id = _bounded_text(raw, 32).lower()
-        if not PROJECT_RE.fullmatch(project_id):
-            raise ProjectResultSummaryError(f"invalid project id: {project_id!r}")
+        project_id = _normalize_project_id(raw)
         if project_id not in seen:
             normalized.append(project_id)
             seen.add(project_id)
@@ -105,7 +125,14 @@ def build_report(
     if len(normalized) > 32:
         raise ProjectResultSummaryError("at most 32 projects may be projected")
 
-    projects = [project_summary(project_id, quality_reader(project_id) or {}) for project_id in normalized]
+    projects = [
+        project_summary(
+            project_id,
+            quality_reader(project_id) or {},
+            adapter_backed=project_id in registered,
+        )
+        for project_id in normalized
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -138,7 +165,12 @@ def main() -> int:
     try:
         report = build_report(args.project or None)
     except ProjectResultSummaryError as exc:
-        print(json.dumps({"schema_version": SCHEMA_VERSION, "status": "invalid", "error": str(exc)}, sort_keys=True))
+        print(
+            json.dumps(
+                {"schema_version": SCHEMA_VERSION, "status": "invalid", "error": str(exc)},
+                sort_keys=True,
+            )
+        )
         return 2
 
     print(json.dumps(report, sort_keys=True))
