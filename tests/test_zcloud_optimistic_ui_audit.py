@@ -46,6 +46,23 @@ async function guardedFutureWrite(button,value){
         self.assertEqual([], result["unexpected_debt"])
         self.assertGreaterEqual(result["visible_pending_count"], 1)
 
+    def test_function_parser_does_not_absorb_following_event_listener(self):
+        source = """
+async function guardedWrite(button){
+  button.disabled=true;
+  await post('/api/write',{});
+}
+function navigate(){return true}
+document.addEventListener('click',async e=>{
+  await post('/api/unrelated-inline-write',{});
+});
+"""
+        blocks = dict(audit._function_blocks(source))
+        self.assertNotIn("unrelated-inline-write", blocks["navigate"])
+        result = audit.audit(source)
+        self.assertEqual("complete", result["status"])
+        self.assertEqual(1, result["mutator_count"])
+
     def test_require_ratchet_accepts_current_bounded_baseline(self):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--app", str(APP), "--json", "--require-ratchet"],
