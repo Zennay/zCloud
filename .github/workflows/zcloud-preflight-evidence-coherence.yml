@@ -1,0 +1,126 @@
+name: zCloud preflight evidence coherence
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_preflight_evidence_coherence.py"
+      - "tests/test_zcloud_preflight_evidence_coherence.py"
+      - ".github/workflows/zcloud-preflight-evidence-coherence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-preflight-evidence-coherence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused coherence regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_preflight_evidence_coherence
+          python3 -m py_compile scripts/zcloud_preflight_evidence_coherence.py
+
+      - name: Prove coherent exact-head transaction read only
+        shell: bash
+        env:
+          MAIN_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          now="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+          snapshot="$RUNNER_TEMP/zcloud-preflight-evidence-coherence-input.json"
+          report="$RUNNER_TEMP/zcloud-preflight-evidence-coherence.json"
+          NOW="$now" MAIN_SHA="$MAIN_SHA" SNAPSHOT="$snapshot" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          policies = {
+              "dependency": "zcloud-capability-dependency-dag-v1",
+              "owner_coverage": "zcloud-roadmap-owner-coverage-v1",
+              "writer_window": "zcloud-serialized-writer-window-audit-v1",
+              "open_pr_ownership": "zcloud-open-pr-overlap-audit-v1",
+              "unpr_branch_ownership": "zcloud-unpr-branch-overlap-audit-v1",
+          }
+          verdicts = {
+              "dependency": "ready",
+              "owner_coverage": "ready",
+              "writer_window": "clear",
+              "open_pr_ownership": "clear",
+              "unpr_branch_ownership": "clear",
+          }
+          payload = {
+              "schema_version": 1,
+              "captured_at": os.environ["NOW"],
+              "main_sha": os.environ["MAIN_SHA"],
+              "candidate_base_sha": os.environ["MAIN_SHA"],
+              "capability_id": "control-plane:workflow-proof",
+              "evidence": [
+                  {
+                      "kind": kind,
+                      "policy": policies[kind],
+                      "observed_at": os.environ["NOW"],
+                      "main_sha": os.environ["MAIN_SHA"],
+                      "verdict": verdict,
+                      "complete": True,
+                  }
+                  for kind, verdict in verdicts.items()
+              ],
+          }
+          Path(os.environ["SNAPSHOT"]).write_text(
+              json.dumps(payload, sort_keys=True), encoding="utf-8"
+          )
+          PY
+          python3 scripts/zcloud_preflight_evidence_coherence.py             "$snapshot"             --require-admit | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "control-plane-preflight-evidence-coherence-v1"
+          assert payload["status"] == "admit"
+          assert payload["mutation_performed"] is False
+          assert len(payload["evidence"]) == 5
+          print(
+              "ZCLOUD_PREFLIGHT_EVIDENCE_COHERENCE_GREEN="
+              f"main:{payload['main_sha']}:span:{payload['evidence_span_seconds']}"
+          )
+          PY
+
+      - name: Upload bounded coherence evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-preflight-evidence-coherence-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-preflight-evidence-coherence.json
+          if-no-files-found: error
+          retention-days: 14
