@@ -105,6 +105,21 @@ class ZcloudMainProtectionAuditTests(unittest.TestCase):
         self.assertFalse(result["checks"]["required_check_count_positive"])
         self.assertEqual("needs_hardening", result["status"])
 
+    def test_legacy_status_contexts_count_as_required_checks(self):
+        payload = canonical_protection()
+        payload["required_status_checks"] = {
+            "strict": True,
+            "checks": [],
+            "contexts": ["zCloud regression smoke"],
+        }
+        result = audit_protection(
+            branch_protected=True,
+            protection=payload,
+        )
+        self.assertTrue(result["checks"]["required_check_count_positive"])
+        self.assertEqual(1, result["required_check_count"])
+
+
     def test_unprotected_branch_rejects_conflicting_payload(self):
         with self.assertRaisesRegex(
             ProtectionEvidenceError,
