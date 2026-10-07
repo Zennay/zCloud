@@ -1,0 +1,196 @@
+name: Recover exact inactive zCloud workers
+
+on:
+  push:
+    branches:
+      - "ops/zguard-targeted-recovery-live-20261007"
+    paths:
+      - ".github/workflows/recover-exact-inactive-workers-20261007.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-exact-inactive-zcloud-workers-20261007
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    steps:
+      - name: Recover FTMO RaiseAI and Supa-w1 only if still inactive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import sqlite3
+          import time
+          import urllib.request
+
+          BASE="http://127.0.0.1:8765"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          WORKERS=("ftmo::w1","raiseai::w1","supa::w1")
+
+          def call(method,path,payload=None,retries=6):
+              data=None
+              headers={"User-Agent":"zcloud-exact-inactive-recovery/1"}
+              if payload is not None:
+                  data=json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"]="application/json"
+              last=None
+              for attempt in range(1,retries+1):
+                  try:
+                      req=urllib.request.Request(BASE+path,data=data,headers=headers,method=method)
+                      with urllib.request.urlopen(req,timeout=15) as response:
+                          return json.load(response)
+                  except Exception as exc:
+                      last=exc
+                      print(f"API_RETRY method={method} path={path} attempt={attempt} error={type(exc).__name__}:{exc}")
+                      time.sleep(min(2*attempt,6))
+              raise RuntimeError(f"{method} {path} unavailable: {last}")
+
+          def live_worker(worker):
+              payload=call("GET","/api/runner-live")
+              base=worker.split("::w",1)[0]
+              rows=((payload.get("chatgpt_runners") or {}).get(base) or {}).get("workers") or []
+              return next((row for row in rows if str(row.get("worker_id") or "")==worker),{})
+
+          def target(worker):
+              payload=call("GET","/api/runner-targets")
+              return ((payload.get("projects") or {}).get(worker) or {})
+
+          def command(command_id):
+              with sqlite3.connect(DB,timeout=5) as conn:
+                  conn.row_factory=sqlite3.Row
+                  row=conn.execute(
+                      "SELECT id,action,status,result,created_at,updated_at FROM runner_commands WHERE id=?",
+                      (int(command_id),),
+                  ).fetchone()
+                  return dict(row) if row else {"status":"missing"}
+
+          def wait_assignment(worker,seconds=60):
+              deadline=time.time()+seconds
+              last={}
+              while time.time()<deadline:
+                  last=target(worker)
+                  if bool(last.get("active")) and bool(last.get("assignment_ready")):
+                      return last
+                  state=live_worker(worker)
+                  if bool(state.get("generating")) or bool(state.get("sending")):
+                      return last
+                  time.sleep(3)
+              return last
+
+          def wait_progress(worker,command_id,seconds=80):
+              deadline=time.time()+seconds
+              last_command={}
+              last_runtime={}
+              while time.time()<deadline:
+                  last_command=command(command_id)
+                  last_runtime=live_worker(worker)
+                  if (
+                      last_command.get("status") in ("completed","failed","missing")
+                      or bool(last_runtime.get("generating"))
+                      or bool(last_runtime.get("sending"))
+                  ):
+                      break
+                  time.sleep(3)
+              return last_command,last_runtime
+
+          results={}
+          for worker in WORKERS:
+              state=live_worker(worker)
+              if bool(state.get("generating")) or bool(state.get("sending")):
+                  results[worker]={"ok":True,"proof":"already-active","state":state.get("state")}
+                  print("WORKER_ALREADY_ACTIVE="+worker)
+                  continue
+
+              cfg=wait_assignment(worker,60)
+              state=live_worker(worker)
+              if bool(state.get("generating")) or bool(state.get("sending")):
+                  results[worker]={"ok":True,"proof":"became-active-during-assignment-wait","state":state.get("state")}
+                  continue
+              q=cfg.get("queue_item") or {}
+              print("ASSIGNMENT="+json.dumps({
+                  "worker":worker,
+                  "active":cfg.get("active"),
+                  "assignment_ready":cfg.get("assignment_ready"),
+                  "global_worker_slot":cfg.get("global_worker_slot"),
+                  "queue_id":q.get("queue_id"),
+                  "queue_project":q.get("project_id"),
+                  "queue_status":q.get("status"),
+                  "queue_worker_slot":q.get("worker_slot"),
+              },sort_keys=True,default=str))
+              if not bool(cfg.get("active")) or not bool(cfg.get("assignment_ready")):
+                  results[worker]={"ok":False,"proof":"assignment-not-ready"}
+                  continue
+
+              now=dt.datetime.now(dt.timezone.utc).isoformat()
+              superseded=[]
+              with sqlite3.connect(DB,timeout=10) as conn:
+                  conn.row_factory=sqlite3.Row
+                  conn.execute("PRAGMA busy_timeout=10000")
+                  conn.execute("BEGIN IMMEDIATE")
+                  rows=conn.execute(
+                      "SELECT id,action FROM runner_commands WHERE project_id=? AND status='pending' ORDER BY id",
+                      (worker,),
+                  ).fetchall()
+                  for row in rows:
+                      superseded.append(int(row["id"]))
+                      conn.execute(
+                          "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
+                          "WHERE id=? AND status='pending'",
+                          (now,"exact inactive-worker recovery superseded stale command",int(row["id"])),
+                      )
+              print("SUPERSEDED="+json.dumps({"worker":worker,"ids":superseded},sort_keys=True))
+
+              fresh=call("POST","/api/runner-control",{"project_id":worker,"action":"new_chat"})
+              if not fresh.get("ok") or not fresh.get("command_id"):
+                  results[worker]={"ok":False,"proof":"new-chat-not-admitted","response":fresh}
+                  continue
+              fresh_id=int(fresh["command_id"])
+              fresh_state,runtime=wait_progress(worker,fresh_id,80)
+              print("NEW_CHAT_RESULT="+json.dumps({
+                  "worker":worker,"command":fresh_state,
+                  "generating":bool(runtime.get("generating")),"sending":bool(runtime.get("sending")),
+                  "state":runtime.get("state"),
+              },sort_keys=True,default=str))
+              if fresh_state.get("status")=="failed":
+                  results[worker]={"ok":False,"proof":"new-chat-failed"}
+                  continue
+              if bool(runtime.get("generating")) or bool(runtime.get("sending")):
+                  results[worker]={"ok":True,"proof":"new-chat-activated"}
+                  continue
+              if fresh_state.get("status")!="completed":
+                  results[worker]={"ok":False,"proof":"new-chat-not-consumed"}
+                  continue
+
+              pushed=call("POST","/api/runner-control",{"project_id":worker,"action":"push"})
+              if not pushed.get("ok") or not pushed.get("command_id"):
+                  results[worker]={"ok":False,"proof":"push-not-admitted","response":pushed}
+                  continue
+              push_id=int(pushed["command_id"])
+              push_state,runtime=wait_progress(worker,push_id,80)
+              print("PUSH_RESULT="+json.dumps({
+                  "worker":worker,"command":push_state,
+                  "generating":bool(runtime.get("generating")),"sending":bool(runtime.get("sending")),
+                  "state":runtime.get("state"),
+              },sort_keys=True,default=str))
+              ok=(
+                  push_state.get("status")=="completed"
+                  or bool(runtime.get("generating"))
+                  or bool(runtime.get("sending"))
+              )
+              results[worker]={"ok":ok,"proof":"targeted-push" if ok else "targeted-push-no-progress"}
+
+          print("EXACT_RECOVERY_RESULTS="+json.dumps(results,sort_keys=True,default=str))
+          failed=[worker for worker,result in results.items() if not bool(result.get("ok"))]
+          if failed:
+              raise SystemExit("inactive worker recovery failed for: "+", ".join(failed))
+          print("EXACT_INACTIVE_WORKERS_RECOVERY_GREEN=1")
+          PY
