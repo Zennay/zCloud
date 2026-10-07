@@ -32,6 +32,7 @@ jobs:
           targets=[
               "zcloud-self-hosted-queue-watchdog.yml",
               "push-all-workers-now.yml",
+              "zcloud-restart-workers.yml",
           ]
           headers={
               "Authorization":f"Bearer {token}",
