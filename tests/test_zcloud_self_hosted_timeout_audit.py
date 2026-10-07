@@ -11,6 +11,7 @@ from scripts import zcloud_self_hosted_timeout_audit as audit
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "zcloud_self_hosted_timeout_audit.py"
+WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-self-hosted-timeout-audit.yml"
 
 
 class SelfHostedTimeoutAuditTests(unittest.TestCase):
@@ -147,6 +148,38 @@ jobs:
             self.assertEqual(1, payload["self_hosted_job_count"])
             self.assertEqual(1, payload["finding_count"])
             self.assertFalse(payload["mutation_performed"])
+
+    def test_workflow_is_exact_head_read_only_and_bounded(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\\n  contents: read", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("timeout-minutes: 5", text)
+        self.assertIn(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            text,
+        )
+        self.assertIn(
+            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+            text,
+        )
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            text,
+        )
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("retention-days: 14", text)
+        for forbidden in (
+            "contents: write",
+            "actions: write",
+            "sudo ",
+            "systemctl restart",
+            "git push",
+            "--require-bounded",
+        ):
+            self.assertNotIn(forbidden, text)
 
 
 if __name__ == "__main__":
