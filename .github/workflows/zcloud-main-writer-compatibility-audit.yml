@@ -1,0 +1,109 @@
+name: zCloud main-writer compatibility audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_main_writer_compatibility_audit.py"
+      - "tests/test_zcloud_main_writer_compatibility_audit.py"
+      - ".github/workflows/zcloud-main-writer-compatibility-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-main-writer-compatibility-audit-\${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run hosted compatibility regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_main_writer_compatibility_audit
+          python3 -m py_compile scripts/zcloud_main_writer_compatibility_audit.py
+
+  prove:
+    needs: validate
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Re-run focused regressions on permanent VPS
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_main_writer_compatibility_audit
+          python3 -m py_compile scripts/zcloud_main_writer_compatibility_audit.py
+
+      - name: Inventory main-writer compatibility read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zcloud-main-writer-compatibility-audit.json"
+          python3 scripts/zcloud_main_writer_compatibility_audit.py --repo-root . | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "zcloud-main-writer-compatibility-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["workflow_count_with_write_signal"] >= payload["incompatible_count"]
+          assert payload["workflow_count_with_write_signal"] >= payload["review_required_count"]
+          print(
+              "ZCLOUD_MAIN_WRITER_COMPAT_AUDIT_GREEN="
+              f"signals:{payload['workflow_count_with_write_signal']}:"
+              f"incompatible:{payload['incompatible_count']}:"
+              f"review:{payload['review_required_count']}"
+          )
+          PY
+
+      - name: Upload bounded compatibility evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-main-writer-compatibility-audit-\${{ github.run_id }}
+          path: \${{ runner.temp }}/zcloud-main-writer-compatibility-audit.json
+          if-no-files-found: error
+          retention-days: 14
