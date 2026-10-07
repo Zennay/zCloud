@@ -1,38 +1,75 @@
 name: zSSH GitHub admin capability probe
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-gh-admin-capability-probe.yml"
+      - "tests/test_zssh_gh_admin_capability_probe_workflow.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/zssh-gh-admin-capability-probe.yml"
+      - "tests/test_zssh_gh_admin_capability_probe_workflow.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zssh-gh-admin-capability-probe
-  cancel-in-progress: true
+  group: zssh-gh-admin-capability-probe-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact zCloud candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact zCloud candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+
+      - name: Validate admin capability probe contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zssh_gh_admin_capability_probe_workflow
+
   probe:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
     name: Probe persistent VPS GitHub auth for zSSH administration
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - name: Check out zCloud control plane
-        uses: actions/checkout@v4
+      - name: Check out exact zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           persist-credentials: false
+          fetch-depth: 1
 
-      - name: Enforce permanent VPS runner identity
+      - name: Enforce permanent VPS runner identity and exact revision
         shell: bash
         run: |
           set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
           python3 scripts/zcloud_vps_runner_guard.py --json \
             | tee "$RUNNER_TEMP/zssh-gh-admin-runner-guard.json"
-          test "$(hostname)" = "vps-bb300bba"
-          test "$(id -un)" = "ubuntu"
 
       - name: Probe persistent gh authorization without mutation
         id: capability
@@ -98,7 +135,7 @@ jobs:
 
       - name: Upload non-secret capability evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zssh-gh-admin-capability-${{ github.run_id }}
           path: |
