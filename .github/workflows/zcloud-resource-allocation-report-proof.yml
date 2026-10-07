@@ -1,0 +1,89 @@
+name: zCloud resource allocation report proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_resource_allocation_report.py
+      - tests/test_resource_allocation_report.py
+      - tests/test_resource_allocation_workflow.py
+      - .github/workflows/zcloud-resource-allocation-report-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-resource-allocation-report-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      LIVE_DB: /home/ubuntu/zennay-cloud/history.db
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused allocation-report regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_resource_allocation_report \
+            tests.test_resource_allocation_workflow
+
+      - name: Prove live resource allocation read model without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$LIVE_DB" "$RUNNER_TEMP/db-before.json" <<'PY'
+          import json, os, sys
+          st=os.stat(sys.argv[1])
+          json.dump({"size":st.st_size,"mtime_ns":st.st_mtime_ns},open(sys.argv[2],"w",encoding="utf-8"))
+          PY
+          python3 scripts/zcloud_resource_allocation_report.py \
+            --contracts project-contracts.json \
+            --db "$LIVE_DB" \
+            --pretty > "$RUNNER_TEMP/zcloud-resource-allocation.json"
+          python3 - "$LIVE_DB" "$RUNNER_TEMP/db-before.json" "$RUNNER_TEMP/zcloud-resource-allocation.json" <<'PY'
+          import json, os, sys
+          before=json.load(open(sys.argv[2],encoding="utf-8"))
+          st=os.stat(sys.argv[1])
+          assert before == {"size":st.st_size,"mtime_ns":st.st_mtime_ns}
+          payload=json.load(open(sys.argv[3],encoding="utf-8"))
+          summary=payload["summary"]
+          assert summary["project_count"] >= 1
+          assert summary["active_lease_count"] >= 0
+          serialized=json.dumps(payload,sort_keys=True).lower()
+          for forbidden in ('"owner_id"', '"metadata"', '"argv"', '"environ"', '"cmdline"'):
+              assert forbidden not in serialized
+          state="consistent" if summary["contract_consistent"] else "drift_visible"
+          print("ZCLOUD_RESOURCE_ALLOCATION_READONLY_GREEN="+state)
+          print("projects="+str(summary["project_count"]))
+          print("active_leases="+str(summary["active_lease_count"]))
+          print("allocated_projects="+str(summary["allocated_project_count"]))
+          PY
