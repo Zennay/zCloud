@@ -1,0 +1,92 @@
+name: zCloud project registry coherence
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - projects.json
+      - project-contracts.json
+      - vps-execution-policy.json
+      - portfolio_queue.seed.json
+      - scripts/zcloud_project_registry_coherence.py
+      - tests/test_project_registry_coherence.py
+      - tests/test_project_registry_coherence_workflow.py
+      - .github/workflows/zcloud-project-registry-coherence.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-registry-coherence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Prove exact checkout
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Validate project registration coherence
+        run: |
+          python3 scripts/zcloud_project_registry_coherence.py
+          python3 -m unittest -v \
+            tests.test_project_registry_coherence \
+            tests.test_project_registry_coherence_workflow
+
+  prove-on-permanent-vps:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Prove exact checkout
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Guard canonical permanent VPS identity
+        run: python3 scripts/zcloud_vps_runner_guard.py
+      - name: Prove live zGuard scheduler target is registered
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          url = "http://127.0.0.1:8765/api/runner-targets"
+          with urllib.request.urlopen(url, timeout=8) as response:
+              payload = json.load(response)
+
+          projects = payload.get("projects") or {}
+          worker = projects.get("zguard::w1")
+          if not isinstance(worker, dict):
+              raise SystemExit("live scheduler is missing zguard::w1")
+          if worker.get("base_project_id") != "zguard":
+              raise SystemExit(f"zguard::w1 has wrong base_project_id: {worker.get('base_project_id')!r}")
+          if worker.get("project_id") != "zguard::w1":
+              raise SystemExit(f"zguard::w1 has wrong project_id: {worker.get('project_id')!r}")
+
+          print(json.dumps({
+              "state": "live-scheduler-registered",
+              "worker_key": "zguard::w1",
+              "base_project_id": worker.get("base_project_id"),
+              "active": bool(worker.get("active")),
+              "has_queue_assignment": bool(worker.get("queue_item") or worker.get("queue_id")),
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Re-run coherence proof on permanent VPS
+        run: |
+          python3 scripts/zcloud_project_registry_coherence.py
+          python3 -m unittest -v \
+            tests.test_project_registry_coherence \
+            tests.test_project_registry_coherence_workflow
+          echo "ZCLOUD_PROJECT_REGISTRY_COHERENCE_GREEN"
