@@ -41,7 +41,7 @@ class Pwq41CompositionPreflightTests(unittest.TestCase):
             target = root / "server.py"
             target.write_text(
                 target.read_text(encoding="utf-8").replace(
-                    "RUNNER_COMMAND_LONG_STALE_SECONDS", "REMOVED_LONG_STALE", 1
+                    "RUNNER_COMMAND_LONG_STALE_SECONDS", "REMOVED_LONG_STALE"
                 ),
                 encoding="utf-8",
             )
