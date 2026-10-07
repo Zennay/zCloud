@@ -40,10 +40,19 @@ jobs:
 
       - name: Audit repository timeout bounds hosted
         shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: |
           set -euo pipefail
+          if [[ "$BASE_SHA" != "$(git rev-parse HEAD)" ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
           report="$RUNNER_TEMP/zcloud-self-hosted-timeout-hosted.json"
-          python3 scripts/zcloud_self_hosted_timeout_audit.py --repo-root . --max-minutes 30 | tee "$report"
+          python3 scripts/zcloud_self_hosted_timeout_audit.py \
+            --repo-root . \
+            --max-minutes 30 \
+            --base-ref "$BASE_SHA" \
+            --require-no-new-debt | tee "$report"
           REPORT="$report" python3 - <<'PY'
           import json
           import os
@@ -53,6 +62,7 @@ jobs:
           assert payload["policy"] == "self-hosted-job-timeout-audit-v1"
           assert payload["mutation_performed"] is False
           assert payload["self_hosted_job_count"] >= 1
+          assert payload["new_debt_count"] == 0
           print(
               "ZCLOUD_SELF_HOSTED_TIMEOUT_HOSTED_GREEN="
               f"jobs:{payload['self_hosted_job_count']}:findings:{payload['finding_count']}"
