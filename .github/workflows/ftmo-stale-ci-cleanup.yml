@@ -1,6 +1,10 @@
 name: FTMO stale CI queue cleanup
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/ftmo-stale-ci-cleanup.yml"
+      - "tests/test_ftmo_stale_ci_cleanup_workflow.py"
   push:
     branches: [main]
     paths:
@@ -11,14 +15,50 @@ permissions:
   contents: read
 
 concurrency:
-  group: ftmo-stale-ci-cleanup
-  cancel-in-progress: true
+  group: ftmo-stale-ci-cleanup-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'live' }}
+  cancel-in-progress: false
 
 jobs:
-  cleanup:
-    runs-on: self-hosted
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Validate stale-CI cleanup trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_ftmo_stale_ci_cleanup_workflow
+
+  cleanup:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Guard canonical permanent VPS before cancellation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Cancel only superseded FTMO branch runs
         shell: bash
         run: |
@@ -63,7 +103,8 @@ jobs:
                   ;;
               esac
             done < <(
-              gh api --paginate "repos/Zennay/Ftmo/actions/runs?branch=$branch&per_page=100"                 --jq '.workflow_runs[] | [.id,.status,.head_sha] | @tsv'
+              gh api --paginate "repos/Zennay/Ftmo/actions/runs?branch=$branch&per_page=100" \
+                --jq '.workflow_runs[] | [.id,.status,.head_sha] | @tsv'
             )
           done
 
