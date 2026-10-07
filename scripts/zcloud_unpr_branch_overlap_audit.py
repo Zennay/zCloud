@@ -53,10 +53,14 @@ def _parse_utc(value: Any) -> dt.datetime:
     return parsed.astimezone(dt.timezone.utc)
 
 
+def _has_control_characters(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
 def _safe_repo_path(value: Any) -> str:
     if not isinstance(value, str) or not value or len(value) > 300:
         raise AuditError("path_invalid")
-    if value.startswith(("/", "\\")) or "\x00" in value:
+    if value.startswith(("/", "\\")) or "\x00" in value or _has_control_characters(value):
         raise AuditError("path_invalid")
     parts = value.split("/")
     if any(part in {"", ".", ".."} for part in parts):
@@ -69,6 +73,8 @@ def _safe_branch(value: Any) -> str:
         raise AuditError("branch_invalid")
     if value == "main":
         return value
+    if _has_control_characters(value):
+        raise AuditError("branch_invalid")
     if value.startswith(("/", "-")) or value.endswith(("/", ".")):
         raise AuditError("branch_invalid")
     if any(token in value for token in ("..", "@{", "\\", " ", "~", "^", ":", "?", "*", "[")):
@@ -161,6 +167,7 @@ def audit(payload: dict[str, Any], candidate_paths: list[str], now: dt.datetime)
         if shared:
             overlaps.append({"branch": row["name"], "paths": shared})
 
+    overlaps.sort(key=lambda item: item["branch"])
     return {
         "schema": SCHEMA,
         "status": "overlap" if overlaps else "clear",
