@@ -41,6 +41,11 @@ def audit_project_registry(
     if not isinstance(queue_seed, list):
         return {"state": "incoherent", "errors": [{"code": "queue_seed_not_list"}]}
 
+    defaults = contracts.get("defaults", {})
+    if not isinstance(defaults, dict):
+        errors.append({"code": "invalid_contract_defaults"})
+        defaults = {}
+
     project_ids = [row.get("id") for row in projects if isinstance(row, dict)]
     if len(project_ids) != len(projects) or any(not isinstance(value, str) or not value for value in project_ids):
         errors.append({"code": "invalid_project_id"})
@@ -109,12 +114,17 @@ def audit_project_registry(
         autonomy = contract.get("autonomy")
         if not isinstance(autonomy, dict):
             autonomy = {}
-        ai_worker_cap = contract.get("ai_worker_cap", contracts.get("defaults", {}).get("ai_worker_cap", 0))
+        ai_worker_cap = contract.get("ai_worker_cap", defaults.get("ai_worker_cap", 0))
+        if (
+            not isinstance(ai_worker_cap, int)
+            or isinstance(ai_worker_cap, bool)
+            or ai_worker_cap < 0
+        ):
+            errors.append({"code": "invalid_ai_worker_cap", "project_ids": [project_id]})
+            continue
         if (
             contract.get("queue_mode") == "execution"
             and autonomy.get("auto_start") is True
-            and isinstance(ai_worker_cap, int)
-            and not isinstance(ai_worker_cap, bool)
             and ai_worker_cap > 0
         ):
             required_seed_projects.add(project_id)
