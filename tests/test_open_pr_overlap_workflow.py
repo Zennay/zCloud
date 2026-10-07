@@ -59,6 +59,7 @@ class OpenPrOverlapWorkflowContractTests(unittest.TestCase):
 
     def test_pr_proof_requires_collision_free_current_slice(self):
         text = self.text
+        self.assertIn("--limit 501", text)
         self.assertIn("--current-pr", text)
         self.assertIn('"$CURRENT_PR"', text)
         self.assertIn("--require-clear", text)
