@@ -38,6 +38,27 @@ jobs:
           python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit
           python3 -m py_compile scripts/zcloud_self_hosted_timeout_audit.py
 
+      - name: Audit repository timeout bounds hosted
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zcloud-self-hosted-timeout-hosted.json"
+          python3 scripts/zcloud_self_hosted_timeout_audit.py --repo-root . --max-minutes 30 | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "self-hosted-job-timeout-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["self_hosted_job_count"] >= 1
+          print(
+              "ZCLOUD_SELF_HOSTED_TIMEOUT_HOSTED_GREEN="
+              f"jobs:{payload['self_hosted_job_count']}:findings:{payload['finding_count']}"
+          )
+          PY
+
   prove:
     needs: validate
     if: >-
