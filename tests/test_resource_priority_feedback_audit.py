@@ -101,11 +101,11 @@ class ResourcePriorityFeedbackAuditTests(unittest.TestCase):
             report["missing"],
         )
 
-    def test_current_repo_baseline_is_bounded_known_debt(self):
+    def test_current_repo_baseline_cannot_regress_beyond_known_debt(self):
         report = audit.audit_source(SOURCE.read_text(encoding="utf-8"))
-        self.assertEqual("needs_hardening", report["state"])
-        self.assertEqual(
-            ["pending_feedback", "success_feedback"],
+        self.assertIn(report["state"], ("complete", "needs_hardening"))
+        self.assertTrue(
+            set(report["missing"]).issubset({"pending_feedback", "success_feedback"}),
             report["missing"],
         )
         for key in (
@@ -118,6 +118,24 @@ class ResourcePriorityFeedbackAuditTests(unittest.TestCase):
             "reenabled",
         ):
             self.assertTrue(report["checks"][key], key)
+
+    def test_feedback_must_be_causally_placed_in_the_handler(self):
+        source = COMPLETE.replace(
+            "  el.setAttribute('aria-busy','true');\n", ""
+        ).replace(
+            "    $('notice').textContent='Priority updated.';\n", ""
+        )
+        source = source.replace(
+            "  el.disabled=true;\n",
+            "  $('notice').textContent='Saving priority…';\n  el.disabled=true;\n",
+        )
+        source = source.replace(
+            "    el.dataset.previousValue=saved;\n",
+            "    $('notice').textContent='Priority updated.';\n    el.dataset.previousValue=saved;\n",
+        )
+        report = audit.audit_source(source)
+        self.assertIn("pending_feedback", report["missing"])
+        self.assertIn("success_feedback", report["missing"])
 
     def test_cli_observation_stays_green_but_require_complete_fails_closed(self):
         observed = subprocess.run(
