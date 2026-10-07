@@ -32,6 +32,7 @@ class ActionsQueuePressureWorkflowTests(unittest.TestCase):
         self.assertIn("active = active[:30]", text)
         self.assertIn("/jobs?per_page=100", text)
         self.assertIn("jobs[:100]", text)
+        self.assertIn('str(job.get("created_at") or run_created)', text)
         self.assertIn('"capacity": 1', text)
         self.assertNotIn("--require-complete", text)
         self.assertNotIn("/cancel", text)
