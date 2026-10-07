@@ -127,6 +127,7 @@ jobs:
           from pathlib import Path
           Path(os.environ["MIXLAB_EVIDENCE"],"queue-receipt.json").write_text(json.dumps(receipt,indent=2)+"\n")
           PY
+          echo "ZCLOUD_MIXLAB_FOUNDATION_PROOF_GREEN=1"
 
       - name: Preserve sanitized evidence only
         if: always()
