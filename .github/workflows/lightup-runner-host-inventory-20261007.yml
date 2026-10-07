@@ -163,3 +163,44 @@ jobs:
           print("ZSSH_WORKER_PROVIDER_SLOTS=" + json.dumps(workers, sort_keys=True))
           conn.close()
           PY
+
+      - name: Read live dynamic worker allocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          with urllib.request.urlopen(base + "/api/runner-targets", timeout=15) as response:
+              targets = json.load(response)
+          allocation = targets.get("global_allocation") or {}
+          workers = allocation.get("workers") or []
+          print("LIGHTUP_RECOVERY_LIVE_ALLOCATION=" + json.dumps({
+              "max_workers": targets.get("max_workers"),
+              "dynamic_workers": targets.get("dynamic_workers"),
+              "workers": [
+                  {
+                      "worker_key": item.get("worker_key"),
+                      "project_id": item.get("project_id"),
+                      "worker_slot": item.get("worker_slot"),
+                      "global_worker_slot": item.get("global_worker_slot"),
+                      "provider": item.get("provider"),
+                      "queue_id": item.get("queue_id"),
+                      "priority": item.get("priority"),
+                  }
+                  for item in workers
+              ],
+              "candidates": [
+                  {
+                      "project_id": item.get("project_id"),
+                      "queue_id": item.get("queue_id"),
+                      "priority": item.get("priority"),
+                      "desired_state": item.get("desired_state"),
+                  }
+                  for item in (allocation.get("candidates") or [])
+                  if item.get("queue_id") == "zssh-lightup-evidence-runner-recovery-20261006"
+              ],
+          }, sort_keys=True))
+          PY
