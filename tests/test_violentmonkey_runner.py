@@ -101,7 +101,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.16", required.group(1))
+        self.assertEqual("1.3.17", required.group(1))
 
     def test_workers_rotate_to_fresh_chat_on_broken_or_new_assignment(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
@@ -127,7 +127,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.16";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.17";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -146,6 +146,14 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("violentmonkeyReadyProjects.has(key)", background)
         self.assertIn("positively announced readiness", background)
         self.assertIn("shouldProbeViolentmonkey(target.project_id)", background)
+
+    def test_primary_runner_retries_prompt_when_generation_never_starts(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        self.assertIn('await scheduleQualityRetry("no-generation-after-send"', userscript)
+        self.assertIn('await sendPrompt("no-generation-retry")', userscript)
+        self.assertIn('"no-generation-retry-send-unavailable"', userscript)
+        self.assertIn("generationDeadlineMs: timing.generationStartTimeoutMs", userscript)
 
         start = background.index("async function inject(tabId, target)")
         end = background.index("async function commandResult(", start)
