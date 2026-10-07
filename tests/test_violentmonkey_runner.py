@@ -106,6 +106,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
     def test_workers_rotate_to_fresh_chat_on_broken_or_new_assignment(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
+        recovery = (ROOT / "firefox-extension" / "recovery.js").read_text(encoding="utf-8")
         server = (ROOT / "server.py").read_text(encoding="utf-8")
 
         self.assertIn("could not load this chatgpt conversation", userscript)
