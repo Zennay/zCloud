@@ -76,6 +76,8 @@ class RunnablePriorityAdmissionTests(unittest.TestCase):
     def test_malformed_or_ambiguous_evidence_fails_closed(self):
         cases = [
             ({"schema_version": 2, "projects": []}, "evidence_schema_invalid"),
+            ({"schema_version": True, "projects": []}, "evidence_schema_invalid"),
+            ({"schema_version": 1.0, "projects": []}, "evidence_schema_invalid"),
             ({"schema_version": 1, "projects": {}}, "evidence_projects_missing"),
             (
                 {"schema_version": 1, "projects": [], "prompt": "do not accept"},
