@@ -131,3 +131,35 @@ jobs:
           print("LIGHTUP_RECOVERY_QUEUE_ITEM=" + json.dumps(result, sort_keys=True))
           conn.close()
           PY
+
+      - name: Read zSSH worker provider slots
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          from pathlib import Path
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+          conn.row_factory = sqlite3.Row
+          conn.execute("PRAGMA query_only=ON")
+          cols = {
+              row["name"] for row in conn.execute("PRAGMA table_info(runner_workers)")
+          }
+          wanted = [
+              c for c in ("project_id", "worker_slot", "provider", "desired_state")
+              if c in cols
+          ]
+          if "project_id" not in wanted or "worker_slot" not in wanted:
+              raise SystemExit("runner_workers identity columns missing")
+          rows = conn.execute(
+              "SELECT " + ",".join(wanted)
+              + " FROM runner_workers WHERE project_id=? ORDER BY worker_slot",
+              ("zssh",),
+          ).fetchall()
+          workers = [{key: row[key] for key in wanted} for row in rows]
+          print("ZSSH_WORKER_PROVIDER_SLOTS=" + json.dumps(workers, sort_keys=True))
+          conn.close()
+          PY
