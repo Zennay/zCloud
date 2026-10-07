@@ -85,6 +85,19 @@ class SerializedGateBacklogAuditTests(unittest.TestCase):
         self.assertEqual(1, result["draft_count"])
         self.assertFalse(result["mutation_performed"])
 
+    def test_primary_gate_only_reference_is_classified(self):
+        result = audit.audit_snapshot(
+            snapshot(
+                [
+                    pr(
+                        1090,
+                        body="Keep unmerged while #580/PWQ-41 owns the serialized control-plane window.",
+                    )
+                ]
+            )
+        )
+        self.assertEqual(1, result["dependent_pr_count"])
+
     def test_successor_reference_is_classified(self):
         result = audit.audit_snapshot(
             snapshot(
