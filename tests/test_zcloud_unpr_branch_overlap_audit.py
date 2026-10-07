@@ -162,11 +162,11 @@ class UnprBranchOverlapAuditTests(unittest.TestCase):
             )
         self.assertEqual(2, code)
 
-    def test_self_hosted_proof_is_exact_head_read_only_and_guarded(self):
+    def test_self_hosted_proof_is_exact_head_read_only_guarded_and_live(self):
         text = (ROOT / ".github/workflows/zcloud-unpr-branch-overlap-audit.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn("permissions:\n  contents: read\n  pull-requests: read", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn(
             "github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository",
@@ -181,6 +181,12 @@ class UnprBranchOverlapAuditTests(unittest.TestCase):
         self.assertIn('test "$(hostname)" = "vps-bb300bba"', text)
         self.assertIn('test "$(id -un)" = "ubuntu"', text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
+        self.assertIn("--limit 501", text)
+        self.assertIn("--json headRefName,isCrossRepository", text)
+        self.assertIn("git fetch --no-tags --prune origin", text)
+        self.assertIn("scripts/zcloud_unpr_branch_snapshot.py", text)
+        self.assertIn("--require-clear", text)
+        self.assertIn("ZCLOUD_UNPR_BRANCH_OVERLAP_LIVE_GREEN=1", text)
         self.assertNotIn("contents: write", text)
         self.assertNotIn("actions: write", text)
 
