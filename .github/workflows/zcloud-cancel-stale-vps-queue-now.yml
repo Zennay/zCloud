@@ -64,7 +64,19 @@ jobs:
           if len(main_sha)!=40:
               raise SystemExit("could not resolve canonical main SHA")
 
-          queued=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
+          queued=[]
+          seen=set()
+          for page in range(1,6):
+              batch=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100&page={page}").get("workflow_runs") or []
+              if not batch:
+                  break
+              for run in batch:
+                  run_id=int(run.get("id") or 0)
+                  if run_id and run_id not in seen:
+                      queued.append(run)
+                      seen.add(run_id)
+              if len(batch)<100:
+                  break
           now=datetime.now(timezone.utc)
           cancelled=[]
           kept=[]
@@ -97,6 +109,7 @@ jobs:
 
           print("CANONICAL_MAIN="+main_sha)
           print("CANCELLED="+json.dumps(cancelled,sort_keys=True))
+          print("SCANNED_QUEUED="+str(len(queued)))
           print("KEPT_COUNT="+str(len(kept)))
           if not cancelled:
               print("STALE_VPS_QUEUE_ALREADY_CLEAN=1")
