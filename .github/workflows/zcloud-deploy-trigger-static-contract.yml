@@ -1,0 +1,24 @@
+name: zCloud deploy trigger static contract
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/zcloud-vps-deploy.yml'
+      - '.github/workflows/zcloud-deploy-trigger-static-contract.yml'
+      - 'tests/test_zcloud_deploy_trigger_contract.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify deploy trigger invariants (no production access)
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_deploy_trigger_contract.py' -v
