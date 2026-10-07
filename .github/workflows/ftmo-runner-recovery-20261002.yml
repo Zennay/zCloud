@@ -9,7 +9,7 @@ on:
 
 # verify72 queue: zssh-ftmo-verify72-runner-recovery-20261002
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ftmo-research-runner-recovery
@@ -20,11 +20,12 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
-      - name: Check out exact main
+      - name: Check out exact triggering revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
-          fetch-depth: 0
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Recover dedicated FTMO research runner safely
         id: recovery
@@ -88,11 +89,10 @@ jobs:
           PRE_PID: ${{ steps.recovery.outputs.pre_pid }}
           POST_STATE: ${{ steps.recovery.outputs.post_state }}
           POST_PID: ${{ steps.recovery.outputs.post_pid }}
+          RECEIPT_PATH: ${{ runner.temp }}/zssh-ftmo-verify72-fallback-recovery.json
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main
-          git reset --hard origin/main
           python3 - <<'PY'
           import json, os, subprocess
           from pathlib import Path
@@ -128,20 +128,20 @@ jobs:
               "runner_diag_tail":diag,
               "fresh_oom_evidence":oom,
           }
-          target=Path("artifacts/ops/zssh-ftmo-verify72-fallback-recovery.json")
+          target=Path(os.environ["RECEIPT_PATH"])
           target.parent.mkdir(parents=True,exist_ok=True)
           target.write_text(json.dumps(receipt,sort_keys=True,indent=2)+"\n",encoding="utf-8")
           print("FTMO_VERIFY72_FALLBACK_RECEIPT",json.dumps(receipt,sort_keys=True))
           PY
-          git config user.name "zcloud-automation"
-          git config user.email "zcloud-automation@users.noreply.github.com"
-          git add artifacts/ops/zssh-ftmo-verify72-fallback-recovery.json
-          if git diff --cached --quiet; then
-            echo "FTMO_VERIFY72_FALLBACK_RECEIPT_UNCHANGED=1"
-          else
-            git commit -m "Record verify72 fallback FTMO runner recovery"
-            git push origin HEAD:main
-          fi
+
+      - name: Upload bounded recovery receipt
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ftmo-fallback-recovery-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/zssh-ftmo-verify72-fallback-recovery.json
+          if-no-files-found: error
+          retention-days: 14
 
 # PR500 exact-head queue recovery trigger 2026-10-04T01:12Z
 
