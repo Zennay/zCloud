@@ -18,12 +18,10 @@ class ResourceSchedulerCompositionWorkflowTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.sha || github.sha", self.text)
         self.assertIn('test "$(git rev-parse HEAD)" = "$expected"', self.text)
 
-    def test_hosted_validation_gates_self_hosted_proof(self):
-        self.assertIn("  validate:\n    runs-on: ubuntu-latest", self.text)
-        self.assertIn("  prove:\n    needs: validate", self.text)
-        hosted = self.text.index("  validate:")
-        proof = self.text.index("  prove:")
-        self.assertLess(hosted, proof)
+    def test_validation_stays_on_permanent_vps_execution_lane(self):
+        self.assertNotIn("runs-on: ubuntu-latest", self.text)
+        self.assertNotIn("needs: validate", self.text)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", self.text)
         self.assertIn("tests.test_resource_scheduler_composition_cli", self.text)
 
     def test_pull_request_self_hosted_execution_is_owner_and_same_repo_guarded(self):
