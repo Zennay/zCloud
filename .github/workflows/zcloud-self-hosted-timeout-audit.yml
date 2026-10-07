@@ -1,0 +1,133 @@
+name: zCloud self-hosted timeout audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_self_hosted_timeout_audit.py"
+      - "tests/test_zcloud_self_hosted_timeout_audit.py"
+      - ".github/workflows/zcloud-self-hosted-timeout-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-self-hosted-timeout-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout and focused tests
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit
+          python3 -m py_compile scripts/zcloud_self_hosted_timeout_audit.py
+
+      - name: Audit repository timeout bounds hosted
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$BASE_SHA" != "$(git rev-parse HEAD)" ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          report="$RUNNER_TEMP/zcloud-self-hosted-timeout-hosted.json"
+          python3 scripts/zcloud_self_hosted_timeout_audit.py \
+            --repo-root . \
+            --max-minutes 30 \
+            --base-ref "$BASE_SHA" \
+            --require-no-new-debt | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "self-hosted-job-timeout-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["self_hosted_job_count"] >= 1
+          assert payload["new_debt_count"] == 0
+          print(
+              "ZCLOUD_SELF_HOSTED_TIMEOUT_HOSTED_GREEN="
+              f"jobs:{payload['self_hosted_job_count']}:findings:{payload['finding_count']}"
+          )
+          PY
+
+  prove:
+    needs: validate
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Re-run focused regressions on permanent VPS
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit
+          python3 -m py_compile scripts/zcloud_self_hosted_timeout_audit.py
+
+      - name: Audit self-hosted job timeout bounds read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zcloud-self-hosted-timeout-audit.json"
+          python3 scripts/zcloud_self_hosted_timeout_audit.py --repo-root . --max-minutes 30 | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "self-hosted-job-timeout-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["self_hosted_job_count"] >= 1
+          print(
+              "ZCLOUD_SELF_HOSTED_TIMEOUT_AUDIT_GREEN="
+              f"jobs:{payload['self_hosted_job_count']}:findings:{payload['finding_count']}"
+          )
+          PY
+
+      - name: Upload bounded timeout audit evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-self-hosted-timeout-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-self-hosted-timeout-audit.json
+          if-no-files-found: error
+          retention-days: 14
