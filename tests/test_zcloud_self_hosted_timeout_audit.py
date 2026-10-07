@@ -151,7 +151,7 @@ jobs:
 
     def test_workflow_is_exact_head_read_only_and_bounded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("permissions:\\n  contents: read", text)
+        self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("timeout-minutes: 5", text)
