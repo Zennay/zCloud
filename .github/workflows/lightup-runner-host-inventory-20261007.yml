@@ -1,0 +1,86 @@
+name: LightUp runner host inventory 20261007
+
+on:
+  push:
+    branches:
+      - "ops/lightup-runner-host-inventory-20261007"
+    paths:
+      - ".github/workflows/lightup-runner-host-inventory-20261007.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Guard canonical permanent VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Inventory runner service and installation paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          def lines(cmd):
+              result = subprocess.run(
+                  cmd,
+                  check=False,
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+              )
+              return {
+                  "returncode": result.returncode,
+                  "stdout": [line for line in result.stdout.splitlines() if line.strip()],
+                  "stderr": [line for line in result.stderr.splitlines() if line.strip()][:20],
+              }
+
+          unit_dir = pathlib.Path("/etc/systemd/system")
+          service_names = sorted(
+              p.name
+              for p in unit_dir.glob("actions.runner.Zennay-*.service")
+              if p.is_file() or p.is_symlink()
+          )
+          lightup_services = [
+              name for name in service_names if "lightup" in name.lower()
+          ]
+
+          runner_roots = []
+          for base in (pathlib.Path("/opt"), pathlib.Path("/home/ubuntu")):
+              if not base.exists():
+                  continue
+              for marker in base.glob("**/.runner"):
+                  try:
+                      relative_depth = len(marker.relative_to(base).parts)
+                  except ValueError:
+                      continue
+                  if relative_depth > 4:
+                      continue
+                  parent = str(marker.parent)
+                  runner_roots.append(parent)
+          runner_roots = sorted(set(runner_roots))
+          lightup_roots = [
+              root for root in runner_roots if "lightup" in root.lower()
+          ]
+
+          evidence = {
+              "hostname": lines(["hostname"])["stdout"],
+              "runner_service_names": service_names,
+              "lightup_service_names": lightup_services,
+              "runner_roots": runner_roots,
+              "lightup_runner_roots": lightup_roots,
+              "lightup_service_count": len(lightup_services),
+              "lightup_runner_root_count": len(lightup_roots),
+          }
+          print("LIGHTUP_RUNNER_HOST_INVENTORY=" + json.dumps(evidence, sort_keys=True))
+          PY
