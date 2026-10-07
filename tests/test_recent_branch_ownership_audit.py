@@ -150,6 +150,53 @@ class RecentBranchCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(collector.CollectorError, "open_pr_bound_exceeded"):
             collector.collect_snapshot("Zennay/zCloud", AS_OF, 72, runner)
 
+    def test_open_pr_snapshot_change_fails_closed(self):
+        pr_calls = 0
+
+        def runner(args):
+            nonlocal pr_calls
+            joined = " ".join(args)
+            if "/git/ref/heads/main" in joined:
+                return {"object": {"sha": MAIN}}
+            if args[:3] == ["gh", "pr", "list"]:
+                pr_calls += 1
+                if pr_calls == 1:
+                    return []
+                return [{"headRefName": "late-owner", "isCrossRepository": False}]
+            if args[:3] == ["gh", "api", "graphql"]:
+                return graphql_page(
+                    [branch("main", MAIN, "2026-10-07T02:55:00Z")]
+                )
+            raise AssertionError(args)
+
+        with self.assertRaisesRegex(
+            collector.CollectorError, "open_pr_snapshot_changed"
+        ):
+            collector.collect_snapshot("Zennay/zCloud", AS_OF, 72, runner)
+
+    def test_branch_ref_change_during_scan_fails_closed(self):
+        graph_calls = 0
+
+        def runner(args):
+            nonlocal graph_calls
+            joined = " ".join(args)
+            if "/git/ref/heads/main" in joined:
+                return {"object": {"sha": MAIN}}
+            if args[:3] == ["gh", "pr", "list"]:
+                return []
+            if args[:3] == ["gh", "api", "graphql"]:
+                graph_calls += 1
+                sha = MAIN if graph_calls == 1 else OPEN
+                return graphql_page(
+                    [branch("main", sha, "2026-10-07T02:55:00Z")]
+                )
+            raise AssertionError(args)
+
+        with self.assertRaisesRegex(
+            collector.CollectorError, "branch_snapshot_changed"
+        ):
+            collector.collect_snapshot("Zennay/zCloud", AS_OF, 72, runner)
+
     def test_branch_pagination_overflow_fails_closed(self):
         page = [
             branch(f"b{i}", f"{i:040x}", "2026-10-01T00:00:00Z")
