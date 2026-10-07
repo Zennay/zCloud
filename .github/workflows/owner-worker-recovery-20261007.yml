@@ -1,4 +1,4 @@
-# trigger owner recovery sequence 2026-10-07T02:20Z
+# trigger owner recovery sequence 2026-10-07T02:22Z
 name: Owner requested zCloud worker recovery 2026-10-07
 
 on:
@@ -19,9 +19,9 @@ concurrency:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
-      - name: Diagnose, restart, push, and re-diagnose workers
+      - name: Restart and push every allocated worker
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,7 +35,11 @@ jobs:
             local allow_failure="$3"
             local since run_id
             since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            gh workflow run "$workflow" --repo "$repo" --ref main
+            if ! gh workflow run "$workflow" --repo "$repo" --ref main; then
+              echo "${label}_DISPATCH=failure"
+              [[ "$allow_failure" == "1" ]] && return 0
+              return 1
+            fi
             run_id=""
             for _ in $(seq 1 30); do
               sleep 2
@@ -60,8 +64,6 @@ jobs:
             [[ "$allow_failure" == "1" ]]
           }
 
-          run_one zcloud-live-debug.yml PRE_DIAGNOSTIC 1
           run_one zcloud-restart-workers.yml RESTART 1
           run_one push-all-workers-now.yml PUSH_ALL 0
-          run_one zcloud-live-debug.yml POST_DIAGNOSTIC 1
           echo "OWNER_WORKER_RECOVERY_SEQUENCE_COMPLETE=1"
