@@ -150,6 +150,34 @@ class RecentBranchCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(collector.CollectorError, "open_pr_bound_exceeded"):
             collector.collect_snapshot("Zennay/zCloud", AS_OF, 72, runner)
 
+    def test_recent_compare_fanout_bound_fails_before_compare_calls(self):
+        nodes = [branch("main", MAIN, "2026-10-07T02:55:00Z")]
+        nodes.extend(
+            branch(
+                f"recent-{i:03d}",
+                f"{i + 1000:040x}",
+                "2026-10-07T02:30:00Z",
+            )
+            for i in range(collector.MAX_RECENT_COMPARE_BRANCHES + 1)
+        )
+
+        def runner(args):
+            joined = " ".join(args)
+            if "/git/ref/heads/main" in joined:
+                return {"object": {"sha": MAIN}}
+            if args[:3] == ["gh", "pr", "list"]:
+                return []
+            if args[:3] == ["gh", "api", "graphql"]:
+                return graphql_page(nodes)
+            if "/compare/" in joined:
+                self.fail("collector must fail before issuing compare calls")
+            raise AssertionError(args)
+
+        with self.assertRaisesRegex(
+            collector.CollectorError, "recent_branch_compare_bound_exceeded"
+        ):
+            collector.collect_snapshot("Zennay/zCloud", AS_OF, 72, runner)
+
     def test_open_pr_snapshot_change_fails_closed(self):
         pr_calls = 0
 
