@@ -1,0 +1,52 @@
+name: Cancel obsolete queued LightUp export proof
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/lightup-export-obsolete-proof-cleanup.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Cancel only the exact queued superseded proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          base = "https://api.github.com"
+          def request(path, method="GET"):
+              req = urllib.request.Request(
+                  base + path, method=method,
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  body = response.read()
+                  return json.loads(body) if body else None
+
+          run_id = 37704077077
+          run_path = f"/repos/Zennay/zCloud/actions/runs/{run_id}"
+          run = request(run_path)
+          assert run["head_sha"] == "4e797963f1b305c4bb0b8e6018cc86a97387cb94"
+          assert run["path"] == ".github/workflows/lightup-pr960-exact-head-proof.yml"
+          pr = request("/repos/Zennay/Lightup/pulls/960")
+          assert pr["head"]["sha"] != "663b994442db66b3184921df300482ef6a408169"
+          jobs = request(run_path + "/jobs")["jobs"]
+          if run["status"] != "queued" or not jobs or any(j["status"] != "queued" for j in jobs):
+              print("PRESERVE: obsolete run is no longer wholly queued")
+          else:
+              request(run_path + "/cancel", method="POST")
+              print(f"CANCELLED_SUPERSEDED_QUEUED_PROOF run={run_id}")
+          PY
