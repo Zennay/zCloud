@@ -65,6 +65,20 @@ class ViolentmonkeyProfileDiagnosticWorkflowTests(unittest.TestCase):
         self.assertIn("con.close()", self.text)
         self.assertIn("ZCLOUD_VIOLENTMONKEY_PROFILE_DIAGNOSTIC_GREEN=1", self.text)
 
+
+    def test_userscript_snapshot_has_local_restore_trap(self):
+        marker = "      - name: Snapshot installed zCloud userscript safely"
+        step = self.text[self.text.index(marker):]
+        helper = "restore_managed_firefox() {"
+        trap = "trap restore_managed_firefox EXIT"
+        python = "python3 - <<'PY'"
+        self.assertIn(helper, step)
+        self.assertIn(trap, step)
+        self.assertIn("trap - EXIT", step)
+        self.assertLess(step.index(helper), step.index(python))
+        self.assertLess(step.index(trap), step.index(python))
+        self.assertGreater(step.index("restore_managed_firefox\n", step.index(python)), step.index(python))
+
     def test_pr_checks_cannot_cancel_live_diagnostic(self):
         self.assertIn(
             "group: zcloud-violentmonkey-profile-diagnostic-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}",
