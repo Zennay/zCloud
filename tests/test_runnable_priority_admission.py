@@ -47,6 +47,20 @@ class RunnablePriorityAdmissionTests(unittest.TestCase):
         self.assertEqual("turbo", result["excluded"][0]["declared_priority"])
         self.assertEqual(0, result["excluded"][0]["priority_weight"])
 
+    def test_weight_scale_matches_existing_resource_control_contract(self):
+        self.assertEqual(
+            {
+                "background": 100,
+                "normal": 400,
+                "high": 800,
+                "turbo": 3000,
+            },
+            __import__(
+                "scripts.zcloud_runnable_priority_admission",
+                fromlist=["PRIORITY_WEIGHT"],
+            ).PRIORITY_WEIGHT,
+        )
+
     def test_priority_order_is_deterministic_inside_admitted_set(self):
         result = rank_runnable_projects(
             evidence(
