@@ -16,11 +16,13 @@ EVIDENCE_SCHEMA_VERSION = 1
 MAX_EVIDENCE_BYTES = 256 * 1024
 MAX_PROJECTS = 256
 
+# Must stay numerically aligned with enhancements.PRIORITY_WEIGHTS, which is
+# the existing dashboard/systemd resource-control contract.
 PRIORITY_WEIGHT = {
-    "background": 10,
-    "normal": 20,
-    "high": 30,
-    "turbo": 40,
+    "background": 100,
+    "normal": 400,
+    "high": 800,
+    "turbo": 3000,
 }
 
 
