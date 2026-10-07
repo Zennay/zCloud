@@ -1,0 +1,80 @@
+name: zCloud serialized writer window audit
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_serialized_writer_window_audit.py"
+      - "tests/test_serialized_writer_window_audit.py"
+      - ".github/workflows/zcloud-serialized-writer-window-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_serialized_writer_window_audit.py"
+      - "tests/test_serialized_writer_window_audit.py"
+      - ".github/workflows/zcloud-serialized-writer-window-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-serialized-writer-window-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused serialized-window regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_serialized_writer_window_audit
+          python3 -m py_compile scripts/zcloud_serialized_writer_window_audit.py
+          echo "ZCLOUD_SERIALIZED_WRITER_WINDOW_AUDIT_GREEN=1"
+
+  prove:
+    needs: validate
+    if: github.event_name == 'pull_request' && github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact trusted candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify permanent VPS identity before candidate tests
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove serialized-window contract on permanent VPS
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_serialized_writer_window_audit
+          python3 -m py_compile scripts/zcloud_serialized_writer_window_audit.py
+          echo "ZCLOUD_SERIALIZED_WRITER_WINDOW_VPS_GREEN=1"
