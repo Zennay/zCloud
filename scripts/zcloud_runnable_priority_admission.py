@@ -75,7 +75,12 @@ def rank_runnable_projects(
     allowed_top_level = {"schema_version", "projects"}
     if set(evidence) - allowed_top_level:
         raise AdmissionError("evidence_unknown_top_level_field")
-    if evidence.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
+    schema_version = evidence.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != EVIDENCE_SCHEMA_VERSION
+    ):
         raise AdmissionError("evidence_schema_invalid")
 
     rows = evidence.get("projects")
