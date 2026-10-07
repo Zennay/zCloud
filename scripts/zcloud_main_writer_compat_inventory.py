@@ -48,13 +48,25 @@ def _is_regular_safe_file(path: Path) -> bool:
         return False
 
 
+def _has_main_refs_write_api(text: str) -> bool:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not REFS_API_RE.search(line):
+            continue
+        start = max(0, index - 6)
+        end = min(len(lines), index + 7)
+        if WRITE_API_RE.search("\n".join(lines[start:end])):
+            return True
+    return False
+
+
 def classify_text(text: str) -> tuple[str, ...]:
     signals: list[str] = []
     if WRITE_PERMISSION_RE.search(text):
         signals.append("contents_write")
     if MAIN_PUSH_RE.search(text):
         signals.append("git_push_main")
-    if REFS_API_RE.search(text) and WRITE_API_RE.search(text):
+    if _has_main_refs_write_api(text):
         signals.append("main_refs_write_api")
     if CHECKOUT_CREDS_RE.search(text):
         signals.append("checkout_persists_credentials")
