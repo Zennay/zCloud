@@ -37,7 +37,7 @@ def assess(data, now, max_age_seconds=300):
         reasons.append("incomplete_gate_inventory")
     else:
         ids = [x.get("number") for x in gates if isinstance(x, dict)]
-        if sorted(ids, key=str) != list(GATES):
+        if len(ids) != len(GATES) or any(type(x) is not int for x in ids) or sorted(ids) != list(GATES):
             reasons.append("unexpected_gate_inventory")
         for gate in gates:
             if not isinstance(gate, dict):
