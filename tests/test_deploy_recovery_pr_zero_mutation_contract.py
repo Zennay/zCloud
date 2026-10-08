@@ -12,7 +12,12 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/zcloud-dashboard-access-recovery.yml"
-PR_TRIGGER = re.compile(r"(?m)^\s{0,4}(?:pull_request|pull_request_target)\s*:")
+PR_TRIGGER = re.compile(
+    r"""(?mx)
+    ^[ ]{0,4}['"]?(?:pull_request|pull_request_target)['"]?[ ]*:
+    |^[ ]{0,4}on[ ]*:[ ]*\[[^\]\n]*\b(?:pull_request|pull_request_target)\b
+    """
+)
 PRIVILEGED_OPERATION = re.compile(
     r"(?i)(?:\bsudo\b|\bsystemctl\s+(?:stop|restart|start)\b"
     r"|\b(?:chattr|chown|chmod)\b|\bsqlite3\b|\bactions/write\b)"
