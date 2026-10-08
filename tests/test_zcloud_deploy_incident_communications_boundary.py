@@ -16,7 +16,7 @@ class DeployOpsCommunicationsBoundaryTest(unittest.TestCase):
             "independently verifies external production health",
             "timestamped corrections",
             "communications owner",
-            "redaction",
+            "Strip internal hostnames",
         ):
             with self.subTest(required=required):
                 self.assertIn(required.lower(), self.content.lower())
