@@ -38,3 +38,26 @@ Allowed conclusion values: `STOP_MISSING_EVIDENCE`, `STOP_OVERLAP`, `STOP_SERIAL
 
 ## Scope and limitations
 This path contains documentation only; no executable code, workflow, queue, runner, browser, service, production or PR metadata mutation. All deployment and merge authorization remain false. Any later operational action requires independently verified fresh evidence and the existing serialized release process.
+
+## Reviewer evidence worksheet (copy per candidate, never reuse between SHAs)
+
+| Field | Recorded value | Failure condition |
+| --- | --- | --- |
+| Observation UTC | _unset_ | Missing timestamp |
+| Canonical `main` SHA (first and last read) | _unset_ | Different SHA or missing reread |
+| Candidate PR / branch / head SHA | _unset_ | Head changed after test |
+| Complete open-PR pagination cursor/end | _unset_ | Incomplete inventory |
+| Complete branch pagination cursor/end | _unset_ | PR-less ownership unknown |
+| Proposed changed paths and current path owners | _unset_ | Any path unowned-by-proof or conflicted |
+| #580, #1089, #1108 and PWQ-258 independent owner status | _unset_ | No positive owner release |
+| Regression / permanent-VPS run ID, head and trusted event | _unset_ | Different head, untrusted event or nonterminal result |
+| Authorized production receipt and independent activation observation | _unset_ | Missing or conflicting evidence |
+
+Treat every `_unset_` value as **STOP_MISSING_EVIDENCE**. Do not fill a field from another PR's body without re-verifying its source and timestamp. A terminal CI result from an older head cannot be reinterpreted as a fresh result.
+
+### Explicit release handoff invariants
+1. Prior owner identifies the exact path set and a **positive handoff**; inactivity, stale timestamps, draft status, or an empty queue are insufficient.
+2. Receiving worker confirms latest `main`, latest candidate head and file-disjoint ownership immediately before any write.
+3. If another worker writes during the check, revoke the snapshot and repeat the ownership inventory.
+4. Human/serialized release approval is separate from code review and from this worksheet; no worksheet state elevates authority.
+5. After evidence collection, retain immutable run links/SHAs and avoid storing credentials or private runtime material in the PR description.
