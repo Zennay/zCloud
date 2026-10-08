@@ -26,7 +26,7 @@ class MemberPathBoundaryTests(unittest.TestCase):
                      "\\\\server\\share", "name:stream", "x.",
                      "x ", "x" * 513, "résumé.json", "a b.txt",
                      "a?b", "a*test", "a%2f..%2fsecret", "a\\u202ejson",
-                     ".hidden", "a/💾.json"):
+                     ".hidden", "a/💾.json", "folder./report.json", "a/.hidden"):
             with self.subTest(name=repr(name)):
                 result = mod.evaluate_member(name)
                 self.assertFalse(result["accepted_for_offline_name_screen"])
