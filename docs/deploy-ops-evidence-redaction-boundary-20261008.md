@@ -68,3 +68,22 @@ The all-zero identities are placeholders, **not** valid evidence. Replace them o
 - Each success claim is tied to a terminal completed check for the stated candidate SHA; in-progress, failed, skipped or missing checks remain unverified.
 - A later main change invalidates the handoff as a fresh promotion basis until new exact-main acceptance is captured.
 - Nothing in the handoff bypasses #580/PWQ-41 + #1089 or authorizes production mutation.
+
+## When evidence cannot be trusted
+
+Use the following bounded outcomes rather than inventing a positive conclusion:
+
+| Observation | Public handoff outcome | Safe next action |
+| --- | --- | --- |
+| Check still queued or running | `pending` | Wait for a terminal result; do not promote. |
+| Check failed, timed out or was cancelled | `not_verified` | Reference the failed run ID only; investigate in the restricted system. |
+| Candidate SHA differs from the checked SHA | `stale_evidence` | Re-run checks against the new exact head. |
+| Main or serialized owner inventory changed | `gate_recheck_required` | Reconcile the authoritative owner inventory before any new decision. |
+| Secret appears in an output or artifact | `restricted_incident` | Stop forwarding it and initiate the credential incident process. |
+| Evidence URL is unavailable or permissions differ | `unavailable` | Re-establish verified restricted access; never paste raw evidence as a workaround. |
+
+None of these outcomes authorizes an operation. In particular a check's GitHub green indicator is insufficient without confirming that its actual commit identity, runner and job outcome match the recorded claim.
+
+## Redaction verification before publication
+
+Use a second-person review when possible: inspect only the sanitized outgoing text, not protected raw material. Specifically verify that HTTPS URLs have no token-bearing query strings, no inline credentials, no signed object-storage parameters, and no private hostname leakage. Strip authorization headers and any opaque session identifiers. Do not use simple substring replacement as proof of sanitization: secrets may be URL-encoded or fragmented across fields. If confidence is insufficient, publish a short outcome code plus a restricted internal reference.
