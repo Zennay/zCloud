@@ -57,7 +57,7 @@ class IncidentWorksheetContract(unittest.TestCase):
         for marker in (
             "no authorization is inferred",
             "explicit independent approval",
-            "no permission to restart",
+            "nor permission to restart",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.doc)
