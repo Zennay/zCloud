@@ -35,5 +35,18 @@ class TriageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             triage.classify({"jobs": [{"name": "recover", "conclusion": None}]})
 
+    def test_non_string_conclusions_rejected(self):
+        for value in ([], {}, 0, True):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    triage.classify({"jobs": [{"name": "recover", "conclusion": value}]})
+
+    def test_both_successes_do_not_authorize_repair(self):
+        x = triage.classify({"jobs": [{"name": "recover", "conclusion": "success"},
+                                      {"name": "external_verify", "conclusion": "success"}]})
+        self.assertEqual(x["status"], "both_checks_succeeded_not_deploy_authority")
+        self.assertFalse(x["recovery_authorized"])
+        self.assertFalse(x["deploy_authorized"])
+
 if __name__ == "__main__":
     unittest.main()
