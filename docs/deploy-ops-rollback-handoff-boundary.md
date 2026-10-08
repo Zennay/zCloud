@@ -28,6 +28,29 @@ Start a new handoff whenever post-deploy health fails, the observed deployed com
 4. Escalate for explicit human approval and production-runbook review. A rollback is a **new production mutation** requiring its own admission, safe-idle, serialization, guarded prewrite and post-change proof. Do not automatically dispatch it from this document.
 5. Record the observed result and independent external health proof after any separately authorized operation. If proof is unavailable, keep the incident open and escalate; never declare successful recovery from a workflow exit code alone.
 
+## Failure-mode review matrix (manual, no execution)
+
+Use these as negative acceptance cases when reviewing a proposed incident handoff. In each case the only permissible outcome from this guide is **hold and escalate**, not rollback execution.
+
+| Scenario | Evidence that invalidates the handoff | Required disposition |
+| --- | --- | --- |
+| CI succeeded for an earlier head | Current candidate SHA differs from the head in the successful run | Hold: rerun exact-head checks under current gate owners. |
+| Deploy workflow exited successfully but health timed out | No independent external health observation for the deployed SHA | Hold: record health as unknown; never record recovery. |
+| Rollback artifact has a plausible tag but no immutable digest | Artifact identity cannot be independently tied to the named last-known-good SHA | Hold: no target selected; require provenance review. |
+| Main advanced after a receipt was signed off | Receipt's base SHA is no longer current main | Hold: recheck owner window and fresh blocker inventory. |
+| A release owner or runner changed during preflight | Ownership / runner binding differs from recorded evidence | Hold: reject old preflight and request new approval. |
+| Two concurrent production transitions are observed | Safe-idle or serialized single-writer exclusivity is unproven | Hold: do not dispatch competing deployment or rollback. |
+| A human approved a different incident or target | Approval is not bound to this incident ID and exact rollback target | Hold: explicit new decision required. |
+| Browser or dashboard appears healthy but deployed SHA is unknown | No verified exact SHA from production and independent status | Hold: UI appearance is not proof of release identity. |
+
+### Reviewable acceptance conditions
+
+- A reviewer can trace incident ID → deployed SHA → run attempt → observed health evidence, without relying on a branch/tag alias.
+- Every proposed last-known-good target has both immutable artifact identity and external provenance.
+- A missing value, a stale timestamp or a conflicting owner always yields a non-authorizing disposition.
+- An operator can identify the human who must approve **a separate** rollback action; this document contains no command, dispatch hook or mutation switch.
+- Independent production health after any separately authorized recovery must be verified before the incident is marked resolved.
+
 ## Non-authority statement
 
 ```json
