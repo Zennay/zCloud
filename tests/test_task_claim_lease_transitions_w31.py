@@ -3,12 +3,25 @@
 Runs against the reference implementation only, never against production.
 """
 import concurrent.futures
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 
-from test_task_claim_lease_reference_w30 import ClaimLeaseMatrix
+from test_task_claim_lease_reference_w30 import ClaimStore
 
 
-class ClaimLeaseTransitions(ClaimLeaseMatrix):
+class ClaimLeaseTransitions(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / 'claims.sqlite'
+        self.store = ClaimStore(self.db)
+
+    def rows(self):
+        with sqlite3.connect(self.db) as connection:
+            return connection.execute('SELECT project,claim_key,owner,expires FROM claims').fetchall()
+
     def test_owner_release_allows_immediate_new_claim(self):
         self.assertTrue(self.store.act("acquire", "cloud", "lane", "worker-a", now=100))
         self.assertTrue(self.store.act("release", "cloud", "lane", "worker-a", now=101))
