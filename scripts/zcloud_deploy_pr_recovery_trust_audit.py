@@ -20,6 +20,14 @@ MUTATING = re.compile(
 def audit(text):
     # Deliberately fail closed: unexpected formatting cannot prove isolation.
     lines = text.splitlines()
+    if re.search(r"(?m)^on:\\s*\\[", text):
+        return {"status": "unknown", "pr_triggers": [], "jobs": {},
+                "violations": ["inline trigger syntax needs independent review"],
+                "mutation_authorized": False, "deploy_authorized": False}
+    if not re.search(r"(?m)^on:\\s*$", text):
+        return {"status": "unknown", "pr_triggers": [], "jobs": {},
+                "violations": ["trigger inventory unavailable"],
+                "mutation_authorized": False, "deploy_authorized": False}
     triggers = []
     jobs = {}
     section = None
