@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 PR = re.compile(r"(?m)^\s*pull_request(?:_target)?\s*:")
-RUNNER = re.compile(r"(?m)^\s*runs-on\s*:\s*(?:\[\s*)?(?:['\"])?self-hosted\b", re.I)
+RUNNER = re.compile(r"(?m)^\s*runs-on\s*:(?:[^\n]*self-hosted|\s*\n\s*-\s*self-hosted\b)", re.I)
 PRIVILEGED = re.compile(r"(?i)\b(?:sudo|systemctl|service\s+\w+\s+(?:restart|stop)|chattr|chmod|chown)\b")
 
 def inspect(text: str) -> dict:
