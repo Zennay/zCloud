@@ -40,7 +40,7 @@ def reject_duplicates(pairs):\n    output = {}\n    for key, value in pairs:\n  
     try:
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)\n        if len(raw) > MAX_INPUT_BYTES:\n            raise ValueError("receipt exceeds size limit")\n        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicates)
         print(json.dumps(redact(payload), sort_keys=True))
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (ValueError, TypeError, UnicodeError) as exc:
         print(json.dumps({"error": "invalid evidence", "release_authorized": False,
                           "recovery_authorized": False, "mutation_performed": False}), file=sys.stdout)
         return 1
