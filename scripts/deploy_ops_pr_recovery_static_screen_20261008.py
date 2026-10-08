@@ -16,8 +16,10 @@ def inspect(text: str) -> dict:
     absence of unsafe paths (called workflows, expressions and aliases exist).
     """
     risks = []
-    if PR.search(text) and RUNNER.search(text) and PRIVILEGED.search(text):
-        risks.append("pr_trigger_self_hosted_privileged_cues")
+    if PR.search(text) and RUNNER.search(text):
+        risks.append("pr_trigger_self_hosted_manual_review")
+        if PRIVILEGED.search(text):
+            risks.append("pr_trigger_self_hosted_privileged_cues")
     if "pull_request_target:" in text and RUNNER.search(text):
         risks.append("pr_target_self_hosted_requires_manual_review")
     return {
