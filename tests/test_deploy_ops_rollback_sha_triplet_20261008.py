@@ -10,6 +10,8 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 def classify_triplet(candidate, previous, deployed, *, verified_rollback=False):
     """Return a deny-by-default evidence classification, never an approval."""
+    if type(verified_rollback) is not bool:
+        return {"status": "INVALID_ROLLBACK_CLAIM", "authorized": False}
     entries = (candidate, previous, deployed)
     if not all(isinstance(v, str) and _SHA.fullmatch(v) for v in entries):
         return {"status": "INVALID_SHA", "authorized": False}
@@ -28,10 +30,10 @@ class RollbackTripletTests(unittest.TestCase):
     P = "b" * 40
     X = "c" * 40
 
-    def check(self, expected, candidate=None, previous=None, deployed=None, **kwargs):
-        result = classify_triplet(candidate if candidate is not None else self.C,
-                                  previous if previous is not None else self.P,
-                                  deployed if deployed is not None else self.C, **kwargs)
+    def check(self, expected, candidate="DEFAULT", previous="DEFAULT", deployed="DEFAULT", **kwargs):
+        result = classify_triplet(self.C if candidate == "DEFAULT" else candidate,
+                                  self.P if previous == "DEFAULT" else previous,
+                                  self.C if deployed == "DEFAULT" else deployed, **kwargs)
         self.assertEqual(expected, result["status"])
         self.assertIs(result["authorized"], False)
 
@@ -53,10 +55,15 @@ class RollbackTripletTests(unittest.TestCase):
     def test_candidate_must_differ_from_previous(self):
         self.check("NO_DISTINCT_ROLLBACK_TARGET", previous=self.C)
 
+    def test_rollback_claim_must_be_boolean(self):
+        for invalid in (None, 0, 1, "true", [], {}):
+            with self.subTest(value=invalid):
+                self.check("INVALID_ROLLBACK_CLAIM", verified_rollback=invalid)
+
     def test_sha_must_be_immutable_and_canonical(self):
         for invalid in ("main", "A" * 40, "a" * 39, "a" * 41, "", "a" * 40 + "\n", None, 4):
             with self.subTest(value=invalid):
-                self.check("INVALID_SHA", deployed=invalid if invalid is not None else "")
+                self.check("INVALID_SHA", deployed=invalid)
                 self.check("INVALID_SHA", candidate=invalid if invalid is not None else "")
                 self.check("INVALID_SHA", previous=invalid if invalid is not None else "")
 
