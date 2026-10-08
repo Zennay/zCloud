@@ -35,6 +35,18 @@ class PRRecoveryScreenTest(unittest.TestCase):
         self.assertFalse(result["review_required"])
         self.assertFalse(result["recovery_authorized"])
 
+    def test_multiline_runner_requires_review(self):
+        body = "on:\\n  pull_request:\\njobs:\\n  check:\\n    runs-on:\\n      - self-hosted\\n      - linux\\n"
+        result = screen.inspect(body)
+        self.assertTrue(result["review_required"])
+        self.assertIn("pr_trigger_self_hosted_manual_review", result["signals"])
+
+    def test_pr_self_hosted_without_privilege_still_requires_review(self):
+        body = "on:\\n  pull_request:\\njobs:\\n  check:\\n    runs-on: [self-hosted, linux]\\n"
+        result = screen.inspect(body)
+        self.assertTrue(result["review_required"])
+        self.assertFalse(result["recovery_authorized"])
+
     def test_invalid_file_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             proc = subprocess.run([sys.executable, str(SCRIPT), str(pathlib.Path(tmp) / "missing.yml")],
