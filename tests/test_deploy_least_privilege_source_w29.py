@@ -48,9 +48,5 @@ class DeployLeastPrivilegeSourceW29(unittest.TestCase):
         self.assertIn("group: zcloud-production-deploy", self.source)
         self.assertRegex(self.source, r"(?m)^  cancel-in-progress: false$")
 
-    def test_source_guard_cannot_authorize_live_deploy(self):
-        self.assertFalse(False, "offline tests never issue production authorization")
-
-
 if __name__ == "__main__":
     unittest.main()
