@@ -40,6 +40,20 @@ class ClockSkewAuditTests(unittest.TestCase):
             with self.subTest(stamp=stamp):
                 self.assertEqual(self.check({"observed_at": stamp})["reason"], "INVALID_RECEIPT")
 
+    def test_noncanonical_utc_stamps_rejected(self):
+        for stamp in ("2026-10-08 01:00:00Z", "2026-10-08T01:00Z",
+                      "2026-10-08T01:00:00.1234567Z"):
+            with self.subTest(stamp=stamp):
+                self.assertEqual(self.check({"observed_at": stamp})["reason"], "INVALID_RECEIPT")
+
+    def test_duplicate_json_keys_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / "duplicate.json"
+            path.write_text('{"observed_at":"2026-10-08T01:00:00Z","observed_at":"2026-10-08T01:00:00Z"}')
+            with mock.patch("sys.argv", ["clock-audit", str(path)]):
+                with mock.patch("sys.stdout"):
+                    self.assertEqual(module.main(), 1)
+
     def test_policy_bounds(self):
         self.assertEqual(self.check({"observed_at": "2026-10-08T01:00:00Z"}, future_skew_seconds=999)["reason"], "INVALID_RECEIPT")
         self.assertEqual(self.check({"observed_at": "2026-10-08T01:00:00Z"}, max_age_seconds=-1)["reason"], "INVALID_RECEIPT")
