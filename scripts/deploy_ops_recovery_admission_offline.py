@@ -6,6 +6,7 @@ This is an *advisory* eligibility check, not deploy/recovery authorization.
 """
 import argparse
 import json
+import re
 import sys
 
 REQUIRED_TRUE = (
@@ -42,6 +43,9 @@ def evaluate(data):
         reasons.append("trigger_not_manual_dispatch")
     if data.get("ref") != "refs/heads/main":
         reasons.append("not_main_ref")
+    for key in ("main_sha", "candidate_sha"):
+        if not isinstance(data.get(key), str) or re.fullmatch(r"[0-9a-fA-F]{40}", data[key]) is None:
+            reasons.append(f"invalid_git_sha:{key}")
     if data.get("main_sha") != data.get("candidate_sha"):
         reasons.append("stale_candidate_sha")
     if data.get("dashboard_healthy") is not False:
