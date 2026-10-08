@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "kind": "zcloud-dashboard-recovery-admission-fixtures",
+  "notes": "Review fixtures only; no live action or test invocation. Positive case requires independently established guarded permissions, never assumed from this fixture.",
+  "cases": [
+    {
+      "id": "pr-healthy",
+      "event": "pull_request",
+      "dashboard": "healthy",
+      "trusted": false,
+      "gates": "unknown",
+      "allow_recovery": false
+    },
+    {
+      "id": "pr-unhealthy",
+      "event": "pull_request",
+      "dashboard": "unhealthy",
+      "trusted": false,
+      "gates": "unknown",
+      "allow_recovery": false
+    },
+    {
+      "id": "main-healthy",
+      "event": "workflow_dispatch",
+      "dashboard": "healthy",
+      "trusted": true,
+      "gates": "released",
+      "allow_recovery": false
+    },
+    {
+      "id": "untrusted-actor",
+      "event": "workflow_dispatch",
+      "dashboard": "unhealthy",
+      "trusted": false,
+      "gates": "released",
+      "allow_recovery": false
+    },
+    {
+      "id": "stale-main",
+      "event": "workflow_dispatch",
+      "dashboard": "unhealthy",
+      "trusted": true,
+      "head_matches_main": false,
+      "gates": "released",
+      "allow_recovery": false
+    },
+    {
+      "id": "writer-active",
+      "event": "workflow_dispatch",
+      "dashboard": "unhealthy",
+      "trusted": true,
+      "head_matches_main": true,
+      "gates": "active",
+      "allow_recovery": false
+    },
+    {
+      "id": "gate-unknown",
+      "event": "workflow_dispatch",
+      "dashboard": "unhealthy",
+      "trusted": true,
+      "head_matches_main": true,
+      "gates": "unknown",
+      "allow_recovery": false
+    },
+    {
+      "id": "approval-missing",
+      "event": "workflow_dispatch",
+      "dashboard": "unhealthy",
+      "trusted": true,
+      "head_matches_main": true,
+      "gates": "released",
+      "approved": false,
+      "allow_recovery": false
+    },
+    {
+      "id": "trusted-bounded",
+      "event": "workflow_dispatch",
+      "dashboard": "unhealthy",
+      "trusted": true,
+      "head_matches_main": true,
+      "gates": "released",
+      "approved": true,
+      "runner_verified": true,
+      "exclusive_window": true,
+      "rollback_ready": true,
+      "allow_recovery": true
+    }
+  ]
+}
