@@ -1,0 +1,218 @@
+# One-night owner-requested recovery; file-disjoint from PRs #580/#938/#948/#1087.
+name: zCloud overnight eight-worker watchdog
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/workflows/zcloud-overnight-eight-20261009.yml"]
+  schedule:
+    # 23:00 UTC = 01:00 Amsterdam on 2026-10-09.
+    - cron: "*/5 23,0-6 * * *"
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+concurrency:
+  group: zcloud-overnight-eight-20261009
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Verify, attempt recovery and record actual browser progress
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, os, sqlite3, subprocess, time, urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          API="http://127.0.0.1:8765"
+          STATE=Path.home()/".local/state/zcloud-overnight-20261009.json"
+          DB="/home/ubuntu/zennay-cloud/history.db"
+          local=datetime.now(ZoneInfo("Europe/Amsterdam"))
+          now=datetime.now(timezone.utc)
+          def request(method,path,obj=None,gh=False):
+              data=json.dumps(obj).encode() if obj is not None else None
+              headers={"User-Agent":"zcloud-overnight-eight/1"}
+              if data is not None: headers["Content-Type"]="application/json"
+              if gh: headers["Authorization"]="Bearer "+os.environ["GH_TOKEN"]
+              base="https://api.github.com/repos/"+os.environ["GH_REPO"] if gh else API
+              req=urllib.request.Request(base+path,headers=headers,data=data,method=method)
+              with urllib.request.urlopen(req,timeout=14) as r:
+                  return json.load(r) if r.status!=204 else {}
+          def report(s):
+              try: request("POST","/issues/1218/comments",{"body":s[:2300]},gh=True)
+              except Exception as e: print("ISSUE_REPORT_FAILED",type(e).__name__)
+          def cmd(args,timeout=25):
+              try:
+                  p=subprocess.run(args,timeout=timeout,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                  return p.returncode==0
+              except Exception: return False
+          def firefox():
+              return cmd(["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"])
+          try: state=json.loads(STATE.read_text())
+          except Exception: state={"recovery":{}}
+          if local.date().isoformat()!="2026-10-09" or local.hour>=8:
+              report("Overnight watch completed; final state: "+str(state.get("summary","unavailable"))+". Disabling dated schedule.")
+              try: request("PUT","/actions/workflows/zcloud-overnight-eight-20261009.yml/disable",gh=True)
+              except Exception as e: print("DISABLE_FAILED",type(e).__name__)
+              raise SystemExit(0)
+
+          actions=[]
+          if not cmd(["sudo","-n","systemctl","is-active","--quiet","zcloud-self-heal.timer"]):
+              ok=cmd(["sudo","-n","systemctl","enable","--now","zcloud-self-heal.timer"])
+              actions.append("one-minute-watchdog-"+("enabled" if ok else "unavailable"))
+          def snapshot():
+              return (request("GET","/api/dynamic-workers").get("dynamic_workers") or {},
+                      request("GET","/api/runner-targets"),
+                      request("GET","/api/runner-live"))
+          try: settings,targets,live=snapshot()
+          except Exception as e:
+              actions.append("backend-recovery:"+type(e).__name__)
+              cmd(["sudo","-n","systemctl","start","zcloud-self-heal.service"],35)
+              time.sleep(4)
+              settings,targets,live=snapshot()
+
+          if not firefox():
+              actions.append("firefox-absent")
+              cmd(["sudo","-n","systemctl","start","zcloud-self-heal.service"],35)
+              time.sleep(3)
+              if not firefox():
+                  cmd(["systemctl","--user","reset-failed","chatgpt-firefox.service"])
+                  cmd(["systemctl","--user","start","chatgpt-firefox.service"],35)
+                  time.sleep(4)
+              if not firefox():
+                  # In standalone Violentmonkey mode the managed user service is deliberately disabled.
+                  # Use the existing launcher/recovery flow, without killing any running browser.
+                  allocation=(targets.get("global_allocation") or {}).get("workers") or []
+                  from urllib.parse import quote
+                  urls=[]
+                  for w in allocation:
+                      key=str(w.get("worker_key") or "")
+                      if key:
+                          base="https://claude.ai/new" if w.get("provider")=="claude" else "https://chatgpt.com/"
+                          urls.append(base+"?zcloud_worker="+quote(key,safe=""))
+                  env=os.environ.copy()
+                  env.pop("RUNNER_TRACKING_ID",None)
+                  env.setdefault("DISPLAY",":10.0")
+                  env.setdefault("XDG_RUNTIME_DIR",f"/run/user/{os.getuid()}")
+                  env.setdefault("DBUS_SESSION_BUS_ADDRESS",f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
+                  try:
+                      log=open("/tmp/zcloud-overnight-firefox.log","ab")
+                      subprocess.Popen(["/usr/bin/firefox",*urls],env=env,stdin=subprocess.DEVNULL,
+                                       stdout=log,stderr=log,start_new_session=True,close_fds=True)
+                      actions.append("firefox-launch-attempt")
+                  except Exception as e: actions.append("firefox-launch-failed:"+type(e).__name__)
+                  time.sleep(10)
+              actions.append("firefox-restored" if firefox() else "firefox-unavailable")
+
+          def meminfo():
+              vals={}
+              for line in Path("/proc/meminfo").read_text().splitlines():
+                  key,_,v=line.partition(":")
+                  vals[key]=int(v.strip().split()[0])//1024
+              return vals
+          memory=meminfo()
+          available=memory.get("MemAvailable",0)
+          swap=memory.get("SwapFree",0)
+          c=int(settings.get("chatgpt_count") or 0)
+          x=int(settings.get("claude_count") or 0)
+          # Previous 7 ChatGPT + 1 Claude caused Firefox OOM. Ramp by one slot
+          # per check only when 3 GB RAM and 256 MB swap remain free.
+          if c<8 and available>=3000 and swap>=256 and firefox():
+              payload={key:settings[key] for key in
+                       ("chatgpt_count","claude_count","chatgpt_cooldown_seconds",
+                        "claude_cooldown_seconds","check_interval_ms","tick_interval_ms",
+                        "heartbeat_interval_ms","generation_start_timeout_ms",
+                        "scheduler_interval_seconds") if key in settings}
+              payload.update(chatgpt_count=min(8,c+1),claude_count=max(0,x-1))
+              try:
+                  result=request("POST","/api/dynamic-workers",payload)
+                  actions.append("capacity-ramp-ok" if result.get("ok") else "capacity-ramp-refused")
+                  targets=request("GET","/api/runner-targets")
+              except Exception as e: actions.append("capacity-ramp-failed:"+type(e).__name__)
+          elif c<8:
+              actions.append(f"capacity-held-memory-{available}MB-swap-{swap}MB")
+          workers=(targets.get("global_allocation") or {}).get("workers") or []
+          chat=[str(w.get("worker_key") or "") for w in workers if
+                str(w.get("provider") or "chatgpt").lower()=="chatgpt" and w.get("worker_key")]
+          def events():
+              result={}
+              try:
+                  with sqlite3.connect(f"file:{DB}?mode=ro",uri=True,timeout=5) as conn:
+                      for key in chat:
+                          project,slot=key.rsplit("::w",1)
+                          row=conn.execute("SELECT ts,event FROM runner_events WHERE project_id=? AND worker_slot=? "
+                              "AND event IN ('prompt-sent','generation-started','generation-finished','generation-progress') "
+                              "ORDER BY id DESC LIMIT 1",(project,int(slot))).fetchone()
+                          result[key]=row
+              except Exception as e: actions.append("event-read-failed:"+type(e).__name__)
+              return result
+
+          if not state.get("initial_push") and chat and firefox():
+              try:
+                  r=request("POST","/api/dynamic-workers/force-push",{})
+                  count=sum(bool(v.get("queued")) for v in r.get("results") or [])
+                  state["initial_push"]=bool(r.get("ok"))
+                  actions.append("INITIAL_FORCE_PUSH_QUEUED="+str(count))
+              except Exception as e: actions.append("force-push-failed:"+type(e).__name__)
+              time.sleep(15)
+
+          live=request("GET","/api/runner-live")
+          ev=events()
+          fresh=[]
+          stalled=[]
+          for key in chat:
+              project=key.split("::w",1)[0]
+              rows=((live.get("chatgpt_runners") or {}).get(project) or {}).get("workers") or []
+              runtime=next((w for w in rows if str(w.get("worker_id") or "")==key),{})
+              generating=bool(runtime.get("generating") or runtime.get("sending"))
+              try:
+                  stamp=datetime.fromisoformat(ev[key][0].replace("Z","+00:00"))
+                  age=(now-stamp).total_seconds()
+              except Exception: age=10**9
+              if generating and age<420: fresh.append(key)
+              if not generating and age>420: stalled.append(key)
+          cooldown=state.setdefault("recovery",{})
+          for key in stalled:
+              if time.time()-float(cooldown.get(key,0))<600: continue
+              try:
+                  r=request("POST","/api/runner-control",{"project_id":key,"action":"new_chat"})
+                  if r.get("ok"):
+                      cooldown[key]=time.time()
+                      actions.append("NEW_CHAT_QUEUED:"+key)
+                  else: actions.append("new-chat-not-admitted:"+key)
+              except Exception as e: actions.append("new-chat-failed:"+key+":"+type(e).__name__)
+
+          summary=f"{len(chat)}/8 ChatGPT allocated; {len(fresh)} fresh+generating; Firefox {firefox()}; RAM available {available}MB"
+          evidence={"local":local.isoformat(timespec="minutes"),"summary":summary,
+                    "stalled_idle":stalled,"actions":actions,
+                    "worker_events":{k:list(v) if v else None for k,v in ev.items()}}
+          print("OVERNIGHT_WORKER_EVIDENCE="+json.dumps(evidence,sort_keys=True))
+          signature=f"{len(chat)}:{len(fresh)}:{int(firefox())}:{len(stalled)}"
+          if signature!=state.get("signature") or time.time()-float(state.get("reported",0))>=1800:
+              report("Overnight live VPS check: **"+summary+"**\n"+
+                     "Stalled idle: "+(", ".join(stalled) or "none")+"\n"+
+                     "Actions: "+(", ".join(actions) or "none")+
+                     "\nNote: generation events are not proof of committed project work.")
+              state["reported"]=time.time()
+              state["signature"]=signature
+          state["summary"]=summary
+          STATE.parent.mkdir(parents=True,exist_ok=True)
+          tmp=STATE.with_suffix(".tmp")
+          tmp.write_text(json.dumps(state,sort_keys=True))
+          tmp.replace(STATE)
+          if not firefox() or not chat: raise SystemExit("No live ChatGPT browser/worker pool")
+          PY
