@@ -24,7 +24,9 @@ class MemberPathBoundaryTests(unittest.TestCase):
                      "/etc/passwd", "C:/Windows/system32", "a\\..\\secret",
                      "a//b", "a/", "./a", "x\x00y", "x\ny",
                      "\\\\server\\share", "name:stream", "x.",
-                     "x ", "x" * 513):
+                     "x ", "x" * 513, "résumé.json", "a b.txt",
+                     "a?b", "a*test", "a%2f..%2fsecret", "a\\u202ejson",
+                     ".hidden", "a/💾.json"):
             with self.subTest(name=repr(name)):
                 result = mod.evaluate_member(name)
                 self.assertFalse(result["accepted_for_offline_name_screen"])
@@ -32,6 +34,10 @@ class MemberPathBoundaryTests(unittest.TestCase):
                 self.assertFalse(result["deploy_authorized"])
                 self.assertFalse(result["recovery_authorized"])
                 self.assertFalse(result["mutation_performed"])
+
+    def test_safe_ascii_segments(self):
+        for name in ("a_b-1.txt", "nested/receipt_2026-10-08.json"):
+            self.assertTrue(mod.evaluate_member(name)["accepted_for_offline_name_screen"])
 
     def test_repeated_checks_are_deterministic(self):
         self.assertEqual(mod.evaluate_member("a/../b"), mod.evaluate_member("a/../b"))
