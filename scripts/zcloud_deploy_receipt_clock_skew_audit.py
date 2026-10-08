@@ -8,13 +8,15 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import stat
 import sys
 
 UTC = dt.timezone.utc
+UTC_STAMP = re.compile(r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$")
 
 def parse_utc(value):
-    if not isinstance(value, str) or not value.endswith("Z"):
+    if not isinstance(value, str) or not UTC_STAMP.fullmatch(value):
         raise ValueError("UTC_Z_REQUIRED")
     parsed = dt.datetime.fromisoformat(value[:-1] + "+00:00")
     if parsed.tzinfo != UTC:
@@ -60,7 +62,14 @@ def main():
             raw = stream.read(4097)
             if len(raw) > 4096:
                 raise ValueError("INVALID_RECEIPT")
-            data = json.loads(raw.decode("utf-8"))
+            def unique_pairs(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("DUPLICATE_KEY")
+                    result[key] = value
+                return result
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs)
         result = evaluate(data, now=dt.datetime.now(UTC),
                           max_age_seconds=args.max_age_seconds,
                           future_skew_seconds=args.future_skew_seconds)
