@@ -39,6 +39,18 @@ class DashboardRecoveryPRContract(unittest.TestCase):
         example = """on:\n  workflow_dispatch:\njobs:\n  recover:\n    steps:\n      - run: sudo systemctl restart zcloud\n"""
         self.assertEqual(violations(example), [])
 
+    def test_pull_request_target_must_not_have_privileged_recovery(self):
+        example = "on:\\n  pull_request_target:\\njobs:\\n  recover:\\n    if: false\\n    steps:\\n      - run: sudo systemctl stop zcloud\\n"
+        self.assertTrue(violations(example))
+
+    def test_flow_style_event_list_is_not_a_bypass(self):
+        example = "on: [workflow_dispatch, pull_request]\\njobs:\\n  recover:\\n    steps:\\n      - run: sudo chown root /tmp/example\\n"
+        self.assertTrue(violations(example))
+
+    def test_quoted_event_name_is_not_a_bypass(self):
+        example = "on:\\n  'pull_request':\\njobs:\\n  recover:\\n    steps:\\n      - run: sudo chmod 600 /tmp/example\\n"
+        self.assertTrue(violations(example))
+
     def test_live_workflow_prohibits_pr_privileged_recovery(self):
         self.assertTrue(WORKFLOW.is_file(), f"Expected workflow missing: {WORKFLOW}")
         self.assertEqual(
