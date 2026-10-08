@@ -1,0 +1,16 @@
+name: Offline dashboard recovery admission contract
+on:
+  push:
+    branches:
+      - docs/deploy-ops-dashboard-recovery-admission-matrix-20261008-0153
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fail-closed fixture contract
+        run: python3 docs/deploy-ops/validate_dashboard_recovery_admission.py
