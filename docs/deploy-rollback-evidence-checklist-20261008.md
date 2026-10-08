@@ -32,6 +32,38 @@ Capture immutable links and timestamps for:
 
 Keep logs redacted (no API tokens, environment values, cookies, or personal information). Prefer evidence URLs and exact SHA values over pasting raw journal output.
 
+## Deterministic offline decision examples
+
+These examples are **review classifications, not automation inputs**. They deliberately
+cannot produce a `deploy`, `rollback`, `restart` or `merge` decision.
+
+| Observed evidence | Classification | Required next action |
+| --- | --- | --- |
+| Run succeeded but its head SHA differs from the candidate | STALE | Obtain exact-candidate evidence; no mutation |
+| Run number matches but attempt number differs | MISMATCH | Reconcile exact run attempt; no mutation |
+| Runner identity or production environment is absent | UNKNOWN | Escalate to release owner; no mutation |
+| Previous artifact's digest or provenance is unverifiable | UNKNOWN | Hold for review; do not restore |
+| Previous deployment predates a non-reversible schema migration | INCOMPATIBLE | Obtain data-safe recovery plan and human sign-off |
+| External URL is healthy, but VPS service state is unverified | INCOMPLETE | Collect independent VPS proof; do not claim recovery |
+| Candidate is verified but #580/PWQ-41 or #1089 has not released the serialized gate | GATE_CLOSED | Preserve evidence; no manual bypass |
+| Rollback command exited zero but observed deployed SHA differs | FAILED | Escalate incident and record actual state |
+| Both gates are released and every record is complete | REVIEW_REQUIRED | Only the current authorized production owner may decide through the guarded process |
+
+### Evidence identity and replay checks
+
+For every referenced GitHub run, record repository identity, workflow identity,
+event type, immutable commit SHA, run ID, **run attempt**, terminal conclusion,
+UTC observation timestamp and evidence URL. Link the artifact identifier and digest
+to that same run attempt; reject evidence reused from a different attempt,
+repository, workflow, environment or commit. A missing field, ambiguous owner,
+expired receipt or later superseding run is an unresolved mismatch, even when
+another dashboard says green.
+
+Never copy unredacted CI output into incident evidence. A timestamp on its own
+does not establish freshness; the live gate must bind its decision to a trusted
+clock and the current exact-main revision. A successful review of this checklist
+cannot open either serialized gate.
+
 ## Closeout requirements
 
 - All required fields are recorded, cross-checked, and attached to the incident.
