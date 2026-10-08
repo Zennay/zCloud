@@ -31,3 +31,26 @@ This note is a non-authorizing review aid for the serialized zCloud deployment w
 Capture UTC observation time; exact main SHA; candidate PR/head SHA; the complete status and run IDs for relevant checks; complete owner and PR-less branch scans; both serialized gate states; the explicit action authorised (if any); and a separate guarded production receipt after integration. State `merge_authorized=false` and `deploy_authorized=false` until every corresponding gate is independently proven. Do not include secrets, raw prompts, auth headers or sensitive runner logs.
 
 This matrix is intentionally documentation-only. It cannot replace the executable gates or the owner-controlled deploy runbooks, and does not change #1108's nine-path ownership.
+
+## Failed-check classification and safe escalation
+
+Keep distinct the **public endpoint health** and **recovery mechanism health**. A successful external dashboard probe is not proof that a failed listener-recovery step succeeded. Never convert a failed recovery receipt into an accepted deploy or integration receipt based solely on external reachability.
+
+When a check fails:
+
+1. Pin the exact candidate head and workflow run/job/step identifiers; capture only bounded non-secret outcome fields.
+2. Classify as `product_regression`, `runner_or_infra`, `recovery_mechanism`, or `unknown`. Treat `unknown` as not accepted.
+3. Require the current owner of the affected workflow or listener to investigate. Do not restart services, re-run a potentially mutating workflow, or overwrite a different owner's branch in this documentation lane.
+4. Record whether independent external probes succeeded without downgrading the failed check.
+5. Revalidate on the same exact head after an owner-controlled correction. If the candidate head changes, discard earlier-head acceptance and rerun relevant checks.
+
+### Example: PR #1124 initial dashboard evidence (2026-10-08 UTC)
+
+- Candidate head: `a2336e10bffeb6993feb7878104691b5d7d2568f`.
+- Dashboard workflow run `37709595499`: overall **failure**.
+- Job `113092118410` / step `Recover zCloud dashboard listener`: **failure**.
+- Job `113092118585` / step `Probe public zCloud dashboard`: **success**.
+- Classification: `recovery_mechanism` suspected; exact cause **unknown** pending owner investigation and logs.
+- Decision: **not accepted** as dashboard-recovery proof; no listener/service restart or retrigger authorized by this note.
+
+These are observational receipts for the original head, not permanent claims about the latest CI or live service state.
