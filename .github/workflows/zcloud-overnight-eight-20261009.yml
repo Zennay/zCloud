@@ -50,8 +50,17 @@ jobs:
               if gh: headers["Authorization"]="Bearer "+os.environ["GH_TOKEN"]
               base="https://api.github.com/repos/"+os.environ["GH_REPO"] if gh else API
               req=urllib.request.Request(base+path,headers=headers,data=data,method=method)
-              with urllib.request.urlopen(req,timeout=14) as r:
-                  return json.load(r) if r.status!=204 else {}
+              # GET probes can transiently disconnect while zCloud recovers from
+              # memory pressure. Retry reads only: retrying POST could duplicate
+              # a force-push/new-chat command.
+              attempts=4 if (method=="GET" and not gh) else 1
+              for attempt in range(attempts):
+                  try:
+                      with urllib.request.urlopen(req,timeout=14) as r:
+                          return json.load(r) if r.status!=204 else {}
+                  except Exception:
+                      if attempt+1>=attempts: raise
+                      time.sleep(2+attempt*2)
           def report(s):
               try: request("POST","/issues/1218/comments",{"body":s[:2300]},gh=True)
               except Exception as e: print("ISSUE_REPORT_FAILED",type(e).__name__)
@@ -162,15 +171,33 @@ jobs:
               return result
 
           if not state.get("initial_push") and chat and firefox():
+              # Earlier one-shot restart left new_chat commands pending. Never
+              # pile a blanket force-push on top of unresolved control intents.
               try:
-                  r=request("POST","/api/dynamic-workers/force-push",{})
-                  count=sum(bool(v.get("queued")) for v in r.get("results") or [])
-                  state["initial_push"]=bool(r.get("ok"))
-                  actions.append("INITIAL_FORCE_PUSH_QUEUED="+str(count))
-              except Exception as e: actions.append("force-push-failed:"+type(e).__name__)
-              time.sleep(15)
+                  with sqlite3.connect(f"file:{DB}?mode=ro",uri=True,timeout=5) as conn:
+                      pending=conn.execute(
+                          "SELECT project_id,action FROM runner_commands WHERE status='pending'"
+                      ).fetchall()
+                  conflicting=[(worker,action) for worker,action in pending if worker in chat]
+                  if conflicting:
+                      actions.append("FORCE_PUSH_DEFERRED_PENDING="+str(len(conflicting)))
+                  else:
+                      r=request("POST","/api/dynamic-workers/force-push",{})
+                      count=sum(bool(v.get("queued")) for v in r.get("results") or [])
+                      state["initial_push"]=bool(r.get("ok")) and count>=len(chat)
+                      actions.append("INITIAL_FORCE_PUSH_QUEUED="+str(count))
+                      # Persist immediately so a subsequent GET failure never
+                      # repeats a command already submitted.
+                      STATE.parent.mkdir(parents=True,exist_ok=True)
+                      STATE.write_text(json.dumps(state,sort_keys=True))
+              except Exception as e: actions.append("force-push-preflight-failed:"+type(e).__name__)
+              time.sleep(10)
 
-          live=request("GET","/api/runner-live")
+          try:
+              live=request("GET","/api/runner-live")
+          except Exception as e:
+              actions.append("runner-live-unavailable:"+type(e).__name__)
+              live=None
           ev=events()
           fresh=[]
           stalled=[]
@@ -184,7 +211,7 @@ jobs:
                   age=(now-stamp).total_seconds()
               except Exception: age=10**9
               if generating and age<420: fresh.append(key)
-              if not generating and age>420: stalled.append(key)
+              if live is not None and not generating and age>420: stalled.append(key)
           cooldown=state.setdefault("recovery",{})
           for key in stalled:
               if time.time()-float(cooldown.get(key,0))<600: continue
