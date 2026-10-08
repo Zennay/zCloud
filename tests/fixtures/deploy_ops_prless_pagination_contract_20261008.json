@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "purpose": "Fail-closed contract vectors for PR-less branch pagination admission (#1164). Data fixtures only; not wired into production.",
+  "snapshot": {
+    "main_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "open_pr_head_branches": [
+      "pr-already-present"
+    ],
+    "max_pages": 3,
+    "max_branches": 5
+  },
+  "cases": [
+    {
+      "id": "second-page-overlap",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": "next-1",
+          "branches": [
+            "safe-a"
+          ]
+        },
+        {
+          "cursor_in": "next-1",
+          "cursor_out": null,
+          "branches": [
+            "overlap-owned"
+          ]
+        }
+      ],
+      "owned_paths": [
+        ".github/workflows/zcloud-vps-deploy.yml"
+      ],
+      "branch_changed_paths": {
+        "safe-a": [
+          "docs/isolated.md"
+        ],
+        "overlap-owned": [
+          ".github/workflows/zcloud-vps-deploy.yml"
+        ]
+      },
+      "expect": {
+        "inventory_complete": true,
+        "admission": "deny",
+        "reason": "overlap"
+      }
+    },
+    {
+      "id": "duplicate-cursor",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": "same",
+          "branches": [
+            "safe-a"
+          ]
+        },
+        {
+          "cursor_in": "same",
+          "cursor_out": "same",
+          "branches": [
+            "safe-b"
+          ]
+        }
+      ],
+      "expect": {
+        "inventory_complete": false,
+        "admission": "deny",
+        "reason": "cursor_cycle"
+      }
+    },
+    {
+      "id": "empty-last-page",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": "last",
+          "branches": [
+            "safe-a"
+          ]
+        },
+        {
+          "cursor_in": "last",
+          "cursor_out": null,
+          "branches": []
+        }
+      ],
+      "expect": {
+        "inventory_complete": true,
+        "admission": "clear"
+      }
+    },
+    {
+      "id": "failure-after-first-page",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": "next",
+          "branches": [
+            "safe-a"
+          ]
+        },
+        {
+          "cursor_in": "next",
+          "error": "api_unavailable"
+        }
+      ],
+      "expect": {
+        "inventory_complete": false,
+        "admission": "deny"
+      }
+    },
+    {
+      "id": "max-pages-exhausted",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": "2",
+          "branches": [
+            "safe-a"
+          ]
+        },
+        {
+          "cursor_in": "2",
+          "cursor_out": "3",
+          "branches": [
+            "safe-b"
+          ]
+        },
+        {
+          "cursor_in": "3",
+          "cursor_out": "4",
+          "branches": [
+            "safe-c"
+          ]
+        }
+      ],
+      "expect": {
+        "inventory_complete": false,
+        "admission": "deny"
+      }
+    },
+    {
+      "id": "main-sha-drift",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": null,
+          "branches": [
+            "safe-a"
+          ]
+        }
+      ],
+      "final_main_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expect": {
+        "inventory_complete": false,
+        "admission": "deny"
+      }
+    },
+    {
+      "id": "pr-head-deduplication",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": null,
+          "branches": [
+            "pr-already-present",
+            "safe-a"
+          ]
+        }
+      ],
+      "expect": {
+        "inventory_complete": true,
+        "admission": "clear",
+        "considered_branches": [
+          "safe-a"
+        ]
+      }
+    },
+    {
+      "id": "unknown-default-base",
+      "pages": [
+        {
+          "cursor_in": null,
+          "cursor_out": null,
+          "branches": [
+            "safe-a"
+          ]
+        }
+      ],
+      "base_sha": null,
+      "expect": {
+        "inventory_complete": false,
+        "admission": "deny"
+      }
+    }
+  ]
+}
