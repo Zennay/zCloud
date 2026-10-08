@@ -32,6 +32,8 @@ def evaluate_member(name: object) -> dict[str, object]:
             reasons.append("unsafe_component")
         if ":" in name:
             reasons.append("colon")
+        if any(not _SAFE_PART.fullmatch(part) for part in name.split("/")):
+            reasons.append("unsupported_character")
         if name.endswith((" ", ".")):
             reasons.append("ambiguous_suffix")
     return {
