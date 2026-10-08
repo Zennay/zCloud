@@ -28,6 +28,19 @@ After deployment, independently confirm the exact deployed SHA, job conclusion, 
 4. Route evidence to the active serialized owner for review; reopen admission only after obtaining fresh head-bound proofs and ownership clearance.
 5. If production health is uncertain, use the separately owned incident/rollback procedure; a documentation-only reviewer must not initiate rollback.
 
+## Deterministic reviewer examples (non-authorizing)
+
+| Scenario | Classification | Required next evidence |
+| --- | --- | --- |
+| Regression succeeded at SHA A; candidate was restacked to SHA B | **STALE** | Re-run regression and all required candidate-bound checks at B |
+| Workflow completed successfully but runner labels/identity were not verified | **UNVERIFIED** | Obtain trustworthy runner provenance for the exact run |
+| Candidate and deployed SHA differ, even when HTTP health returns 200 | **MISMATCH** | Establish deployed identity and escalate to the serialized deploy owner |
+| Receipt is internally valid but has no independent post-deploy observation | **INCOMPLETE** | Fresh deployed-SHA and external health receipts |
+| Main changes after release admission but before the guarded prewrite | **INVALIDATED** | Start admission again against current main; do not reuse approval |
+| A required check is pending while another unrelated check is green | **PENDING** | Exact-head terminal result of the required check |
+
+The classification names are descriptive operator vocabulary, **not** GitHub check conclusions or API fields. Missing information does not mean a failure occurred; it means authorization has not been established. Treat any contradictory positive/negative evidence as **UNVERIFIED** until independently reconciled, and never silently choose the favorable observation.
+
 ## Parallel-owner discipline
 
 This slice modifies no workflow, script, CI, queue, deployment, metadata-remediation PR, or production resource. #1108 owns planner/preflight/immutable-intent changes. #1110 owns canonical deploy-trigger static tests. #1111/#1115 own offline receipt parsing/comparison. #580/PWQ-41 and #1089 hold the serialized live control-plane/deploy window. An unrelated green read-only check does not remove these ownership constraints.
