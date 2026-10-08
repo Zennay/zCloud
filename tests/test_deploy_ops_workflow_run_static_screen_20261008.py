@@ -26,6 +26,12 @@ class WorkflowRunStaticScreenTests(unittest.TestCase):
     def test_privileged_command(self):
         self.assert_denied("on: workflow_run\nsteps:\n  - run: sudo systemctl restart dashboard\n", "REVIEW_REQUIRED")
 
+    def test_flow_style_multi_trigger(self):
+        self.assert_denied("on: [push, workflow_run]\\njobs:\\n  repair:\\n    runs-on: self-hosted\\n", "REVIEW_REQUIRED")
+
+    def test_quoted_trigger_key(self):
+        self.assert_denied("'on':\\n  'workflow_run':\\n    types: [completed]\\njobs:\\n  run:\\n    runs-on: self-hosted\\n", "REVIEW_REQUIRED")
+
     def test_missing_trigger_is_unknown_not_safe(self):
         self.assert_denied("on: push\njobs:\n  read:\n    runs-on: ubuntu-latest\n", "UNKNOWN_DENY")
 
