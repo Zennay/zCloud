@@ -6,9 +6,12 @@ Advisory only: this never authorizes release or touches remote resources.
 import argparse
 import ipaddress
 import json
+import re
 from urllib.parse import urlsplit
 
 TRUSTED_HOSTS = frozenset({"github.com", "api.github.com"})
+API_ARTIFACT = re.compile(r"/repos/Zennay/zCloud/actions/artifacts/[1-9][0-9]*")
+WEB_ARTIFACT = re.compile(r"/Zennay/zCloud/actions/runs/[1-9][0-9]*/artifacts/[1-9][0-9]*")
 DENY = {"deploy_authorized": False, "recovery_authorized": False, "mutation_performed": False}
 
 def inspect(url: object) -> dict:
@@ -29,6 +32,11 @@ def inspect(url: object) -> dict:
                 reasons.append("nonstandard_port")
             if parsed.fragment:
                 reasons.append("fragment_forbidden")
+            if parsed.query:
+                reasons.append("query_forbidden")
+            if not ((host == "api.github.com" and API_ARTIFACT.fullmatch(parsed.path))
+                    or (host == "github.com" and WEB_ARTIFACT.fullmatch(parsed.path))):
+                reasons.append("artifact_path_required")
             if "\\" in url or any(ord(ch) < 32 or ord(ch) == 127 for ch in url):
                 reasons.append("unsafe_character")
             if host:
