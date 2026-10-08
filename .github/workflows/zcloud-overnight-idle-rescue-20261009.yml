@@ -1,0 +1,111 @@
+# One-shot response to incident #1218; does not modify any worker/Firefox runtime source.
+name: zCloud overnight idle consumer guarded rescue 2026-10-09
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+concurrency:
+  group: zcloud-overnight-idle-rescue-20261009
+  cancel-in-progress: false
+
+jobs:
+  inspect-and-dispatch:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Only restart the Firefox consumer after idle/pending proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, os, sqlite3, time, urllib.request
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+          now=datetime.now(ZoneInfo("Europe/Amsterdam"))
+          assert now.date().isoformat()=="2026-10-09" and now.hour<8, "Outside requested overnight window"
+          root="http://127.0.0.1:8765"
+          headers={"User-Agent":"zcloud-overnight-idle-rescue/1"}
+          def local(path):
+              with urllib.request.urlopen(urllib.request.Request(root+path,headers=headers),timeout=12) as r:
+                  return json.load(r)
+          targets=local("/api/runner-targets")
+          allocated=((targets.get("global_allocation") or {}).get("workers") or [])
+          keys={str(w.get("worker_key") or "") for w in allocated if w.get("worker_key")}
+          if not keys:
+              print("RESCUE_SKIPPED=no-allocated-workers")
+              raise SystemExit(0)
+          def is_busy():
+              live=local("/api/runner-live")
+              if not isinstance(live.get("chatgpt_runners"),dict):
+                  raise RuntimeError("No runner live state; never restart blind")
+              workers=[]
+              for project in (live.get("chatgpt_runners") or {}).values():
+                  if isinstance(project,dict): workers+=project.get("workers") or []
+              # Protect every worker (including non-allocated sessions) from global restart.
+              busy=[str(w.get("worker_id") or "") for w in workers
+                    if w.get("generating") or w.get("sending")]
+              print("LIVE_WORKERS",len(workers),"GENERATING_OR_SENDING",busy)
+              return bool(busy)
+          if is_busy():
+              print("RESCUE_SKIPPED=active-generation")
+              raise SystemExit(0)
+          with sqlite3.connect("file:/home/ubuntu/zennay-cloud/history.db?mode=ro",
+                               uri=True,timeout=6) as conn:
+              pending=conn.execute("SELECT project_id,action,created_at FROM runner_commands "
+                                   "WHERE status='pending' ORDER BY id DESC LIMIT 100").fetchall()
+          stuck=[]
+          for key,action,created in pending:
+              if key not in keys: continue
+              try:
+                  created_dt=datetime.fromisoformat(str(created).replace("Z","+00:00"))
+                  if (datetime.now(timezone.utc)-created_dt).total_seconds()<90: continue
+              except Exception: continue
+              stuck.append((key,action))
+          print("OLD_ALLOCATED_PENDING",stuck)
+          if not stuck:
+              print("RESCUE_SKIPPED=no-old-pending-work")
+              raise SystemExit(0)
+          time.sleep(12)
+          if is_busy():
+              print("RESCUE_SKIPPED=activity-recovered-during-observation")
+              raise SystemExit(0)
+          token=os.environ["GH_TOKEN"]
+          repo=os.environ["GH_REPO"]
+          gh_root=f"https://api.github.com/repos/{repo}"
+          gh_headers={"Authorization":f"Bearer {token}","Accept":"application/vnd.github+json",
+                      "X-GitHub-Api-Version":"2022-11-28","User-Agent":"zcloud-overnight-idle-rescue/1"}
+          def github(method,path,payload=None):
+              data=json.dumps(payload).encode() if payload is not None else None
+              h=dict(gh_headers)
+              if data is not None:h["Content-Type"]="application/json"
+              with urllib.request.urlopen(urllib.request.Request(
+                    gh_root+path,data=data,headers=h,method=method),timeout=15) as r:
+                  return json.load(r) if r.status!=204 else {}
+          workflow="zcloud-restart-workers.yml"
+          recent=github("GET",f"/actions/workflows/{workflow}/runs?per_page=10").get("workflow_runs") or []
+          for run in recent:
+              started=datetime.fromisoformat(run["created_at"].replace("Z","+00:00"))
+              age=(datetime.now(timezone.utc)-started).total_seconds()
+              if age<600 and run.get("status") in ("in_progress","queued","waiting","requested","pending","completed"):
+                  print("RESCUE_SKIPPED=recent-existing-restart",run.get("id"),run.get("status"))
+                  raise SystemExit(0)
+          github("POST",f"/actions/workflows/{workflow}/dispatches",{"ref":"main"})
+          print("GUARDED_RESTART_DISPATCHED=1",sorted(keys),stuck)
+          github("POST","/issues/1218/comments",{
+              "body":"Guarded recovery dispatched existing restart-workers workflow from VPS: "
+                     f"{len(keys)} allocated worker(s), no workers generating/sending in two samples, "
+                     f"{len(stuck)} pending controls older than 90s. "
+                     "Restart/processing still requires independent verification; no success claimed."})
+          PY
