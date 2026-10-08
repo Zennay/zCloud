@@ -70,7 +70,7 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertFalse(json.loads(run.stdout)["mutation_performed"])
 
     def test_invalid_utf8_bytes_fail_closed(self):
-        run = subprocess.run([sys.executable, str(SCRIPT)], input=b'{"token":"secret"}\\xff',
+        run = subprocess.run([sys.executable, str(SCRIPT)], input=b'{"token":"secret"}' + bytes([255]),
                              capture_output=True, check=False)
         self.assertEqual(run.returncode, 1)
         self.assertNotIn(b"secret", run.stdout + run.stderr)
