@@ -27,7 +27,7 @@ class DashboardRecoveryQuarantineTest(unittest.TestCase):
 
     def test_pr_checks_still_exist(self):
         self.assertRegex(self.source, r"(?m)^  pull_request:")
-        self.assertRegex(self.source, r"(?m)^    branches: [main]$")
+        self.assertIn("    branches: [main]", self.source)
 
 
 if __name__ == "__main__":
