@@ -16,7 +16,7 @@ class DashboardRecoveryQuarantineTest(unittest.TestCase):
 
     def test_recovery_job_is_unconditionally_disabled(self):
         section = self.source.split("\n  recover:\n", 1)[1].split("\n  external_verify:\n", 1)[0]
-        self.assertRegex(section, r"(?m)^    if: $\\{\\{ false }}$")
+        self.assertIn("    if: ${{ false }}", section)
         self.assertIn("runs-on: self-hosted", section)
 
     def test_external_verification_remains_independent_and_hosted(self):
