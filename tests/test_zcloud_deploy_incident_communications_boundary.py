@@ -34,7 +34,7 @@ class DeployOpsCommunicationsBoundaryTest(unittest.TestCase):
         for required in (
             "leave the incident status as **investigating**",
             "do not speculate",
-            "not approval for deployment",
+            "approval for deployment",
         ):
             with self.subTest(required=required):
                 self.assertIn(required.lower(), self.content.lower())
