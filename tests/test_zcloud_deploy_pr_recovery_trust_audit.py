@@ -63,6 +63,12 @@ jobs:
         self.assertEqual(report["status"], "clear")
         self.assertEqual(report["pr_triggers"], [])
 
+    def test_inline_trigger_fails_closed(self):
+        self.assertEqual(audit_module.audit("on: [pull_request]\\njobs:\\n")["status"], "unknown")
+
+    def test_missing_trigger_inventory_fails_closed(self):
+        self.assertEqual(audit_module.audit("jobs:\\n  probe:\\n    runs-on: self-hosted\\n")["status"], "unknown")
+
     def test_no_jobs_on_pr_fails_closed(self):
         self.assertEqual(audit_module.audit("on:\n  pull_request:\n")["status"], "unsafe")
 
