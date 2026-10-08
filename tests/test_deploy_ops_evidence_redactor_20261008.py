@@ -69,6 +69,13 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertNotIn("secret-marker", run.stdout + run.stderr)
         self.assertFalse(json.loads(run.stdout)["mutation_performed"])
 
+    def test_invalid_utf8_bytes_fail_closed(self):
+        run = subprocess.run([sys.executable, str(SCRIPT)], input=b'{"token":"secret"}\\xff',
+                             capture_output=True, check=False)
+        self.assertEqual(run.returncode, 1)
+        self.assertNotIn(b"secret", run.stdout + run.stderr)
+        self.assertFalse(json.loads(run.stdout)["release_authorized"])
+
     def test_cli_success_is_still_non_authorizing(self):
         run = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(fixture()),
                              text=True, capture_output=True, check=False)
