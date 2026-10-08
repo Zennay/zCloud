@@ -50,6 +50,17 @@ class EvidenceTest(unittest.TestCase):
             s["ahead"] = invalid
             self.assertTrue(inspect(s))
 
+    def test_incomplete_snapshot_rejected(self):
+        for payload in (None, [], {}, {"checks": []}):
+            self.assertTrue(inspect(payload))
+
+    def test_invalid_sha_and_failed_check_rejected(self):
+        s = self.sample()
+        s["candidate_head_sha"] = "invalid"
+        s["checks"]["cpu"]["conclusion"] = "failure"
+        self.assertTrue(any("invalid full lowercase SHA" in x for x in inspect(s)))
+        self.assertTrue(any("not successful" in x for x in inspect(s)))
+
     def test_boolean_behind_rejected(self):
         s = self.sample()
         s["behind"] = False
