@@ -39,6 +39,10 @@ jobs:
         report = audit_module.audit(workflow)
         self.assertEqual(report["status"], "clear")
 
+    def test_hosted_mutating_pr_is_not_safe(self):
+        workflow = """on:\n  pull_request:\njobs:\n  recovery:\n    runs-on: ubuntu-latest\n    steps:\n      - run: sudo systemctl stop zennay-cloud.service\n"""
+        self.assertEqual(audit_module.audit(workflow)["status"], "unsafe")
+
     def test_unclassified_self_hosted_pr_fails_closed(self):
         workflow = """on:
   pull_request:
