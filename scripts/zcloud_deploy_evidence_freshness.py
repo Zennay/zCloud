@@ -26,8 +26,12 @@ def inspect(snapshot):
             errors.append(f"{name}: invalid full lowercase SHA")
     if main != base:
         errors.append("candidate base differs from current main")
-    if snapshot.get("behind") != 0 or type(snapshot.get("behind")) is not int:
+    if type(snapshot.get("behind")) is not int or snapshot["behind"] != 0:
         errors.append("candidate is behind main or behind count missing")
+    if type(snapshot.get("ahead")) is not int or snapshot["ahead"] < 1:
+        errors.append("candidate ahead count missing or not positive")
+    if main == head:
+        errors.append("candidate head must differ from current main")
     if snapshot.get("serialized_gate_released") is not True:
         errors.append("serialized deploy gate not explicitly released")
     checks = snapshot.get("checks")
