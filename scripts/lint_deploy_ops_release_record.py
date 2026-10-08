@@ -5,20 +5,23 @@ import re
 import sys
 
 RECORD = Path(__file__).resolve().parents[1] / "docs" / "deploy-ops-gate-release-decision-record.md"
-REQUIRED = (
-    "#580", "#1089", "PWQ-258", "HOLD", "main SHA",
-    "PR-less", "exact-head", "mutation_performed: false",
-    "merge_authorized: false", "deploy_authorized: false",
-)
-DENIED = (
-    r"(?im)^- (?:merge_authorized|deploy_authorized|mutation_performed):\s*true\s*$",
-    r"(?im)^- Gate disposition:\s*(?:GO|RELEASE|APPROVED)\b",
-)
+REQUIRED = ("#580", "#1089", "PWQ-258", "HOLD", "main SHA", "PR-less", "exact-head")
+FLAGS = ("mutation_performed", "merge_authorized", "deploy_authorized")
 
 
 def validate(text: str) -> list[str]:
     failures = [f"missing requirement: {item}" for item in REQUIRED if item not in text]
-    failures.extend(f"unsafe declaration: {pattern}" for pattern in DENIED if re.search(pattern, text))
+    sections = re.split(r"(?m)^## Decision\s*$", text)
+    if len(sections) != 2:
+        return failures + ["expected exactly one decision section"]
+    decision = sections[1]
+    for flag in FLAGS:
+        values = re.findall(rf"(?im)^\s*-\s*{flag}:\s*(\S+)\s*$", decision)
+        if values != ["false"]:
+            failures.append(f"{flag} must occur once and be false in decision")
+    dispositions = re.findall(r"(?im)^\s*-\s*Gate disposition:\s*(.+?)\s*$", decision)
+    if dispositions != ["HOLD (default)"]:
+        failures.append("decision must have exactly one HOLD (default) disposition")
     return failures
 
 
