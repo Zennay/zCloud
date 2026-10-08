@@ -38,3 +38,33 @@ This checklist is a **non-authorizing** companion for incident handoff and audit
 ```
 
 This document is deliberately independent of the release runbook, receipt validator, gate owner files and all runtime/deploy workflows. It does not change the serialized #580/PWQ-41 + #1089 gate or the #1108 metadata-remediation owner.
+
+## Sanitized receipt example (illustrative, not a live proof)
+
+An operator can share a *minimal* handoff with immutable identifiers and outcomes. Never invent a success value when the underlying check is still running. This example is intentionally invalid as live authorization:
+
+```json
+{
+  "candidate_sha": "0000000000000000000000000000000000000000",
+  "base_sha": "0000000000000000000000000000000000000000",
+  "checks": {
+    "regression": "not_verified",
+    "runner_identity": "not_verified",
+    "external_health": "not_verified"
+  },
+  "serialized_gate": "not_verified",
+  "metadata_write_authorized": false,
+  "merge_authorized": false,
+  "deploy_authorized": false,
+  "mutation_performed": false
+}
+```
+
+The all-zero identities are placeholders, **not** valid evidence. Replace them only with verified GitHub commit identities before publishing an operational receipt. Do not attach raw logs or include bearer tokens in evidence URLs. If a record cannot be safely redacted while preserving meaning, share only a restricted evidence reference and a bounded outcome code.
+
+## Review acceptance
+
+- The public handoff includes no secrets, signed URLs, personal data, raw log lines or machine-specific command lines.
+- Each success claim is tied to a terminal completed check for the stated candidate SHA; in-progress, failed, skipped or missing checks remain unverified.
+- A later main change invalidates the handoff as a fresh promotion basis until new exact-main acceptance is captured.
+- Nothing in the handoff bypasses #580/PWQ-41 + #1089 or authorizes production mutation.
