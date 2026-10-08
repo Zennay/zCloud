@@ -61,7 +61,7 @@ def audit(text):
         if not jobs:
             problems.append("PR trigger present but job inventory unavailable")
         for name, detail in jobs.items():
-            if detail["mutation"] and not detail["hosted"]:
+            if detail["mutation"]:
                 problems.append("PR-accessible privileged mutation job: " + name)
             elif not detail["hosted"]:
                 problems.append("PR-accessible non-hosted job cannot be proven read-only: " + name)
