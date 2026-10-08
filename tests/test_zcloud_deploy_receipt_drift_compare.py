@@ -1,6 +1,11 @@
 """Regression tests for the deploy receipt drift comparator."""
 import copy
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from scripts.zcloud_deploy_receipt_drift_compare import compare
 
 BASE = {
@@ -46,6 +51,31 @@ class ReceiptDriftTests(unittest.TestCase):
             compare(BASE, {**BASE, "candidate_sha": "not-a-sha"})
         with self.assertRaises(ValueError):
             compare(BASE, {**BASE, "workflow_run_id": True})
+
+
+    def test_cli_exit_codes_and_safe_output(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_deploy_receipt_drift_compare.py"
+        with tempfile.TemporaryDirectory() as directory:
+            before = Path(directory) / "before.json"
+            after = Path(directory) / "after.json"
+            before.write_text(json.dumps(BASE), encoding="utf-8")
+            for payload, expected_code in (
+                (BASE, 0),
+                ({**BASE, "runner_name": "replacement"}, 1),
+                ({"unexpected": True}, 2),
+            ):
+                with self.subTest(expected_code=expected_code):
+                    after.write_text(json.dumps(payload), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(script), str(before), str(after)],
+                        capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, expected_code, result.stderr)
+                    report = json.loads(result.stdout)
+                    for flag in ("release_authorized", "merge_authorized",
+                                 "deploy_authorized", "mutation_performed"):
+                        self.assertIs(report[flag], False)
+                    self.assertEqual(report["evidence_drift_detected"], expected_code != 0)
 
 if __name__ == "__main__":
     unittest.main()
