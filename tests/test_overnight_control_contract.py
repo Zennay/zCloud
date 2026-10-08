@@ -5,7 +5,7 @@ Read-only: never contacts the VPS, GitHub API or browser. Run with:
     python3 -m unittest discover -s tests -p 'test_overnight_control_contract.py'
 """
 from pathlib import Path
-import re
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -18,6 +18,19 @@ class OvernightControlContract(unittest.TestCase):
     def setUpClass(cls):
         cls.watch = WATCH.read_text(encoding="utf-8")
         cls.oneshot = ONESHOT.read_text(encoding="utf-8")
+
+    def test_embedded_python_is_valid_without_execution(self):
+        # Parse the scripts embedded in YAML without executing any VPS action.
+        for name, source in (("watchdog", self.watch), ("one-shot", self.oneshot)):
+            with self.subTest(name=name):
+                lines = source.splitlines()
+                starts = [i for i, line in enumerate(lines) if "python3 - <<'PY'" in line]
+                self.assertEqual(len(starts), 1, "Expected exactly one embedded Python script")
+                start = starts[0] + 1
+                ends = [i for i in range(start, len(lines)) if lines[i].strip() == "PY"]
+                self.assertEqual(len(ends), 1, "Missing or ambiguous here-doc terminator")
+                script = textwrap.dedent("\n".join(lines[start:ends[0]]) + "\n")
+                compile(script, f"{name}-embedded.py", "exec")
 
     def test_recovery_uses_trusted_vps_runner(self):
         for name, source in (("watchdog", self.watch), ("one-shot", self.oneshot)):
