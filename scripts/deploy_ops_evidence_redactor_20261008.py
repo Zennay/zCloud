@@ -10,7 +10,7 @@ import sys
 
 SHA = re.compile(r"^[a-fA-F0-9]{40}$")
 STATUS = {"success", "failure", "cancelled", "skipped", "unknown"}
-FIELDS = ("repository", "candidate_sha", "main_sha", "regression", "vps_probe", "production_receipt")
+MAX_INPUT_BYTES = 65536\nFIELDS = ("repository", "candidate_sha", "main_sha", "regression", "vps_probe", "production_receipt")
 def redact(value):
     if not isinstance(value, dict):
         raise ValueError("receipt must be an object")
@@ -36,9 +36,9 @@ def redact(value):
     out["mutation_performed"] = False
     return out
 
-def main():
+def reject_duplicates(pairs):\n    output = {}\n    for key, value in pairs:\n        if key in output:\n            raise ValueError("duplicate JSON key")\n        output[key] = value\n    return output\n\ndef main():
     try:
-        payload = json.load(sys.stdin)
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)\n        if len(raw) > MAX_INPUT_BYTES:\n            raise ValueError("receipt exceeds size limit")\n        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicates)
         print(json.dumps(redact(payload), sort_keys=True))
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         print(json.dumps({"error": "invalid evidence", "release_authorized": False,
