@@ -13,6 +13,10 @@ on:
 
 jobs:
   recover:
+    # Safety quarantine: never run privileged VPS repair from PRs, pushes, or
+    # manual requests until #1135's exact-main serialized admission is implemented.
+    # External hosted verification remains enabled independently.
+    if: ${{ false }}
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
