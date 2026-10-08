@@ -25,6 +25,16 @@ class DashboardRecoveryQuarantineTest(unittest.TestCase):
         self.assertIn("ZCLOUD_DASHBOARD_EXTERNAL_STATUS_GREEN", section)
         self.assertNotRegex(section, r"(?m)^    needs:.*recover")
 
+    def test_hosted_external_check_has_no_privileged_recovery_commands(self):
+        section = self.source.split("\n  external_verify:\n", 1)[1]
+        for forbidden in ("sudo ", "systemctl ", "chown ", "chmod ", "chattr ", "daemon-reload"):
+            with self.subTest(command=forbidden):
+                self.assertNotIn(forbidden, section)
+
+    def test_guard_precedes_self_hosted_runner(self):
+        section = self.source.split("\n  recover:\n", 1)[1].split("\n  external_verify:\n", 1)[0]
+        self.assertLess(section.index("    if: ${{ false }}"), section.index("    runs-on: self-hosted"))
+
     def test_pr_checks_still_exist(self):
         self.assertRegex(self.source, r"(?m)^  pull_request:")
         self.assertIn("    branches: [main]", self.source)
