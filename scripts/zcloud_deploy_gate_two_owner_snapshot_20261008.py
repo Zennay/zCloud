@@ -12,7 +12,7 @@ import sys
 REQUIRED = frozenset(("#580", "#1089"))
 MAX_AGE_SECONDS = 300
 
-def assess(snapshot, *, now):
+def assess(snapshot, *, now, expected_main_sha=None):
     if not isinstance(snapshot, dict):
         return "incomplete", "snapshot_not_object"
     if snapshot.get("repository") != "Zennay/zCloud":
@@ -20,6 +20,8 @@ def assess(snapshot, *, now):
     sha = snapshot.get("main_sha")
     if not isinstance(sha, str) or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
         return "incomplete", "invalid_main_sha"
+    if expected_main_sha is not None and sha != expected_main_sha:
+        return "incomplete", "main_moved_since_collection"
     if snapshot.get("inventory_complete") is not True:
         return "incomplete", "inventory_not_complete"
     try:
@@ -55,12 +57,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("snapshot", help="Local JSON snapshot; no network access")
     parser.add_argument("--now", help="UTC timestamp for reproducible tests")
+    parser.add_argument("--expected-main-sha", required=True, help="Separately verified canonical main revision")
     args = parser.parse_args(argv)
     try:
         with open(args.snapshot, encoding="utf-8") as handle:
             snapshot = json.load(handle)
         now = dt.datetime.fromisoformat(args.now.replace("Z", "+00:00")) if args.now else dt.datetime.now(dt.timezone.utc)
-        status, reason = assess(snapshot, now=now)
+        status, reason = assess(snapshot, now=now, expected_main_sha=args.expected_main_sha)
     except (OSError, ValueError, TypeError) as exc:
         status, reason = "incomplete", "unreadable_or_invalid_snapshot"
     print(json.dumps({"status": status, "reason": reason}, sort_keys=True))
