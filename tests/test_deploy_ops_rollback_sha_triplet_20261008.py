@@ -67,5 +67,40 @@ class RollbackTripletTests(unittest.TestCase):
                 self.check("INVALID_SHA", candidate=invalid if invalid is not None else "")
                 self.check("INVALID_SHA", previous=invalid if invalid is not None else "")
 
+    def test_all_canonical_deployed_destinations_deny_authorization(self):
+        for deployed, claim, status in (
+            (self.C, False, "SHAPE_ONLY_UNVERIFIED"),
+            (self.C, True, "CONTRADICTORY_ROLLBACK_CLAIM"),
+            (self.P, False, "ROLLBACK_UNVERIFIED"),
+            (self.P, True, "SHAPE_ONLY_UNVERIFIED"),
+            (self.X, False, "UNRECOGNIZED_DEPLOYED_SHA"),
+            (self.X, True, "UNRECOGNIZED_DEPLOYED_SHA"),
+        ):
+            with self.subTest(deployed=deployed, verified_rollback=claim):
+                self.check(status, deployed=deployed, verified_rollback=claim)
+
+    def test_sha_type_confusion_is_denied_in_every_position(self):
+        invalid_values = (b"a" * 40, bytearray(b"a" * 40), 0, True, False,
+                          ["a" * 40], {"sha": "a" * 40}, ("a" * 40,))
+        for invalid in invalid_values:
+            with self.subTest(type=type(invalid).__name__):
+                self.check("INVALID_SHA", candidate=invalid)
+                self.check("INVALID_SHA", previous=invalid)
+                self.check("INVALID_SHA", deployed=invalid)
+
+    def test_noncanonical_unicode_and_whitespace_are_rejected(self):
+        invalid_values = (" a" * 40, "a" * 40 + " ", "\\u0430" * 40,
+                          "a" * 40 + "\\r", "a" * 40 + "\\x00")
+        for invalid in invalid_values:
+            with self.subTest(value=repr(invalid)):
+                self.check("INVALID_SHA", deployed=invalid)
+
+    def test_identical_candidate_and_previous_never_indicate_rollback(self):
+        for deployed in (self.C, self.P, self.X):
+            for claim in (False, True):
+                with self.subTest(deployed=deployed, claim=claim):
+                    self.check("NO_DISTINCT_ROLLBACK_TARGET", previous=self.C,
+                               deployed=deployed, verified_rollback=claim)
+
 if __name__ == "__main__":
     unittest.main()
