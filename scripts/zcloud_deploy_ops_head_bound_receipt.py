@@ -24,6 +24,8 @@ def evaluate(data):
         reasons.append("stale_or_invalid_compare")
     if not isinstance(data["changed_paths"], list) or not data["changed_paths"] or not all(isinstance(p, str) and p for p in data["changed_paths"]):
         reasons.append("incomplete_paths")
+    if not isinstance(data["candidate_pr"], int) or isinstance(data["candidate_pr"], bool) or data["candidate_pr"] < 1 or not isinstance(data["owner"], str) or not data["owner"].strip():
+        reasons.append("invalid_candidate_or_owner")
     checks = data["required_checks"]
     if not isinstance(checks, list) or not checks:
         reasons.append("missing_checks")
