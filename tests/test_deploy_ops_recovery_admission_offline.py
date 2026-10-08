@@ -40,6 +40,14 @@ class OfflineRecoveryAdmissionTests(unittest.TestCase):
         bundle["candidate_sha"] = "b" * 40
         self.assertIn("stale_candidate_sha", admission.evaluate(bundle))
 
+    def test_malformed_commit_hashes_fail_closed(self):
+        for key in ("main_sha", "candidate_sha"):
+            for bad in ("not-a-sha", "g" * 40, "", None):
+                with self.subTest(key=key, bad=bad):
+                    bundle = valid_bundle()
+                    bundle[key] = bad
+                    self.assertIn("invalid_git_sha:" + key, admission.evaluate(bundle))
+
     def test_both_serialized_gates_are_required(self):
         for key in ("gate_580_released", "gate_1089_released"):
             with self.subTest(key=key):
