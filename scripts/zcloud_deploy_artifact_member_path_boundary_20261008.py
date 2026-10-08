@@ -35,7 +35,7 @@ def evaluate_member(name: object) -> dict[str, object]:
             reasons.append("colon")
         if any(not _SAFE_PART.fullmatch(part) for part in name.split("/")):
             reasons.append("unsupported_character")
-        if name.endswith((" ", ".")):
+        if any(part.endswith((".", " ")) for part in name.split("/")):
             reasons.append("ambiguous_suffix")
     return {
         "accepted_for_offline_name_screen": not reasons,
