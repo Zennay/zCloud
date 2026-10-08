@@ -14,6 +14,7 @@ import sys
 _DRIVE = re.compile(r"^[a-zA-Z]:")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
+_SAFE_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def evaluate_member(name: object) -> dict[str, object]:
     reasons: list[str] = []
