@@ -7,6 +7,8 @@ consistency signal, not provenance, ownership or production admission.
 import argparse
 import datetime as dt
 import json
+import os
+import stat
 import sys
 
 UTC = dt.timezone.utc
@@ -50,8 +52,15 @@ def main():
     parser.add_argument("--future-skew-seconds", type=int, default=60)
     args = parser.parse_args()
     try:
-        with open(args.receipt, encoding="utf-8") as stream:
-            data = json.load(stream)
+        fd = os.open(args.receipt, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+                raise ValueError("INVALID_RECEIPT")
+            raw = stream.read(4097)
+            if len(raw) > 4096:
+                raise ValueError("INVALID_RECEIPT")
+            data = json.loads(raw.decode("utf-8"))
         result = evaluate(data, now=dt.datetime.now(UTC),
                           max_age_seconds=args.max_age_seconds,
                           future_skew_seconds=args.future_skew_seconds)
