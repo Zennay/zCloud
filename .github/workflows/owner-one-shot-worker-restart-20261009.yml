@@ -1,0 +1,123 @@
+name: Owner one-shot restart zCloud allocated workers (2026-10-09)
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/owner-one-shot-worker-restart-20261009.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-owner-worker-restart-20261009
+  cancel-in-progress: false
+
+jobs:
+  restart:
+    if: github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Open a fresh chat for each live allocated worker, with bounded verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sqlite3, time, urllib.request, urllib.error
+          from pathlib import Path
+
+          BASE = "http://127.0.0.1:8765"
+          DB = Path("/home/ubuntu/zennay-cloud/history.db")
+          def call(method, path, payload=None):
+              data = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(
+                  BASE + path, data=data,
+                  headers={"Content-Type": "application/json", "User-Agent": "zcloud-owner-oneshot-restart/1"},
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  return json.load(resp)
+
+          def targets():
+              return (call("GET", "/api/runner-targets").get("global_allocation") or {}).get("workers") or []
+
+          # Refresh allocation against the saved pool settings; never override counts,
+          # resume paused projects, or change queues/worker ownership.
+          before = targets()
+          if not before:
+              raise SystemExit("No allocated workers; restart not attempted")
+          print("ALLOCATION_BEFORE=" + json.dumps(before, sort_keys=True), flush=True)
+
+          # Application-level restart avoids force-killing Firefox, the listener,
+          # or work already executing in another project.
+          commands = {}
+          for row in before:
+              key = str(row.get("worker_key") or "").strip()
+              if not key:
+                  key = f"{row['project_id']}::w{int(row.get('worker_slot') or 1)}"
+              response = call("POST", "/api/runner-control", {
+                  "project_id": key, "action": "new_chat"
+              })
+              print("RESTART_REQUEST=" + json.dumps({"worker": key, "response": response}, sort_keys=True), flush=True)
+              if not response.get("ok") or not response.get("command_id"):
+                  raise SystemExit(f"New-chat command rejected for {key}: {response}")
+              commands[key] = int(response["command_id"])
+
+          states = {}
+          deadline = time.time() + 160
+          while time.time() < deadline:
+              with sqlite3.connect(DB, timeout=8) as conn:
+                  conn.row_factory = sqlite3.Row
+                  states = {}
+                  for key, cid in commands.items():
+                      row = conn.execute(
+                          "SELECT status,result,updated_at FROM runner_commands WHERE id=?",
+                          (cid,),
+                      ).fetchone()
+                      states[key] = dict(row) if row else {"status": "missing"}
+              if all(v.get("status") in ("completed", "failed") for v in states.values()):
+                  break
+              time.sleep(5)
+
+          after = targets()
+          current = {
+              str(w.get("worker_key") or f"{w.get('project_id')}::w{int(w.get('worker_slot') or 1)}"):
+              str(w.get("queue_id") or "") for w in after
+          }
+          previous = {
+              str(w.get("worker_key") or f"{w.get('project_id')}::w{int(w.get('worker_slot') or 1)}"):
+              str(w.get("queue_id") or "") for w in before
+          }
+          live = call("GET", "/api/runner-live")
+          def runtime(key):
+              base = key.split("::w", 1)[0]
+              pool = ((live.get("chatgpt_runners") or {}).get(base) or {}).get("workers") or []
+              return next((r for r in pool if str(r.get("worker_id") or "") == key), {})
+
+          failures = []
+          deferred = []
+          completed = []
+          superseded = []
+          for key, result in states.items():
+              if current.get(key) != previous.get(key):
+                  superseded.append(key)
+              elif result.get("status") == "completed":
+                  completed.append(key)
+              elif result.get("status") == "pending" and (
+                  runtime(key).get("generating") or runtime(key).get("sending")
+              ):
+                  deferred.append(key)
+              else:
+                  failures.append(key)
+          print("RESTART_VERIFICATION=" + json.dumps({
+              "completed": completed,
+              "deferred_busy": deferred,
+              "superseded_allocation": superseded,
+              "failed_or_idle": failures,
+              "command_states": states,
+              "current_allocation": current,
+          }, sort_keys=True), flush=True)
+          if failures:
+              raise SystemExit("Worker new-chat restart not confirmed: " + ",".join(failures))
+          print("OWNER_ONESHOT_WORKERS_RESTARTED_OR_SAFELY_DEFERRED=1")
+          PY
