@@ -6,8 +6,8 @@ Run: python3 -m unittest discover -s tests -p 'test_checkout_trust_negative_2026
 import re
 import unittest
 
-SHA40 = re.compile(r"[0-9a-f]{40}\\Z")
-CHECKOUT = re.compile(r"\\Aactions/checkout@([0-9a-f]{40})\\Z")
+SHA40 = re.compile(r"[0-9a-f]{40}\Z")
+CHECKOUT = re.compile(r"\Aactions/checkout@([0-9a-f]{40})\Z")
 
 
 def evaluate_checkout(step, *, expected_revision):
