@@ -59,3 +59,28 @@ Read-only inspection of `.github/workflows/zcloud-dashboard-access-recovery.yml`
 | Repair succeeds locally but external probe fails | Report incomplete | Do not claim production green |
 
 All test fixtures must run with mocks or disposable runners; **none** are permission to exercise the live `recover` job. Workflow implementation remains owned by #1135's reconciled recovery owner, not this docs PR.
+
+## Reviewer-ready release decision record
+
+For every prospective recovery run the owner must record a **single immutable decision** before any privileged step:
+
+| Field | Admissible value | Fail-closed rule |
+| --- | --- | --- |
+| canonical repository | `Zennay/zCloud` | Other / missing repository -> DENY |
+| invocation | manually authorized trusted dispatch | PR, push or unknown -> VERIFY_ONLY |
+| main revision | protected main SHA reread immediately before admission | stale / unknown / drift -> DENY |
+| serialized gates | #580/PWQ-41 and #1089 both explicitly released on that same revision | either active or incomplete -> DENY |
+| dashboard health | bounded independent status response plus local verification | healthy -> NOOP; unknown -> DENY |
+| execution environment | allowlisted permanent guarded VPS runner and noninteractive privilege | generic runner / missing permission -> DENY |
+| exclusive ownership | reviewer approval and no concurrent recovery | conflicting or missing owner -> DENY |
+| rollback state | precise prior state captured without secrets | missing rollback state -> DENY |
+
+Decision codes are `VERIFY_ONLY`, `DENY`, `NOOP_HEALTHY`, and `REPAIR_ADMITTED`. **Only** `REPAIR_ADMITTED` may enter a bounded privileged path. A successful external status check is evidence for `NOOP_HEALTHY`, not for `REPAIR_ADMITTED`.
+
+### Safe completion receipt
+
+For an explicitly admitted and actually necessary repair, record the reviewed admission SHA, authorized owner, action class, start/end time, original service state, bounded post-action local and external probe verdicts, rollback result (or not-needed reason), and a correlation/run ID. A pass requires **both** local API and external API verification against the same post-action deployment; a failure or timing gap is `INCOMPLETE`, never a green deployment.
+
+### Why this is a separate PR
+
+The known issue #1135 and existing audit branch retain their owner responsibilities. This add-only document is **not** executable remediation, not a workflow patch, and not a production gate bypass. Its purpose is to provide a stable shared acceptance contract without writing to the active owner's workflow, tests, SQLite, Notion queue or runner state.
