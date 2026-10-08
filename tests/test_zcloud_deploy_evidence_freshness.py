@@ -9,7 +9,7 @@ B = "b" * 40
 class EvidenceTest(unittest.TestCase):
     def sample(self):
         return {"main_sha": A, "candidate_base_sha": A,
-                "candidate_head_sha": B, "behind": 0,
+                "candidate_head_sha": B, "ahead": 1, "behind": 0,
                 "serialized_gate_released": True,
                 "checks": {name: {"conclusion": "success", "head_sha": B}
                            for name in ("regression", "cpu", "dashboard")}}
@@ -36,6 +36,19 @@ class EvidenceTest(unittest.TestCase):
         s = self.sample()
         del s["checks"]["dashboard"]
         self.assertTrue(inspect(s))
+
+    def test_same_head_as_main_rejected(self):
+        s = self.sample()
+        s["candidate_head_sha"] = A
+        for check in s["checks"].values():
+            check["head_sha"] = A
+        self.assertTrue(any("must differ" in x for x in inspect(s)))
+
+    def test_zero_or_boolean_ahead_rejected(self):
+        for invalid in (0, False, -1, None):
+            s = self.sample()
+            s["ahead"] = invalid
+            self.assertTrue(inspect(s))
 
     def test_boolean_behind_rejected(self):
         s = self.sample()
