@@ -20,7 +20,7 @@ def classify(payload):
         name, conclusion = job.get("name"), job.get("conclusion")
         if name not in ("recover", "external_verify"):
             continue
-        if conclusion not in OUTCOMES:
+        if not isinstance(conclusion, str) or conclusion not in OUTCOMES:
             raise ValueError("missing or invalid conclusion for monitored job")
         if name in observations:
             raise ValueError("duplicate monitored job")
