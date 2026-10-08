@@ -14,7 +14,22 @@ def screen(text):
         return {"verdict": "UNKNOWN_DENY", "reason": "empty_input",
                 "deploy_authorized": False, "recovery_authorized": False,
                 "mutation_performed": False}
-    trigger = bool(re.search(r"(?m)^\s*(?:on:|['\"]on['\"]:)\s*(?:\n(?:\s+[^\n]+\n)*?\s+workflow_run\s*:|\{[^\n}]*workflow_run\s*:|\[?workflow_run\b)", text))
+    # Screen common YAML block/flow trigger shapes; never claim to parse YAML.
+    trigger = False
+    for match in re.finditer(r"(?m)^[ \\t]*(?:on|['\\\"]on['\\\"])[ \\t]*:[ \\t]*(.*)$", text):
+        tail = match.group(1).split("#", 1)[0]
+        if re.search(r"\\bworkflow_run\\b", tail):
+            trigger = True
+            break
+        if not tail.strip():
+            for line in text[match.end():].splitlines():
+                if line.strip() and not line.startswith((" ", "\\t")):
+                    break
+                if re.match(r"^[ \\t]+['\\\"]?workflow_run['\\\"]?[ \\t]*:", line):
+                    trigger = True
+                    break
+            if trigger:
+                break
     privileged = bool(re.search(r"(?im)\b(?:sudo|systemctl|service|chown|chmod|chattr|docker|kubectl|git\s+push)\b", text))
     self_hosted = bool(re.search(r"(?i)self-hosted", text))
     write_permission = bool(re.search(r"(?im)^\s*(?:contents|actions|deployments|packages|id-token)\s*:\s*write\s*$", text))
