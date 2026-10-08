@@ -15,7 +15,7 @@ python3 -m unittest tests.test_zcloud_deploy_evidence_freshness
 
 The JSON snapshot must contain `main_sha`, `candidate_base_sha`,
 `candidate_head_sha` (full lowercase 40-character commit IDs), an
-integer `behind` equal to 0, `serialized_gate_released: true`, and
+integer `behind` equal to 0, a positive integer `ahead`, a candidate head\ndifferent from `main_sha`, `serialized_gate_released: true`, and
 `checks` with `regression`, `cpu`, and `dashboard` objects. Each
 required check must have `conclusion: "success"` and a `head_sha`
 matching `candidate_head_sha`. Missing, incomplete, stale, or
