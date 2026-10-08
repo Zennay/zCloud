@@ -1,0 +1,26 @@
+name: zCloud deploy evidence boundary tests
+
+on:
+  pull_request:
+    paths:
+      - scripts/zcloud_deploy_evidence_boundary.py
+      - tests/test_zcloud_deploy_evidence_boundary.py
+      - .github/workflows/zcloud-deploy-evidence-boundary-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence-boundary:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact triggering commit
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Run isolated evidence tests
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_deploy_evidence_boundary.py' -v
