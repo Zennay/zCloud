@@ -41,6 +41,31 @@ After deployment, independently confirm the exact deployed SHA, job conclusion, 
 
 The classification names are descriptive operator vocabulary, **not** GitHub check conclusions or API fields. Missing information does not mean a failure occurred; it means authorization has not been established. Treat any contradictory positive/negative evidence as **UNVERIFIED** until independently reconciled, and never silently choose the favorable observation.
 
+## Minimal redacted operator handoff template
+
+Copy only the following non-secret identifiers into the release owner's existing coordination channel. Unknown values must remain `UNKNOWN`; do not manufacture timestamps, checks, or success statuses.
+
+```text
+Observation UTC: UNKNOWN
+Repository: Zennay/zCloud
+PR number: UNKNOWN
+Current main commit (40 hex): UNKNOWN
+Candidate commit (40 hex): UNKNOWN
+Evidence commit (40 hex): UNKNOWN
+Required regression run ID / conclusion: UNKNOWN / NOT_CHECKED
+Permanent VPS runner identity verified: UNKNOWN
+Same-repository workflow provenance verified: UNKNOWN
+Serialized #580/PWQ-41 ownership cleared: UNKNOWN
+Serialized #1089 ownership cleared: UNKNOWN
+Prewrite state identity: UNKNOWN
+Deployed commit (40 hex): UNKNOWN
+External health independently checked: UNKNOWN
+Blocking contradiction or missing proof: UNKNOWN
+Decision: NOT_AUTHORIZED
+```
+
+The template is intentionally not parseable as an authorization token. It cannot substitute for the independently verified live release gates. Never change `Decision` to an authorized value in a document or PR comment; only the separate guarded release controller can make that determination. In particular, an absent or closed PR is **not** sufficient evidence that its serialized ownership window was released.
+
 ## Parallel-owner discipline
 
 This slice modifies no workflow, script, CI, queue, deployment, metadata-remediation PR, or production resource. #1108 owns planner/preflight/immutable-intent changes. #1110 owns canonical deploy-trigger static tests. #1111/#1115 own offline receipt parsing/comparison. #580/PWQ-41 and #1089 hold the serialized live control-plane/deploy window. An unrelated green read-only check does not remove these ownership constraints.
