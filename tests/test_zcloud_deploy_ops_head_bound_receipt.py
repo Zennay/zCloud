@@ -59,6 +59,18 @@ class ReceiptTests(unittest.TestCase):
         d["required_checks"] = []
         self.assertEqual(evaluate(d)["decision"], "defer")
 
+    def test_invalid_owner_identity_defer(self):
+        for owner in ("", "   ", None):
+            with self.subTest(owner=owner):
+                d = valid()
+                d["owner"] = owner
+                self.assertEqual(evaluate(d)["decision"], "defer")
+
+    def test_invalid_candidate_id_defer(self):
+        d = valid()
+        d["candidate_pr"] = False
+        self.assertEqual(evaluate(d)["decision"], "defer")
+
     def test_boolean_ahead_not_integer(self):
         d = valid()
         d["ahead"] = True
