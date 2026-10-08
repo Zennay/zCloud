@@ -53,6 +53,27 @@ class TestDeployGate(unittest.TestCase):
         s["gates"][1]["verified_main_sha"] = "a" * 40
         self.assertEqual(assess(s, now=NOW)[0], "incomplete")
 
+    def test_main_drift_fails_closed(self):
+        self.assertEqual(
+            assess(snapshot(), now=NOW, expected_main_sha="a" * 40),
+            ("incomplete", "main_moved_since_collection"),
+        )
+
+    def test_exact_main_matches(self):
+        self.assertEqual(
+            assess(snapshot(), now=NOW, expected_main_sha=SHA)[0], "clear"
+        )
+
+    def test_missing_gate_fails_closed(self):
+        s = snapshot()
+        s["gates"].pop()
+        self.assertEqual(assess(s, now=NOW)[0], "incomplete")
+
+    def test_unknown_status_fails_closed(self):
+        s = snapshot()
+        s["gates"][0]["status"] = "closed"
+        self.assertEqual(assess(s, now=NOW)[0], "incomplete")
+
     def test_incomplete_inventory_fails_closed(self):
         s = snapshot()
         s["inventory_complete"] = False
