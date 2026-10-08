@@ -52,6 +52,23 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertNotIn("secret-marker", run.stdout + run.stderr)
         self.assertFalse(json.loads(run.stdout)["release_authorized"])
 
+    def test_duplicate_json_keys_are_rejected_without_echo(self):
+        valid = json.dumps(fixture())
+        duplicated = valid.replace('"repository": "Zennay/zCloud"', '"repository": "Zennay/zCloud", "repository": "secret-marker"')
+        run = subprocess.run([sys.executable, str(SCRIPT)], input=duplicated,
+                             text=True, capture_output=True, check=False)
+        self.assertEqual(run.returncode, 1)
+        self.assertNotIn("secret-marker", run.stdout + run.stderr)
+        self.assertFalse(json.loads(run.stdout)["release_authorized"])
+
+    def test_oversized_input_is_bounded_and_denied(self):
+        payload = json.dumps(fixture()) + ("secret-marker" * 6000)
+        run = subprocess.run([sys.executable, str(SCRIPT)], input=payload,
+                             text=True, capture_output=True, check=False)
+        self.assertEqual(run.returncode, 1)
+        self.assertNotIn("secret-marker", run.stdout + run.stderr)
+        self.assertFalse(json.loads(run.stdout)["mutation_performed"])
+
     def test_cli_success_is_still_non_authorizing(self):
         run = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(fixture()),
                              text=True, capture_output=True, check=False)
