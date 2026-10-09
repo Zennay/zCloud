@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "status": "proposal-only; not runtime policy",
+  "issue": 1228,
+  "cases": [
+    {
+      "id": "ascii-composite",
+      "project": "cloud",
+      "key": "notion:api",
+      "class": "permit"
+    },
+    {
+      "id": "latin-cyrillic-confusable",
+      "project": "cloud",
+      "key": "аpi",
+      "compare_key": "api",
+      "class": "distinct-not-equivalent"
+    },
+    {
+      "id": "nfd-combining",
+      "project": "cloud",
+      "key": "é",
+      "class": "reject-proposed"
+    },
+    {
+      "id": "nfc-precomposed",
+      "project": "cloud",
+      "key": "é",
+      "class": "permit-proposed"
+    },
+    {
+      "id": "bidi-override",
+      "project": "cloud",
+      "key": "a‮b",
+      "class": "reject-proposed"
+    },
+    {
+      "id": "zero-width",
+      "project": "cloud",
+      "key": "a​b",
+      "class": "reject-proposed"
+    },
+    {
+      "id": "json-unpaired-surrogate",
+      "raw_json": "{\"claim_key\":\"\\ud800\"}",
+      "class": "reject-proposed"
+    },
+    {
+      "id": "case-distinction",
+      "project": "cloud",
+      "key": "Job-A",
+      "compare_key": "job-a",
+      "class": "distinct-not-equivalent"
+    },
+    {
+      "id": "tuple-delimiter-collision",
+      "project": "c",
+      "key": "a:b",
+      "compare_project": "b:c",
+      "compare_key": "a",
+      "class": "distinct-not-equivalent"
+    },
+    {
+      "id": "cross-project",
+      "project": "cloud",
+      "key": "task",
+      "compare_project": "ftmo",
+      "compare_key": "task",
+      "class": "distinct-not-equivalent"
+    }
+  ],
+  "safety": "Fixtures only; no production host, token, queue, SQLite database or worker action."
+}
