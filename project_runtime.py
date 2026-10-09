@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 import json
 import sqlite3
@@ -265,7 +266,7 @@ def receipt_coverage(
         if observed > reference:
             invalid.append(project_id)
             continue
-        age_seconds = int((reference - observed).total_seconds())
+        age_seconds = ceil((reference - observed).total_seconds())
         receipt_ids[project_id] = receipt.get("id")
         if age_seconds > max_age_seconds:
             stale.append({"project_id": project_id, "age_seconds": age_seconds, "receipt_id": receipt.get("id")})
