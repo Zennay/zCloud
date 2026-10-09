@@ -45,7 +45,12 @@ class WorkerEvidenceTests(unittest.TestCase):
         self.check(sample(ts="2026-10-09T04:15:00"), "unknown")
 
     def test_completed_does_not_prove_materiality(self):
-        self.check(sample("generation-completed"), "generating")
+        self.check(sample("generation-completed"), "completed")
+
+    def test_completion_does_not_authorize_recovery(self):
+        result = classify_worker_evidence(sample("generation-completed"), now=NOW)
+        self.assertNotEqual(result["state"], "material_progress")
+        self.assertFalse(result["recovery_authorized"])
 
 if __name__ == "__main__":
     unittest.main()
