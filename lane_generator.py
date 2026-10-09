@@ -208,6 +208,8 @@ def _normal_scope(scope):
     # A single path/capability is one scope entry, not an iterable of chars.
     # List-shaped queue/claim metadata remains fully backwards compatible.
     for value in _scope_entries(scope.get("capabilities"), "capabilities"):
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("invalid conflict_scope.capabilities: control character")
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
         if not item:
             raise ValueError("invalid conflict_scope.capabilities: empty entry")
@@ -215,6 +217,10 @@ def _normal_scope(scope):
             capabilities.append(item)
     files = []
     for value in _scope_entries(scope.get("files"), "files"):
+        # Validate *before* whitespace stripping, otherwise a trailing newline
+        # or tab turns one unsafe scope declaration into a different path.
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("invalid conflict_scope.files: control-character path")
         item = str(value or "").strip().replace("\\", "/")
         while item.startswith("./"):
             item = item[2:]
