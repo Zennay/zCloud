@@ -68,6 +68,27 @@ class LeaseClockBoundaryReferenceTests(unittest.TestCase):
         self.assertEqual(lease_deadline(self.now, MAX_LEASE_SECONDS),
                          self.now + timedelta(hours=1))
 
+    def test_subsecond_boundary_across_timezone_offsets(self):
+        west = timezone(-timedelta(hours=5))
+        start = self.now.astimezone(west)
+        deadline = lease_deadline(start, 1)
+        self.assertTrue(lease_is_live(deadline, self.now + timedelta(microseconds=999999)))
+        self.assertFalse(lease_is_live(deadline, self.now + timedelta(seconds=1)))
+
+    def test_daylight_saving_uses_absolute_utc_elapsed_time(self):
+        from zoneinfo import ZoneInfo
+        london = ZoneInfo("Europe/London")
+        before_transition = datetime(2026, 10, 25, 1, 30, tzinfo=london, fold=0)
+        deadline = lease_deadline(before_transition, 3600)
+        self.assertEqual(deadline, datetime(2026, 10, 25, 1, 30, tzinfo=UTC))
+        self.assertFalse(lease_is_live(deadline, datetime(2026, 10, 25, 1, 30, tzinfo=london, fold=1)))
+
+    def test_expired_deadline_remains_expired_on_clock_progress(self):
+        deadline = lease_deadline(self.now, 3)
+        for elapsed in (3, 4, 300, 3600):
+            with self.subTest(elapsed=elapsed):
+                self.assertFalse(lease_is_live(deadline, self.now + timedelta(seconds=elapsed)))
+
     def test_non_datetime_denied(self):
         for value in ("2026-10-09T02:00:00Z", 0, None):
             with self.subTest(value=value):
