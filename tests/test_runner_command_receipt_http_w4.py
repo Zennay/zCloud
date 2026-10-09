@@ -29,6 +29,21 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-receipt-http-")
         self.old_db = server.DB
         self.old_cache = server.CACHE
+        # init_db() loads dynamic worker policy globals from the test DB.
+        # Restore them to avoid contaminating unrelated tests discovered later.
+        self.saved_policy = {
+            key: getattr(server, key)
+            for key in (
+                "GLOBAL_CHATGPT_WORKER_LIMIT", "DYNAMIC_CHATGPT_WORKERS",
+                "DYNAMIC_CLAUDE_WORKERS", "DYNAMIC_CHATGPT_COOLDOWN_SECONDS",
+                "DYNAMIC_CLAUDE_COOLDOWN_SECONDS",
+                "DYNAMIC_WORKER_CHECK_INTERVAL_MS",
+                "DYNAMIC_WORKER_TICK_INTERVAL_MS",
+                "DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS",
+                "DYNAMIC_WORKER_GENERATION_TIMEOUT_MS",
+                "AUTONOMY_TICK_SECONDS",
+            )
+        }
         server.DB = Path(self.tmp.name) / "history.db"
         server.CACHE = None
         server.init_db()
@@ -48,6 +63,8 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.thread.join(timeout=3)
         server.DB = self.old_db
         server.CACHE = self.old_cache
+        for key, value in self.saved_policy.items():
+            setattr(server, key, value)
         self.tmp.cleanup()
 
     def send(self, command_id, status="completed", result="first"):
