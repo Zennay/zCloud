@@ -5,7 +5,7 @@ This is a **non-authorizing, point-in-time handoff**, not a live worker/runner h
 ## Canonical pointers
 
 - [zCloud project](https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8) has posture `Accelerate`; [Current State & AI Handoff](https://app.notion.com/p/3e79e19ac955819e9ccee5bec98bbb9c) places completion in `Verifying`.
-- Last cited canonical main is `b8bd5684` in the 2026-10-08 22:07 UTC handoff. **Re-read exact main before using it.**
+- The 2026-10-08 22:07 UTC Notion handoff cited historical `main@b8bd5684`; the fresh PR creation on 2026-10-09 03:50 UTC instead resolved `main@900f9b95510e1bcf31ec99690b728d572d1ec416`. Never treat the historical audit SHA as current. **Re-read exact main before each operation.**
 - Serialized integration belongs to [#580](https://github.com/Zennay/zCloud/pull/580) / PWQ-41; successor deployment gate is [#1089](https://github.com/Zennay/zCloud/pull/1089). Their review/merge windows may change; a separate worker must recheck them.
 - [#1034](https://github.com/Zennay/zCloud/pull/1034) owns cross-repository Actions queue pressure; [#1143](https://github.com/Zennay/zCloud/pull/1143) owns fail-closed recovery. No second owner should dispatch, restart, or edit their live files.
 
