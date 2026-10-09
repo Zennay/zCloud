@@ -29,8 +29,8 @@ The `source` field is **not authentication**. Never accept arbitrary client,
 browser, worker-chat, or Notion JSON as trusted merely because it contains the
 literal `trusted_runtime`. Provenance must be enforced by the calling collector
 through a protected execution boundary, and the assignment/worker IDs must be
-bound to the actual runtime observation before invoking this tool. This helper
-does **not** perform that binding and must not be used as an authorization
+bound to the actual runtime observation before invoking this tool. The helper
+checks expected identifiers, but does **not** authenticate the collector and must not be used as an authorization
 decision for deployment, restart, job resumption, lease allocation, or queue
 writes.
 
