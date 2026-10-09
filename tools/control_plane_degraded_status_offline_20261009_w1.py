@@ -50,6 +50,11 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
         value = observation.get(name)
         if type(value) is str and any(ord(ch) < 32 or 127 <= ord(ch) <= 159 or category(ch) == "Cf" for ch in value):
             return result
+    # Reject whitespace normalization ambiguity in event identity.
+    for name in ("worker_id", "assignment_id"):
+        value = observation.get(name)
+        if type(value) is str and value != value.strip():
+            return result
     if kind == "api_unavailable":
         return {"label": "Service temporarily unavailable", "authorizes_action": False}
     if kind == "conflict":
