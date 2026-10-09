@@ -42,10 +42,10 @@ jobs:
               f"- Expected failures (known production gaps): **{len(expected)}**",
               f"- Unexpected successes: **{len(data['unexpected_successes'])}**",
               "### Known-defect probes",
-              *[f"- \`{item}\`" for item in expected],
+              *[f"- `{item}`" for item in expected],
           ]
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
-              out.write("\\n".join(lines) + "\\n")
+              out.write(chr(10).join(lines) + chr(10))
           if expected:
               print(f"::warning title=Known production contract gaps::{len(expected)} expected failures remain; green CI does not establish remediation.")
           PY
