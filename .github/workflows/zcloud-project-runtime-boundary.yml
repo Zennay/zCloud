@@ -1,0 +1,31 @@
+name: zCloud project runtime boundary
+
+# Run regression on trusted author branch pushes, not untrusted PR code.
+# No service restart, secrets, queue writes, production SQLite, or recovery.
+on:
+  push:
+    branches:
+      - fix/control-plane-runtime-capacity-receipt-freshness-20261009-w1
+    paths:
+      - project_runtime.py
+      - tests/test_project_runtime.py
+      - .github/workflows/zcloud-project-runtime-boundary.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify permanent zCloud runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Test project runtime contract in isolated fixtures
+        run: python3 -m unittest -v tests.test_project_runtime
+      - name: Run full Python regression without live mutations
+        run: python3 -m unittest discover -v
