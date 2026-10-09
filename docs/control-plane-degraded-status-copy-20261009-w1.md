@@ -58,6 +58,17 @@ If a dashboard recovery check fails on an older SHA, label it **Historical dashb
 
 **Scenario E — contradictory producers after a clock jump:** show `Conflicting observations`, with both source identities and timezones. Do not choose the highest lifecycle rank, most recent wall-clock timestamp, or healthiest state without corroboration.
 
+
+## Accessibility and localization acceptance examples
+
+The status label must remain meaningful when colors, icons and charts are unavailable. A screen reader should announce **status, affected scope, evidence age, source, and uncertainty** in that order; it must not announce a definitive operational conclusion based on an empty observation. Treat the following as illustrative copy rather than runtime formatting requirements:
+
+- **English:** "Status unknown for Worker 2. Last observation 2026-10-09 06:00 UTC from worker heartbeat. Current activity unverified."
+- **Dutch:** "Status onbekend voor Worker 2. Laatste waarneming 9 oktober 2026, 06:00 UTC, via worker-heartbeat. Huidige activiteit niet bevestigd."
+- **Recovery failure:** "Dashboard recovery check failed for commit <exact SHA>; see run <run URL>. Worker state is unverified. No restart was performed."
+
+Never encode the sole difference between `Status unknown`, `Generation observed` and `Service temporarily unavailable` using green/amber/red alone. Localization must preserve the distinction between *last observed* and *currently verified*, and must not translate unknown into stopped or successful.
+
 ## Acceptance checklist (manual UI review; no production authority)
 
 - [ ] Copy remains usable without colors, icons or tooltips; screen-reader text spells out unknown/observed distinction.
