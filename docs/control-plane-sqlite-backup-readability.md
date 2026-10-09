@@ -39,7 +39,8 @@ head b734ab0216c2147eab056f5800606afd9cf7155b; this probe does not edit that own
 
 The proof records the raw outcome and refuses any other failure or any error.
 It then composes only the pinned owner's setup/teardown memory fixture into a
-disposable copy of the candidate. AST comparison requires every current test
+disposable local clone at the exact candidate commit, preserving Git identity for
+existing commit-aware tests. AST comparison requires every current test
 method to remain unchanged, including tests added after the owner branch.
 The entire composed suite and dedicated memory-guard suite must pass.
 The receipt distinguishes raw success from known host-memory failure and pins
