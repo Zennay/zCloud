@@ -41,8 +41,10 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
     if kind == "generation_started":
         if (type(expected_worker_id) is str and bool(expected_worker_id.strip())
                 and type(expected_assignment_id) is str and bool(expected_assignment_id.strip())
-                and observation.get("worker_id") == expected_worker_id
-                and observation.get("assignment_id") == expected_assignment_id
+                and type(observation.get("worker_id")) is str
+                and type(observation.get("assignment_id")) is str
+                and observation["worker_id"] == expected_worker_id
+                and observation["assignment_id"] == expected_assignment_id
                 and observation.get("correlated") is True):
             return {"label": "Generation observed", "authorizes_action": False}
     return result
