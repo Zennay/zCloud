@@ -1,0 +1,24 @@
+name: Offline control-plane observation collision contract
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/control_plane_observation_collisions_offline_20261009_w2.py'
+      - 'tests/test_control_plane_observation_collisions_offline_20261009_w2.py'
+      - '.github/workflows/control-plane-observation-collision-offline-20261009-w2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check offline module syntax
+        run: python3 -m py_compile scripts/control_plane_observation_collisions_offline_20261009_w2.py tests/test_control_plane_observation_collisions_offline_20261009_w2.py
+      - name: Run isolated adversarial contract
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_observation_collisions_offline_20261009_w2.py' -v
