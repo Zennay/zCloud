@@ -94,6 +94,25 @@ class ResourceCLIReceiptTransactionTests(unittest.TestCase):
                         self.invoke(*args)
                     self.assertFalse(self.db.exists())
 
+    def test_unknown_project_preflight_never_creates_sqlite(self):
+        for command in ("receipt", "acquire"):
+            with self.subTest(command=command):
+                args = [command, "--project", "unknown-project"]
+                if command == "acquire":
+                    args += ["--owner", "worker"]
+                with self.assertRaisesRegex(ValueError, "missing explicit runtime contract"):
+                    self.invoke(*args)
+                self.assertFalse(self.db.exists())
+
+    def test_invalid_receipt_ci_status_never_opens_sqlite(self):
+        for status in ("green", "pending", "success ", "UNKNOWN"):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(ValueError, "unsupported ci_status"):
+                    self.invoke(
+                        "receipt", "--project", "ftmo", "--ci-status", status,
+                    )
+                self.assertFalse(self.db.exists())
+
     def test_acquire_and_release_hold_explicit_write_transaction(self):
         acquire = runtime.acquire_resource
         release = runtime.release_resource
