@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 UNKNOWN = "Status unknown"
 
-def classify(observation, *, now):
+def classify(observation, *, now, expected_worker_id=None, expected_assignment_id=None):
     """Return a display-only state. Fail closed for invalid or uncorrelated evidence."""
     result = {"label": UNKNOWN, "authorizes_action": False}
     if type(observation) is not dict or type(now) is not datetime or now.tzinfo is None:
@@ -33,6 +33,10 @@ def classify(observation, *, now):
     if kind == "api_responding":
         return {"label": "API responding", "authorizes_action": False}
     if kind == "generation_started":
-        if all(type(observation.get(k)) is str and observation[k].strip() for k in ("worker_id", "assignment_id")) and observation.get("correlated") is True:
+        if (type(expected_worker_id) is str and bool(expected_worker_id.strip())
+                and type(expected_assignment_id) is str and bool(expected_assignment_id.strip())
+                and observation.get("worker_id") == expected_worker_id
+                and observation.get("assignment_id") == expected_assignment_id
+                and observation.get("correlated") is True):
             return {"label": "Generation observed", "authorizes_action": False}
     return result
