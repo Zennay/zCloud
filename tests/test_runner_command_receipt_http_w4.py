@@ -85,6 +85,18 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(before, self.state())
 
     @unittest.expectedFailure
+    def test_terminal_replay_unknown_id_and_malformed_id_do_not_claim_success(self):
+        # One end-to-end contract covers all three known callback defects.
+        self.assertEqual(200, self.send(self.command_id, "completed", "first"))
+        before = self.state()
+        self.assertEqual(409, self.send(self.command_id, "failed", "late"))
+        self.assertEqual(before, self.state())
+        self.assertEqual(409, self.send(self.command_id + 100000, "completed", "ghost"))
+        self.assertEqual(before, self.state())
+        self.assertEqual(400, self.send("not-a-command", "completed", "invalid"))
+        self.assertEqual(before, self.state())
+
+    @unittest.expectedFailure
     def test_unknown_id_must_not_report_success(self):
         # Current endpoint returns {"ok":true} despite UPDATE rowcount=0.
         # Avoid claiming dispatch success for a command that never existed.
