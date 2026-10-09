@@ -84,6 +84,13 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.send(self.command_id + 50000, result="ghost")
         self.assertEqual(before, self.state())
 
+    @unittest.expectedFailure
+    def test_unknown_id_must_not_report_success(self):
+        # Current endpoint returns {"ok":true} despite UPDATE rowcount=0.
+        # Avoid claiming dispatch success for a command that never existed.
+        self.assertEqual(409, self.send(self.command_id + 50000, result="ghost"))
+        self.assertEqual(("pending", None), self.state()[:2])
+
     def test_pending_command_id_is_serialized_as_json_integer(self):
         url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
         with urllib.request.urlopen(url, timeout=5) as response:
