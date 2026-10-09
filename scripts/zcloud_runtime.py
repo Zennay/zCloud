@@ -64,6 +64,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.command in {"acquire", "release"}:
         _validated_owner(args.owner)
+    if args.command == "acquire":
+        args.validated_metadata = json.loads(args.metadata_json)
+        if not isinstance(args.validated_metadata, dict):
+            raise ValueError("--metadata-json must be an object")
     conn = connect(args.db)
     try:
         if args.command == "receipt":
@@ -86,15 +90,12 @@ def main(argv=None) -> int:
             print(json.dumps({"ok": True, "receipt": result}, ensure_ascii=False, sort_keys=True))
             return 0
         if args.command == "acquire":
-            metadata = json.loads(args.metadata_json)
-            if not isinstance(metadata, dict):
-                raise ValueError("--metadata-json must be an object")
             result = runtime.acquire_resource(
                 conn,
                 args.project,
                 args.owner,
                 lease_seconds=args.lease_seconds,
-                metadata=metadata,
+                metadata=args.validated_metadata,
             )
             conn.commit()
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
