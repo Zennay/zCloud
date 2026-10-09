@@ -120,10 +120,20 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(before, self.state())
 
     def test_unknown_positive_id_changes_no_rows(self):
-        before = self.state()
+        # This baseline tracks data integrity independently of the known
+        # false-200 defect asserted in test_unknown_id_must_not_report_success.
+        # Compare all persisted rows so a wrong-ID mutation cannot go unnoticed.
+        with server.connect() as conn:
+            before = [tuple(row) for row in conn.execute(
+                "SELECT id,project_id,status,result,updated_at FROM runner_commands ORDER BY id"
+            ).fetchall()]
         code = self.send(self.command_id + 50000, result="ghost")
         self.assertIn(code, (200, 409), "unknown ID must not trigger server error")
-        self.assertEqual(before, self.state())
+        with server.connect() as conn:
+            after = [tuple(row) for row in conn.execute(
+                "SELECT id,project_id,status,result,updated_at FROM runner_commands ORDER BY id"
+            ).fetchall()]
+        self.assertEqual(before, after)
 
     def test_known_defect_probe_has_working_http_transport(self):
         # A preflight outside expectedFailure prevents transport/DB/setup
