@@ -6,6 +6,7 @@ runtime writer requires separate serialized ownership and exact-head validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Mapping
 
 
@@ -15,12 +16,17 @@ class RestartDecision:
     reason: str
 
 
+_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\\Z")
+
+
 def assess_restart(evidence: Mapping[str, object]) -> RestartDecision:
     """Require independently fresh, exact-generation and resource-safe evidence.
 
     A configured worker slot is not evidence of a healthy worker. An unknown
     condition always denies; never assume absent telemetry means idle.
     """
+    if not isinstance(evidence, Mapping):
+        return RestartDecision(False, "invalid_evidence")
     required = (
         "worker_id", "generation_id", "observed_generation_id",
         "observation_age_seconds", "worker_active", "action_in_flight",
@@ -28,7 +34,7 @@ def assess_restart(evidence: Mapping[str, object]) -> RestartDecision:
     )
     if any(k not in evidence for k in required):
         return RestartDecision(False, "missing_evidence")
-    if any(not isinstance(evidence[k], str) or not evidence[k].strip()
+    if any(not isinstance(evidence[k], str) or not _IDENTIFIER.fullmatch(evidence[k])
            for k in ("worker_id", "generation_id", "observed_generation_id")):
         return RestartDecision(False, "invalid_identity")
     if evidence["generation_id"] != evidence["observed_generation_id"]:
