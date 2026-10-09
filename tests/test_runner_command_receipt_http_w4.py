@@ -63,8 +63,8 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.addCleanup(self.http.server_close)
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
-        # Register shutdown before start(): a failed thread.start() should
-        # not leave a shutdown() call waiting for serve_forever() to begin.
+        # Only register shutdown once the server thread actually started:
+        # shutdown() before serve_forever() starts could deadlock.
         self.thread.start()
         self.addCleanup(self.stop_http_thread)
 
@@ -112,6 +112,12 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
                 (self.command_id,),
             ).fetchone()
             return tuple(row)
+
+    def test_http_fixture_uses_isolated_paths(self):
+        self.assertEqual(Path(self.tmp.name) / "history.db", server.DB)
+        self.assertEqual(Path(self.tmp.name) / "project-layout.json", server.LAYOUT_FILE)
+        self.assertTrue(server.DB.exists())
+        self.assertTrue(self.thread.is_alive())
 
     def test_valid_receipt_updates_only_its_command(self):
         self.assertEqual(200, self.send(self.command_id, result="first accepted"))
