@@ -54,6 +54,20 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertEqual(len(module.sanitize(list(range(300)))), 201)
         self.assertTrue(module.sanitize("x" * 5000).endswith("[TRUNCATED]"))
 
+    def test_nonfinite_numbers_never_cross_handoff_boundary(self):
+        import math
+        sample = {"nan": math.nan, "pos_inf": math.inf, "neg_inf": -math.inf,
+                  "finite": 1.5, "count": 3}
+        cleaned = module.classify_handoff(sample)
+        for key in ("nan", "pos_inf", "neg_inf"):
+            self.assertEqual(cleaned["evidence"][key], "[REDACTED]")
+        self.assertEqual(cleaned["evidence"]["finite"], 1.5)
+        self.assertEqual(cleaned["evidence"]["count"], 3)
+        for flag in ("authenticated_origin", "authorizes_restart",
+                     "authorizes_queue_write", "authorizes_deploy",
+                     "mutation_performed"):
+            self.assertIs(cleaned[flag], False)
+
     def test_never_authorizes_mutation(self):
         for evidence in ({"status": "success"}, None, {"token": "abc"}):
             result = module.classify_handoff(evidence)
