@@ -49,7 +49,7 @@ def compare(previous, candidate):
             return "stale_sequence"
         if candidate.sequence == previous.sequence:
             return "duplicate" if candidate == previous else "conflicting_receipt"
-        if candidate.observed_at < previous.observed_at:
+        if datetime.fromisoformat(candidate.observed_at.replace("Z", "+00:00")) < datetime.fromisoformat(previous.observed_at.replace("Z", "+00:00")):
             return "regressed_observation_time"
         return "forward"
     if candidate.sequence != 0:
