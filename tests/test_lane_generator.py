@@ -269,6 +269,29 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("ftmo-active-2", qa_lane["blocked_by"][0]["queue_id"])
         self.assertEqual(["src/shared.py"], qa_lane["blocked_by"][0]["overlap"]["files"])
 
+    def test_single_scalar_claim_capability_blocks_real_lane(self):
+        """Reject a conflicting claim supplied as one capability string."""
+        project = self.project("cloud", "platform")
+        candidate = {
+            **self.item("cloud-runtime", "Repair Firefox automation"),
+            "project_id": "cloud",
+        }
+        claims = [{
+            "project_id": "cloud",
+            "claim_key": "runner-control",
+            "owner_id": "other",
+            "metadata": {"conflict_scope": {
+                "capabilities": "cloud:runtime-automation",
+            }},
+        }]
+        lanes = generate_execution_lanes(project, [candidate], claims)
+        runtime = next(lane for lane in lanes
+                       if lane["lane_id"] == "runtime-automation")
+        self.assertEqual("blocked", runtime["status"])
+        self.assertIsNone(runtime["queue_id"])
+        self.assertEqual("task_claim_scope_conflict",
+                         runtime["blocked_by"][0]["reason"])
+
 
 
 if __name__ == "__main__":
