@@ -50,6 +50,8 @@ def _identity(item):
     fields = ("project_id", "owner_id", "pool")
     if any(not isinstance(item.get(k), str) or not item[k] or item[k] != item[k].strip() for k in fields):
         raise ValueError("invalid_lease_identity")
+    if any(ord(ch) < 32 or ord(ch) == 127 for k in fields for ch in item[k]):
+        raise ValueError("unsafe_control_character_in_identity")
     return tuple(item[k] for k in fields)
 
 
@@ -131,6 +133,11 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
                 errors.add("invalid_lease_cpu")
             if not _nonnegative_integer(lease.get("memory_soft_mb")):
                 errors.add("invalid_lease_memory")
+            workload = lease.get("workload_class")
+            if not isinstance(workload, str) or not workload or workload != workload.strip():
+                errors.add("invalid_workload_class")
+            if not isinstance(lease.get("metadata"), dict):
+                errors.add("invalid_lease_metadata")
         except (ValueError, TypeError, KeyError, OverflowError):
             errors.add("invalid_lease")
     if len(indexed) != len(leases):
@@ -159,12 +166,14 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
                 holder_ids.append(identity)
                 if identity[2] != pool:
                     errors.add("holder_pool_mismatch")
+                if not isinstance(holder.get("metadata"), dict):
+                    errors.add("invalid_holder_metadata")
                 if identity not in indexed:
                     errors.add("holder_missing_from_leases")
                 elif any(
                     holder.get(field) != indexed[identity].get(field)
                     for field in ("acquired_at", "lease_until", "cpu_soft_cores",
-                                  "memory_soft_mb", "workload_class")
+                                  "memory_soft_mb", "workload_class", "metadata")
                 ):
                     errors.add("holder_lease_data_mismatch")
             except ValueError:

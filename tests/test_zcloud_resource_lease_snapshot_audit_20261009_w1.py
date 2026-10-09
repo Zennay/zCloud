@@ -133,6 +133,45 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
             s["pools"]["protected"]["holders"][0]["cpu_soft_cores"] = 999.0
         self.denied(self.audit(change), "holder_lease_data_mismatch")
 
+    def test_rejects_holder_disagreeing_on_metadata(self):
+        def change(s, c):
+            s["pools"]["protected"]["holders"][0]["metadata"]["token"] = "altered"
+        self.denied(self.audit(change), "holder_lease_data_mismatch")
+
+    def test_rejects_lease_without_structured_metadata(self):
+        def change(s, c):
+            s["leases"][0]["metadata"] = "untrusted"
+        self.denied(self.audit(change), "invalid_lease_metadata")
+
+    def test_rejects_holder_without_structured_metadata(self):
+        def change(s, c):
+            s["pools"]["protected"]["holders"][0]["metadata"] = ["untrusted"]
+        self.denied(self.audit(change), "invalid_holder_metadata")
+
+    def test_rejects_blank_workload_class(self):
+        def change(s, c):
+            s["leases"][0]["workload_class"] = " "
+            s["pools"]["protected"]["holders"][0]["workload_class"] = " "
+        self.denied(self.audit(change), "invalid_workload_class")
+
+    def test_rejects_control_character_in_owner_identity(self):
+        def change(s, c):
+            s["leases"][0]["owner_id"] = "worker-one\\nspoof"
+            s["pools"]["protected"]["holders"][0]["owner_id"] = "worker-one\\nspoof"
+        self.denied(self.audit(change), "invalid_lease")
+
+    def test_accepts_snapshot_at_exact_staleness_boundary(self):
+        def change(s, c):
+            s["time"] = "2026-10-09T16:55:00+00:00"
+        result = self.audit(change)
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(result["safe_to_act"])
+
+    def test_rejects_snapshot_one_microsecond_past_staleness_limit(self):
+        def change(s, c):
+            s["time"] = "2026-10-09T16:54:59.999999+00:00"
+        self.denied(self.audit(change), "stale_snapshot")
+
     def test_rejects_mismatched_holder_identity(self):
         def change(s, c):
             s["pools"]["protected"]["holders"][0]["owner_id"] = "other-worker"
