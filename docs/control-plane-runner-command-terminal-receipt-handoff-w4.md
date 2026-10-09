@@ -42,3 +42,60 @@ successful server endpoint integration.
 
 Current PR #1221 contains only add-only offline reference/contract checks
 and this handoff. It does not establish production readiness.
+
+## Proposed minimal endpoint implementation (owner-only; not deployed)
+
+The integration owner can preserve the existing loopback restriction and status
+allowlist while replacing the ID parse and unconditional UPDATE with the following
+explicit validation and atomic transition. This is illustrative integration
+code, **not** an applied patch to `server.py`.
+
+```python
+raw_id = payload.get("command_id")
+if type(raw_id) is not int or raw_id <= 0:
+    return self.reply({"error": "Ongeldig command_id"}, 400)
+command_id = raw_id
+
+status = str(payload.get("status") or "")
+if status not in ("completed", "failed"):
+    return self.reply({"error": "Ongeldige status"}, 400)
+
+with connect() as c:
+    changed = c.execute(
+        "UPDATE runner_commands SET status=?,updated_at=?,result=? "
+        "WHERE id=? AND status='pending'",
+        (status, now(), str(payload.get("result") or "")[:300], command_id),
+    ).rowcount
+
+if changed != 1:
+    # Same bounded response for an unknown command and any already-terminal ID.
+    # No second read is necessary; do not disclose command existence.
+    return self.reply({"error": "Command niet pending"}, 409)
+return self.reply({"ok": True})
+```
+
+The above chooses strict JSON integer IDs rather than coercing digit strings.
+If existing runner clients send IDs as strings, the owner must first verify and
+migrate that contract; do **not** silently deploy this stricter behavior.
+The code also assumes `connect()` commits context-manager writes exactly as the
+current endpoint does.
+
+### Acceptance matrix for owner HTTP tests
+
+| Request / database before | Expected HTTP | Database after |
+| --- | --- | --- |
+| localhost, integer ID 1 pending, completed | 200 | ID 1 completed, result capped at 300 |
+| localhost, same receipt replay to completed ID 1 | 409 | Prior result and timestamp untouched |
+| localhost, failed after completed ID 1 | 409 | Prior result and timestamp untouched |
+| localhost, completed after scheduler marks ID 1 failed | 409 | Scheduler result and timestamp untouched |
+| localhost, unknown positive ID | 409 | No rows added or changed |
+| localhost, ID 0 / -1 / true / null / string | 400 | No rows changed |
+| localhost, unsupported status | 400 | No rows changed |
+| remote source IP (even with valid ID) | 403 | No rows changed |
+| two competing terminal reports to pending ID | one 200, one 409 | Exactly one winner; no lost update |
+
+Do not modify `updated_at` on rejected or duplicate receipts. Preserve the
+300-character Python string slicing policy unless the owner explicitly revises
+the public result contract. Repeat the race test with independent SQLite
+connections and the real HTTP handler; the offline reference tests only
+demonstrate intended SQL semantics.
