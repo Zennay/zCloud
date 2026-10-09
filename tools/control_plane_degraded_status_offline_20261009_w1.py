@@ -38,13 +38,17 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
         return result
     if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed) or parsed > now or (now - parsed).total_seconds() > 120:
         return result
+    # Source and identity values must avoid Unicode format/invisible ambiguity.
+    from unicodedata import category
+    if any(category(ch) == "Cf" for ch in observation["source"]):
+        return result
     # A valid event source must not contain C0/C1 control characters.
     if any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in observation["source"]):
         return result
     # Reject invisible control characters in event identity as well as source.
     for name in ("worker_id", "assignment_id"):
         value = observation.get(name)
-        if type(value) is str and any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in value):
+        if type(value) is str and any(ord(ch) < 32 or 127 <= ord(ch) <= 159 or category(ch) == "Cf" for ch in value):
             return result
     if kind == "api_unavailable":
         return {"label": "Service temporarily unavailable", "authorizes_action": False}
