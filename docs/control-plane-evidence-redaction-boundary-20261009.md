@@ -3,6 +3,7 @@
 This add-only slice demonstrates bounded diagnostic *data minimization* for handoff payloads. It does not edit zCloud server, workers, scheduler, queue, SQLite, Actions, secrets handling or deployment paths. The classifier is **not integrated** with production logging and MUST NOT be described as production protection.
 
 - Nested keys containing token, cookie, authorization, password, secret, private key or API key are redacted; common inline bearer/GitHub/OpenAI token formats are masked.
+- Common URL query parameters containing credentials (for example `access_token`, `refresh_token`, `api_key`, `client_secret`) are masked while unrelated query parameters remain visible. This does not cover every possible secret-bearing key, encoded key, URL userinfo, or fragment.
 - Non-finite floats (`NaN`, positive/negative infinity) are replaced with `[REDACTED]` to avoid invalid JSON-compatible evidence. Finite numbers remain unchanged.
 - Unknown Python objects are never stringified. Collection size, string length and nesting are bounded.
 - This is a best-effort display sanitizer, **not** a complete data-loss-prevention boundary. Unrecognized credential formats, URL query values, embedded structured blobs, maliciously chosen keys, and paths can still leak. Never feed untrusted raw logs into it as if they were safe.
