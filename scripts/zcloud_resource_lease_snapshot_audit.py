@@ -161,6 +161,12 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
                     errors.add("holder_pool_mismatch")
                 if identity not in indexed:
                     errors.add("holder_missing_from_leases")
+                elif any(
+                    holder.get(field) != indexed[identity].get(field)
+                    for field in ("acquired_at", "lease_until", "cpu_soft_cores",
+                                  "memory_soft_mb", "workload_class")
+                ):
+                    errors.add("holder_lease_data_mismatch")
             except ValueError:
                 errors.add("invalid_holder_identity")
         if len(set(holder_ids)) != len(holder_ids):
