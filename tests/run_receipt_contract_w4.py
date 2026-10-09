@@ -62,6 +62,14 @@ def main():
         "skipped": [{"test": test.id(), "reason": reason}
                     for test, reason in result.skipped],
     }
+    # Validate evidence consistency before publishing it. An incomplete
+    # trace list would undermine the handoff even if unittest exits green.
+    if set(summary["expected_failure_details"]) != set(failures):
+        print("ERROR: expected-failure trace identities do not match", file=sys.stderr)
+        return 1
+    if any(not trace.strip() for trace in summary["expected_failure_details"].values()):
+        print("ERROR: empty expected-failure traceback", file=sys.stderr)
+        return 1
     Path("receipt-results.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
