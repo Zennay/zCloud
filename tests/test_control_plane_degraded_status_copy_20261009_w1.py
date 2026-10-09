@@ -90,5 +90,19 @@ class DegradedStatusCopyContract(unittest.TestCase):
         self.assertIn("older event must not establish current generation", self.text)
         self.assertIn("Do not choose the highest lifecycle rank", self.text)
 
+
+    def test_accessible_bilingual_copy_preserves_uncertainty(self):
+        for fragment in (
+            "status, affected scope, evidence age, source, and uncertainty",
+            "Status unknown for Worker 2",
+            "Status onbekend voor Worker 2",
+            "Current activity unverified",
+            "Huidige activiteit niet bevestigd",
+            "No restart was performed",
+            "must not translate unknown into stopped or successful",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, self.text)
+
 if __name__ == "__main__":
     unittest.main()
