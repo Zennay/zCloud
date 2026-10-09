@@ -23,7 +23,7 @@ MAX_JS_SAFE_COMMAND_ID = (1 << 53) - 1
 def finish(db, command_id, status, result):
     if type(command_id) is not int or not (0 < command_id <= MAX_JS_SAFE_COMMAND_ID):
         return False
-    if status not in ("completed", "failed"):
+    if type(status) is not str or status not in ("completed", "failed"):
         return False
     with db:
         result_update = db.execute(
@@ -68,6 +68,17 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
             with self.subTest(bad_id=bad_id):
                 self.assertFalse(finish(self.db, bad_id, "completed", "invalid"))
         self.assertEqual(("pending", None), self.row(1))
+
+    def test_non_string_statuses_do_not_modify_database(self):
+        before = self.db.execute(
+            "SELECT id,status,result FROM runner_commands ORDER BY id"
+        ).fetchall()
+        for invalid in (None, 0, False, True, [], {}, 1.0):
+            with self.subTest(status=invalid):
+                self.assertFalse(finish(self.db, 1, invalid, "bad status"))
+                self.assertEqual(before, self.db.execute(
+                    "SELECT id,status,result FROM runner_commands ORDER BY id"
+                ).fetchall())
 
     def test_invalid_status_does_not_finalize(self):
         self.assertFalse(finish(self.db, 1, "pending", "replay"))
