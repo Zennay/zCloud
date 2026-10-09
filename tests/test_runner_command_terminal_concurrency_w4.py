@@ -56,5 +56,30 @@ class RunnerCommandConcurrencyReference(unittest.TestCase):
             self.assertEqual(winner, stored[0])
 
 
+    def test_same_status_replay_cannot_replace_first_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "reference.db"
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "CREATE TABLE runner_commands (id INTEGER PRIMARY KEY, "
+                    "status TEXT NOT NULL, result TEXT)"
+                )
+                db.execute("INSERT INTO runner_commands VALUES (1,'pending',NULL)")
+            with sqlite3.connect(path) as db:
+                first = db.execute(
+                    "UPDATE runner_commands SET status='completed',result='first' "
+                    "WHERE id=1 AND status='pending'"
+                )
+                self.assertEqual(1, first.rowcount)
+                second = db.execute(
+                    "UPDATE runner_commands SET status='completed',result='replay' "
+                    "WHERE id=1 AND status='pending'"
+                )
+                self.assertEqual(0, second.rowcount)
+                stored = db.execute(
+                    "SELECT status,result FROM runner_commands WHERE id=1"
+                ).fetchone()
+            self.assertEqual(("completed", "first"), stored)
+
 if __name__ == "__main__":
     unittest.main()
