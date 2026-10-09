@@ -14,6 +14,8 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
     allowed = {"kind", "source", "observed_at", "worker_id", "assignment_id", "correlated"}
     if set(observation) - allowed:
         return result
+    if any(type(k) is not str for k in observation):
+        return result
     kind = observation.get("kind")
     if type(kind) is not str or type(observation.get("source")) is not str or not observation["source"].strip():
         return result
