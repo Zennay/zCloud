@@ -112,6 +112,15 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(200, self.send(self.command_id, result=payload))
         self.assertEqual(("completed", "R" * 300), self.state()[:2])
 
+    def test_result_unicode_truncation_counts_python_characters(self):
+        payload = "😀" * 301
+        self.assertEqual(200, self.send(self.command_id, result=payload))
+        self.assertEqual(("completed", "😀" * 300), self.state()[:2])
+
+    def test_empty_result_does_not_change_status_contract(self):
+        self.assertEqual(200, self.send(self.command_id, status="failed", result=""))
+        self.assertEqual(("failed", ""), self.state()[:2])
+
     def test_rejected_status_preserves_all_command_rows(self):
         with server.connect() as conn:
             before = [tuple(row) for row in conn.execute(
