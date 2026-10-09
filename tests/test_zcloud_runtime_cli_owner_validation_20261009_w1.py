@@ -70,6 +70,30 @@ class ResourceCLIOwnerTests(unittest.TestCase):
                         ])
                 self.assertFalse(self.db.exists(), "invalid metadata must not initialize SQLite")
 
+    def test_oversize_metadata_rejected_before_database_creation(self):
+        # The underlying runtime silently truncates metadata_json to 4000 chars.
+        for blob in ("x" * 4100, "é" * 4100):
+            with self.subTest(kind=blob[0]):
+                with self.assertRaisesRegex(ValueError, "exceeds 4000"):
+                    with redirect_stdout(io.StringIO()):
+                        cli.main([
+                            "--db", str(self.db), "acquire", "--project", "ftmo",
+                            "--owner", "worker", "--metadata-json",
+                            json.dumps({"blob": blob}, ensure_ascii=False),
+                        ])
+                self.assertFalse(self.db.exists(), "oversize metadata must not open SQLite")
+
+    def test_maximum_serialized_metadata_is_preserved(self):
+        # Canonical separators mean {\\"blob\\":\\"\\"} is 11 chars.
+        blob = "a" * (4000 - len('{"blob":""}'))
+        with redirect_stdout(io.StringIO()) as out:
+            rc = cli.main([
+                "--db", str(self.db), "acquire", "--project", "ftmo",
+                "--owner", "worker", "--metadata-json", json.dumps({"blob": blob}),
+            ])
+        self.assertEqual(0, rc)
+        self.assertEqual(blob, json.loads(out.getvalue())["lease"]["metadata"]["blob"])
+
     def test_valid_acquire_metadata_survives_round_trip(self):
         with redirect_stdout(io.StringIO()) as output:
             rc = cli.main([
