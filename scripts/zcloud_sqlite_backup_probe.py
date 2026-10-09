@@ -17,7 +17,7 @@ TABLES = ("project_state_receipts", "resource_leases", "portfolio_queue", "task_
 def probe_backup(path: Path, *, max_pages: int = 10000, timeout_seconds: float = 5.0) -> dict:
     if type(max_pages) is not int or not 1 <= max_pages <= 10000:
         raise ValueError("invalid page bound")
-    if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30:
+    if type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= 30 or not math.isfinite(timeout_seconds):
         raise ValueError("invalid time bound")
     path = Path(path).absolute()
     if not path.is_file():
