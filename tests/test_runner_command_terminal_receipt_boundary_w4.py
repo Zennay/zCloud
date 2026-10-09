@@ -6,7 +6,6 @@ Unexpected success is a hard unittest failure and requires contract review.
 No runtime, SQLite, browser or runner state is touched.
 """
 import pathlib
-import re
 import unittest
 
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "server.py"
