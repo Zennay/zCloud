@@ -20,7 +20,7 @@ def classify(observation, *, now):
         parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
     except ValueError:
         return result
-    if parsed.tzinfo is None or parsed > now or (now - parsed).total_seconds() > 120:
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed) or parsed > now or (now - parsed).total_seconds() > 120:
         return result
     if kind == "api_unavailable":
         return {"label": "Service temporarily unavailable", "authorizes_action": False}
