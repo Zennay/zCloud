@@ -1,0 +1,20 @@
+name: Control-plane degraded status copy contract
+on:
+  pull_request:
+    paths:
+      - 'docs/control-plane-degraded-status-copy-20261009-w1.md'
+      - 'tests/test_control_plane_degraded_status_copy_20261009_w1.py'
+      - '.github/workflows/control-plane-degraded-status-copy-20261009-w1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate degraded status language
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_degraded_status_copy_20261009_w1.py' -v
