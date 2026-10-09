@@ -37,5 +37,19 @@ class CounterEvidenceTests(unittest.TestCase):
     def test_arbitrary_precision_is_not_implicitly_admitted(self):
         self.assertEqual(assess(0, 10**100)["reason"], "out_of_range")
 
+    def test_invalid_previous_counter_is_rejected(self):
+        for value in (None, True, False, "0", 0.0, [], {}, float("nan"), -1, MAX_COUNTER + 1):
+            with self.subTest(previous=repr(value)):
+                self.assertFalse(assess(value, 1)["valid"])
+
+    def test_max_boundary_equality_and_rollback(self):
+        self.assertEqual(assess(MAX_COUNTER, MAX_COUNTER)["reason"], "equal")
+        self.assertEqual(assess(MAX_COUNTER, MAX_COUNTER, allow_equal=False)["reason"], "no_progress")
+        self.assertEqual(assess(MAX_COUNTER, MAX_COUNTER - 1)["reason"], "rollback")
+
+    def test_no_progress_does_not_override_bad_evidence(self):
+        self.assertEqual(assess(-1, -1, allow_equal=False)["reason"], "out_of_range")
+        self.assertEqual(assess(True, True, allow_equal=False)["reason"], "non_integer")
+
 if __name__ == "__main__":
     unittest.main()
