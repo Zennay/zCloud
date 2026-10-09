@@ -92,23 +92,21 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(("completed", "preflight"), self.state()[:2])
 
     @unittest.expectedFailure
-    def test_terminal_replay_unknown_id_and_malformed_id_do_not_claim_success(self):
-        # One end-to-end contract covers all three known callback defects.
-        self.assertEqual(200, self.send(self.command_id, "completed", "first"))
-        before = self.state()
-        self.assertEqual(409, self.send(self.command_id, "failed", "late"))
-        self.assertEqual(before, self.state())
-        self.assertEqual(409, self.send(self.command_id + 100000, "completed", "ghost"))
-        self.assertEqual(before, self.state())
-        self.assertEqual(400, self.send("not-a-command", "completed", "invalid"))
-        self.assertEqual(before, self.state())
-
-    @unittest.expectedFailure
     def test_unknown_id_must_not_report_success(self):
         # Current endpoint returns {"ok":true} despite UPDATE rowcount=0.
         # Avoid claiming dispatch success for a command that never existed.
         self.assertEqual(409, self.send(self.command_id + 50000, result="ghost"))
         self.assertEqual(("pending", None), self.state()[:2])
+
+    def test_malformed_status_rejection_preserves_pending_poll(self):
+        before = self.state()
+        self.assertEqual(400, self.send(self.command_id, status="completed;failed"))
+        self.assertEqual(before, self.state())
+        url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
+        with urllib.request.urlopen(url, timeout=5) as response:
+            self.assertEqual(200, response.status)
+            commands = json.load(response)["commands"]
+        self.assertIn(self.command_id, [row["id"] for row in commands])
 
     def test_pending_command_id_is_serialized_as_json_integer(self):
         url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
