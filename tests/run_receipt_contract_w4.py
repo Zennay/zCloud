@@ -15,6 +15,25 @@ sys.path.insert(0, str(ROOT))
 
 BASELINE_TESTS = 67
 MAX_EXPECTED_FAILURES = 13
+# Reviewed baseline: a new expectedFailure must not replace an old one while
+# leaving the count unchanged. Removing names after remediation is permitted.
+REVIEWED_XFAIL_NAMES = frozenset([
+    "test_unsafe_javascript_integer_id_must_be_rejected",
+    "test_unknown_id_must_not_report_success",
+    "test_scheduler_expired_terminal_state_cannot_be_revived",
+    "test_competing_http_callbacks_have_one_terminal_winner",
+    "test_replayed_callback_must_not_overwrite_terminal_result",
+    "test_boolean_id_must_be_rejected_without_mutation",
+    "test_negative_id_must_return_controlled_400",
+    "test_numeric_string_id_must_not_coerce_to_command",
+    "test_null_id_must_return_controlled_400",
+    "test_malformed_id_must_return_controlled_400",
+    "test_zero_id_must_be_rejected_without_mutation",
+    "test_pending_compare_and_swap_required",
+    "test_positive_id_must_be_validated"
+]
+)
+
 
 
 def main():
@@ -37,6 +56,14 @@ def main():
     )
     if result.testsRun < BASELINE_TESTS:
         print(f"ERROR: only {result.testsRun} tests discovered (minimum {BASELINE_TESTS})", file=sys.stderr)
+        return 1
+    unexpected_xfails = sorted(
+        name for name in failures
+        if name.rsplit(".", 1)[-1] not in REVIEWED_XFAIL_NAMES
+    )
+    if unexpected_xfails:
+        print("ERROR: unreviewed expected-failure tests: " +
+              ", ".join(unexpected_xfails), file=sys.stderr)
         return 1
     if len(failures) > MAX_EXPECTED_FAILURES:
         print(f"ERROR: {len(failures)} expected failures exceed budget {MAX_EXPECTED_FAILURES}", file=sys.stderr)
