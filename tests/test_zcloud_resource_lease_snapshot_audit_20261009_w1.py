@@ -161,6 +161,33 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate_json_key"):
             _strict_json('{"pools":{},"pools":{"protected":{}}}')
 
+    def test_rejects_nonfinite_cpu_observation(self):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(cpu=repr(invalid)):
+                def change(s, c):
+                    s["leases"][0]["cpu_soft_cores"] = invalid
+                self.denied(self.audit(change), "invalid_lease_cpu")
+
+    def test_rejects_nonfinite_json_constants(self):
+        for token in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(token=token):
+                with self.assertRaisesRegex(ValueError, "nonfinite_json_number"):
+                    _strict_json('{"cpu":' + token + '}')
+
+    def test_rejects_bool_schema_version(self):
+        def change(s, c):
+            c["schema_version"] = True
+        self.denied(self.audit(change), "invalid_contracts")
+
+    def test_owner_cannot_be_leased_in_two_pools(self):
+        def change(s, c):
+            c["resource_pools"]["other"] = {"slots": 1}
+            other = deepcopy(s["leases"][0])
+            other["pool"] = "other"
+            s["leases"].append(other)
+            s["pools"]["other"] = {"capacity": 1, "used": 1, "available": 0, "holders": [deepcopy(other)]}
+        self.denied(self.audit(change), "owner_assigned_multiple_pools")
+
     def test_output_does_not_expose_identity_or_metadata(self):
         result = self.audit()
         encoded = json.dumps(result)
