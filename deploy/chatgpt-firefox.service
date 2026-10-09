@@ -1,11 +1,11 @@
 [Unit]
 Description=Firefox + ChatGPT Project Runner
-Requires=chatgpt-display.service chatgpt-openbox.service
-After=chatgpt-display.service chatgpt-openbox.service zennay-cloud.service
+After=zennay-cloud.service
 
 [Service]
 Type=simple
-Environment=DISPLAY=:99
+Environment=DISPLAY=:10
+Environment=XAUTHORITY=/home/ubuntu/.Xauthority
 Environment=MOZ_ENABLE_WAYLAND=0
 ExecStartPre=/home/ubuntu/.local/bin/chatgpt-firefox-prestart.sh
 ExecStartPre=/bin/sleep 2
