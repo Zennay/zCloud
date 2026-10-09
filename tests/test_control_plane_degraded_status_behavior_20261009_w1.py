@@ -171,7 +171,7 @@ class ClassifierTests(unittest.TestCase):
 
     def test_observed_identity_whitespace_fails_even_if_expected_matches(self):
         for field in ("worker_id", "assignment_id"):
-            for suffix in (" ", "\\t", "\\n"):
+            for suffix in (" ", chr(9), chr(10)):
                 with self.subTest(field=field, suffix=suffix):
                     values = {"worker_id": "w1", "assignment_id": "a1", "correlated": True}
                     values[field] += suffix
