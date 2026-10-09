@@ -147,7 +147,7 @@ class ClassifierTests(unittest.TestCase):
 
     def test_control_characters_in_generation_ids_fail_closed(self):
         for name in ("worker_id", "assignment_id"):
-            for character in ("\\x00", "\\x1b", "\\x7f", "\\x85"):
+            for character in map(chr, (0, 27, 127, 133)):
                 with self.subTest(name=name, character=character):
                     values = {"worker_id": "w1", "assignment_id": "a1", "correlated": True}
                     values[name] += character
