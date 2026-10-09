@@ -25,7 +25,7 @@ def probe_backup(path: Path, *, max_pages: int = 10000, timeout_seconds: float =
     deadline = time.monotonic() + timeout_seconds
 
     def progress(status, remaining, total):
-        if total > max_pages or time.monotonic() >= deadline:
+        if total > max_pages or total * page_size > 40 * 1024 * 1024 or time.monotonic() >= deadline:
             raise ValueError("backup probe exceeded its bound")
 
     # as_uri percent-encodes #, ?, &, spaces and Unicode before adding mode=ro.
