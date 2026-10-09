@@ -28,7 +28,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 -m unittest discover -s tests -p 'test_runner_command_*_w4.py' -v 2>&1 | tee receipt-test-results.log
+          # HTTP handler logging writes to stderr from background threads and
+          # can interleave with unittest's verbose progress on stderr.
+          # Buffer progress in a dedicated file; report it only after completion.
+          python3 -m unittest discover -s tests -p 'test_runner_command_*_w4.py' -v > receipt-test-results.log 2>&1
+          cat receipt-test-results.log
           # unittest exits 0 even when discovery finds zero tests. Require
           # the reviewed suite's minimum size so path/rename regressions
           # cannot yield a misleading green result.
