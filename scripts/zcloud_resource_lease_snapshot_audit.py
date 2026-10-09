@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+from math import isfinite
 from pathlib import Path
 
 
@@ -25,7 +26,9 @@ def _strict_json(text):
             output[key] = value
         return output
 
-    return json.loads(text, object_pairs_hook=reject_duplicate_keys)
+    def reject_nonfinite(token):
+        raise ValueError("nonfinite_json_number")
+    return json.loads(text, object_pairs_hook=reject_duplicate_keys, parse_constant=reject_nonfinite)
 
 
 def _instant(value):
@@ -70,7 +73,7 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
     pools = snapshot.get("pools")
     leases = snapshot.get("leases")
     pool_contracts = contracts.get("resource_pools")
-    if contracts.get("schema_version") != 1 or not isinstance(pool_contracts, dict) or not pool_contracts:
+    if type(contracts.get("schema_version")) is not int or contracts["schema_version"] != 1 or not isinstance(pool_contracts, dict) or not pool_contracts:
         errors.add("invalid_contracts")
         pool_contracts = {}
     if not isinstance(pools, dict) or not isinstance(leases, list):
@@ -88,12 +91,17 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
             contract_caps[pool] = slots
 
     indexed = {}
+    canonical_owners = set()
     for lease in leases:
         try:
             project, owner, pool = _identity(lease)
             identity = (project, owner, pool)
             if identity in indexed:
                 errors.add("duplicate_lease")
+            # DB primary key is (project_id, owner_id), irrespective of pool.
+            if (project, owner) in canonical_owners:
+                errors.add("owner_assigned_multiple_pools")
+            canonical_owners.add((project, owner))
             indexed[identity] = lease
             if len(owner) >= _OWNER_STORAGE_LIMIT:
                 # Runtime currently truncates newly inserted owner IDs at 200.
@@ -106,7 +114,8 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
                 expiry = _instant(lease.get("lease_until"))
                 if acquired > observed or expiry <= observed or expiry <= acquired:
                     errors.add("invalid_lease_interval")
-            if type(lease.get("cpu_soft_cores")) not in (int, float) or lease["cpu_soft_cores"] < 0:
+            cpu = lease.get("cpu_soft_cores")
+            if type(cpu) not in (int, float) or cpu < 0 or (type(cpu) is float and not isfinite(cpu)):
                 errors.add("invalid_lease_cpu")
             if not _nonnegative_integer(lease.get("memory_soft_mb")):
                 errors.add("invalid_lease_memory")
