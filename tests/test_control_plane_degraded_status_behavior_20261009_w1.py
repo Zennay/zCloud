@@ -168,5 +168,17 @@ class ClassifierTests(unittest.TestCase):
                     expected_worker_id=values["worker_id"],
                     expected_assignment_id="a1")["label"])
 
+
+    def test_observed_identity_whitespace_fails_even_if_expected_matches(self):
+        for field in ("worker_id", "assignment_id"):
+            for suffix in (" ", "\\t", "\\n"):
+                with self.subTest(field=field, suffix=suffix):
+                    values = {"worker_id": "w1", "assignment_id": "a1", "correlated": True}
+                    values[field] += suffix
+                    self.assertEqual("Status unknown", classify(
+                        evidence("generation_started", **values), now=NOW,
+                        expected_worker_id=values["worker_id"],
+                        expected_assignment_id=values["assignment_id"])["label"])
+
 if __name__ == "__main__":
     unittest.main()
