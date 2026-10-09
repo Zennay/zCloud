@@ -234,6 +234,66 @@ class SQLiteBackupProbeTests(unittest.TestCase):
         self.assertFalse(report["foreign_keys_ok"])
         self.assertLess(len(json.dumps(report)), 1000)
 
+    def test_byte_budget_rejects_large_pages_before_creating_copy(self):
+        large = Path(self.tmp.name) / "large-page.db"
+        with sqlite3.connect(large) as conn:
+            conn.execute("PRAGMA page_size=65536")
+            conn.execute("CREATE TABLE padding(payload BLOB)")
+            conn.execute("INSERT INTO padding VALUES(zeroblob(41943040))")
+        before = large.stat().st_size
+        real_connect = sqlite3.connect
+        opened = []
+
+        def connect(database, **kwargs):
+            opened.append(database)
+            return real_connect(database, **kwargs)
+
+        with patch.object(probe.sqlite3, "connect", side_effect=connect):
+            with self.assertRaisesRegex(ValueError, "exceeded"):
+                probe.probe_backup(large)
+        self.assertEqual(1, len(opened), "oversize input must not open a destination")
+        self.assertNotIn(":memory:", opened)
+        self.assertEqual(before, large.stat().st_size)
+
+    def test_mid_backup_transaction_never_produces_torn_cross_table_state(self):
+        self.writer.execute("CREATE TABLE snapshot_padding(payload BLOB)")
+        self.writer.execute("INSERT INTO snapshot_padding VALUES(zeroblob(524288))")
+        self.writer.execute("UPDATE project_state_receipts SET phase='old'")
+        self.writer.execute("UPDATE resource_leases SET workload_class='old'")
+        self.writer.commit()
+        real_connect = sqlite3.connect
+        committed = []
+        copied = []
+
+        class AtomicSource(sqlite3.Connection):
+            def backup(source, destination, *, pages, progress, sleep):
+                def mutate_then_check(status, remaining, total):
+                    if not committed and remaining:
+                        self.writer.execute("UPDATE project_state_receipts SET phase='new'")
+                        self.writer.execute("UPDATE resource_leases SET workload_class='new'")
+                        self.writer.commit()
+                        committed.append(True)
+                    progress(status, remaining, total)
+                return super().backup(destination, pages=pages,
+                                      progress=mutate_then_check, sleep=sleep)
+
+        class CapturedCopy(sqlite3.Connection):
+            def close(copy):
+                copied.append((
+                    copy.execute("SELECT phase FROM project_state_receipts").fetchone()[0],
+                    copy.execute("SELECT workload_class FROM resource_leases").fetchone()[0]))
+                super().close()
+
+        def connect(database, **kwargs):
+            kwargs["factory"] = CapturedCopy if database == ":memory:" else AtomicSource
+            return real_connect(database, **kwargs)
+
+        with patch.object(probe.sqlite3, "connect", side_effect=connect):
+            self.assertTrue(probe.probe_backup(self.db)["readable"])
+        self.assertEqual([True], committed)
+        self.assertEqual(1, len(copied))
+        self.assertIn(copied[0], (("old", "old"), ("new", "new")))
+
 
 if __name__ == "__main__":
     unittest.main()
