@@ -82,5 +82,13 @@ class DegradedStatusCopyContract(unittest.TestCase):
         self.assertIn("Historical dashboard recovery failure", self.text)
         self.assertIn("exact failing run URL and exact commit identity", self.text)
 
+
+    def test_operator_scenarios_preserve_denial_under_ambiguity(self):
+        for label in ("Scenario A", "Scenario B", "Scenario C", "Scenario D", "Scenario E"):
+            self.assertIn("**" + label + " —", self.text)
+        self.assertIn("Do not provide a privileged recovery CTA", self.text)
+        self.assertIn("older event must not establish current generation", self.text)
+        self.assertIn("Do not choose the highest lifecycle rank", self.text)
+
 if __name__ == "__main__":
     unittest.main()
