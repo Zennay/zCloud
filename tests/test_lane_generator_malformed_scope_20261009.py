@@ -102,6 +102,46 @@ class InvalidScopeAdmissionTests(unittest.TestCase):
             {"files": [], "capabilities": []},
         )
         self.assertEqual({"files": [], "capabilities": []}, overlap)
+    def test_corrupt_queue_metadata_json_does_not_hide_write_scope(self):
+        queued = entry("runtime", "Repair Firefox automation", {})
+        queued.pop("metadata")
+        queued["metadata_json"] = '{"conflict_scope":{"files":["shared.py"]'
+        with self.assertRaisesRegex(ValueError, "invalid metadata_json"):
+            generate_execution_lanes(PROJECT, [queued])
+
+    def test_nonobject_queue_metadata_json_does_not_hide_write_scope(self):
+        queued = entry("runtime", "Repair Firefox automation", {})
+        queued.pop("metadata")
+        queued["metadata_json"] = '["not-a-scope"]'
+        with self.assertRaisesRegex(ValueError, "invalid metadata_json"):
+            generate_execution_lanes(PROJECT, [queued])
+
+    def test_corrupt_claim_metadata_json_blocks_unknown_ownership(self):
+        queued = entry("runtime", "Repair Firefox automation",
+                       {"files": ["src/shared.py"]})
+        claims = [{
+            "project_id": "cloud",
+            "claim_key": "peer",
+            "metadata_json": '{"conflict_scope":{"files":["src/shared.py"]'
+        }]
+        with self.assertRaisesRegex(ValueError, "invalid metadata_json"):
+            generate_execution_lanes(PROJECT, [queued], claims)
+
+    def test_valid_claim_metadata_json_remains_authoritative(self):
+        queued = entry("runtime", "Repair Firefox automation",
+                       {"files": ["src/shared.py"]})
+        claims = [{
+            "project_id": "cloud",
+            "claim_key": "peer",
+            "metadata_json": '{"conflict_scope":{"files":["src/shared.py"]}}',
+        }]
+        lanes = generate_execution_lanes(PROJECT, [queued], claims)
+        runtime = next(row for row in lanes
+                       if row["lane_id"] == "runtime-automation")
+        self.assertEqual("blocked", runtime["status"])
+        self.assertEqual("task_claim_scope_conflict",
+                         runtime["blocked_by"][0]["reason"])
+
 
 
 if __name__ == "__main__":
