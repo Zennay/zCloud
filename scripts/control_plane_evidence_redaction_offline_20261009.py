@@ -6,6 +6,7 @@ provenance, and never authorizes production actions.
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
 
 _SECRET_KEY = re.compile(
@@ -32,8 +33,10 @@ def sanitize(value: Any, *, _depth: int = 0) -> Any:
     """Return bounded, redacted plain data; unknown types fail closed."""
     if _depth > _MAX_DEPTH:
         return _TRUNCATED
-    if value is None or type(value) in (bool, int, float):
+    if value is None or type(value) in (bool, int):
         return value
+    if type(value) is float:
+        return value if math.isfinite(value) else _REDACTED
     if isinstance(value, str):
         return _ASSIGNMENT.sub(lambda m: m.group(1) + _REDACTED, _INLINE.sub(_REDACTED, value[:_MAX_CHARS])) + (
             _TRUNCATED if len(value) > _MAX_CHARS else ""
