@@ -216,6 +216,19 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
             s["time"] = "2026-10-09T17:00:00.000001+00:00"
         self.denied(self.audit(change), "future_snapshot")
 
+    def test_rejects_unsafe_freshness_window_overrides(self):
+        for limit in (True, False, 0, -1, 301, float("inf"), "300", None):
+            with self.subTest(limit=repr(limit)):
+                snapshot, contracts = fixture()
+                result = audit_snapshot(snapshot, contracts, now=NOW, max_age_seconds=limit)
+                self.denied(result, "invalid_audit_age_limit")
+
+    def test_accepts_stricter_integer_freshness_window(self):
+        snapshot, contracts = fixture()
+        result = audit_snapshot(snapshot, contracts, now=NOW, max_age_seconds=60)
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(result["safe_to_act"])
+
     def test_rejects_stale_snapshot(self):
         def change(s, c):
             s["time"] = "2026-10-09T16:54:59+00:00"

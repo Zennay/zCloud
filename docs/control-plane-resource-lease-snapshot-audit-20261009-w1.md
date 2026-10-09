@@ -14,7 +14,7 @@ A persisted owner ID of exactly 200 characters therefore has ambiguous original 
 
 This snapshot verifier independently confirms all of the following before a *human review*:
 
-- A bounded, timezone-aware snapshot timestamp, not future or older than five minutes.
+- A bounded, timezone-aware snapshot timestamp, not future or older than five minutes. Caller-specified windows must be positive literal integers no greater than 300 seconds.
 - Contract pool names and integer capacities match reported pool capacities.
 - Every lease project exists in the contract registry and is allocated only to its contracted compute pool (no protected-pool spoof). Even idle projects must have valid, registered compute-pool bindings.
 - Pool `used` / `available` counts are nonnegative integers and add to capacity.

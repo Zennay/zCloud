@@ -58,6 +58,11 @@ def _identity(item):
 def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHOT_AGE_SECONDS):
     """Return only codes and counts, never owner identifiers or lease metadata."""
     errors = set()
+    # Callers must not weaken the five-minute review boundary with floats,
+    # booleans, extreme integers, or a disabled age threshold.
+    if type(max_age_seconds) is not int or not 1 <= max_age_seconds <= MAX_SNAPSHOT_AGE_SECONDS:
+        errors.add("invalid_audit_age_limit")
+        max_age_seconds = MAX_SNAPSHOT_AGE_SECONDS
     if not isinstance(snapshot, dict) or not isinstance(contracts, dict):
         return {"ready_for_review": False, "safe_to_act": False,
                 "mutation_performed": False, "errors": ["invalid_root"], "lease_count": 0}
