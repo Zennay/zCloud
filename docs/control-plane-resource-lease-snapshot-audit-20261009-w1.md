@@ -16,7 +16,7 @@ This snapshot verifier independently confirms all of the following before a *hum
 
 - A bounded, timezone-aware snapshot timestamp, not future or older than five minutes.
 - Contract pool names and integer capacities match reported pool capacities.
-- Every lease project exists in the contract registry and is allocated only to its contracted compute pool (no protected-pool spoof).
+- Every lease project exists in the contract registry and is allocated only to its contracted compute pool (no protected-pool spoof). Even idle projects must have valid, registered compute-pool bindings.
 - Pool `used` / `available` counts are nonnegative integers and add to capacity.
 - Every holder is represented exactly once in the global leases list, under the same pool, with identical lease times, CPU/memory/workload fields, and opaque metadata (compared but never printed).
 - Lease identities are nonempty, have no surrounding whitespace or ASCII control characters, and are nonduplicated. Workload classes must be nonblank and lease/holder metadata must remain JSON objects.

@@ -89,6 +89,16 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
         errors.add("invalid_project_registry")
         project_contracts = {}
 
+    # A snapshot with no active leases must not hide a malformed contract for
+    # an idle project: validate every registered project's compute binding.
+    for project, contract in project_contracts.items():
+        if not isinstance(project, str) or not project or project != project.strip():
+            errors.add("invalid_project_contract_identity")
+            continue
+        compute = contract.get("compute") if isinstance(contract, dict) else None
+        if not isinstance(compute, dict) or not isinstance(compute.get("pool"), str) or compute["pool"] not in pool_contracts:
+            errors.add("invalid_project_compute_pool")
+
     contract_caps = {}
     for pool, cfg in pool_contracts.items():
         slots = cfg.get("slots") if isinstance(cfg, dict) else None

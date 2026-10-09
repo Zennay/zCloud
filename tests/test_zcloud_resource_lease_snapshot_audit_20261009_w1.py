@@ -88,6 +88,28 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
             c["projects"]["cloud"]["compute"]["pool"] = "disabled"
         self.denied(self.audit(change), "lease_pool_contract_mismatch")
 
+    def test_rejects_idle_project_with_unknown_compute_pool(self):
+        def change(s, c):
+            c["projects"]["idle"] = {"compute": {"pool": "phantom"}}
+        self.denied(self.audit(change), "invalid_project_compute_pool")
+
+    def test_rejects_malformed_idle_project_compute(self):
+        def change(s, c):
+            c["projects"]["idle"] = {"compute": "protected"}
+        self.denied(self.audit(change), "invalid_project_compute_pool")
+
+    def test_rejects_blank_project_identifier_in_contract(self):
+        def change(s, c):
+            c["projects"][""] = {"compute": {"pool": "protected"}}
+        self.denied(self.audit(change), "invalid_project_contract_identity")
+
+    def test_accepts_valid_idle_project_bound_to_valid_pool(self):
+        def change(s, c):
+            c["projects"]["idle"] = {"compute": {"pool": "protected"}}
+        result = self.audit(change)
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(result["safe_to_act"])
+
     def test_rejects_missing_project_registry(self):
         def change(s, c):
             c.pop("projects")
