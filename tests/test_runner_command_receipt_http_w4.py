@@ -27,6 +27,8 @@ import server
 class RunnerCommandReceiptHttpW4(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-receipt-http-")
+        # Cleanup registration must precede all global snapshot operations.
+        self.addCleanup(self.tmp.cleanup)
         self.old_db = server.DB
         self.old_cache = server.CACHE
         # init_db() loads dynamic worker policy globals from the test DB.
@@ -46,7 +48,6 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         }
         # Register restoration before any initialization that can raise, so a
         # failed setUp cannot leak DB paths/policy into subsequent test classes.
-        self.addCleanup(self.tmp.cleanup)
         self.addCleanup(self.restore_server_globals)
         server.DB = Path(self.tmp.name) / "history.db"
         server.CACHE = None
@@ -60,6 +61,8 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.addCleanup(self.http.server_close)
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
+        # Register shutdown before start(): a failed thread.start() should
+        # not leave a shutdown() call waiting for serve_forever() to begin.
         self.thread.start()
         self.addCleanup(self.stop_http_thread)
 
