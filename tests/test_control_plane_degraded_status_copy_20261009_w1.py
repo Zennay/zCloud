@@ -58,5 +58,21 @@ class DegradedStatusCopyContract(unittest.TestCase):
         self.assertIn("never grants permission to dispatch, restart, merge, deploy or modify queues", self.text)
         self.assertIn("does not imply material progress", self.text)
 
+
+    def test_multi_source_precedence_fails_closed(self):
+        for phrase in (
+            "No evidence / unavailable producer",
+            "Contradictory fresh producers",
+            "One fresh source, one stale source",
+            "Replayed event or missing worker identity",
+            "Clock skew, missing timezone or future timestamps",
+            "Recovered telemetry",
+            "Unverified recovery action",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+        self.assertIn("do not pick the most optimistic state", self.text)
+        self.assertIn("cannot authorize recovery actions", self.text)
+
 if __name__ == "__main__":
     unittest.main()
