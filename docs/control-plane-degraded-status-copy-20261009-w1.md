@@ -25,6 +25,19 @@ This document specifies **user-visible status language**, not control-plane perm
 | Fresh healthy endpoint only | API responding | API reachability does not attest browser generation. | Workers generating |
 | Conflicting clocks or producers | Conflicting observations | Sources disagree; show provenance and collect new evidence. | Healthy |
 
+
+## Multi-source precedence and loss-of-evidence boundary
+
+- **No evidence / unavailable producer:** render `Status unknown`; keep last-known evidence explicitly historical, never silently promote it to current.
+- **Contradictory fresh producers:** render `Conflicting observations` with separate producer/source timestamps; do not pick the most optimistic state.
+- **One fresh source, one stale source:** identify both timestamps and scopes; fresh API reachability alone cannot overrule stale or unknown browser-generation evidence.
+- **Replayed event or missing worker identity:** do not infer `Generation observed`. An older generation-start event cannot attest activity in a newer assignment.
+- **Clock skew, missing timezone or future timestamps:** treat freshness as unverified rather than treating impossible timestamps as newest.
+- **Recovered telemetry:** change from `Status unknown` only when fresh, correlated, same-assignment evidence is available; do not backfill a success claim.
+- **Unverified recovery action:** never claim that a service was restarted, a worker recovered, or a queue resumed from a passive dashboard message.
+
+This precedence is display guidance only. UI visibility, operator intent, and green checks cannot authorize recovery actions. Ownership and release gates stay with the designated integration owners.
+
 ## Acceptance checklist (manual UI review; no production authority)
 
 - [ ] Copy remains usable without colors, icons or tooltips; screen-reader text spells out unknown/observed distinction.
