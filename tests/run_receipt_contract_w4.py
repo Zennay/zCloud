@@ -78,7 +78,7 @@ def main():
     # rather than matching incidental 'AssertionError:' text within frames.
     non_assertion_xfails = sorted(
         name for name, trace in summary["expected_failure_details"].items()
-        if not trace.strip().splitlines()[-1].lstrip().startswith("AssertionError:")
+        if not any(line.startswith("AssertionError:") for line in trace.splitlines())
     )
     if non_assertion_xfails:
         print("ERROR: expected-failure probes failed without an assertion: " +
