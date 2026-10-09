@@ -52,5 +52,24 @@ class SequenceGapTests(unittest.TestCase):
     def test_cursor_upper_bound_cannot_advance(self):
         self.assertEqual(self.check([self.event(2**63)], cursor=2**63-1)["reason"], "invalid_sequence")
 
+    def test_custom_mapping_not_executed(self):
+        class HostileMapping(dict):
+            def __iter__(self):
+                raise RuntimeError("untrusted iteration")
+        self.assertEqual(self.check([HostileMapping(self.event(5))])["reason"], "invalid_event")
+    def test_custom_list_not_executed(self):
+        class HostileList(list):
+            def __iter__(self):
+                raise RuntimeError("untrusted iteration")
+        self.assertEqual(self.check(HostileList([self.event(5)]))["reason"], "invalid_batch")
+    def test_dict_subclass_rejected(self):
+        class CustomDict(dict):
+            pass
+        self.assertEqual(self.check([CustomDict(self.event(5))])["reason"], "invalid_event")
+    def test_sequence_zero_from_initial_cursor(self):
+        self.assertTrue(self.check([self.event(1)], cursor=0)["continuous"])
+    def test_no_empty_identifier(self):
+        self.assertEqual(self.check([self.event(5)], worker="")["reason"], "invalid_identity")
+
 if __name__ == "__main__":
     unittest.main()
