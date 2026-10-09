@@ -12,6 +12,15 @@ on:
       - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
       - '.github/workflows/control-plane-receipt-contract-w4.yml'
 
+  push:
+    branches: [main]
+    paths:      - 'tests/test_runner_command_*_w4.py'
+      # Re-run when the runner/gate or production receipt handler changes.
+      - 'tests/run_receipt_contract_w4.py'
+      - 'server.py'
+      - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
+      - '.github/workflows/control-plane-receipt-contract-w4.yml'
+
 # Do not spend runner slots on superseded revisions of this draft PR.
 # Concurrency is scoped to this workflow and PR/ref, not other zCloud jobs.
 concurrency:
