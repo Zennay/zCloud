@@ -64,7 +64,15 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
             self.command_id = conn.execute("SELECT max(id) FROM runner_commands").fetchone()[0]
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.addCleanup(self.http.server_close)
-        self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
+        # The default 0.5 s serve_forever poll interval makes every
+        # shutdown wait up to half a second. This fixture starts a fresh
+        # listener per test, so use a small interval without changing HTTP
+        # handler behavior or the production service.
+        self.thread = threading.Thread(
+            target=self.http.serve_forever,
+            kwargs={"poll_interval": 0.02},
+            daemon=True,
+        )
         # Only register shutdown once the server thread actually started:
         # shutdown() before serve_forever() starts could deadlock.
         self.thread.start()
