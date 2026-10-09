@@ -83,6 +83,56 @@ class ActiveLaneScopeReservationTests(unittest.TestCase):
         lane = lane_by_id(active, "deploy-ops")
         self.assertEqual("idle", lane["status"])
         self.assertEqual([], lane["blocked_by"])
+    def test_scalar_file_on_active_queue_reserves_entire_path(self):
+        active = task("a", "Implement queue scheduler", "running")
+        active["metadata"]["conflict_scope"]["files"] = "shared/control.py"
+        candidate = task("b", "Repair Firefox automation", "queued",
+                         ["shared/control.py"])
+        lane = lane_by_id([active, candidate], "runtime-automation")
+        self.assertEqual("blocked", lane["status"])
+        self.assertEqual("a", lane["blocked_by"][0]["queue_id"])
+        self.assertEqual(["shared/control.py"],
+                         lane["blocked_by"][0]["overlap"]["files"])
+
+    def test_scalar_file_on_candidate_is_not_split_into_characters(self):
+        active = task("a", "Implement queue scheduler", "running",
+                      ["shared/control.py"])
+        candidate = task("b", "Repair Firefox automation", "queued")
+        candidate["metadata"]["conflict_scope"]["files"] = "shared/control.py"
+        lane = lane_by_id([active, candidate], "runtime-automation")
+        self.assertEqual("blocked", lane["status"])
+        self.assertEqual(["shared/control.py"],
+                         lane["blocked_by"][0]["overlap"]["files"])
+
+    def test_scalar_capability_on_claim_blocks_matching_lane(self):
+        candidate = task("a", "Repair Firefox automation", "queued")
+        claims = [{
+            "project_id": "cloud",
+            "claim_key": "existing",
+            "owner_id": "other",
+            "metadata": {
+                "conflict_scope": {"capabilities": "cloud:runtime-automation"}
+            },
+        }]
+        lanes = generate_execution_lanes(PROJECT, [candidate], claims)
+        lane = next(l for l in lanes if l["lane_id"] == "runtime-automation")
+        self.assertEqual("blocked", lane["status"])
+        self.assertEqual("claim", lane["blocked_by"][0]["kind"])
+        self.assertEqual(["cloud:runtime-automation"],
+                         lane["blocked_by"][0]["overlap"]["capabilities"])
+
+    def test_scalar_capability_on_active_queue_blocks_other_lane(self):
+        active = task("a", "Implement queue scheduler", "running")
+        active["metadata"]["conflict_scope"]["capabilities"] = "shared-owner"
+        candidate = task("b", "Deploy VPS workflow", "queued")
+        candidate["metadata"]["conflict_scope"]["capabilities"] = [
+            "shared-owner"
+        ]
+        lane = lane_by_id([active, candidate], "deploy-ops")
+        self.assertEqual("blocked", lane["status"])
+        self.assertEqual(["shared-owner"],
+                         lane["blocked_by"][0]["overlap"]["capabilities"])
+
 
 
 if __name__ == "__main__":
