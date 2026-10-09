@@ -7,9 +7,6 @@ on:
       - tests/test_zcloud_sqlite_backup_probe.py
       - docs/control-plane-sqlite-backup-readability.md
       - .github/workflows/control-plane-sqlite-backup-proof.yml
-  push:
-    branches: ['feature/control-plane-sqlite-recovery-probe-20261009-1818']
-    paths: ['.github/workflows/control-plane-sqlite-backup-proof.yml']
 permissions:
   contents: read
 concurrency:
