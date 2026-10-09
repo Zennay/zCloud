@@ -181,6 +181,26 @@ class InvalidScopeAdmissionTests(unittest.TestCase):
         self.assert_denied({"capabilities": ["queue-owner\\n"]},
                            "control character")
 
+    def test_blank_metadata_json_does_not_mean_empty_scope(self):
+        queued = entry("runtime", "Repair Firefox automation", {})
+        queued.pop("metadata")
+        queued["metadata_json"] = ""
+        with self.assertRaisesRegex(ValueError, "invalid metadata_json"):
+            generate_execution_lanes(PROJECT, [queued])
+
+    def test_falsy_numeric_metadata_json_does_not_mean_empty_scope(self):
+        queued = entry("runtime", "Repair Firefox automation", {})
+        queued.pop("metadata")
+        queued["metadata_json"] = 0
+        with self.assertRaisesRegex(ValueError, "invalid metadata_json"):
+            generate_execution_lanes(PROJECT, [queued])
+
+    def test_absent_metadata_json_still_defaults_to_empty(self):
+        self.assertEqual(
+            {"files": [], "capabilities": []},
+            scopes_overlap({}, {"files": None, "capabilities": None}),
+        )
+
 
 
 if __name__ == "__main__":
