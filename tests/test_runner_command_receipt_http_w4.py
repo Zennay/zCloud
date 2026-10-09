@@ -81,8 +81,15 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
 
     def test_unknown_positive_id_changes_no_rows(self):
         before = self.state()
-        self.send(self.command_id + 50000, result="ghost")
+        code = self.send(self.command_id + 50000, result="ghost")
+        self.assertIn(code, (200, 409), "unknown ID must not trigger server error")
         self.assertEqual(before, self.state())
+
+    def test_known_defect_probe_has_working_http_transport(self):
+        # A preflight outside expectedFailure prevents transport/DB/setup
+        # failures from being mistaken for the known callback bug.
+        self.assertEqual(200, self.send(self.command_id, result="preflight"))
+        self.assertEqual(("completed", "preflight"), self.state()[:2])
 
     @unittest.expectedFailure
     def test_terminal_replay_unknown_id_and_malformed_id_do_not_claim_success(self):
