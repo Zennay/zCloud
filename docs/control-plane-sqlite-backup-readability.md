@@ -46,3 +46,9 @@ The receipt distinguishes raw success from known host-memory failure and pins
 both candidate and fixture-owner identities. This is composition evidence, not
 an assertion that unmodified discovery passed. Integration still depends on
 #646 and the serialized writer window; no production memory guard is weakened.
+
+An exclusive rollback-journal writer is also covered: the probe returns a generic
+failure while locked, then succeeds after the producer rolls back. Failed proof
+steps emit an incomplete receipt when the runner remains available; process or
+runner shutdown before artifact upload supplies no acceptance evidence. The raw
+suite summary preserves only test IDs and counts, never exception payloads.
