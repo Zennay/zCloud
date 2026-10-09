@@ -72,10 +72,17 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
 
     def assert_fixture_fully_cleaned(self):
         self.assertFalse(Path(self.tmp.name).exists(), "temporary fixture leaked")
+        # On a partial setUp failure, only compare snapshots actually taken.
+        # Never replace the original setup exception with AttributeError.
         if hasattr(self, "old_db"):
             self.assertEqual(self.old_db, server.DB)
+        if hasattr(self, "old_layout_file"):
             self.assertEqual(self.old_layout_file, server.LAYOUT_FILE)
+        if hasattr(self, "old_cache"):
             self.assertIs(self.old_cache, server.CACHE)
+        if hasattr(self, "saved_policy"):
+            for key, value in self.saved_policy.items():
+                self.assertEqual(value, getattr(server, key), key)
         if hasattr(self, "http"):
             self.assertEqual(-1, self.http.socket.fileno(), "HTTP listener leaked")
         if hasattr(self, "thread"):
