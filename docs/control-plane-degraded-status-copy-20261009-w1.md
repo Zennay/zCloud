@@ -38,6 +38,13 @@ This document specifies **user-visible status language**, not control-plane perm
 
 This precedence is display guidance only. UI visibility, operator intent, and green checks cannot authorize recovery actions. Ownership and release gates stay with the designated integration owners.
 
+
+## Recovery-check failure: user-visible containment
+
+If dashboard recovery CI fails while other CI checks pass, display **Dashboard recovery check failed** with the exact failing run URL and exact commit identity. The passing contract, regression and CPU checks remain individually reportable, but **overall operational readiness is unverified**. This is not proof that production is down, and it does not authorize a restart, rollback or dispatch. Never infer a safe recovery action from the failure alone.
+
+If a dashboard recovery check fails on an older SHA, label it **Historical dashboard recovery failure** and distinguish it from the current revision. Do not suppress unresolved historical risk, but do not attribute it to the new commit without current evidence.
+
 ## Acceptance checklist (manual UI review; no production authority)
 
 - [ ] Copy remains usable without colors, icons or tooltips; screen-reader text spells out unknown/observed distinction.
