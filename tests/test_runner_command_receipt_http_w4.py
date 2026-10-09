@@ -4,7 +4,6 @@ These cases intentionally track known production defects as expected failures.
 They must become normal assertions when the serialized server owner fixes them.
 """
 import json
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -70,6 +69,20 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
                 (self.command_id,),
             ).fetchone()
             return tuple(row)
+
+    def test_valid_receipt_updates_only_its_command(self):
+        self.assertEqual(200, self.send(self.command_id, result="first accepted"))
+        self.assertEqual(("completed", "first accepted"), self.state()[:2])
+
+    def test_invalid_status_is_rejected_without_mutation(self):
+        before = self.state()
+        self.assertEqual(400, self.send(self.command_id, status="pending"))
+        self.assertEqual(before, self.state())
+
+    def test_unknown_positive_id_changes_no_rows(self):
+        before = self.state()
+        self.send(self.command_id + 50000, result="ghost")
+        self.assertEqual(before, self.state())
 
     @unittest.expectedFailure
     def test_replayed_callback_must_not_overwrite_terminal_result(self):
