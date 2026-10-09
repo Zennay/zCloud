@@ -142,6 +142,29 @@ class InvalidScopeAdmissionTests(unittest.TestCase):
         self.assertEqual("task_claim_scope_conflict",
                          runtime["blocked_by"][0]["reason"])
 
+    def test_explicit_blank_file_scope_entry_is_not_ignored(self):
+        self.assert_denied({"files": ["  "]},
+                           "invalid conflict_scope.files")
+
+    def test_dot_root_path_cannot_hide_file_scope(self):
+        self.assert_denied({"files": ["./"]},
+                           "invalid conflict_scope.files")
+
+    def test_explicit_empty_capability_entry_denied(self):
+        self.assert_denied({"capabilities": ["---"]},
+                           "invalid conflict_scope.capabilities")
+
+    def test_control_characters_in_file_path_denied(self):
+        self.assert_denied({"files": ["src/secret\\x00.py"]},
+                           "control-character path")
+
+    def test_valid_scope_with_optional_empty_lists_remains_valid(self):
+        result = scopes_overlap(
+            {"files": [], "capabilities": []},
+            {"files": [], "capabilities": []}
+        )
+        self.assertEqual({"files": [], "capabilities": []}, result)
+
 
 
 if __name__ == "__main__":
