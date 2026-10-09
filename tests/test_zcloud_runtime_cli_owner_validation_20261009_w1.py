@@ -77,7 +77,7 @@ class ResourceCLIOwnerTests(unittest.TestCase):
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM resource_leases").fetchone()[0])
 
     def test_oversized_owner_rejected_without_changing_existing_lease(self):
-        valid_owner = "shared-prefix-" + "a" * 187
+        valid_owner = "shared-prefix-" + "a" * 186
         self.assertEqual(200, len(valid_owner))
         rc, first = self.invoke("acquire", valid_owner)
         self.assertEqual(0, rc)
