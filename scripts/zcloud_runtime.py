@@ -72,6 +72,19 @@ def main(argv=None) -> int:
     if args.command in {"receipt", "acquire"}:
         runtime.project_contract(args.project)
     if args.command == "receipt":
+        # The central runtime currently slices these persisted fields. Refuse
+        # oversized values at the CLI boundary rather than recording a
+        # misleading partial commit ID, provenance source or next action.
+        persisted_limits = {
+            "phase": 240, "action": 1000, "commit": 80,
+            "blocker": 1000, "next_gate": 1000, "source": 300,
+        }
+        for key, limit in persisted_limits.items():
+            value = getattr(args, key)
+            if len(value) > limit or "\x00" in value:
+                raise ValueError(
+                    f"--{key.replace('_', '-')} must be NUL-free and <= {limit} characters"
+                )
         if str(args.ci_status or "").lower() not in {
             "", "queued", "in_progress", "success", "failure", "cancelled", "skipped"
         }:
