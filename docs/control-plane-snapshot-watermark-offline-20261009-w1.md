@@ -14,7 +14,8 @@ This function does **not** verify signatures, provenance, authenticated worker i
 - Same generation with lower sequence: `stale_sequence`.
 - Equal generation and sequence, byte-equivalent record: `duplicate`.
 - Equal generation and sequence, different receipt: `conflicting_receipt`.
-- Same generation and head with larger sequence: `forward` (offline comparison only).
+- Same generation and head with larger sequence but earlier parsed UTC observation time: `regressed_observation_time`.
+- Same generation and head with larger sequence and nondecreasing parsed UTC time: `forward` (offline comparison only).
 - Higher generation and nonzero sequence: `unanchored_generation`.
 - Higher generation and zero sequence: `new_generation_unverified` (never an authorization).
 
