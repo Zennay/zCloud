@@ -35,5 +35,32 @@ class IdentifierTests(unittest.TestCase):
                 self.assertFalse(module.is_safe_display_identifier(value))
         self.assertTrue(module.is_safe_display_identifier("x"*128))
 
+    def test_unicode_formatting_families(self):
+        # Exhaustively reject Unicode format codepoints regardless of display.
+        import unicodedata
+        for codepoint in range(0x110000):
+            char = chr(codepoint)
+            if unicodedata.category(char) == "Cf":
+                with self.subTest(codepoint=codepoint):
+                    self.assertFalse(module.is_safe_display_identifier("a" + char + "b"))
+
+    def test_coercion_is_never_attempted(self):
+        class Explosive:
+            def __str__(self):
+                raise AssertionError("untrusted object stringification")
+
+            def __repr__(self):
+                raise AssertionError("untrusted object representation")
+
+        self.assertFalse(module.is_safe_display_identifier(Explosive()))
+        self.assertFalse(module.is_safe_display_identifier(["worker"]))
+        self.assertFalse(module.is_safe_display_identifier({"id": "worker"}))
+
+    def test_ascii_punctuation_restrictions(self):
+        for value in ("a/b", "a\\\\b", "a@b", "a#b", "a,b", "a=b",
+                      "a;b", "a?b", "a%20b", "a\\tb", "a\\rb"):
+            with self.subTest(value=value):
+                self.assertFalse(module.is_safe_display_identifier(value))
+
 if __name__ == "__main__":
     unittest.main()
