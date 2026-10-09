@@ -34,5 +34,29 @@ class DegradedStatusCopyContract(unittest.TestCase):
         for term in ("screen-reader", "Timestamps include timezone", "exact PR SHA", "source and scope"):
             self.assertIn(term, self.text)
 
+
+    def test_table_has_unique_evidence_and_expected_denial_pairs(self):
+        rows = [line for line in self.text.splitlines() if line.startswith("| ")]
+        records = [[cell.strip() for cell in line.strip("|").split("|")] for line in rows]
+        records = [cells for cells in records if len(cells) == 4 and cells[0] not in ("Available evidence", "---")]
+        self.assertEqual(8, len(records))
+        self.assertEqual(len(records), len({cells[0] for cells in records}))
+        expectations = {
+            "Prompt-sent only": ("Prompt submitted", "Working now"),
+            "Stale heartbeat": ("Status unknown", "Offline / crashed"),
+            "API 503 or timeout": ("Service temporarily unavailable", "Workers stopped"),
+            "Queue claim expired or missing from GET": ("Claim state unverified", "Worker released"),
+            "GitHub PR checks on previous commit": ("Checks pending for current revision", "Ready to deploy"),
+            "Fresh healthy endpoint only": ("API responding", "Workers generating"),
+            "Conflicting clocks or producers": ("Conflicting observations", "Healthy"),
+            "Fresh, correlated generation-start with worker identity": ("Generation observed", "Task completed"),
+        }
+        actual = {cells[0]: (cells[1], cells[3]) for cells in records}
+        self.assertEqual(expectations, actual)
+
+    def test_no_privileged_action_is_implied_by_display(self):
+        self.assertIn("never grants permission to dispatch, restart, merge, deploy or modify queues", self.text)
+        self.assertIn("does not imply material progress", self.text)
+
 if __name__ == "__main__":
     unittest.main()
