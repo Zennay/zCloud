@@ -173,6 +173,27 @@ class TaskClaimsIsolatedRaces(unittest.TestCase):
         self.assertTrue(renewed["renewed"])
         self.assertEqual(renewed["claim"]["acquired_at"], first["claim"]["acquired_at"])
 
+    def test_expired_heartbeat_cannot_extend_dead_lease(self):
+        self.assertTrue(self.acquire("owner-A")["acquired"])
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                "UPDATE task_claims SET lease_until='2000-01-01T00:00:00+00:00'"
+            )
+        renewed = server.task_claim_heartbeat("fixture", "same", "owner-A", lease_seconds=3600)
+        self.assertFalse(renewed["renewed"])
+        with sqlite3.connect(self.db) as connection:
+            actual = connection.execute("SELECT lease_until FROM task_claims").fetchone()[0]
+        self.assertEqual(actual, "2000-01-01T00:00:00+00:00")
+
+    def test_lease_clamping_produces_bounded_claim_expiry(self):
+        from datetime import datetime, timezone
+        before = datetime.now(timezone.utc).timestamp()
+        acquired = server.task_claim_acquire("fixture", "bounded", "owner-A", lease_seconds=1)
+        self.assertTrue(acquired["acquired"])
+        expiry = datetime.fromisoformat(acquired["claim"]["lease_until"]).timestamp()
+        self.assertGreaterEqual(expiry - before, 14)
+        self.assertLessEqual(expiry - before, 18)
+
     def test_missing_identity_cannot_create_claim(self):
         for project, key, owner in [("", "valid", "owner"), ("fixture", "", "owner"), ("fixture", "key", "")]:
             with self.assertRaises(ValueError):
