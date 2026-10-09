@@ -31,6 +31,7 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.old_db = server.DB
         self.old_cache = server.CACHE
+        self.old_layout_file = server.LAYOUT_FILE
         # init_db() loads dynamic worker policy globals from the test DB.
         # Restore them to avoid contaminating unrelated tests discovered later.
         self.saved_policy = {
@@ -50,6 +51,7 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         # failed setUp cannot leak DB paths/policy into subsequent test classes.
         self.addCleanup(self.restore_server_globals)
         server.DB = Path(self.tmp.name) / "history.db"
+        server.LAYOUT_FILE = Path(self.tmp.name) / "project-layout.json"
         server.CACHE = None
         server.init_db()
         with server.connect() as conn:
@@ -73,6 +75,7 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
 
     def restore_server_globals(self):
         server.DB = self.old_db
+        server.LAYOUT_FILE = self.old_layout_file
         server.CACHE = self.old_cache
         for key, value in self.saved_policy.items():
             setattr(server, key, value)
