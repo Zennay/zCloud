@@ -4,6 +4,7 @@ These tests do not import zCloud runtime modules, access production, or grant
 privileged actions. They specify expected display-only behavior for future
 consumer integration; green tests DO NOT verify a deployed implementation.
 """
+import math
 import unittest
 
 
@@ -25,7 +26,11 @@ def display_evidence(source_sha, ci, production, worker, claim, approval, *, now
               and result["ci"] == "verified"
               and production.get("run_id") == ci["run_id"]
               and production.get("attempt") == ci["attempt"]
-              and production.get("status") == "healthy"):
+              and production.get("status") == "healthy"
+              and isinstance(production.get("observed_at"), (int, float))
+              and not isinstance(production.get("observed_at"), bool)
+              and math.isfinite(production["observed_at"])
+              and 0 <= now - production["observed_at"] <= 60):
             result["production"] = "observed_healthy"
     if isinstance(worker, dict):
         observed = worker.get("last_action_at")
@@ -45,7 +50,8 @@ class OfflineProvenanceMatrix(unittest.TestCase):
         self.ci = {"sha": "A", "run_id": 7, "attempt": 2,
                    "conclusion": "success"}
         self.prod = {"sha": "A", "run_id": 7, "attempt": 2,
-                     "environment": "production", "status": "healthy"}
+                     "environment": "production", "status": "healthy",
+                     "observed_at": 1990}
 
     def check(self, expected, **changes):
         inputs = dict(source_sha="A", ci=self.ci, production=self.prod,
@@ -100,6 +106,15 @@ class OfflineProvenanceMatrix(unittest.TestCase):
 
     def test_approval_does_not_grant_display_authority(self):
         self.check(("admission", "denied"), approval={"approved": True})
+
+    def test_production_timestamp_not_current(self):
+        for timestamp in (None, True, float("nan"), float("inf"), -1, 1939, 2001):
+            with self.subTest(timestamp=timestamp):
+                self.check(("production", "unverified"),
+                           production={**self.prod, "observed_at": timestamp})
+
+    def test_fresh_matching_production_observation(self):
+        self.check(("production", "observed_healthy"))
 
     def test_boolean_attempt_not_integer(self):
         self.check(("ci", "unknown"), ci={**self.ci, "attempt": True})
