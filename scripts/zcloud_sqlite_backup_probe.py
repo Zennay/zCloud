@@ -42,8 +42,8 @@ def probe_backup(path: Path, *, max_pages: int = 10000, timeout_seconds: float =
             restored.set_progress_handler(
                 lambda: int(time.monotonic() >= deadline), 1000)
             try:
-                integrity_ok = restored.execute("PRAGMA quick_check").fetchall() == [("ok",)]
-                foreign_keys_ok = not restored.execute("PRAGMA foreign_key_check").fetchall()
+                integrity_ok = restored.execute("PRAGMA quick_check").fetchmany(2) == [("ok",)]
+                foreign_keys_ok = restored.execute("SELECT 1 FROM pragma_foreign_key_check LIMIT 1").fetchone() is None
                 schema = restored.execute(
                     "SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name"
                 ).fetchall()
