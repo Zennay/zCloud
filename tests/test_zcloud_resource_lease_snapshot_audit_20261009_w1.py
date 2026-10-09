@@ -20,6 +20,9 @@ NOW = "2026-10-09T17:00:00+00:00"
 def fixture():
     contracts = {
         "schema_version": 1,
+        "projects": {
+            "cloud": {"compute": {"pool": "protected"}},
+        },
         "resource_pools": {
             "protected": {"slots": 2},
             "disabled": {"slots": 0},
@@ -74,6 +77,21 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
         def change(s, c):
             s["pools"]["protected"].update(capacity=2, used=3, available=0)
         self.denied(self.audit(change), "invalid_pool_capacity_arithmetic")
+
+    def test_rejects_lease_from_unregistered_project(self):
+        def change(s, c):
+            s["leases"][0]["project_id"] = "phantom"
+        self.denied(self.audit(change), "unknown_lease_project")
+
+    def test_rejects_lease_in_wrong_contract_pool(self):
+        def change(s, c):
+            c["projects"]["cloud"]["compute"]["pool"] = "disabled"
+        self.denied(self.audit(change), "lease_pool_contract_mismatch")
+
+    def test_rejects_missing_project_registry(self):
+        def change(s, c):
+            c.pop("projects")
+        self.denied(self.audit(change), "invalid_project_registry")
 
     def test_rejects_boolean_counters(self):
         def change(s, c):
