@@ -320,6 +320,42 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("runtime-safe", runtime["queue_id"])
         self.assertEqual([], runtime["blocked_by"])
 
+    def test_malformed_active_scope_must_fail_before_admission(self):
+        """Never silently discard a malformed active writer's file ownership."""
+        project = self.project("cloud", "platform")
+        active = {
+            **self.item("control-active", "Implement queue scheduler",
+                        status="running",
+                        metadata={"conflict_scope": {
+                            "files": {"path": "shared.py"},
+                        }}),
+            "project_id": "cloud",
+        }
+        queued = {
+            **self.item("runtime-waiting", "Repair Firefox automation",
+                        metadata={"conflict_scope": {
+                            "files": ["shared.py"],
+                        }}),
+            "project_id": "cloud",
+        }
+        with self.assertRaisesRegex(ValueError, "invalid conflict_scope.files"):
+            generate_execution_lanes(project, [queued, active])
+
+    def test_malformed_task_claim_scope_must_fail_before_admission(self):
+        """Unparseable claim entries cannot become an empty reserved scope."""
+        project = self.project("cloud", "platform")
+        queued = {
+            **self.item("runtime-waiting", "Repair Firefox automation"),
+            "project_id": "cloud",
+        }
+        claims = [{
+            "project_id": "cloud",
+            "claim_key": "already-owned",
+            "metadata": {"conflict_scope": {"files": [None]}},
+        }]
+        with self.assertRaisesRegex(ValueError, "invalid conflict_scope.files"):
+            generate_execution_lanes(project, [queued], claims)
+
 
 
 if __name__ == "__main__":
