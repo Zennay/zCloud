@@ -72,7 +72,7 @@ class ResourceCLIOwnerTests(unittest.TestCase):
 
     def test_oversize_metadata_rejected_before_database_creation(self):
         # The underlying runtime silently truncates metadata_json to 4000 chars.
-        for blob in ("x" * 4100, "é" * 4100):
+        for blob in ("x" * 4100, "é" * 4100, "é" * 3000):
             with self.subTest(kind=blob[0]):
                 with self.assertRaisesRegex(ValueError, "exceeds 4000"):
                     with redirect_stdout(io.StringIO()):
@@ -82,6 +82,17 @@ class ResourceCLIOwnerTests(unittest.TestCase):
                             json.dumps({"blob": blob}, ensure_ascii=False),
                         ])
                 self.assertFalse(self.db.exists(), "oversize metadata must not open SQLite")
+
+    def test_nonfinite_metadata_is_rejected_before_database_creation(self):
+        for bad_json in ('{"value":NaN}', '{"value":Infinity}', '{"value":-Infinity}'):
+            with self.subTest(value=bad_json):
+                with self.assertRaises(ValueError):
+                    with redirect_stdout(io.StringIO()):
+                        cli.main([
+                            "--db", str(self.db), "acquire", "--project", "ftmo",
+                            "--owner", "worker", "--metadata-json", bad_json,
+                        ])
+                self.assertFalse(self.db.exists(), "non-finite JSON must not touch SQLite")
 
     def test_maximum_serialized_metadata_is_preserved(self):
         # Canonical separators mean {\\"blob\\":\\"\\"} is 11 chars.
