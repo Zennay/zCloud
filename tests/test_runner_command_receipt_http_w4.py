@@ -84,6 +84,17 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.send(self.command_id + 50000, result="ghost")
         self.assertEqual(before, self.state())
 
+    def test_pending_command_id_is_serialized_as_json_integer(self):
+        url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
+        with urllib.request.urlopen(url, timeout=5) as response:
+            self.assertEqual(200, response.status)
+            payload = json.load(response)
+        matches = [command for command in payload["commands"]
+                   if command["id"] == self.command_id]
+        self.assertEqual(1, len(matches))
+        self.assertIs(type(matches[0]["id"]), int)
+        self.assertGreater(matches[0]["id"], 0)
+
     @unittest.expectedFailure
     def test_competing_http_callbacks_have_one_terminal_winner(self):
         # Two real HTTP requests race on the same pending row. Only one may
