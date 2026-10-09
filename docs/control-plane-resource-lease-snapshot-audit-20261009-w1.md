@@ -47,6 +47,24 @@ No result, including `ready_for_review: true`, grants mutation authority.
 Never run this checker from a privileged recovery job or use it to unblock
 the #580/PWQ-41 + #576/#1089 serialized writer/deploy gate.
 
+## Important limits of a normalized export
+
+A green audit checks the *internal consistency* of a single exported JSON pair; it
+does not prove it came from the production SQLite database, that the export was
+complete, or that the producer faithfully represented raw stored fields. In
+particular, existing `project_runtime._lease_payload()` silently substitutes an
+empty metadata object if stored `resource_leases.metadata_json` is malformed. Thus
+matching empty metadata in `holders` and `leases` can still pass the snapshot
+check without proving raw SQLite JSON integrity. The source-level
+`json.dumps(... )[:4000]` truncation risk is tracked separately in
+[issue #1272](https://github.com/Zennay/zCloud/issues/1272).
+The owner-ID truncation risk is tracked in
+[issue #1271](https://github.com/Zennay/zCloud/issues/1271).
+
+Future integration needs a trusted source identity, exact deployed commit SHA and
+raw-storage validation **before** any automatic operational decision. The audit
+does not create such evidence and always returns `safe_to_act: false`.
+
 ## Ownership and test evidence
 
 - Separate, add-only control-plane scope: `scripts/zcloud_resource_lease_snapshot_audit.py`,
