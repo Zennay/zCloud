@@ -1474,7 +1474,7 @@ async function refreshTargets() {
       targets[id] = {...target, projectId: target.project_id || id, projectName: target.name || id};
     }
     postStatus({event: "targets-loaded", at: new Date().toISOString(), reason: Object.keys(targets).join(",")});
-    const tabs = await browser.tabs.query({url: "https://chatgpt.com/*"});
+    const tabs = await browser.tabs.query({url: ["https://chatgpt.com/*", "https://claude.ai/*", "https://claude.com/*"]});
     const restoredAssignments = await sessionAssignments(tabs);
     const recoveryTabs = await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming);
     const claimedTabIds = new Set(
@@ -1714,7 +1714,9 @@ async function inject(tabId, target) {
         "document.documentElement.setAttribute('data-zcloud-worker-id'," + JSON.stringify(effectiveTarget.project_id) + ");" +
         "document.documentElement.setAttribute('data-zcloud-worker-config'," + JSON.stringify(encodedConfig) + ");" +
         "document.documentElement.setAttribute('data-zcloud-force-initial-dispatch'," + JSON.stringify(effectiveTarget.force_initial_dispatch ? "true" : "false") + ");" +
-        "window.dispatchEvent(new Event('zcloud-worker-config'));";
+        "window.dispatchEvent(new Event('zcloud-worker-config'));" +
+        "if (!window.__zcloudFocusBridgeInstalled) { window.__zcloudFocusBridgeInstalled = true;" +
+        "window.addEventListener('zcloud-focus-request', () => { try { browser.runtime.sendMessage({type: 'zcloud-focus-request'}); } catch (_) {} }); }";
       await browser.tabs.executeScript(tabId, {code, runAt: "document_idle"});
       await new Promise(resolve => setTimeout(resolve, 500));
       const readiness = await browser.tabs.executeScript(tabId, {
@@ -2239,6 +2241,12 @@ browser.runtime.onMessage.addListener((message, sender) => {
       .catch(() => ({auto_continue: false, vps_dispatch_only: true, continue_delay_seconds: 0, autonomy: {reason:"policy-unavailable"}}));
   } else if (message?.type === "runner-new-chat" && message.projectId) {
     newProjectChat(message.projectId, message.reason || "stall-recovery", null);
+  } else if (message?.type === "zcloud-focus-request") {
+    const tabId = sender?.tab?.id ?? null;
+    const windowId = sender?.tab?.windowId ?? null;
+    if (windowId != null) browser.windows.update(windowId, {focused: true}).catch(() => {});
+    if (tabId != null) browser.tabs.update(tabId, {active: true}).catch(() => {});
+    return Promise.resolve({ok: true});
   } else if (message?.type === "runner-replacement-handoff-consumed" && message.projectId) {
     const tabId = sender?.tab?.id ?? null;
     const target = tabId != null ? tabTargets[tabId] : null;
@@ -2249,7 +2257,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!tab.url || !tab.url.includes("chatgpt.com")) return;
+  if (!tab.url || !(tab.url.includes("chatgpt.com") || tab.url.includes("claude.ai") || tab.url.includes("claude.com"))) return;
   const assigned = tabTargets[tabId];
   if (assigned) {
     if (pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {

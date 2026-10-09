@@ -932,6 +932,17 @@
     return false;
   }
 
+  async function ensureFocused(timeoutMs = 2000) {
+    if (document.hasFocus()) return true;
+    try { window.dispatchEvent(new Event("zcloud-focus-request")); } catch (_) {}
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (document.hasFocus()) return true;
+      await sleep(100);
+    }
+    return document.hasFocus();
+  }
+
   async function fill(text) {
     const box = composer();
     if (!box) return false;
@@ -1076,6 +1087,7 @@
 
     sending = true;
     try {
+      await ensureFocused();
       if (currentProvider === "chatgpt") {
         const highReady = await ensureHighThinking();
         if (!highReady) {
