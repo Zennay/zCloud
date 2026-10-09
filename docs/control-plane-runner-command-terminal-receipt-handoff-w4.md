@@ -199,3 +199,20 @@ strings, null, and replay/cross-command races in isolated real HTTP tests.
 Do not deploy this partial server-only guard without corresponding producer
 and allocation checks. The offline reference test demonstrates the problem,
 not full implementation correctness.
+
+## Additional observed defect: phantom positive acknowledgement
+
+The default-branch callback unconditionally replies `{"ok":true}` after
+`UPDATE runner_commands ... WHERE id=?`, without inspecting SQLite
+`rowcount`. An unknown positive command ID matches zero rows but still
+receives HTTP **200**. This is a semantic false acknowledgement even when the
+database stays unchanged. The isolated live-handler HTTP regression
+`test_unknown_id_must_not_report_success` records this as a tracked
+`expectedFailure` until integration. The proposed conditional update above
+already handles this case via `changed != 1` -> a bounded `409` response.
+
+Verify the worker acceptance policy before implementing `409`: userscript
+`commandResult` returns `false` on non-2xx; the Firefox extension sends a
+`no-cors` request and does not inspect the status. This is distinct from the
+late-terminal-overwrite and invalid-ID-validation defects. Unknown and
+already-terminal IDs should receive a consistent non-disclosing response.
