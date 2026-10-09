@@ -239,9 +239,13 @@ def _metadata(item):
         return {}
     try:
         value = json.loads(raw)
-    except Exception:
-        return {}
-    return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError) as exc:
+        # A corrupted queue row or task-claim receipt cannot safely be
+        # interpreted as "owns no files/capabilities".
+        raise ValueError("invalid metadata_json: unreadable object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("invalid metadata_json: expected object")
+    return value
 
 
 def _scope_from_item(item):
