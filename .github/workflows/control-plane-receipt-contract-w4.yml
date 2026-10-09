@@ -51,3 +51,13 @@ jobs:
           PY
           fi
           exit "${result:-0}"
+      - name: Preserve structured receipt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-receipt-evidence
+          path: |
+            receipt-results.json
+            receipt-test-results.log
+          if-no-files-found: error
+          retention-days: 14
