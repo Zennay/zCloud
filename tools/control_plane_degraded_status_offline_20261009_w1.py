@@ -16,7 +16,17 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
         return result
     if any(type(k) is not str for k in observation):
         return result
+    # Bound envelope fields and prohibit mixing lifecycle identity with unrelated events.
+    if any(type(v) is str and len(v) > 256 for v in observation.values()):
+        return result
     kind = observation.get("kind")
+    base_fields = {"kind", "source", "observed_at"}
+    identity_fields = {"worker_id", "assignment_id", "correlated"}
+    if kind == "generation_started":
+        if set(observation) != base_fields | identity_fields:
+            return result
+    elif set(observation) != base_fields:
+        return result
     if type(kind) is not str or type(observation.get("source")) is not str or not observation["source"].strip():
         return result
     stamp = observation.get("observed_at")
