@@ -426,6 +426,11 @@ def generate_execution_lanes(project, backlog, claims=()):
             blocked_by_lane[lane_id].extend(conflicts)
             continue
 
+        # An earlier, higher-priority candidate may have been rejected by a
+        # foreign claim or an occupied lane. Once a safe fallback is chosen,
+        # its own admission is conflict-free: never expose the rejected
+        # candidate's blockers as if they belonged to the selected task.
+        blocked_by_lane[lane_id] = []
         chosen_by_lane[lane_id] = candidate
         occupied_scopes.append({
             "queue_id": str(candidate.get("queue_id") or ""),
