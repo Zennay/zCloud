@@ -112,6 +112,24 @@ class TaskClaimsIsolatedRaces(unittest.TestCase):
         with sqlite3.connect(self.db) as c:
             self.assertEqual(c.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0], 1)
 
+    def test_current_owner_heartbeat_and_release_then_reassign(self):
+        self.assertTrue(self.acquire("owner-A")["acquired"])
+        heartbeat = server.task_claim_heartbeat("fixture", "same", "owner-A", lease_seconds=120)
+        self.assertTrue(heartbeat["renewed"])
+        self.assertEqual(heartbeat["claim"]["owner_id"], "owner-A")
+        self.assertTrue(server.task_claim_release("fixture", "same", "owner-A")["released"])
+        self.assertEqual(server.task_claims("fixture"), [])
+        self.assertTrue(self.acquire("owner-B")["acquired"])
+        self.assertEqual(server.task_claims("fixture")[0]["owner_id"], "owner-B")
+
+    def test_read_only_claim_listing_does_not_prune_expired_rows(self):
+        self.assertTrue(self.acquire("owner-A", "fixture", "expired")["acquired"])
+        with sqlite3.connect(self.db) as c:
+            c.execute("UPDATE task_claims SET lease_until='2000-01-01T00:00:00+00:00'")
+        self.assertEqual(server.task_claims("fixture", prune_expired=False), [])
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0], 1)
+
     def test_missing_identity_cannot_create_claim(self):
         for project, key, owner in [("", "valid", "owner"), ("fixture", "", "owner"), ("fixture", "key", "")]:
             with self.assertRaises(ValueError):
