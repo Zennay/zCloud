@@ -25,6 +25,8 @@ def evaluate_stop(evidence):
                 "stop_already_pending", "observation_age_seconds")
     if any(key not in evidence for key in required):
         return StopDecision(False, "missing_field")
+    if set(evidence) != set(required):
+        return StopDecision(False, "unexpected_field")
     for key in ("worker_id", "request_id"):
         value = evidence[key]
         if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
@@ -72,6 +74,12 @@ class EmergencyStopOfflineTests(unittest.TestCase):
             evidence = dict(self.good)
             evidence.pop(key)
             self.assertFalse(evaluate_stop(evidence).allowed_offline_only)
+
+    def test_unexpected_fields_fail_closed(self):
+        self.check_denied({"override_fence": True})
+        self.check_denied({"operator_role": "admin"})
+        self.assertEqual(evaluate_stop(dict(self.good, override_fence=True)).reason,
+                         "unexpected_field")
 
     def test_ids_reject_injection_and_oversize(self):
         for value in ("", "../escape", "id with space", "x"*129, "é", "\n"):
