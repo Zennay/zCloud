@@ -30,6 +30,16 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertNotIn("abc.def.ghi", sanitized)
         self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz", sanitized)
 
+    def test_inline_credential_assignments_are_masked(self):
+        sample = "password=plain-secret api_key: another-secret cookie='session-value'"
+        cleaned = module.sanitize(sample)
+        for secret in ("plain-secret", "another-secret", "session-value"):
+            self.assertNotIn(secret, cleaned)
+        self.assertIn("[REDACTED]", cleaned)
+
+    def test_nonsecret_assignments_are_preserved(self):
+        self.assertEqual(module.sanitize("state=running priority=2"), "state=running priority=2")
+
     def test_unknown_types_fail_closed(self):
         class Hostile:
             def __str__(self):
