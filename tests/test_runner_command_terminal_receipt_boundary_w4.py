@@ -41,6 +41,16 @@ class CommandReceiptContract(unittest.TestCase):
         self.assertIn("WHERE id=?", snippet)
         self.assertIn("(status,now(),", snippet)
 
+    def test_command_id_parsed_before_mutation(self):
+        snippet = endpoint()
+        self.assertLess(snippet.index("command_id=int("),
+                        snippet.index("UPDATE runner_commands SET status="))
+
+    def test_existing_local_auth_guard_precedes_payload_id_parsing(self):
+        snippet = endpoint()
+        self.assertLess(snippet.index("127.0.0.1"),
+                        snippet.index("command_id=int("))
+
     @unittest.expectedFailure  # Existing server.py gap; unexpected success requires review.
     def test_pending_compare_and_swap_required(self):
         snippet = endpoint()
