@@ -21,10 +21,10 @@ class OperatorPreflightDocumentContract(unittest.TestCase):
             "Positive authority", "Safety guards", "Rollback", "Outcome",
         ):
             with self.subTest(field=field):
-                self.assertRegex(self.text, rf"(?m)^\\| {re.escape(field)} \\|")
+                self.assertRegex(self.text, rf"(?m)^\| {re.escape(field)} \|")
 
     def test_ten_numbered_deny_conditions(self):
-        items = re.findall(r"(?m)^([0-9]+)\\. ", self.text)
+        items = re.findall(r"(?m)^([0-9]+)\. ", self.text)
         self.assertEqual(items, [str(i) for i in range(1, 11)])
 
     def test_tabletop_has_seven_explicit_dispositions(self):
@@ -39,7 +39,7 @@ class OperatorPreflightDocumentContract(unittest.TestCase):
             "not deployed or wired to runtime",
             "does *not* grant privileges",
             "does not authenticate any observations",
-            "No production mutation",
+            "does not execute anything",
         ):
             with self.subTest(statement=statement):
                 self.assertIn(statement.casefold(), self.text.casefold())
