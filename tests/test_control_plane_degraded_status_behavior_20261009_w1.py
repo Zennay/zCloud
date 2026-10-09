@@ -20,7 +20,7 @@ class ClassifierTests(unittest.TestCase):
         ]
         for value, expected in fixtures:
             with self.subTest(expected=expected):
-                actual = classify(value, now=NOW)
+                actual = classify(value, now=NOW, expected_worker_id='w1', expected_assignment_id='a1')
                 self.assertEqual(expected, actual["label"])
                 self.assertIs(actual["authorizes_action"], False)
 
@@ -56,6 +56,17 @@ class ClassifierTests(unittest.TestCase):
             with self.subTest(now=now):
                 self.assertEqual({"label": "Status unknown", "authorizes_action": False},
                                  classify(evidence("api_responding"), now=now))
+
+
+    def test_generation_requires_external_identity_binding(self):
+        forged = evidence("generation_started", worker_id="w1", assignment_id="a1", correlated=True)
+        for kwargs in ({}, {"expected_worker_id": "w1"}, {"expected_assignment_id": "a1"},
+                       {"expected_worker_id": "w2", "expected_assignment_id": "a1"},
+                       {"expected_worker_id": "w1", "expected_assignment_id": "a2"}):
+            with self.subTest(kwargs=kwargs):
+                self.assertEqual("Status unknown", classify(forged, now=NOW, **kwargs)["label"])
+        self.assertEqual("Generation observed", classify(
+            forged, now=NOW, expected_worker_id="w1", expected_assignment_id="a1")["label"])
 
 if __name__ == "__main__":
     unittest.main()
