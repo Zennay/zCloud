@@ -18,7 +18,7 @@ This snapshot verifier independently confirms all of the following before a *hum
 - Contract pool names and integer capacities match reported pool capacities.
 - Every lease project exists in the contract registry and is allocated only to its contracted compute pool (no protected-pool spoof).
 - Pool `used` / `available` counts are nonnegative integers and add to capacity.
-- Every holder is represented exactly once in the global leases list, under the same pool.
+- Every holder is represented exactly once in the global leases list, under the same pool, with identical lease time bounds and CPU/memory/workload fields.
 - Lease identities are nonempty, have no surrounding whitespace and are nonduplicated.
 - Every lease is active at snapshot time, not acquired in the future, with a positive lifetime.
 - CPU/memory reservations are nonnegative finite numbers/integer MB; NaN/Infinity are rejected.
