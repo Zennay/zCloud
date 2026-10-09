@@ -113,6 +113,33 @@ class RejectedCandidateFallbackTests(unittest.TestCase):
         self.assertEqual([], by_id["runtime-automation"]["blocked_by"])
         self.assertEqual("blocked", by_id["deploy-ops"]["status"])
         self.assertTrue(by_id["deploy-ops"]["blocked_by"])
+    def test_several_rejections_and_claims_then_safe_fallback_is_clean(self):
+        """Only a fully blocked lane exposes accumulated candidate blockers."""
+        control = task("control", "Implement queue scheduler", "P2",
+                       ["conflict/queue.py"], status="running")
+        blocked_p0 = task("reject-queue", "Fix Firefox automation", "P0",
+                          ["conflict/queue.py"])
+        blocked_p1 = task("reject-claim", "Repair browser runtime", "P1",
+                          ["conflict/claim.py"])
+        accepted_p2 = task("accept", "Repair Firefox tab state", "P2",
+                           ["isolated/tab.py"])
+        claim = {
+            "project_id": "cloud",
+            "claim_key": "claimed-different-file",
+            "owner_id": "peer",
+            "metadata": {"conflict_scope": {
+                "files": ["conflict/claim.py"],
+            }},
+        }
+        backlog = [accepted_p2, blocked_p1, control, blocked_p0]
+        chosen = lane(backlog, claims=[claim])
+        self.assertEqual("queued", chosen["status"])
+        self.assertEqual("accept", chosen["queue_id"])
+        self.assertEqual([], chosen["blocked_by"])
+        self.assertEqual(["accept"], list(eligible_queue_lane_map(
+            PROJECT, backlog, [claim]
+        )))
+
 
 
 if __name__ == "__main__":
