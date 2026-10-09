@@ -118,5 +118,13 @@ class DegradedStatusCopyContract(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, self.text)
 
+
+    def test_acceptance_record_is_explicitly_historical(self):
+        self.assertIn("Acceptance evidence record — exact revision", self.text)
+        self.assertIn("37898334021", self.text)
+        self.assertIn("37898333673", self.text)
+        self.assertIn("not accepted for release", self.text)
+        self.assertIn("become historical as soon as the branch changes", self.text)
+
 if __name__ == "__main__":
     unittest.main()
