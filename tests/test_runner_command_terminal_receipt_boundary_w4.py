@@ -1,7 +1,8 @@
 """Offline red regression: late runner command receipts must be fenced.
 
 Run: python3 -m unittest tests/test_runner_command_terminal_receipt_boundary_w4.py
-Expected current-main result: two tracked expected failures (known defects).\nUnexpected success is a hard unittest failure and requires contract review.
+Expected current-main result: two tracked expected failures (known defects).
+Unexpected success is a hard unittest failure and requires contract review.
 No runtime, SQLite, browser or runner state is touched.
 """
 import pathlib
@@ -29,6 +30,11 @@ class CommandReceiptContract(unittest.TestCase):
 
     def test_live_endpoint_truncates_result_to_300_characters(self):
         self.assertIn("str(payload.get('result') or '')[:300]", endpoint())
+
+    def test_invalid_status_precedes_database_mutation(self):
+        snippet = endpoint()
+        self.assertLess(snippet.index("status not in ('completed','failed')"),
+                        snippet.index('UPDATE runner_commands SET status='))
 
     def test_live_endpoint_uses_bound_parameters(self):
         snippet = endpoint()
