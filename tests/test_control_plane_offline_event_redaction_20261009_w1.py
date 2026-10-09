@@ -46,6 +46,15 @@ class RedactionBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.redact_control_event({**BASE, "status": "Bearer-secret"})
 
+    def test_invalid_calendar_dates_are_rejected(self):
+        for value in ("2026-02-30T02:00:00Z", "2026-13-09T02:00:00Z", "2026-10-09T25:00:00Z", "2026-10-09T02:61:00Z"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                mod.redact_control_event({**BASE, "timestamp": value})
+
+    def test_leap_day_is_valid(self):
+        event = {**BASE, "timestamp": "2024-02-29T23:59:59Z"}
+        self.assertEqual(mod.redact_control_event(event), event)
+
     def test_timestamp_is_utc_second_precision(self):
         for value in ("2026-10-09T02:00:00+01:00", "2026-10-09", "secret", "2026-10-09T02:00:00Z\nTOKEN"):
             with self.subTest(value=value), self.assertRaises(ValueError):
