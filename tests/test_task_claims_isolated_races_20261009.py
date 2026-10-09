@@ -150,6 +150,29 @@ class TaskClaimsIsolatedRaces(unittest.TestCase):
         self.assertFalse(server.task_claim_release("fixture", "same", "owner-A")["released"])
         self.assertEqual(server.task_claims("fixture"), [])
 
+    def test_concurrent_reclaim_after_expiry_has_single_new_owner(self):
+        self.assertTrue(self.acquire("expired-owner")["acquired"])
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                "UPDATE task_claims SET lease_until='2000-01-01T00:00:00+00:00'"
+            )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(self.acquire, [f"reclaimer-{i}" for i in range(8)]))
+        winners = [result for result in outcomes if result["acquired"]]
+        self.assertEqual(len(winners), 1)
+        self.assertTrue(winners[0]["claim"]["owner_id"].startswith("reclaimer-"))
+        self.assertEqual(server.task_claims("fixture")[0]["owner_id"], winners[0]["claim"]["owner_id"])
+        self.assertFalse(server.task_claim_release("fixture", "same", "expired-owner")["released"])
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0], 1)
+
+    def test_heartbeat_does_not_change_acquired_timestamp(self):
+        first = self.acquire("owner-A")
+        self.assertTrue(first["acquired"])
+        renewed = server.task_claim_heartbeat("fixture", "same", "owner-A", lease_seconds=120)
+        self.assertTrue(renewed["renewed"])
+        self.assertEqual(renewed["claim"]["acquired_at"], first["claim"]["acquired_at"])
+
     def test_missing_identity_cannot_create_claim(self):
         for project, key, owner in [("", "valid", "owner"), ("fixture", "", "owner"), ("fixture", "key", "")]:
             with self.assertRaises(ValueError):
