@@ -64,6 +64,23 @@ class WatermarkTests(unittest.TestCase):
         self.assertEqual(compare(mark(), mark(at="2026-02-30T01:00:00Z")), "invalid")
         self.assertEqual(compare(mark(), mark(at="2026-10-09T01:00:00+01:00")), "invalid")
 
+    def test_reject_noncanonical_iso_utc_forms(self):
+        for bad in (
+            "2026-10-09T01:00:00+00:00Z",
+            "2026-10-09 01:00:00Z",
+            "2026-W41-5T01:00:00Z",
+            "2026-10-09T01:00Z",
+            "2026-10-09T01:00:00.1234567Z",
+            "2026-10-09T01:00:00z",
+            "2026-10-09T24:00:00Z",
+            "2026-10-09T01:00:60Z",
+        ):
+            with self.subTest(timestamp=bad):
+                self.assertEqual(compare(mark(), mark(s=6, at=bad)), "invalid")
+
+    def test_valid_leap_day_and_microseconds(self):
+        self.assertEqual(compare(mark(at="2024-02-29T12:00:00Z"), mark(s=6, at="2024-02-29T12:00:00.000001Z")), "forward")
+
     def test_invalid_input(self):
         self.assertEqual(compare({}, mark()), "invalid")
         self.assertEqual(compare(mark(), None), "invalid")
