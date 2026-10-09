@@ -39,6 +39,18 @@ class TriStatePermissionBoundaryTests(unittest.TestCase):
             del partial[name]
             self.assert_denies(partial, "invalid")
 
+    def test_mapping_subclasses_and_spoofed_dict_rejected(self):
+        class SpoofedDict(dict):
+            def __getitem__(self, key):
+                return False
+
+        class SpoofedKeys(dict):
+            def __iter__(self):
+                return iter(module.EXPECTED)
+
+        for value in (SpoofedDict(DENIED), SpoofedKeys(DENIED)):
+            self.assert_denies(value, "invalid")
+
     def test_non_mappings_rejected(self):
         for value in (None, [], (), "false", True, 0):
             with self.subTest(value=repr(value)):
