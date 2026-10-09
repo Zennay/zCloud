@@ -216,3 +216,22 @@ Verify the worker acceptance policy before implementing `409`: userscript
 `no-cors` request and does not inspect the status. This is distinct from the
 late-terminal-overwrite and invalid-ID-validation defects. Unknown and
 already-terminal IDs should receive a consistent non-disclosing response.
+
+## Independent dashboard-recovery CI diagnosis (not owned by this PR)
+
+At [run 37868539167](https://github.com/Zennay/zCloud/actions/runs/37868539167)
+(recovery job 113620968090), the systemd unit was **active**, Python listened
+on `0.0.0.0:8765`, and the SQLite writeability probe printed
+`ZCLOUD_SQLITE_WRITE_PROBE_GREEN`. The following local `curl -fsS`
+request returned HTTP **503** and the JSON parser then failed on empty input.
+The run therefore failed at the local dashboard status/health step, **not**
+at the filesystem write-permission step. The companion job “Verify dashboard
+from external runner” succeeded in the same run. This difference warrants
+route-specific diagnosis; it does not prove the dashboard is universally down.
+
+**Dashboard workflow owner follow-up (separate from receipt integration):**
+record HTTP status and a safely bounded body for both `127.0.0.1:8765/api/status`
+and the public-IP `/api/status` probe, compare response headers and any reverse
+proxy/load balancer path, and distinguish `503` from malformed JSON. Do not
+blindly chmod/restart SQLite or hide a genuine 503 under retries. This PR
+must not edit the shared live recovery workflow, service, or VPS.
