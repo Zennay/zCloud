@@ -27,7 +27,7 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
             return result
     elif set(observation) != base_fields:
         return result
-    if type(kind) is not str or type(observation.get("source")) is not str or not observation["source"].strip():
+    if type(kind) is not str or type(observation.get("source")) is not str or not observation["source"].strip() or observation["source"] != observation["source"].strip():
         return result
     stamp = observation.get("observed_at")
     if type(stamp) is not str:
@@ -51,6 +51,8 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
     if kind == "generation_started":
         if (type(expected_worker_id) is str and bool(expected_worker_id.strip())
                 and type(expected_assignment_id) is str and bool(expected_assignment_id.strip())
+                and expected_worker_id == expected_worker_id.strip()
+                and expected_assignment_id == expected_assignment_id.strip()
                 and type(observation.get("worker_id")) is str
                 and type(observation.get("assignment_id")) is str
                 and observation["worker_id"] == expected_worker_id
