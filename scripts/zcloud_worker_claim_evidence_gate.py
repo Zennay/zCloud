@@ -21,7 +21,7 @@ def parse_time(value):
     return parsed.astimezone(UTC)
 
 
-def assess(snapshot, *, now, max_age_seconds=300):
+def assess(snapshot, *, now, expected_assignment_id=None, expected_worker_id=None, max_age_seconds=300):
     """A Notion claim alone must never be reported as live generation."""
     if not isinstance(snapshot, dict) or max_age_seconds <= 0:
         raise ValueError("invalid input")
@@ -30,7 +30,7 @@ def assess(snapshot, *, now, max_age_seconds=300):
     if not all(isinstance(snapshot.get(k), str) and snapshot[k].strip()
                for k in required):
         return {"state": "unverified", "reason": "missing_runtime_evidence", "mutation_performed": False}
-    if snapshot["source"] != "trusted_runtime":
+    if not expected_assignment_id or not expected_worker_id:\n        return {"state": "unverified", "reason": "missing_expected_identity", "mutation_performed": False}\n    if (snapshot["assignment_id"] != expected_assignment_id or\n            snapshot["worker_id"] != expected_worker_id):\n        return {"state": "unverified", "reason": "identity_mismatch", "mutation_performed": False}\n    if snapshot["source"] != "trusted_runtime":
         return {"state": "unverified", "reason": "untrusted_source", "mutation_performed": False}
     try:
         started = parse_time(snapshot["generation_started_at"])
@@ -49,14 +49,14 @@ def assess(snapshot, *, now, max_age_seconds=300):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", help="JSON file with trusted runtime evidence")
-    parser.add_argument("--now", help="ISO-8601 timestamp; defaults to UTC clock")
+    parser.add_argument("--expected-assignment-id", required=True)\n    parser.add_argument("--expected-worker-id", required=True)\n    parser.add_argument("--now", help="ISO-8601 timestamp; defaults to UTC clock")
     parser.add_argument("--max-age-seconds", type=int, default=300)
     args = parser.parse_args()
     try:
         with open(args.snapshot, encoding="utf-8") as handle:
             data = json.load(handle)
         current = parse_time(args.now) if args.now else dt.datetime.now(UTC)
-        result = assess(data, now=current, max_age_seconds=args.max_age_seconds)
+        result = assess(data, now=current, expected_assignment_id=args.expected_assignment_id,\n                        expected_worker_id=args.expected_worker_id,\n                        max_age_seconds=args.max_age_seconds)
     except (OSError, ValueError, TypeError) as error:
         result = {"state": "unverified", "reason": "invalid_input", "mutation_performed": False}
         print(f"evidence error: {error}", file=sys.stderr)
