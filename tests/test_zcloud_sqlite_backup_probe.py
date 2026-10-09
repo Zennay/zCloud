@@ -294,6 +294,31 @@ class SQLiteBackupProbeTests(unittest.TestCase):
         self.assertEqual(1, len(copied))
         self.assertIn(copied[0], (("old", "old"), ("new", "new")))
 
+    def test_exclusive_rollback_journal_writer_fails_closed_then_recovers(self):
+        locked = Path(self.tmp.name) / "locked-private.db"
+        with sqlite3.connect(locked) as conn:
+            runtime.init_tables(conn)
+        locker = sqlite3.connect(locked)
+        locker.row_factory = sqlite3.Row
+        try:
+            locker.execute("BEGIN EXCLUSIVE")
+            runtime.record_receipt(locker, "cloud", action="uncommitted-private")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(2, probe.main(["--db", str(locked), "--timeout-seconds", "0.01"]))
+            report = json.loads(out.getvalue())
+            self.assertEqual("probe_unavailable", report["reason"])
+            self.assertFalse(report["authority_granted"])
+            self.assertNotIn(str(locked), out.getvalue())
+            self.assertNotIn("uncommitted-private", out.getvalue())
+            locker.rollback()
+            report = probe.probe_backup(locked)
+            self.assertTrue(report["readable"])
+            self.assertEqual(0, report["row_counts"]["project_state_receipts"])
+            self.assertEqual(0, report["row_counts"]["resource_leases"])
+        finally:
+            locker.close()
+
 
 if __name__ == "__main__":
     unittest.main()
