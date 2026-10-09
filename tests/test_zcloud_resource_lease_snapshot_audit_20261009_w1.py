@@ -123,6 +123,16 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
             s["pools"]["protected"]["holders"].append(deepcopy(s["pools"]["protected"]["holders"][0]))
         self.denied(self.audit(change), "duplicate_holder")
 
+    def test_rejects_holder_disagreeing_on_expiry(self):
+        def change(s, c):
+            s["pools"]["protected"]["holders"][0]["lease_until"] = "2026-10-09T17:50:00+00:00"
+        self.denied(self.audit(change), "holder_lease_data_mismatch")
+
+    def test_rejects_holder_disagreeing_on_cpu_budget(self):
+        def change(s, c):
+            s["pools"]["protected"]["holders"][0]["cpu_soft_cores"] = 999.0
+        self.denied(self.audit(change), "holder_lease_data_mismatch")
+
     def test_rejects_mismatched_holder_identity(self):
         def change(s, c):
             s["pools"]["protected"]["holders"][0]["owner_id"] = "other-worker"
