@@ -4,14 +4,12 @@ This module deliberately never approves actions. It rejects attempts to interpre
 missing, string, numeric, or contradictory values as trusted authorization.
 It is NOT wired into production and supplies no permission to mutate anything.
 """
-from collections.abc import Mapping
-
 EXPECTED = ("restart_allowed", "queue_write_allowed", "deploy_allowed")
 
 
 def classify_permission_claim(claim):
     """Return a denial-only classification suitable for untrusted snapshots."""
-    if not isinstance(claim, Mapping):
+    if type(claim) is not dict:
         return {"classification": "invalid", "authorizes_action": False}
     if set(claim) != set(EXPECTED):
         return {"classification": "invalid", "authorizes_action": False}
