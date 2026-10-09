@@ -158,3 +158,27 @@ of the earlier compatibility question:
 This trace is a **static source audit**, not live production evidence. The
 integration owner should pair it with a real `/runner-commands` JSON sample
 and a POST callback contract test on the same exact-head build.
+
+## Server response serialization — source-verified contract
+
+The default-branch `GET /api/runner-commands` handler selects
+`id,project_id,action,created_at` directly from the SQLite
+`runner_commands` table using `fetchall()`, then serializes each row with
+`dict(r)` under `{"commands": [...]}`. It **does not convert `id` to a
+string**. Python SQLite maps INTEGER values to Python `int`, and the normal
+JSON encoder emits those values as JSON numbers; both callback clients should
+therefore receive numeric IDs from this endpoint under the current schema.
+This resolves the earlier *string-versus-number* concern for the standard
+delivery path, subject to verifying the live database schema and HTTP response.
+
+**Remaining compatibility gate:** JavaScript numbers represent integers
+exactly only through `Number.MAX_SAFE_INTEGER` (2^53 - 1). SQLite INTEGER
+can be larger. The owner should document a max-ID policy, fail safely on
+out-of-range IDs in both producers, and cover such a case in an isolated
+HTTP/JSON fixture. In particular, the userscript's `Number(command.id || 0)`
+would silently round an unsafe integer before acknowledgement.
+
+The production callback is **still unpatched on inspected default branch**:
+`int(payload.get('command_id') or 0)` remains unguarded and its UPDATE still
+has `WHERE id=?` without `status='pending'`. Successful execution of
+offline reference tests is not evidence of remediation.
