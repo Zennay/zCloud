@@ -176,6 +176,18 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(before, self.state())
 
     @unittest.expectedFailure
+    def test_negative_id_must_return_controlled_400(self):
+        before = self.state()
+        self.assertEqual(400, self.send(-1))
+        self.assertEqual(before, self.state())
+
+    @unittest.expectedFailure
+    def test_numeric_string_id_must_not_coerce_to_command(self):
+        before = self.state()
+        self.assertEqual(400, self.send(str(self.command_id), result="coerced"))
+        self.assertEqual(before, self.state())
+
+    @unittest.expectedFailure
     def test_zero_id_must_be_rejected_without_mutation(self):
         before = self.state()
         self.assertEqual(400, self.send(0))
