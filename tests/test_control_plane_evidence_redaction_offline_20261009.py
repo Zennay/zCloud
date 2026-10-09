@@ -54,6 +54,16 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertEqual(len(module.sanitize(list(range(300)))), 201)
         self.assertTrue(module.sanitize("x" * 5000).endswith("[TRUNCATED]"))
 
+    def test_terminal_escape_sequences_stripped(self):
+        raw = "\\x1b[31mstatus=running\\x1b[0m\\x1b]0;hidden-title\\x07"
+        cleaned = module.sanitize(raw)
+        self.assertEqual(cleaned, "status=running")
+        self.assertNotIn("\\x1b", cleaned)
+
+    def test_low_control_characters_removed(self):
+        cleaned = module.sanitize("ok\\x00bad\\x7fvalue\\nnext")
+        self.assertEqual(cleaned, "ok?bad?value\\nnext")
+
     def test_url_query_credentials_masked_without_dropping_safe_parameters(self):
         uri = "https://example.invalid/status?project=zcloud&access_token=topsecret&limit=5#details"
         cleaned = module.sanitize(uri)
