@@ -41,6 +41,11 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
     # A valid event source must not contain C0/C1 control characters.
     if any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in observation["source"]):
         return result
+    # Reject invisible control characters in event identity as well as source.
+    for name in ("worker_id", "assignment_id"):
+        value = observation.get(name)
+        if type(value) is str and any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in value):
+            return result
     if kind == "api_unavailable":
         return {"label": "Service temporarily unavailable", "authorizes_action": False}
     if kind == "conflict":
