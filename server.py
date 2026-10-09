@@ -325,6 +325,16 @@ def _firefox_session_env(primary_pid=None):
     env=os.environ.copy()
     env.pop('RUNNER_TRACKING_ID',None)
     env.update(values)
+    # Never trust an inherited DISPLAY that points at a known headless/offscreen
+    # X server. If a crashed Firefox was itself misdirected onto one (e.g. :99,
+    # which on this host is Xvfb -- a virtual framebuffer with no remote-desktop
+    # viewer), copying its environment would silently perpetuate the same
+    # invisible display forever across every future auto-restart. The VPS's
+    # real, xrdp-visible session is Xorg on :10 (started by xrdp-sesexec); :99
+    # must never be treated as the browser's home display.
+    _HEADLESS_DISPLAYS={':99',':99.0'}
+    if env.get('DISPLAY') in _HEADLESS_DISPLAYS:
+        env.pop('DISPLAY',None)
     if not env.get('DISPLAY'):
         sockets=sorted(
             (Path('/tmp/.X11-unix').glob('X*') if Path('/tmp/.X11-unix').exists() else []),
@@ -2060,13 +2070,29 @@ def _autonomy_initialize_project(project_id):
         row=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
     return dict(row) if row else None
 
-def _autonomy_enqueue_start(project_id,reason):
+def _autonomy_enqueue_start(project_id,reason,min_interval_seconds=90):
+    # A worker that keeps failing to make progress (e.g. stuck on a login
+    # screen that needs a human) also keeps runner_targets.active flipping
+    # back to False every time the extension gives up on it. Without a
+    # cooldown here, autonomy_scheduler_tick (which runs every few seconds)
+    # re-enqueues a 'start' command just as fast, and each one forces a full
+    # conversation reset (new tab, old one closed) in the extension -- which
+    # is exactly what makes the page reload out from under someone trying to
+    # log in before it ever finishes loading. Rate-limit restarts of the same
+    # stuck worker instead of re-firing on every scheduler tick.
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         runtime=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
         if runtime and bool(runtime['manual_pause']):
             return False
+        if runtime and runtime['last_dispatch_at']:
+            try:
+                last=datetime.fromisoformat(runtime['last_dispatch_at']).astimezone(timezone.utc)
+                if (datetime.now(timezone.utc)-last).total_seconds() < max(0,int(min_interval_seconds or 0)):
+                    return False
+            except Exception:
+                pass
         target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
         if not target or bool(target['active']):
             return False
@@ -2076,7 +2102,7 @@ def _autonomy_enqueue_start(project_id,reason):
         c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (project_id,'start','pending',ts,ts,None))
-        c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
+        c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',(ts,str(reason)[:250],project_id))
     return True
 
 def _autonomy_dispatch_due(runtime,min_interval_seconds):

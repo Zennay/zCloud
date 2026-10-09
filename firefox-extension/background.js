@@ -1789,6 +1789,17 @@ async function inject(tabId, target) {
         at: new Date().toISOString(),
         tabId
       });
+      // The legacy injected runner below (runProject) predates Claude support
+      // and is hardwired to ChatGPT's DOM/flow. Running it against claude.ai
+      // -- e.g. while a human is on the sign-in screen, which is exactly where
+      // a slow/absent Violentmonkey readiness probe shows up -- caused it to
+      // repeatedly poke the page (its own internal timers + "new chat" style
+      // resets) every refresh cycle, making the login page reload/reset out
+      // from under whoever was trying to log in. Never run it for a Claude
+      // target; just leave the tab alone and keep retrying the VM probe.
+      if (/claude\.(ai|com)/i.test(String(effectiveTarget.url || target.url || ""))) {
+        return {mode: "violentmonkey-pending"};
+      }
     }
 
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
