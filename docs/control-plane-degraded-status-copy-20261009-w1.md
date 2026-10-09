@@ -45,6 +45,19 @@ If dashboard recovery CI fails while other CI checks pass, display **Dashboard r
 
 If a dashboard recovery check fails on an older SHA, label it **Historical dashboard recovery failure** and distinguish it from the current revision. Do not suppress unresolved historical risk, but do not attribute it to the new commit without current evidence.
 
+
+## Worked operator examples (display-only)
+
+**Scenario A — API 503 while the last worker event says generation started:** show `Service temporarily unavailable` and separately show the historical generation-start observation with its timestamp. Do not replace the 503 with `Generation observed` or imply that a restart is safe.
+
+**Scenario B — a stale worker claim disappears after a GET read:** show `Claim state unverified` with the last claim timestamp. Do not label the worker `released`, `free` or `ready for reassignment` from cleanup alone.
+
+**Scenario C — all focused tests pass but dashboard recovery fails:** show `Dashboard recovery check failed` with failing run and exact head SHA. Show successes as individual checks, not as overall readiness. Do not provide a privileged recovery CTA based on the banner.
+
+**Scenario D — newer prompt submitted after an older generation-start:** show `Prompt submitted` for the new assignment until same-assignment evidence arrives. The older event must not establish current generation.
+
+**Scenario E — contradictory producers after a clock jump:** show `Conflicting observations`, with both source identities and timezones. Do not choose the highest lifecycle rank, most recent wall-clock timestamp, or healthiest state without corroboration.
+
 ## Acceptance checklist (manual UI review; no production authority)
 
 - [ ] Copy remains usable without colors, icons or tooltips; screen-reader text spells out unknown/observed distinction.
