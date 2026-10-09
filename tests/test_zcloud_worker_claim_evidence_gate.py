@@ -2,7 +2,7 @@
 import datetime as dt
 import unittest
 
-from scripts.zcloud_worker_claim_evidence_gate import assess
+from scripts.zcloud_worker_claim_evidence_gate import assess as evaluate\n\n\ndef assess(snapshot, *, now):\n    return evaluate(snapshot, now=now, expected_assignment_id='assignment-1',\n                    expected_worker_id='worker-1')
 
 NOW = dt.datetime(2026, 10, 9, 3, 0, tzinfo=dt.timezone.utc)
 
@@ -25,6 +25,13 @@ class ClaimEvidenceTests(unittest.TestCase):
 
     def test_notion_status_does_not_prove_generation(self):
         self.assertEqual(assess(snapshot(source="notion"), now=NOW)["state"], "unverified")
+
+    def test_identity_mismatch_fails_closed(self):
+        self.assertEqual(assess(snapshot(worker_id="worker-2"), now=NOW)["reason"], "identity_mismatch")
+        self.assertEqual(assess(snapshot(assignment_id="assignment-2"), now=NOW)["reason"], "identity_mismatch")
+
+    def test_unbound_evidence_fails_closed(self):
+        self.assertEqual(evaluate(snapshot(), now=NOW)["reason"], "missing_expected_identity")
 
     def test_heartbeat_expires(self):
         self.assertEqual(assess(snapshot(heartbeat_at="2026-10-09T02:50:00Z"), now=NOW)["state"], "stale")
