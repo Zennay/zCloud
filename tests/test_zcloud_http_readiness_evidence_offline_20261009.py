@@ -32,6 +32,22 @@ class ReadinessEvidenceTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(classify_http_readiness(value, service_active=True, sqlite_ok=True).state, "incomplete")
 
+    def test_http_success_does_not_override_failed_dependencies(self):
+        for status in (200, 201, 204):
+            with self.subTest(status=status):
+                self.assertEqual(classify_http_readiness(status, service_active=True, sqlite_ok=False).state, "degraded")
+                self.assertEqual(classify_http_readiness(status, service_active=False, sqlite_ok=True).state, "unavailable")
+
+    def test_error_codes_other_than_gateway_are_degraded(self):
+        for status in (301, 401, 403, 404, 408, 429, 500):
+            with self.subTest(status=status):
+                self.assertEqual(classify_http_readiness(status, service_active=True, sqlite_ok=True).state, "degraded")
+
+    def test_non_boolean_sqlite_evidence_is_incomplete(self):
+        for sqlite in (None, 0, 1, "ok", [], {}):
+            with self.subTest(sqlite=sqlite):
+                self.assertEqual(classify_http_readiness(200, service_active=True, sqlite_ok=sqlite).state, "incomplete")
+
     def test_no_observation_authorizes_restart(self):
         for http in (200, 400, 502, 503, 504):
             for active in (True, False, None):
