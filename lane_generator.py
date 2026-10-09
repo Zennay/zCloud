@@ -242,8 +242,11 @@ def _metadata(item):
     value = item.get("metadata")
     if isinstance(value, dict):
         return value
+    # NULL/missing metadata is the documented "no metadata" state.
+    # A present but blank/non-JSON value is corrupted evidence, not an
+    # authoritative declaration that no files are owned.
     raw = item.get("metadata_json")
-    if not raw:
+    if raw is None:
         return {}
     try:
         value = json.loads(raw)
