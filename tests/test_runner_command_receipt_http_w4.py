@@ -44,6 +44,10 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
                 "AUTONOMY_TICK_SECONDS",
             )
         }
+        # Register restoration before any initialization that can raise, so a
+        # failed setUp cannot leak DB paths/policy into subsequent test classes.
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self.restore_server_globals)
         server.DB = Path(self.tmp.name) / "history.db"
         server.CACHE = None
         server.init_db()
@@ -54,18 +58,21 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
             )
             self.command_id = conn.execute("SELECT max(id) FROM runner_commands").fetchone()[0]
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        self.addCleanup(self.http.server_close)
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
         self.thread.start()
+        self.addCleanup(self.stop_http_thread)
 
-    def tearDown(self):
+    def stop_http_thread(self):
         self.http.shutdown()
-        self.http.server_close()
         self.thread.join(timeout=3)
+        self.assertFalse(self.thread.is_alive(), "temporary HTTP server thread leaked")
+
+    def restore_server_globals(self):
         server.DB = self.old_db
         server.CACHE = self.old_cache
         for key, value in self.saved_policy.items():
             setattr(server, key, value)
-        self.tmp.cleanup()
 
     def send(self, command_id, status="completed", result="first"):
         payload = json.dumps({"command_id": command_id, "status": status, "result": result}).encode()
