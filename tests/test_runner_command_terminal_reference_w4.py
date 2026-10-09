@@ -114,6 +114,32 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
         self.assertTrue(finish(self.db, safe_id, "completed", "boundary"))
         self.assertEqual(("completed", "boundary"), self.row(safe_id))
 
+    def test_invalid_receipts_never_modify_any_existing_row(self):
+        # Include the full table, not just the addressed row: invalid payloads
+        # must not mutate other commands or their stored results.
+        before = self.db.execute(
+            "SELECT id,status,result FROM runner_commands ORDER BY id"
+        ).fetchall()
+        for bad_id in (0, -4, False, "1", 1.0, None, 2**53):
+            for status in ("completed", "failed", "pending"):
+                with self.subTest(command_id=bad_id, status=status):
+                    self.assertFalse(finish(self.db, bad_id, status, "invalid"))
+                    self.assertEqual(before, self.db.execute(
+                        "SELECT id,status,result FROM runner_commands ORDER BY id"
+                    ).fetchall())
+
+    def test_finalized_command_replays_do_not_mutate_any_rows(self):
+        before = self.db.execute(
+            "SELECT id,status,result FROM runner_commands ORDER BY id"
+        ).fetchall()
+        for terminal_id in (2, 3):
+            for status in ("completed", "failed"):
+                with self.subTest(command_id=terminal_id, status=status):
+                    self.assertFalse(finish(self.db, terminal_id, status, "late"))
+                    self.assertEqual(before, self.db.execute(
+                        "SELECT id,status,result FROM runner_commands ORDER BY id"
+                    ).fetchall())
+
     def test_sql_injection_like_result_remains_inert_data(self):
         payload = "x'); DELETE FROM runner_commands; --"
         self.assertTrue(finish(self.db, 1, "completed", payload))
