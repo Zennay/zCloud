@@ -84,6 +84,16 @@ This contract is **not** wired into production. The serialized control-plane own
 
 **Release veto:** A focused contract test success is not a deployment gate. A failing dashboard recovery check, missing independent review, unresolved owner collision, or absent verified runtime evidence means **do not merge/deploy**. This is a reviewer checklist, not a delegated permission to mutate systems.
 
+
+## Acceptance evidence record — exact revision
+
+- Evaluated revision: `c6887c234dd7f22e4573cfb803331d0d50aba4a9`.
+- Focused contract: [run 37898334021](https://github.com/Zennay/zCloud/actions/runs/37898334021) **SUCCESS**.
+- Full regression: [run 37898333977](https://github.com/Zennay/zCloud/actions/runs/37898333977) **SUCCESS**.
+- VPS CPU diagnostic: [run 37898333890](https://github.com/Zennay/zCloud/actions/runs/37898333890) **SUCCESS**.
+- Dashboard recovery: [run 37898333673](https://github.com/Zennay/zCloud/actions/runs/37898333673) **FAILURE**. Remediation belongs to #1143.
+- Decision: **not accepted for release**. Contract proof is not end-to-end dashboard implementation proof; independent owner review and serialized integration are pending. These results apply only to the revision above and become historical as soon as the branch changes.
+
 ## Acceptance checklist (manual UI review; no production authority)
 
 - [ ] Copy remains usable without colors, icons or tooltips; screen-reader text spells out unknown/observed distinction.
