@@ -5,6 +5,7 @@ Expected current-main result: two tracked expected failures (known defects).
 Unexpected success is a hard unittest failure and requires contract review.
 No runtime, SQLite, browser or runner state is touched.
 """
+import ast
 import pathlib
 import re
 import unittest
@@ -30,11 +31,17 @@ class CommandReceiptContract(unittest.TestCase):
 
     def test_handler_is_post_only(self):
         source = SOURCE.read_text(encoding="utf-8")
-        handler = source.rfind("def do_POST(", 0, source.index("if u.path=='/api/runner-command-result':"))
-        self.assertGreaterEqual(handler, 0)
-        next_handler = source.find("def do_GET(", handler + 1)
-        handler_body = source[handler:next_handler] if next_handler >= 0 else source[handler:]
-        self.assertIn("if u.path=='/api/runner-command-result':", handler_body)
+        lines = source.splitlines()
+        route = "if u.path=='/api/runner-command-result':"
+        tree = ast.parse(source)
+        containing_methods = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "do_POST"
+            and route in "\n".join(lines[node.lineno - 1:node.end_lineno])
+        ]
+        self.assertEqual(1, len(containing_methods),
+                         "receipt route must belong to the POST handler")
 
     def test_local_only(self):
         snippet = endpoint()
