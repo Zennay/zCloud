@@ -130,6 +130,26 @@ class TaskClaimsIsolatedRaces(unittest.TestCase):
         with sqlite3.connect(self.db) as c:
             self.assertEqual(c.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0], 1)
 
+    def test_worker_identity_and_metadata_roundtrip_stays_in_fixture(self):
+        outcome = server.task_claim_acquire(
+            "fixture", "scoped", "owner-A", worker_id="worker-1",
+            lease_seconds=60, metadata={"ticket": "offline-fixture"},
+        )
+        self.assertTrue(outcome["acquired"])
+        observed = server.task_claims("fixture", prune_expired=False)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["worker_id"], "worker-1")
+        self.assertEqual(observed[0]["metadata"]["ticket"], "offline-fixture")
+        self.assertEqual(self.db.name, "claims-fixture.sqlite3")
+        self.assertNotEqual(self.db.resolve(), (ROOT / "history.db").resolve())
+
+    def test_release_missing_or_already_released_claim_is_idempotently_denied(self):
+        self.assertFalse(server.task_claim_release("fixture", "missing", "owner-A")["released"])
+        self.assertTrue(self.acquire("owner-A")["acquired"])
+        self.assertTrue(server.task_claim_release("fixture", "same", "owner-A")["released"])
+        self.assertFalse(server.task_claim_release("fixture", "same", "owner-A")["released"])
+        self.assertEqual(server.task_claims("fixture"), [])
+
     def test_missing_identity_cannot_create_claim(self):
         for project, key, owner in [("", "valid", "owner"), ("fixture", "", "owner"), ("fixture", "key", "")]:
             with self.assertRaises(ValueError):
