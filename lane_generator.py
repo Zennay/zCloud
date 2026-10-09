@@ -182,15 +182,21 @@ PROJECT_SCOPE_ALIASES = {
 }
 
 
+def _scope_entries(value):
+    return (value,) if isinstance(value, str) else (value or ())
+
+
 def _normal_scope(scope):
     scope = scope if isinstance(scope, dict) else {}
     capabilities = []
-    for value in scope.get("capabilities") or []:
+    # A single path/capability is one scope entry, not an iterable of chars.
+    # List-shaped queue/claim metadata remains fully backwards compatible.
+    for value in _scope_entries(scope.get("capabilities")):
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
         if item and item not in capabilities:
             capabilities.append(item)
     files = []
-    for value in scope.get("files") or []:
+    for value in _scope_entries(scope.get("files")):
         item = str(value or "").strip().replace("\\", "/")
         while item.startswith("./"):
             item = item[2:]
