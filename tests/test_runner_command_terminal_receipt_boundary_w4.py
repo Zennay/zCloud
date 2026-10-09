@@ -61,6 +61,16 @@ class CommandReceiptContract(unittest.TestCase):
         self.assertEqual(1, len(comparison.ops))
         self.assertIsInstance(comparison.ops[0], ast.Eq)
 
+    def test_scheduler_stale_sweep_only_updates_pending_commands(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        start = source.index("def _reconcile_stale_runner_commands_locked(")
+        end = source.index("def reconcile_stale_runner_commands(", start)
+        sweeper = source[start:end]
+        self.assertIn("AND status='pending'", sweeper,
+                      "stale sweeper must not replace terminal results")
+        self.assertIn("BEGIN IMMEDIATE", source[end:source.index("def autonomy_scheduler_tick(", end)],
+                      "stale reconciliation must acquire a write transaction")
+
     def test_local_only(self):
         snippet = endpoint()
         self.assertIn("127.0.0.1", snippet)
