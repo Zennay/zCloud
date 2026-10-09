@@ -154,6 +154,24 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
                         "SELECT id,status,result FROM runner_commands ORDER BY id"
                     ).fetchall())
 
+    def test_replayed_payload_cannot_replace_terminal_result_after_truncation(self):
+        first = "😀" * 350
+        self.assertTrue(finish(self.db, 1, "completed", first))
+        self.assertEqual(("completed", "😀" * 300), self.row(1))
+        # Even a different status and very large second payload must not
+        # rewrite the bounded first receipt.
+        self.assertFalse(finish(self.db, 1, "failed", "x" * 10000))
+        self.assertEqual(("completed", "😀" * 300), self.row(1))
+
+    def test_unknown_safe_id_with_large_result_is_no_op(self):
+        before = self.db.execute(
+            "SELECT id,status,result FROM runner_commands ORDER BY id"
+        ).fetchall()
+        self.assertFalse(finish(self.db, MAX_JS_SAFE_COMMAND_ID, "completed", "z" * 2000))
+        self.assertEqual(before, self.db.execute(
+            "SELECT id,status,result FROM runner_commands ORDER BY id"
+        ).fetchall())
+
     def test_result_normalization_matches_http_callback_contract(self):
         cases = (
             (None, ""), (False, ""), (0, ""), (123, "123"),
