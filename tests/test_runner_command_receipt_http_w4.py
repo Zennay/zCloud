@@ -235,6 +235,21 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(200, self.send(self.command_id, result=payload))
         self.assertEqual(("completed", "R" * 300), self.state()[:2])
 
+    def test_result_null_and_nonstring_values_follow_existing_normalization(self):
+        # Existing server endpoint uses str(value or '')[:300].
+        # Capture this explicitly so the owner can choose whether to preserve
+        # legacy semantics while introducing pending-only compare-and-swap.
+        cases = ((None, ""), (0, ""), (False, ""), (123, "123"))
+        for raw, expected in cases:
+            with self.subTest(result=raw):
+                with server.connect() as conn:
+                    conn.execute(
+                        "UPDATE runner_commands SET status='pending',result=NULL WHERE id=?",
+                        (self.command_id,),
+                    )
+                self.assertEqual(200, self.send(self.command_id, result=raw))
+                self.assertEqual(("completed", expected), self.state()[:2])
+
     def test_result_payload_does_not_execute_sql(self):
         injected = "x'); DELETE FROM runner_commands; --"
         with server.connect() as conn:
