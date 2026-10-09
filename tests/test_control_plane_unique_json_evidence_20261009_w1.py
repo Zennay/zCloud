@@ -45,6 +45,18 @@ class UniqueEvidenceTests(unittest.TestCase):
         with self.assertRaises(AmbiguousEvidence):
             parse_unique_evidence(None)
 
+    def test_unencodable_unicode(self):
+        with self.assertRaises(AmbiguousEvidence):
+            parse_unique_evidence('{"x":"\\ud800"}')
+
+    def test_invalid_limits(self):
+        for limit in (0, -1, True, None, 1048577, 1.5):
+            with self.subTest(limit=limit), self.assertRaises(AmbiguousEvidence):
+                parse_unique_evidence("{}", max_bytes=limit)
+
+    def test_exact_byte_limit(self):
+        self.assertEqual(parse_unique_evidence("{}", max_bytes=2), {})
+
     def test_identical_distinct_case_keys(self):
         self.assertEqual(parse_unique_evidence('{"A":1,"a":2}'), {"A": 1, "a": 2})
 
