@@ -69,6 +69,21 @@ The status label must remain meaningful when colors, icons and charts are unavai
 
 Never encode the sole difference between `Status unknown`, `Generation observed` and `Service temporarily unavailable` using green/amber/red alone. Localization must preserve the distinction between *last observed* and *currently verified*, and must not translate unknown into stopped or successful.
 
+
+## Integration handoff — blocked until owner review
+
+This contract is **not** wired into production. The serialized control-plane owner (#580/PWQ-41 and #1089) must independently verify these conditions before proposing any runtime/UI integration:
+
+1. Map each observable field to its authenticated producer, scope, assignment identity, and UTC timestamp. Reject synthetic or unattributed producer identity.
+2. Confirm that missing, stale, conflicted or replayed observations always use the corresponding non-authorizing label. Do not infer authority from display state.
+3. Preserve old observations as explicitly historical. A newer prompt cannot inherit an older generation-start indication.
+4. Test degraded API/503 and failed dashboard recovery without dispatching a restart or attempting a privileged repair.
+5. Verify accessible English/Dutch copy with the same uncertainty semantics and without color-only differentiation.
+6. Confirm the implementation uses live evidence and exact-head CI, not merely these fixture-only documentation tests.
+7. Record independent review, changed-file ownership census and the serialized integration gate before changing any production file.
+
+**Release veto:** A focused contract test success is not a deployment gate. A failing dashboard recovery check, missing independent review, unresolved owner collision, or absent verified runtime evidence means **do not merge/deploy**. This is a reviewer checklist, not a delegated permission to mutate systems.
+
 ## Acceptance checklist (manual UI review; no production authority)
 
 - [ ] Copy remains usable without colors, icons or tooltips; screen-reader text spells out unknown/observed distinction.
