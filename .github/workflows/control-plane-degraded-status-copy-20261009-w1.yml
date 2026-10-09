@@ -4,6 +4,8 @@ on:
     paths:
       - 'docs/control-plane-degraded-status-copy-20261009-w1.md'
       - 'tests/test_control_plane_degraded_status_copy_20261009_w1.py'
+      - 'tests/test_control_plane_degraded_status_behavior_20261009_w1.py'
+      - 'tools/control_plane_degraded_status_offline_20261009_w1.py'
       - '.github/workflows/control-plane-degraded-status-copy-20261009-w1.yml'
   workflow_dispatch:
 permissions:
@@ -17,4 +19,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate degraded status language
-        run: python3 -m unittest discover -s tests -p 'test_control_plane_degraded_status_copy_20261009_w1.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_control_plane_degraded_status_copy_20261009_w1.py' -v
+          python3 -m unittest discover -s tests -p 'test_control_plane_degraded_status_behavior_20261009_w1.py' -v
