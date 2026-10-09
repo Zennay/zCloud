@@ -70,6 +70,23 @@ class CausalOrderTests(unittest.TestCase):
     def test_unknown_event(self):
         self.assertFalse(validate_sequence(sample("requested", "privileged"))[0])
 
+    def test_cancel_after_admission(self):
+        self.assertTrue(validate_sequence(sample("requested", "admitted", "cancelled"))[0])
+
+    def test_cancel_in_flight(self):
+        self.assertTrue(validate_sequence(sample("requested", "admitted", "started", "cancelled"))[0])
+
+    def test_fail_before_start_denied(self):
+        self.assertFalse(validate_sequence(sample("requested", "admitted", "failed"))[0])
+
+    def test_oversized_receipts_denied(self):
+        self.assertEqual(validate_sequence([{}] * 1001), (False, "invalid_receipts"))
+
+    def test_invalid_identifier_length_denied(self):
+        rows = sample("requested", "cancelled")
+        rows[0]["run_id"] = "x" * 129
+        self.assertFalse(validate_sequence(rows)[0])
+
 
 if __name__ == "__main__":
     unittest.main()
