@@ -52,7 +52,7 @@ code, **not** an applied patch to `server.py`.
 
 ```python
 raw_id = payload.get("command_id")
-if type(raw_id) is not int or raw_id <= 0:
+if type(raw_id) is not int or not (0 < raw_id <= 2**53 - 1):
     return self.reply({"error": "Ongeldig command_id"}, 400)
 command_id = raw_id
 
@@ -74,7 +74,7 @@ if changed != 1:
 return self.reply({"ok": True})
 ```
 
-The above chooses strict JSON integer IDs rather than coercing digit strings.
+The above chooses strict positive JSON integer IDs inside the cross-client\nJavaScript safe range (1 through 2**53 - 1), rather than coercing digit\nstrings. This is a proposed transport contract and must be coordinated with\nthe server-side ID allocator: reject or alarm on newly allocated IDs above\nthis range instead of creating unacknowledgeable pending commands.
 If existing runner clients send IDs as strings, the owner must first verify and
 migrate that contract; do **not** silently deploy this stricter behavior.
 The code also assumes `connect()` commits context-manager writes exactly as the
@@ -182,3 +182,20 @@ The production callback is **still unpatched on inspected default branch**:
 `int(payload.get('command_id') or 0)` remains unguarded and its UPDATE still
 has `WHERE id=?` without `status='pending'`. Successful execution of
 offline reference tests is not evidence of remediation.
+
+## Enforce the range at both ends (integration-owner follow-up)
+
+The HTTP callback guard alone does **not** solve numeric aliasing: by the
+moment a JavaScript client sends an unsafe integer, precision may already have
+been lost. Before rollout, add a producer-side predicate
+`Number.isSafeInteger(command.id) && command.id > 0` to both userscript and
+extension command-poll paths. Reject out-of-range commands before dispatch,
+report a bounded diagnostic, and do not acknowledge a rounded ID. The command
+allocator must fail closed or migrate to an explicitly specified string-ID
+protocol before it could reach `2**53`; otherwise the worker would be stuck.
+
+Validate boundaries 0, 1, `2**53-1`, `2**53`, `2**53+1`, floats, booleans,
+strings, null, and replay/cross-command races in isolated real HTTP tests.
+Do not deploy this partial server-only guard without corresponding producer
+and allocation checks. The offline reference test demonstrates the problem,
+not full implementation correctness.
