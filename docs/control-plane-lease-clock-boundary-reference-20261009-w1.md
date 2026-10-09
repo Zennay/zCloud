@@ -14,3 +14,11 @@ This is an **offline reference model**, not the deployed lease implementation an
 Run: `python3 -m unittest discover -s tests -p 'test_control_plane_lease_clock_boundary_reference_w1.py' -v`.
 
 No modifications to existing files, queues, runners, deployments, workflows or services. Review before merge; keep separate from #1219.
+
+## Extended regression cases (2026-10-09)
+
+- Subsecond strict-before and exact-equality expiration across UTC-05 versus UTC.
+- Europe/London daylight-saving fallback: the repeated 01:30 (fold=0 and fold=1) are different instants; lease elapsed time is measured in UTC and cannot gain an extra hour.
+- Once the reference deadline is reached, later forward-moving timestamps cannot revive it.
+
+The above asserts behavior of the isolated reference helper, not of the actual zCloud scheduler or SQLite owner claim. Operational acceptance requires independent exact-head CI evidence and comparison with the production API by #1219/#580 owners.
