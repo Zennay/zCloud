@@ -9,7 +9,7 @@ a generation that actually started.
 
 ```sh
 python3 scripts/zcloud_worker_claim_evidence_gate.py evidence.json \
-  --max-age-seconds 300
+  --max-age-seconds 300 \\\n  --expected-assignment-id assignment-1 \\\n  --expected-worker-id worker-1
 python3 -m unittest discover -s tests -p 'test_zcloud_worker_claim_evidence_gate.py'
 ```
 
