@@ -20,7 +20,9 @@ This snapshot verifier independently confirms all of the following before a *hum
 - Every holder is represented exactly once in the global leases list, under the same pool.
 - Lease identities are nonempty, have no surrounding whitespace and are nonduplicated.
 - Every lease is active at snapshot time, not acquired in the future, with a positive lifetime.
-- CPU/memory reservations are nonnegative numbers/integer MB.
+- CPU/memory reservations are nonnegative finite numbers/integer MB; NaN/Infinity are rejected.
+- The same (project, owner) cannot appear in two pools (matching the live SQLite primary key).
+- Schema version must be a literal integer, not a boolean.
 - Owner identifiers at the existing 200-character storage boundary are flagged for provenance review.
 - No observed owner identifiers, metadata, tokens, or credentials are printed.
 
