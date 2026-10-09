@@ -67,6 +67,8 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         # shutdown() before serve_forever() starts could deadlock.
         self.thread.start()
         self.addCleanup(self.stop_http_thread)
+        # The HTTP fixture must not outlive the test; unregister the global
+        # server-side cache as part of the same cleanup lifecycle.
 
     def stop_http_thread(self):
         self.http.shutdown()
