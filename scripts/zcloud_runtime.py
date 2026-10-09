@@ -62,8 +62,22 @@ def main(argv=None) -> int:
     sub.add_parser("status")
 
     args = parser.parse_args(argv)
+    if args.command in {"receipt", "acquire", "release"}:
+        if not args.project or not args.project.strip() or "\x00" in args.project:
+            raise ValueError("--project must be nonempty and NUL-free")
     if args.command in {"acquire", "release"}:
         _validated_owner(args.owner)
+    if args.command == "receipt":
+        args.validated_evidence = json.loads(args.evidence_json)
+        if not isinstance(args.validated_evidence, dict):
+            raise ValueError("--evidence-json must be an object")
+        # Validate before opening SQLite. Strict finite JSON also avoids
+        # non-standard NaN/Infinity values in authoritative evidence receipts.
+        json.dumps(
+            args.validated_evidence, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        )
+        runtime._serialize_receipt_evidence(args.validated_evidence)
     if args.command == "acquire":
         args.validated_metadata = json.loads(args.metadata_json)
         if not isinstance(args.validated_metadata, dict):
@@ -80,9 +94,6 @@ def main(argv=None) -> int:
     conn = connect(args.db)
     try:
         if args.command == "receipt":
-            evidence = json.loads(args.evidence_json)
-            if not isinstance(evidence, dict):
-                raise ValueError("--evidence-json must be an object")
             result = runtime.record_receipt(
                 conn,
                 args.project,
@@ -93,12 +104,15 @@ def main(argv=None) -> int:
                 blocker=args.blocker,
                 next_gate=args.next_gate,
                 source=args.source,
-                evidence=evidence,
+                evidence=args.validated_evidence,
             )
             conn.commit()
             print(json.dumps({"ok": True, "receipt": result}, ensure_ascii=False, sort_keys=True))
             return 0
         if args.command == "acquire":
+            # Enforce a single writer transaction for capacity check + insert,
+            # even if the SQLite connection policy changes in the future.
+            conn.execute("BEGIN IMMEDIATE")
             result = runtime.acquire_resource(
                 conn,
                 args.project,
@@ -110,6 +124,7 @@ def main(argv=None) -> int:
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
             return 0 if result.get("acquired") else 75
         if args.command == "release":
+            conn.execute("BEGIN IMMEDIATE")
             result = runtime.release_resource(conn, args.project, args.owner)
             conn.commit()
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
