@@ -1,0 +1,64 @@
+name: Control-plane SQLite backup readability proof
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_sqlite_backup_probe.py
+      - tests/test_zcloud_sqlite_backup_probe.py
+      - docs/control-plane-sqlite-backup-readability.md
+      - .github/workflows/control-plane-sqlite-backup-proof.yml
+  push:
+    branches: ['feature/control-plane-sqlite-recovery-probe-20261009-1818']
+    paths: ['.github/workflows/control-plane-sqlite-backup-proof.yml']
+permissions:
+  contents: read
+concurrency:
+  group: sqlite-backup-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  prove:
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Zennay')
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Guard canonical VPS before checkout
+        run: |
+          test "$(hostname)" = vps-bb300bba
+          test "$RUNNER_NAME" = zcloud-vps-1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Guard immutable candidate and permanent runner
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Focused real SQLite backup proof
+        run: |
+          python3 -m compileall -q scripts/zcloud_sqlite_backup_probe.py tests/test_zcloud_sqlite_backup_probe.py
+          python3 -m unittest -v tests.test_zcloud_sqlite_backup_probe
+      - name: Existing runtime and recovery compatibility
+        run: python3 -m unittest -v tests.test_project_runtime tests.test_zcloud_recovery tests.test_control_plane_recovery_runbook
+      - name: Full Python regression
+        run: python3 -m unittest discover -v
+      - name: Publish bounded proof receipt
+        env:
+          PROOF_PATH: ${{ runner.temp }}/sqlite-backup-proof-${{ github.run_id }}.json
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, socket
+          report = {"schema_version": 1, "candidate_sha": os.environ["EXPECTED_SHA"],
+                    "host": socket.gethostname(), "runner": os.environ["RUNNER_NAME"],
+                    "run_id": os.environ["GITHUB_RUN_ID"], "status": "success",
+                    "evidence_mode": "temporary-real-sqlite-only",
+                    "production_restore_performed": False, "live_database_opened": False}
+          pathlib.Path(os.environ["PROOF_PATH"]).write_text(json.dumps(report, sort_keys=True))
+          print(json.dumps(report, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-backup-readability-proof
+          path: ${{ runner.temp }}/sqlite-backup-proof-${{ github.run_id }}.json
+          retention-days: 7
