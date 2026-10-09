@@ -144,5 +144,17 @@ class ClassifierTests(unittest.TestCase):
                 self.assertEqual({"label": "Status unknown", "authorizes_action": False},
                                  classify(evidence("api_responding", source=source), now=NOW))
 
+
+    def test_control_characters_in_generation_ids_fail_closed(self):
+        for name in ("worker_id", "assignment_id"):
+            for character in ("\\x00", "\\x1b", "\\x7f", "\\x85"):
+                with self.subTest(name=name, character=character):
+                    values = {"worker_id": "w1", "assignment_id": "a1", "correlated": True}
+                    values[name] += character
+                    item = evidence("generation_started", **values)
+                    self.assertEqual("Status unknown", classify(
+                        item, now=NOW, expected_worker_id=values["worker_id"],
+                        expected_assignment_id=values["assignment_id"])["label"])
+
 if __name__ == "__main__":
     unittest.main()
