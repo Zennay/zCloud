@@ -95,6 +95,36 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertIs(type(matches[0]["id"]), int)
         self.assertGreater(matches[0]["id"], 0)
 
+    def test_http_result_is_truncated_at_300_characters(self):
+        payload = "R" * 301
+        self.assertEqual(200, self.send(self.command_id, result=payload))
+        self.assertEqual(("completed", "R" * 300), self.state()[:2])
+
+    def test_rejected_status_preserves_all_command_rows(self):
+        with server.connect() as conn:
+            before = [tuple(row) for row in conn.execute(
+                "SELECT id,status,result,updated_at FROM runner_commands ORDER BY id"
+            ).fetchall()]
+        self.assertEqual(400, self.send(self.command_id, status="cancelled", result="bad"))
+        with server.connect() as conn:
+            after = [tuple(row) for row in conn.execute(
+                "SELECT id,status,result,updated_at FROM runner_commands ORDER BY id"
+            ).fetchall()]
+        self.assertEqual(before, after)
+
+    @unittest.expectedFailure
+    def test_scheduler_expired_terminal_state_cannot_be_revived(self):
+        # Simulate the watchdog marking an overdue command failed before
+        # a worker's delayed successful HTTP receipt arrives.
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE runner_commands SET status='failed',result='stale-timeout' "
+                "WHERE id=?", (self.command_id,)
+            )
+        before = self.state()
+        self.send(self.command_id, "completed", "late worker success")
+        self.assertEqual(before, self.state())
+
     @unittest.expectedFailure
     def test_competing_http_callbacks_have_one_terminal_winner(self):
         # Two real HTTP requests race on the same pending row. Only one may
