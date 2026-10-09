@@ -235,3 +235,19 @@ and the public-IP `/api/status` probe, compare response headers and any reverse
 proxy/load balancer path, and distinguish `503` from malformed JSON. Do not
 blindly chmod/restart SQLite or hide a genuine 503 under retries. This PR
 must not edit the shared live recovery workflow, service, or VPS.
+
+## Verified focused CI disclosure (2026-10-09)
+
+At head `6cd07239676d2d9f6b4b9f39c797e5d26e2f73e2`, [GitHub Actions
+receipt-contract run 37868962698](https://github.com/Zennay/zCloud/actions/runs/37868962698)
+completed successfully: **67 tests in 1.375 seconds, 13 expected failures**.
+The updated workflow emitted the actual warning:
+
+> Receipt contract suite passed with 13 expected failures; green CI does not establish remediation.
+
+This verifies both the test runner and the explicit outstanding-defect
+warning, **not** the production callback fix. The xfail tests must be converted
+to normal passing tests only after the serialized production owner lands the
+pending-only CAS, strict ID validation and affected-row acknowledgement logic.
+Do not treat the focused workflow as a substitute for full exact-head smoke,
+production-owner sign-off or staged rollout gates.
