@@ -31,17 +31,22 @@ class CommandReceiptContract(unittest.TestCase):
 
     def test_handler_is_post_only(self):
         source = SOURCE.read_text(encoding="utf-8")
-        lines = source.splitlines()
-        route = "if u.path=='/api/runner-command-result':"
         tree = ast.parse(source)
-        containing_methods = [
-            node for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "do_POST"
-            and route in "\n".join(lines[node.lineno - 1:node.end_lineno])
-        ]
-        self.assertEqual(1, len(containing_methods),
-                         "receipt route must belong to the POST handler")
+        route = "/api/runner-command-result"
+        owners = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in ("do_POST", "do_GET", "do_PUT", "do_DELETE", "do_PATCH"):
+                continue
+            literals = [
+                part.value for part in ast.walk(node)
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            ]
+            if route in literals:
+                owners.append(node.name)
+        self.assertEqual(["do_POST"], owners,
+                         "command result route must exist only in POST handler")
 
     def test_local_only(self):
         snippet = endpoint()
