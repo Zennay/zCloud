@@ -41,6 +41,9 @@ jobs:
           fi
           echo '## Control-plane receipt contract' >> "$GITHUB_STEP_SUMMARY"
           grep -E '^Ran [0-9]+ tests|^OK' receipt-test-results.log >> "$GITHUB_STEP_SUMMARY" || true
+          # An unexpected success means a known defect may have been fixed;
+          # unittest still reports it as a failure, forcing its xfail marker
+          # to be removed and its passing assertion reviewed explicitly.
           if grep -q '^OK (expected failures=' receipt-test-results.log; then
             count="$(grep -oE 'expected failures=[0-9]+' receipt-test-results.log | tail -1 | cut -d= -f2)"
             echo "::warning title=Known production contract gaps::Receipt contract suite passed with ${count} expected failures; green CI does not establish remediation."
@@ -51,4 +54,6 @@ jobs:
               echo "::error title=New masked regressions::Expected failures increased above the reviewed baseline of 13."
               exit 1
             fi
+          else
+            echo "**Expected-failure probes:** none reported. Review whether all known production gates are now fixed before treating this as remediation evidence." >> "$GITHUB_STEP_SUMMARY"
           fi
