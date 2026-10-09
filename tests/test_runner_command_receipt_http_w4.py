@@ -95,6 +95,18 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertIs(type(matches[0]["id"]), int)
         self.assertGreater(matches[0]["id"], 0)
 
+    def test_failed_receipt_is_terminal_and_persists_error(self):
+        self.assertEqual(200, self.send(self.command_id, status="failed", result="diagnostic"))
+        self.assertEqual(("failed", "diagnostic"), self.state()[:2])
+
+    def test_pending_get_excludes_acknowledged_command(self):
+        url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
+        self.assertEqual(200, self.send(self.command_id, result="acknowledged"))
+        with urllib.request.urlopen(url, timeout=5) as response:
+            self.assertEqual(200, response.status)
+            pending = json.load(response)["commands"]
+        self.assertNotIn(self.command_id, [command["id"] for command in pending])
+
     def test_http_result_is_truncated_at_300_characters(self):
         payload = "R" * 301
         self.assertEqual(200, self.send(self.command_id, result=payload))
