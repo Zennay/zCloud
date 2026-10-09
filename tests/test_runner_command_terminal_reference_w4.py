@@ -77,5 +77,17 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
         self.assertEqual(("pending", None), self.row(1))
 
 
+    def test_sql_injection_like_result_remains_inert_data(self):
+        payload = "x'); DELETE FROM runner_commands; --"
+        self.assertTrue(finish(self.db, 1, "completed", payload))
+        self.assertEqual(("completed", payload), self.row(1))
+        self.assertEqual(3, self.db.execute("SELECT COUNT(*) FROM runner_commands").fetchone()[0])
+
+    def test_cross_command_replay_does_not_change_unrelated_terminal_result(self):
+        self.assertTrue(finish(self.db, 1, "failed", "first"))
+        self.assertFalse(finish(self.db, 2, "completed", "late cross-command"))
+        self.assertEqual(("failed", "first"), self.row(1))
+        self.assertEqual(("completed", "original"), self.row(2))
+
 if __name__ == "__main__":
     unittest.main()
