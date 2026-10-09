@@ -74,11 +74,11 @@ def main():
         print("ERROR: empty expected-failure traceback", file=sys.stderr)
         return 1
     # expectedFailure accepts *any* exception, including a broken test
-    # fixture. Require the reviewed red probes to fail on an assertion,
-    # rather than silently accepting NameError/ImportError/HTTP timeouts.
+    # fixture. Require the terminal exception to be an assertion,
+    # rather than matching incidental 'AssertionError:' text within frames.
     non_assertion_xfails = sorted(
         name for name, trace in summary["expected_failure_details"].items()
-        if "AssertionError:" not in trace
+        if not trace.strip().splitlines()[-1].lstrip().startswith("AssertionError:")
     )
     if non_assertion_xfails:
         print("ERROR: expected-failure probes failed without an assertion: " +
