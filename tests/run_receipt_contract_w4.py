@@ -8,6 +8,11 @@ import sys
 import unittest
 from pathlib import Path
 
+# Direct script execution places tests/ rather than repository root on sys.path.
+# Production-handler HTTP tests import server from the repository root.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 BASELINE_TESTS = 67
 MAX_EXPECTED_FAILURES = 13
 
