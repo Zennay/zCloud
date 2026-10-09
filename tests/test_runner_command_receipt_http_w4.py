@@ -85,6 +85,43 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(before, self.state())
 
     @unittest.expectedFailure
+    def test_competing_http_callbacks_have_one_terminal_winner(self):
+        # Two real HTTP requests race on the same pending row. Only one may
+        # commit; a late callback must not alter even the stored result text.
+        barrier = threading.Barrier(3)
+        outcomes = []
+        failures = []
+        lock = threading.Lock()
+
+        def complete(status, result):
+            try:
+                barrier.wait(timeout=5)
+                response_status = self.send(self.command_id, status=status, result=result)
+                with lock:
+                    outcomes.append((response_status, status, result))
+            except Exception as error:
+                with lock:
+                    failures.append(error)
+
+        workers = [
+            threading.Thread(target=complete, args=("completed", "winner-success")),
+            threading.Thread(target=complete, args=("failed", "winner-failure")),
+        ]
+        for worker in workers:
+            worker.start()
+        try:
+            barrier.wait(timeout=5)
+        finally:
+            for worker in workers:
+                worker.join(timeout=7)
+        self.assertFalse(failures, failures)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(2, len(outcomes))
+        self.assertEqual([200, 409], sorted(item[0] for item in outcomes))
+        winning = next(item for item in outcomes if item[0] == 200)
+        self.assertEqual((winning[1], winning[2]), self.state()[:2])
+
+    @unittest.expectedFailure
     def test_replayed_callback_must_not_overwrite_terminal_result(self):
         self.assertEqual(200, self.send(self.command_id, result="winner"))
         before = self.state()
