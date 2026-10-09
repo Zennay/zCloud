@@ -25,11 +25,14 @@ def finish(db, command_id, status, result):
         return False
     if type(status) is not str or status not in ("completed", "failed"):
         return False
+    # Match the current callback's persisted result normalization while
+    # independently modeling the pending-only CAS missing from production.
+    normalized_result = str(result or "")[:300]
     with db:
         result_update = db.execute(
             "UPDATE runner_commands SET status=?, result=? "
             "WHERE id=? AND status='pending'",
-            (status, result, command_id),
+            (status, normalized_result, command_id),
         )
     return result_update.rowcount == 1
 
@@ -150,6 +153,20 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
                     self.assertEqual(before, self.db.execute(
                         "SELECT id,status,result FROM runner_commands ORDER BY id"
                     ).fetchall())
+
+    def test_result_normalization_matches_http_callback_contract(self):
+        cases = (
+            (None, ""), (False, ""), (0, ""), (123, "123"),
+            ("a" * 300, "a" * 300), ("b" * 301, "b" * 300),
+            ("😀" * 301, "😀" * 300),
+        )
+        for raw, stored in cases:
+            with self.subTest(result=repr(raw)[:40]):
+                self.db.execute(
+                    "UPDATE runner_commands SET status='pending', result=NULL WHERE id=1"
+                )
+                self.assertTrue(finish(self.db, 1, "completed", raw))
+                self.assertEqual(("completed", stored), self.row(1))
 
     def test_sql_injection_like_result_remains_inert_data(self):
         payload = "x'); DELETE FROM runner_commands; --"
