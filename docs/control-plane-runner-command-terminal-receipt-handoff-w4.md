@@ -130,3 +130,31 @@ behavior and limits disclosure. Either policy must preserve the atomic
 `WHERE id=? AND status='pending'` update and must be tested through both
 producers. Do not change producer retry behavior or the live runner protocol from
 this draft test-only PR.
+
+## Producer ID type trace (verified 2026-10-09)
+
+Tracing the consumer logic beyond the immediate callback callsites resolves part
+of the earlier compatibility question:
+
+* **Violentmonkey/userscript**: `handleCommands()` fetches
+  `/runner-commands`, filters and sorts using `Number(command.id || 0)`,
+  then explicitly assigns `const id = Number(command.id || 0)` before passing
+  `id` to `commandResult(id, ...)`. Normal delivered finite IDs therefore
+  serialize as JSON numbers. This path is compatible with a strict JSON
+  integer contract for ordinary IDs; the owner must still reject
+  fractional, unsafe, nonfinite or overflowed values.
+* **Firefox extension**: `pollCommands()` fetches the same route and forwards
+  `command.id` directly to `pushProject`, `startProject`,
+  `pauseProject`, `drainProject`, or `newProjectChat`, which invoke
+  `commandResult`. There is **no ID coercion** in this path: compatibility
+  depends on the JSON type emitted by the server's `/runner-commands`
+  endpoint. Require a real fetched response fixture/test before enforcing
+  strict server-side integer-only validation.
+* `Number(...)` in the userscript does **not** prove a safe integer:
+  `Number.isSafeInteger(id)` and `id > 0` should be asserted for incoming
+  commands before dispatch. That producer change is separately owned and
+  must not be silently folded into this draft branch.
+
+This trace is a **static source audit**, not live production evidence. The
+integration owner should pair it with a real `/runner-commands` JSON sample
+and a POST callback contract test on the same exact-head build.
