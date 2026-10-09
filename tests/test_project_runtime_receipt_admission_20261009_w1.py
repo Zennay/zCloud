@@ -73,6 +73,13 @@ class ProjectRuntimeEvidenceAdmissionTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertEqual("cloud", result["stale"][0]["project_id"])
 
+    def test_subsecond_expiry_beyond_boundary_is_stale(self):
+        self.receipt("2026-10-09T15:57:59.999999+00:00")
+        result = self.coverage()
+        self.assertFalse(result["ready"])
+        self.assertEqual("cloud", result["stale"][0]["project_id"])
+        self.assertGreater(result["stale"][0]["age_seconds"], 120)
+
     def test_exact_reference_time_is_current(self):
         self.receipt("2026-10-09T16:00:00Z")
         self.assertTrue(self.coverage()["ready"])
