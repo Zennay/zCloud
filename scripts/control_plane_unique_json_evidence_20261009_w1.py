@@ -28,7 +28,13 @@ def parse_unique_evidence(raw: str, *, max_bytes: int = 65536) -> dict[str, Any]
     """Parse a strictly bounded object without last-key-wins interpretation."""
     if not isinstance(raw, str):
         raise AmbiguousEvidence("JSON text required")
-    if len(raw.encode("utf-8")) > max_bytes:
+    if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
+        raise AmbiguousEvidence("invalid evidence size limit")
+    try:
+        byte_length = len(raw.encode("utf-8"))
+    except UnicodeError as exc:
+        raise AmbiguousEvidence("invalid Unicode evidence") from exc
+    if byte_length > max_bytes:
         raise AmbiguousEvidence("oversized JSON evidence")
     try:
         data = json.loads(raw, object_pairs_hook=_unique_pairs,
