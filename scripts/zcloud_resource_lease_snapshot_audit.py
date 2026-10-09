@@ -82,6 +82,11 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
     if set(pools) != set(pool_contracts):
         errors.add("pool_registry_mismatch")
 
+    project_contracts = contracts.get("projects")
+    if not isinstance(project_contracts, dict) or not project_contracts:
+        errors.add("invalid_project_registry")
+        project_contracts = {}
+
     contract_caps = {}
     for pool, cfg in pool_contracts.items():
         slots = cfg.get("slots") if isinstance(cfg, dict) else None
@@ -109,6 +114,13 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
                 errors.add("ambiguous_owner_storage_boundary")
             if pool not in pool_contracts:
                 errors.add("unknown_lease_pool")
+            contract = project_contracts.get(project)
+            if not isinstance(contract, dict):
+                errors.add("unknown_lease_project")
+            else:
+                compute = contract.get("compute")
+                if not isinstance(compute, dict) or compute.get("pool") != pool:
+                    errors.add("lease_pool_contract_mismatch")
             if observed is not None:
                 acquired = _instant(lease.get("acquired_at"))
                 expiry = _instant(lease.get("lease_until"))
