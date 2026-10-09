@@ -24,8 +24,11 @@ def display_evidence(source_sha, ci, production, worker, claim, approval, *, now
         elif (production.get("sha") == source_sha
               and production.get("environment") == "production"
               and result["ci"] == "verified"
-              and production.get("run_id") == ci["run_id"]
-              and production.get("attempt") == ci["attempt"]
+              and type(production.get("run_id")) is int
+              and type(production.get("attempt")) is int
+              and production["run_id"] > 0 and production["attempt"] > 0
+              and production["run_id"] == ci["run_id"]
+              and production["attempt"] == ci["attempt"]
               and production.get("status") == "healthy"
               and isinstance(production.get("observed_at"), (int, float))
               and not isinstance(production.get("observed_at"), bool)
@@ -34,7 +37,8 @@ def display_evidence(source_sha, ci, production, worker, claim, approval, *, now
             result["production"] = "observed_healthy"
     if isinstance(worker, dict):
         observed = worker.get("last_action_at")
-        if isinstance(observed, (int, float)) and not isinstance(observed, bool):
+        if (isinstance(observed, (int, float))
+                and not isinstance(observed, bool) and math.isfinite(observed)):
             result["worker"] = ("active_observed" if 0 <= now - observed <= 60
                                 else "stale")
         elif worker.get("configured"):
@@ -140,6 +144,19 @@ class OfflineProvenanceMatrix(unittest.TestCase):
             with self.subTest(timestamp=timestamp):
                 self.check(("production", "observed_healthy"),
                            production={**self.prod, "observed_at": timestamp})
+
+    def test_production_identity_rejects_boolean_and_nonpositive(self):
+        for field in ("run_id", "attempt"):
+            for value in (True, False, 0, -1, "7", None, 7.0):
+                with self.subTest(field=field, value=value):
+                    self.check(("production", "unverified"),
+                               production={**self.prod, field: value})
+
+    def test_nonfinite_worker_time_never_active(self):
+        for observed_at in (float("nan"), float("inf"), -float("inf"), True):
+            with self.subTest(observed_at=observed_at):
+                self.check(("worker", "configured_only"),
+                           worker={"configured": True, "last_action_at": observed_at})
 
     def test_boolean_attempt_not_integer(self):
         self.check(("ci", "unknown"), ci={**self.ci, "attempt": True})
