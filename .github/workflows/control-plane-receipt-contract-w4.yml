@@ -1,0 +1,23 @@
+name: Control-plane receipt contract W4
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/test_runner_command_*_w4.py'
+      - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
+      - '.github/workflows/control-plane-receipt-contract-w4.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  receipt-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated control-plane receipt contracts
+        run: |
+          python3 -m unittest discover -s tests -p 'test_runner_command_*_w4.py' -v
