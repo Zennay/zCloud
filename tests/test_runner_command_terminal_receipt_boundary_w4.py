@@ -28,12 +28,13 @@ class CommandReceiptContract(unittest.TestCase):
                         "command_id <= 0", "if different_id <= 0:"):
             self.assertIsNone(pattern.search(invalid))
 
-
     def test_handler_is_post_only(self):
         source = SOURCE.read_text(encoding="utf-8")
         handler = source.rfind("def do_POST(", 0, source.index("if u.path=='/api/runner-command-result':"))
         self.assertGreaterEqual(handler, 0)
-        self.assertIn("if u.path=='/api/runner-command-result':", source[handler:])
+        next_handler = source.find("def do_GET(", handler + 1)
+        handler_body = source[handler:next_handler] if next_handler >= 0 else source[handler:]
+        self.assertIn("if u.path=='/api/runner-command-result':", handler_body)
 
     def test_local_only(self):
         snippet = endpoint()
