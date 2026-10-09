@@ -1,0 +1,20 @@
+name: Control-plane numeric observation boundary (offline)
+on:
+  pull_request:
+    paths:
+      - 'tests/test_control_plane_numeric_observation_boundary_20261009.py'
+      - 'docs/control-plane-numeric-observation-boundary-20261009.md'
+      - '.github/workflows/control-plane-numeric-observation-boundary-20261009.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run isolated stdlib safety checks
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_numeric_observation_boundary_20261009.py' -v
