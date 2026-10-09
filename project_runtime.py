@@ -236,7 +236,7 @@ def receipt_coverage(
 ) -> dict:
     """Return a fail-closed freshness audit for active project state receipts."""
     project_ids = sorted({str(project_id).strip() for project_id in project_ids if str(project_id).strip()})
-    max_age_seconds = max(60, int(max_age_seconds or 24 * 3600))
+    max_age_seconds = max(60, int(24 * 3600 if max_age_seconds is None else max_age_seconds))
     try:
         if now_value is None:
             reference = datetime.now(timezone.utc)
