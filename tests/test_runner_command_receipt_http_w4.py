@@ -27,7 +27,9 @@ import server
 class RunnerCommandReceiptHttpW4(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-receipt-http-")
-        # Cleanup registration must precede all global snapshot operations.
+        # LIFO ordering: this assertion runs after shutdown, global restore
+        # and temporary-file deletion, even if setUp() raises partway through.
+        self.addCleanup(self.assert_fixture_fully_cleaned)
         self.addCleanup(self.tmp.cleanup)
         self.old_db = server.DB
         self.old_cache = server.CACHE
@@ -67,8 +69,17 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         # shutdown() before serve_forever() starts could deadlock.
         self.thread.start()
         self.addCleanup(self.stop_http_thread)
-        # The HTTP fixture must not outlive the test; unregister the global
-        # server-side cache as part of the same cleanup lifecycle.
+
+    def assert_fixture_fully_cleaned(self):
+        self.assertFalse(Path(self.tmp.name).exists(), "temporary fixture leaked")
+        if hasattr(self, "old_db"):
+            self.assertEqual(self.old_db, server.DB)
+            self.assertEqual(self.old_layout_file, server.LAYOUT_FILE)
+            self.assertIs(self.old_cache, server.CACHE)
+        if hasattr(self, "http"):
+            self.assertEqual(-1, self.http.socket.fileno(), "HTTP listener leaked")
+        if hasattr(self, "thread"):
+            self.assertFalse(self.thread.is_alive(), "HTTP thread leaked")
 
     def stop_http_thread(self):
         self.http.shutdown()
@@ -114,32 +125,6 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
                 (self.command_id,),
             ).fetchone()
             return tuple(row)
-
-    def test_fixture_cleanup_restores_server_paths_and_closes_listener(self):
-        # Verify the actual registered cleanup callbacks, not merely their
-        # presence. Exercise a second, independent mini-fixture so this test
-        # does not shut down its own HTTP server prematurely.
-        old_db, old_layout, old_cache = server.DB, server.LAYOUT_FILE, server.CACHE
-        temp_dir = tempfile.TemporaryDirectory(prefix="zcloud-cleanup-probe-")
-        probe = unittest.TestCase()
-        probe.addCleanup(temp_dir.cleanup)
-        probe.addCleanup(
-            lambda: (setattr(server, "DB", old_db),
-                     setattr(server, "LAYOUT_FILE", old_layout),
-                     setattr(server, "CACHE", old_cache))
-        )
-        probe_db = Path(temp_dir.name) / "probe.db"
-        probe_layout = Path(temp_dir.name) / "probe-layout.json"
-        try:
-            server.DB, server.LAYOUT_FILE, server.CACHE = probe_db, probe_layout, None
-            self.assertEqual(probe_db, server.DB)
-            self.assertEqual(probe_layout, server.LAYOUT_FILE)
-        finally:
-            probe.doCleanups()
-        self.assertEqual(old_db, server.DB)
-        self.assertEqual(old_layout, server.LAYOUT_FILE)
-        self.assertIs(old_cache, server.CACHE)
-        self.assertFalse(Path(temp_dir.name).exists())
 
     def test_http_fixture_uses_isolated_paths(self):
         self.assertEqual(Path(self.tmp.name) / "history.db", server.DB)
