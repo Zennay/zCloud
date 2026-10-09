@@ -51,6 +51,24 @@ class TaskClaimsIsolatedRaces(unittest.TestCase):
         self.assertFalse(server.task_claim_release("fixture", "same", "owner-B")["released"])
         self.assertEqual(server.task_claims("fixture")[0]["owner_id"], "owner-A")
 
+    def test_wrong_project_or_key_cannot_renew_claim(self):
+        self.assertTrue(self.acquire("owner-A")["acquired"])
+        original = server.task_claims("fixture")[0]["lease_until"]
+        self.assertFalse(server.task_claim_heartbeat("other-project", "same", "owner-A")["renewed"])
+        self.assertFalse(server.task_claim_heartbeat("fixture", "other-key", "owner-A")["renewed"])
+        self.assertFalse(server.task_claim_release("other-project", "same", "owner-A")["released"])
+        self.assertFalse(server.task_claim_release("fixture", "other-key", "owner-A")["released"])
+        self.assertEqual(server.task_claims("fixture")[0]["lease_until"], original)
+
+    def test_lease_boundaries_are_bounded_in_current_api(self):
+        # Current API clamps to [15,3600] rather than rejecting out-of-range
+        # requests. This documents the current behavior; #1207 tracks
+        # whether strict HTTP rejection should replace that contract.
+        self.assertEqual(server._claim_lease_seconds(1), 15)
+        self.assertEqual(server._claim_lease_seconds(15), 15)
+        self.assertEqual(server._claim_lease_seconds(3600), 3600)
+        self.assertEqual(server._claim_lease_seconds(99999), 3600)
+
     def test_expired_owner_cannot_renew_or_delete_reclaimed_claim(self):
         self.assertTrue(self.acquire("owner-A")["acquired"])
         with sqlite3.connect(self.db) as c:
