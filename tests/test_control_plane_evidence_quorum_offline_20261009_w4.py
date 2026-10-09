@@ -1,5 +1,6 @@
 """Fixture-only negative contracts; never reads runtime state."""
 import unittest
+from itertools import permutations
 from scripts.control_plane_evidence_quorum_offline_20261009_w4 import assess
 
 
@@ -80,6 +81,21 @@ class QuorumEvidenceTests(unittest.TestCase):
         original = [entry.copy() for entry in observations]
         self.assert_non_authorizing(observations, "unverified_running")
         self.assertEqual(observations, original)
+
+    def test_all_three_statuses_are_order_invariant(self):
+        statuses = ("running", "stopped", "unknown")
+        for sequence in permutations(statuses):
+            with self.subTest(statuses=sequence):
+                observations = [
+                    {"source": f"worker-{index}", "status": status}
+                    for index, status in enumerate(sequence)
+                ]
+                self.assert_non_authorizing(observations, "contradictory")
+
+    def test_unknown_only_is_incomplete(self):
+        self.assert_non_authorizing(
+            [{"source": "worker-1", "status": "unknown"}], "incomplete"
+        )
 
 
 if __name__ == "__main__":
