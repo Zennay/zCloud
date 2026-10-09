@@ -22,6 +22,10 @@ _ASSIGNMENT = re.compile(
     r"client[_-]?secret|authorization|cookie)\s*[:=]\s*)"
     r"(?:\"[^\"]*\"|'[^']*'|[^\s&;,]+)"
 )
+_QUERY_SECRET = re.compile(
+    r"(?i)([?&](?:access_token|refresh_token|api_key|apikey|"
+    r"client_secret|password|auth_token|id_token)=)[^&#\s]*"
+)
 _MAX_DEPTH = 12
 _MAX_ITEMS = 200
 _MAX_CHARS = 4096
@@ -38,7 +42,7 @@ def sanitize(value: Any, *, _depth: int = 0) -> Any:
     if type(value) is float:
         return value if math.isfinite(value) else _REDACTED
     if isinstance(value, str):
-        return _ASSIGNMENT.sub(lambda m: m.group(1) + _REDACTED, _INLINE.sub(_REDACTED, value[:_MAX_CHARS])) + (
+        return _QUERY_SECRET.sub(lambda m: m.group(1) + _REDACTED, _ASSIGNMENT.sub(lambda m: m.group(1) + _REDACTED, _INLINE.sub(_REDACTED, value[:_MAX_CHARS]))) + (
             _TRUNCATED if len(value) > _MAX_CHARS else ""
         )
     if isinstance(value, dict):
