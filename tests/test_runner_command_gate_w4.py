@@ -1,6 +1,10 @@
 """Self-tests for the focused receipt evidence gate (no live runtime writes)."""
 import unittest
+import sys
+from pathlib import Path
 
+# Works both in focused discovery and repository-root unittest discovery.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_receipt_contract_w4 import approved_xfail_ids, has_assertion_heading
 
 
