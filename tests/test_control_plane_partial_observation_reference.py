@@ -21,8 +21,12 @@ def apply(previous: dict, incoming: Observation) -> dict:
     Keys in previous are (source, subject, field); values are (value, timestamp, cursor).
     Cross-source claims never overwrite each other.
     """
-    if not incoming.source or not incoming.subject or incoming.cursor < 0 or incoming.observed_at < 0:
-        raise ValueError("ambiguous observation identity or clock")
+    if (not isinstance(incoming.source, str) or not incoming.source.strip()
+            or not isinstance(incoming.subject, str) or not incoming.subject.strip()
+            or type(incoming.cursor) is not int or incoming.cursor < 0
+            or type(incoming.observed_at) is not int or incoming.observed_at < 0
+            or not isinstance(incoming.values, dict)):
+        raise ValueError("ambiguous observation identity, cursor, clock, or fields")
     result = dict(previous)
     for field, value in incoming.values.items():
         if not isinstance(field, str) or not field:
@@ -30,6 +34,8 @@ def apply(previous: dict, incoming: Observation) -> dict:
         key = (incoming.source, incoming.subject, field)
         old = result.get(key)
         if old is not None:
+            if incoming.cursor > old[2] and incoming.observed_at < old[1]:
+                raise ValueError("same-source timestamp regression")
             if incoming.cursor < old[2]:
                 continue
             if incoming.cursor == old[2] and (value, incoming.observed_at) != old[:2]:
@@ -73,6 +79,23 @@ class PartialObservationContractTests(unittest.TestCase):
     def test_observation_does_not_grant_mutation_authority(self):
         states = apply({}, Observation("github", "main", 1, 100, {"checks": "success"}))
         self.assertFalse(action_authorized(states))
+
+    def test_higher_cursor_with_regressed_observation_time_rejected(self):
+        old = apply({}, Observation("vps", "worker-1", 1, 100, {"state": "running"}))
+        with self.assertRaises(ValueError):
+            apply(old, Observation("vps", "worker-1", 2, 90, {"state": "stopped"}))
+
+    def test_boolean_cursor_is_not_valid_sequence_identity(self):
+        with self.assertRaises(ValueError):
+            apply({}, Observation("vps", "worker-1", True, 100, {"state": "running"}))
+
+    def test_boolean_clock_is_not_valid_timestamp(self):
+        with self.assertRaises(ValueError):
+            apply({}, Observation("vps", "worker-1", 1, False, {"state": "running"}))
+
+    def test_none_field_map_rejected(self):
+        with self.assertRaises(ValueError):
+            apply({}, Observation("vps", "worker-1", 1, 100, None))
 
     def test_missing_identity_rejected(self):
         with self.assertRaises(ValueError):
