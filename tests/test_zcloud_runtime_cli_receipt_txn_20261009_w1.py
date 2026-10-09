@@ -113,6 +113,45 @@ class ResourceCLIReceiptTransactionTests(unittest.TestCase):
                     )
                 self.assertFalse(self.db.exists())
 
+    def test_oversize_or_nul_receipt_fields_never_open_sqlite(self):
+        field_limits = {
+            "phase": 240, "action": 1000, "commit": 80,
+            "blocker": 1000, "next-gate": 1000, "source": 300,
+        }
+        for field, limit in field_limits.items():
+            for invalid in ("x" * (limit + 1), "valid\x00hidden"):
+                with self.subTest(field=field, length=len(invalid)):
+                    with self.assertRaisesRegex(ValueError, "NUL-free"):
+                        self.invoke(
+                            "receipt", "--project", "ftmo",
+                            "--" + field, invalid,
+                        )
+                    self.assertFalse(self.db.exists())
+
+    def test_exact_receipt_field_limits_round_trip_without_truncation(self):
+        field_limits = {
+            "phase": 240, "action": 1000, "commit": 80,
+            "blocker": 1000, "next_gate": 1000, "source": 300,
+        }
+        for field, limit in field_limits.items():
+            value = "r" * limit
+            with self.subTest(field=field, length=limit):
+                rc, response = self.invoke(
+                    "receipt", "--project", "ftmo",
+                    "--" + field.replace("_", "-"), value,
+                )
+                self.assertEqual(0, rc)
+                self.assertEqual(value, response["receipt"][field])
+        with sqlite3.connect(self.db) as connection:
+            rows = connection.execute(
+                "SELECT phase, action, commit_sha, blocker, next_gate, source "
+                "FROM project_state_receipts ORDER BY id"
+            ).fetchall()
+        self.assertEqual(6, len(rows))
+        # Every persisted row preserves its original field at its exact limit.
+        for index, (_, limit) in enumerate(field_limits.items()):
+            self.assertEqual(limit, len(rows[index][index]))
+
     def test_acquire_and_release_hold_explicit_write_transaction(self):
         acquire = runtime.acquire_resource
         release = runtime.release_resource
