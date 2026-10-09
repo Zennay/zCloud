@@ -6,6 +6,7 @@ Unexpected success is a hard unittest failure and requires contract review.
 No runtime, SQLite, browser or runner state is touched.
 """
 import pathlib
+import re
 import unittest
 
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "server.py"
@@ -62,9 +63,13 @@ class CommandReceiptContract(unittest.TestCase):
     @unittest.expectedFailure  # Existing server.py gap; unexpected success requires review.
     def test_positive_id_must_be_validated(self):
         snippet = endpoint()
-        self.assertTrue("command_id<=0" in snippet or "command_id < 1" in snippet
-                        or "command_id <=" in snippet,
-                        "negative or zero command IDs must be rejected")
+        # Match a positive-ID rejection predicate, not just any mention of
+        # command_id or an unrelated comparison later in the handler.
+        self.assertRegex(
+            snippet,
+            r"if\\s+command_id\\s*(?:<=\\s*0|<\\s*1)\\s*:",
+            "nonpositive command IDs must be rejected before the SQL write",
+        )
 
 
 if __name__ == "__main__":
