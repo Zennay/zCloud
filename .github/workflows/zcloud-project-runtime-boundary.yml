@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+# Only superseded proof attempts from this owned branch may be cancelled.
+concurrency:
+  group: zcloud-project-runtime-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   runtime-contract:
     runs-on: [self-hosted, zcloud, vps]
