@@ -20,7 +20,7 @@ This document defines the minimum evidence required before zCloud reports worker
 ## State decision
 1. Report **unknown** when telemetry is missing, stale, cross-SHA, or uncorrelated. Never translate unknown into healthy, stopped, or permission to restart.
 2. Report **attempted** after prompt-sent only. Do not count it as productive.
-3. Report **generating** only with a fresh generation-started signal tied to the same assignment and worker.
+3. Report **generating** only with a fresh generation-started signal tied to the same assignment and worker; report **completed** for a fresh correlated generation-completed event (not material progress).
 4. Report **material progress** only with durable evidence (commit, changed file, PR, test/build, queue transition, or confirmed worker task) linked to the assignment.
 5. Report **accepted** only after required exact-head checks succeed and any explicit integration gates clear.
 6. Report **deployed** only with exact-main production evidence after deployment; an older SHA or PR check is insufficient.
