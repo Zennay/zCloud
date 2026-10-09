@@ -182,21 +182,37 @@ PROJECT_SCOPE_ALIASES = {
 }
 
 
-def _scope_entries(value):
-    return (value,) if isinstance(value, str) else (value or ())
+def _scope_entries(value, field):
+    """Preserve scalar strings, but never reinterpret malformed write scopes.
+
+    A mapping silently iterates its keys, while a number may crash during
+    iteration. Neither is an authoritative file/capability reservation.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"invalid conflict_scope.{field}: expected strings")
+    if any(not isinstance(entry, str) for entry in value):
+        raise ValueError(f"invalid conflict_scope.{field}: expected strings")
+    return value
 
 
 def _normal_scope(scope):
-    scope = scope if isinstance(scope, dict) else {}
+    if scope is None:
+        scope = {}
+    if not isinstance(scope, dict):
+        raise ValueError("invalid conflict_scope: expected object")
     capabilities = []
     # A single path/capability is one scope entry, not an iterable of chars.
     # List-shaped queue/claim metadata remains fully backwards compatible.
-    for value in _scope_entries(scope.get("capabilities")):
+    for value in _scope_entries(scope.get("capabilities"), "capabilities"):
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
         if item and item not in capabilities:
             capabilities.append(item)
     files = []
-    for value in _scope_entries(scope.get("files")):
+    for value in _scope_entries(scope.get("files"), "files"):
         item = str(value or "").strip().replace("\\", "/")
         while item.startswith("./"):
             item = item[2:]
@@ -204,7 +220,9 @@ def _normal_scope(scope):
         if not item:
             continue
         parts = [part for part in item.split("/") if part not in ("", ".")]
-        if not parts or any(part == ".." for part in parts):
+        if any(part == ".." for part in parts):
+            raise ValueError("invalid conflict_scope.files: parent traversal")
+        if not parts:
             continue
         item = "/".join(parts)
         if item not in files:
