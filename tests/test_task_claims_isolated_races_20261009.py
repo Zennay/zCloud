@@ -89,6 +89,29 @@ class TaskClaimsIsolatedRaces(unittest.TestCase):
             self.assertTrue(all(f.result()["acquired"] for f in futures))
         self.assertEqual(len(server.task_claims()), 4)
 
+    def test_same_owner_reacquire_preserves_original_acquisition(self):
+        first = self.acquire("owner-A")
+        self.assertTrue(first["acquired"])
+        second = self.acquire("owner-A")
+        self.assertTrue(second["acquired"])
+        self.assertEqual(first["claim"]["acquired_at"], second["claim"]["acquired_at"])
+        self.assertEqual(server.task_claims("fixture")[0]["owner_id"], "owner-A")
+
+    def test_foreign_owner_cannot_reacquire_existing_unexpired_claim(self):
+        self.assertTrue(self.acquire("owner-A")["acquired"])
+        result = self.acquire("owner-B")
+        self.assertFalse(result["acquired"])
+        self.assertEqual(server.task_claims("fixture")[0]["owner_id"], "owner-A")
+
+    def test_prune_expired_only_in_temporary_fixture(self):
+        self.assertTrue(self.acquire("owner-A", "fixture", "expired")["acquired"])
+        self.assertTrue(self.acquire("owner-B", "fixture", "active")["acquired"])
+        with sqlite3.connect(self.db) as c:
+            c.execute("UPDATE task_claims SET lease_until='2000-01-01T00:00:00+00:00' WHERE claim_key='expired'")
+        self.assertEqual([row["claim_key"] for row in server.task_claims("fixture")], ["active"])
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0], 1)
+
     def test_missing_identity_cannot_create_claim(self):
         for project, key, owner in [("", "valid", "owner"), ("fixture", "", "owner"), ("fixture", "key", "")]:
             with self.assertRaises(ValueError):
