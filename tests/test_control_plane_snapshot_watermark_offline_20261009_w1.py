@@ -19,6 +19,12 @@ class WatermarkTests(unittest.TestCase):
     def test_forward(self):
         self.assertEqual(compare(mark(), mark(s=6)), "forward")
 
+    def test_forward_with_regressed_observation_time(self):
+        self.assertEqual(compare(mark(), mark(s=6, at="2026-10-09T00:59:59Z")), "regressed_observation_time")
+
+    def test_forward_with_later_observation_time(self):
+        self.assertEqual(compare(mark(), mark(s=6, at="2026-10-09T01:00:01Z")), "forward")
+
     def test_duplicate(self):
         self.assertEqual(compare(mark(), mark()), "duplicate")
 
