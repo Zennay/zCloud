@@ -30,3 +30,19 @@ receipt/resource producers. It covers committed WAL data, uncommitted writer
 isolation, expired-lease preservation, read-only behavior, bounded failure, schema
 and foreign-key rejection, encoded filenames and output privacy. It never opens
 the live database, changes queue state or calls a running service.
+
+## VPS test-fixture dependency
+
+Unmodified full-suite discovery can fail under real VPS memory pressure in two
+existing autonomy dispatch tests. Their canonical isolation owner is PR #646,
+head b734ab0216c2147eab056f5800606afd9cf7155b; this probe does not edit that owner.
+
+The proof records the raw outcome and refuses any other failure or any error.
+It then composes only the pinned owner's setup/teardown memory fixture into a
+disposable copy of the candidate. AST comparison requires every current test
+method to remain unchanged, including tests added after the owner branch.
+The entire composed suite and dedicated memory-guard suite must pass.
+The receipt distinguishes raw success from known host-memory failure and pins
+both candidate and fixture-owner identities. This is composition evidence, not
+an assertion that unmodified discovery passed. Integration still depends on
+#646 and the serialized writer window; no production memory guard is weakened.
