@@ -41,6 +41,30 @@ class StatusSnapshotPathGuardTests(unittest.TestCase):
                 with self.subTest(candidate=candidate), self.assertRaises(UnsafeStatusPath):
                     validate_status_snapshot_path(candidate, root)
 
+    def test_trusted_root_ancestor_symlink_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            physical = base / "physical"
+            physical.mkdir()
+            root = physical / "trusted"
+            root.mkdir()
+            snapshot = root / "status.json"
+            snapshot.write_text("{}", encoding="utf-8")
+            (base / "alias").symlink_to(physical, target_is_directory=True)
+            with self.assertRaises(UnsafeStatusPath):
+                validate_status_snapshot_path(base / "alias" / "trusted" / "status.json",
+                                              base / "alias" / "trusted")
+
+    def test_directory_and_outside_regular_file_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "trusted"
+            root.mkdir()
+            outside = Path(tmp) / "outside.json"
+            outside.write_text("{}", encoding="utf-8")
+            for candidate in (root, outside):
+                with self.subTest(candidate=candidate), self.assertRaises(UnsafeStatusPath):
+                    validate_status_snapshot_path(candidate, root)
+
     def test_missing_and_relative_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
