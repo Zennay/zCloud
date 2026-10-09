@@ -9,6 +9,12 @@ on:
       - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
       - '.github/workflows/control-plane-receipt-contract-w4.yml'
 
+# Do not spend runner slots on superseded revisions of this draft PR.
+# Concurrency is scoped to this workflow and PR/ref, not other zCloud jobs.
+concurrency:
+  group: receipt-contract-w4-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
