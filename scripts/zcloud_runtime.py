@@ -68,6 +68,14 @@ def main(argv=None) -> int:
         args.validated_metadata = json.loads(args.metadata_json)
         if not isinstance(args.validated_metadata, dict):
             raise ValueError("--metadata-json must be an object")
+        # Runtime storage truncates serialized lease metadata at 4000 chars.
+        # Refuse oversize payloads rather than persisting malformed JSON.
+        serialized = json.dumps(
+            args.validated_metadata, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(serialized) > 4000:
+            raise ValueError("--metadata-json exceeds 4000 stored characters")
     conn = connect(args.db)
     try:
         if args.command == "receipt":
