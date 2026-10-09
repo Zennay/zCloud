@@ -17,8 +17,11 @@ def fixture():
     return db
 
 
+MAX_JS_SAFE_COMMAND_ID = (1 << 53) - 1
+
+
 def finish(db, command_id, status, result):
-    if type(command_id) is not int or command_id <= 0:
+    if type(command_id) is not int or not (0 < command_id <= MAX_JS_SAFE_COMMAND_ID):
         return False
     if status not in ("completed", "failed"):
         return False
@@ -61,7 +64,7 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
         self.assertIsNone(self.row(999))
 
     def test_invalid_ids_fail_closed(self):
-        for bad_id in (0, -1, True, "1", None):
+        for bad_id in (0, -1, True, "1", None, 1.0, 2**53, 2**53 + 1):
             with self.subTest(bad_id=bad_id):
                 self.assertFalse(finish(self.db, bad_id, "completed", "invalid"))
         self.assertEqual(("pending", None), self.row(1))
@@ -93,8 +96,23 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
             "INSERT INTO runner_commands (id,status,result) VALUES (?,?,?)",
             (unsafe_id, "pending", None),
         )
-        self.assertTrue(finish(self.db, unsafe_id, "completed", "server-only"))
+        # SQLite supports this ID, but the HTTP/JavaScript-number contract does not.
+        self.assertFalse(finish(self.db, unsafe_id, "completed", "unsafe"))
+        self.assertEqual(("pending", None), self.row(unsafe_id))
+        self.db.execute(
+            "UPDATE runner_commands SET status=?,result=? WHERE id=?",
+            ("completed", "server-only", unsafe_id),
+        )
         self.assertEqual(("completed", "server-only"), self.row(unsafe_id))
+
+    def test_maximum_javascript_safe_id_is_accepted(self):
+        safe_id = MAX_JS_SAFE_COMMAND_ID
+        self.db.execute(
+            "INSERT INTO runner_commands (id,status,result) VALUES (?,?,?)",
+            (safe_id, "pending", None),
+        )
+        self.assertTrue(finish(self.db, safe_id, "completed", "boundary"))
+        self.assertEqual(("completed", "boundary"), self.row(safe_id))
 
     def test_sql_injection_like_result_remains_inert_data(self):
         payload = "x'); DELETE FROM runner_commands; --"
