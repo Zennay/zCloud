@@ -220,6 +220,18 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(before, self.state())
 
     @unittest.expectedFailure
+    def test_null_id_must_return_controlled_400(self):
+        before = self.state()
+        self.assertEqual(400, self.send(None))
+        self.assertEqual(before, self.state())
+
+    @unittest.expectedFailure
+    def test_malformed_id_must_return_controlled_400(self):
+        before = self.state()
+        self.assertEqual(400, self.send("not-an-id"))
+        self.assertEqual(before, self.state())
+
+    @unittest.expectedFailure
     def test_zero_id_must_be_rejected_without_mutation(self):
         before = self.state()
         self.assertEqual(400, self.send(0))
