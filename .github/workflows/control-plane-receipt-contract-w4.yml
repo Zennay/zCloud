@@ -44,6 +44,9 @@ jobs:
           # An unexpected success means a known defect may have been fixed;
           # unittest still reports it as a failure, forcing its xfail marker
           # to be removed and its passing assertion reviewed explicitly.
+          # Even a green unittest exit can hide a newly added xfail that
+          # replaces an older known issue. Pin the baseline names, not just
+          # the total, in an independently reviewed follow-up before merge.
           if grep -q '^OK (expected failures=' receipt-test-results.log; then
             count="$(grep -oE 'expected failures=[0-9]+' receipt-test-results.log | tail -1 | cut -d= -f2)"
             echo "::warning title=Known production contract gaps::Receipt contract suite passed with ${count} expected failures; green CI does not establish remediation."
@@ -56,4 +59,14 @@ jobs:
             fi
           else
             echo "**Expected-failure probes:** none reported. Review whether all known production gates are now fixed before treating this as remediation evidence." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Include the names of every remaining expected failure for reviewer
+          # visibility; counts alone can conceal changes in the set of defects.
+          echo '### Known-defect probes' >> "$GITHUB_STEP_SUMMARY"
+          if grep -F '... expected failure' receipt-test-results.log |
+               sed -E 's/ \(test_runner_command_/ (test_runner_command_/' |
+               sed 's/^/- `/;s/$/`/' >> "$GITHUB_STEP_SUMMARY"; then
+            :
+          else
+            echo 'No expected-failure probes were reported.' >> "$GITHUB_STEP_SUMMARY"
           fi
