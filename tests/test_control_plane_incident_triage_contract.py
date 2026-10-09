@@ -31,8 +31,13 @@ def validate(text: str) -> list[str]:
         failures.append("rollback boundary absent")
     if "SHA + ID + attempt + environment" not in text:
         failures.append("proof identity dimensions absent")
-    if text.count("mutation_authorized: false") != 1:
-        failures.append("expected one explicit non-authorizing handoff")
+    exact_fields = [line.strip() for line in text.splitlines()]
+    if exact_fields.count("mutation_authorized: false") != 1:
+        failures.append("expected exactly one explicit non-authorizing handoff")
+    if any(line.startswith("mutation_authorized:") and line != "mutation_authorized: false" for line in exact_fields):
+        failures.append("contradictory mutation authorization")
+    if any(line.startswith("redactions_applied:") and line != "redactions_applied: yes" for line in exact_fields):
+        failures.append("redactions may not be disabled")
     return failures
 
 
@@ -49,6 +54,23 @@ class IncidentTriageContract(unittest.TestCase):
     def test_authority_grant_is_never_a_valid_template(self) -> None:
         doc = DOC.read_text(encoding="utf-8")
         self.assertTrue(validate(doc.replace("mutation_authorized: false", "mutation_authorized: true")))
+
+    def test_comment_does_not_satisfy_authority_field(self) -> None:
+        doc = DOC.read_text(encoding="utf-8")
+        self.assertTrue(validate(doc.replace(
+            "mutation_authorized: false",
+            "# mutation_authorized: false",
+        )))
+
+    def test_contradictory_authorization_must_fail(self) -> None:
+        doc = DOC.read_text(encoding="utf-8")
+        self.assertTrue(validate(doc + "\\nmutation_authorized: true\\n"))
+
+    def test_redaction_override_must_fail(self) -> None:
+        doc = DOC.read_text(encoding="utf-8")
+        self.assertTrue(validate(doc.replace(
+            "redactions_applied: yes", "redactions_applied: no",
+        )))
 
     def test_rollback_disclaimer_must_remain(self) -> None:
         doc = DOC.read_text(encoding="utf-8")
