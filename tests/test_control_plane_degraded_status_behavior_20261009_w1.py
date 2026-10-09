@@ -125,5 +125,17 @@ class ClassifierTests(unittest.TestCase):
                                  classify(item, now=NOW, expected_worker_id="w1",
                                           expected_assignment_id="a1"))
 
+
+    def test_whitespace_ambiguous_sources_and_expected_ids_fail_closed(self):
+        for source in (" fixture", "fixture ", " fixture "):
+            with self.subTest(source=source):
+                self.assertEqual("Status unknown", classify(
+                    evidence("api_responding", source=source), now=NOW)["label"])
+        item = evidence("generation_started", worker_id="w1", assignment_id="a1", correlated=True)
+        for expected_worker, expected_assignment in ((" w1", "a1"), ("w1 ", "a1"), ("w1", " a1")):
+            with self.subTest(expected_worker=expected_worker, expected_assignment=expected_assignment):
+                self.assertEqual("Status unknown", classify(item, now=NOW,
+                    expected_worker_id=expected_worker, expected_assignment_id=expected_assignment)["label"])
+
 if __name__ == "__main__":
     unittest.main()
