@@ -24,6 +24,7 @@ def classify_worker_evidence(
         return {"state": "unknown", "reason": "missing_events", "recovery_authorized": False}
     rank = {"prompt-sent": 1, "generation-started": 2, "generation-completed": 3}
     latest: tuple[datetime, int] | None = None
+    conflicting_at_latest = False
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -42,13 +43,16 @@ def classify_worker_evidence(
         if not 0 <= age <= max_age_seconds:
             continue
         candidate = (ts.astimezone(timezone.utc), rank[kind])
-        if latest is None or candidate > latest:
+        if latest is None or candidate[0] > latest[0]:
             latest = candidate
+            conflicting_at_latest = False
+        elif candidate[0] == latest[0] and candidate[1] != latest[1]:
+            conflicting_at_latest = True
     if latest is None:
         return {"state": "unknown", "reason": "no_fresh_correlated_events", "recovery_authorized": False}
+    if conflicting_at_latest:
+        return {"state": "unknown", "reason": "ambiguous_same_timestamp", "recovery_authorized": False}
     best = latest[1]
-    if best == 0:
-        return {"state": "unknown", "reason": "no_fresh_correlated_events", "recovery_authorized": False}
     if best == 1:
         return {"state": "attempted", "reason": "prompt_only", "recovery_authorized": False}
     if best == 3:
