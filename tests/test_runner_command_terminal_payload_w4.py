@@ -1,0 +1,40 @@
+"""Offline regression for result truncation under duplicate terminal receipts.
+
+Reference-model behavior only; production endpoint remains separately owned.
+"""
+import sqlite3
+import unittest
+
+
+class TerminalReceiptPayloadReference(unittest.TestCase):
+    def test_first_payload_is_bounded_and_preserved_on_late_replay(self):
+        db = sqlite3.connect(":memory:")
+        self.addCleanup(db.close)
+        db.execute(
+            "CREATE TABLE runner_commands "
+            "(id INTEGER PRIMARY KEY, status TEXT NOT NULL, result TEXT)"
+        )
+        db.execute("INSERT INTO runner_commands VALUES (1,'pending',NULL)")
+        first_payload = "a" * 500
+        first = db.execute(
+            "UPDATE runner_commands SET status=?,result=? "
+            "WHERE id=? AND status='pending'",
+            ("completed", first_payload[:300], 1),
+        )
+        late = db.execute(
+            "UPDATE runner_commands SET status=?,result=? "
+            "WHERE id=? AND status='pending'",
+            ("failed", "late callback", 1),
+        )
+        self.assertEqual(1, first.rowcount)
+        self.assertEqual(0, late.rowcount)
+        status, result = db.execute(
+            "SELECT status,result FROM runner_commands WHERE id=1"
+        ).fetchone()
+        self.assertEqual("completed", status)
+        self.assertEqual("a" * 300, result)
+        self.assertEqual(300, len(result))
+
+
+if __name__ == "__main__":
+    unittest.main()
