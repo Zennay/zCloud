@@ -8,7 +8,7 @@ Classify whether a *supplied* control-plane observation is a replay, stale updat
 This function does **not** verify signatures, provenance, authenticated worker identity, claim ownership, freshness against a trusted clock, exclusive leases, or actual GitHub head state. It must not be used as a runtime authorization decision.
 
 ## Decision behavior
-- Invalid shape, booleans masquerading as counters, out-of-range counters, malformed lowercase commit SHA, or malformed UTC timestamp: `invalid`.
+- Invalid shape, booleans masquerading as counters, out-of-range counters, malformed lowercase commit SHA, or malformed or noncanonical UTC timestamp (strict `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`, 1–6 fractional digits): `invalid`.
 - Lower generation: `stale_generation`.
 - Same generation with different head: `conflicting_head`.
 - Same generation with lower sequence: `stale_sequence`.
