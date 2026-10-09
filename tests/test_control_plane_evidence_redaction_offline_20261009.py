@@ -54,6 +54,23 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertEqual(len(module.sanitize(list(range(300)))), 201)
         self.assertTrue(module.sanitize("x" * 5000).endswith("[TRUNCATED]"))
 
+    def test_url_query_credentials_masked_without_dropping_safe_parameters(self):
+        uri = "https://example.invalid/status?project=zcloud&access_token=topsecret&limit=5#details"
+        cleaned = module.sanitize(uri)
+        self.assertNotIn("topsecret", cleaned)
+        self.assertIn("project=zcloud", cleaned)
+        self.assertIn("limit=5", cleaned)
+        self.assertIn("access_token=[REDACTED]", cleaned)
+        self.assertIn("#details", cleaned)
+
+    def test_url_query_terminal_and_encoded_secret_values(self):
+        for uri in ("https://host.invalid/?refresh_token=abc%2Fdef",
+                    "https://host.invalid/?api_key=secret",
+                    "https://host.invalid/?client_secret="):
+            cleaned = module.sanitize(uri)
+            self.assertIn("[REDACTED]", cleaned)
+            self.assertNotIn("abc%2Fdef", cleaned)
+
     def test_nonfinite_numbers_never_cross_handoff_boundary(self):
         import math
         sample = {"nan": math.nan, "pos_inf": math.inf, "neg_inf": -math.inf,
