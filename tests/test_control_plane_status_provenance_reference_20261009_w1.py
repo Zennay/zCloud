@@ -116,6 +116,31 @@ class OfflineProvenanceMatrix(unittest.TestCase):
     def test_fresh_matching_production_observation(self):
         self.check(("production", "observed_healthy"))
 
+    def test_wrong_environment_denies_healthy(self):
+        for environment in ("staging", "", None, "Production"):
+            with self.subTest(environment=environment):
+                self.check(("production", "unverified"),
+                           production={**self.prod, "environment": environment})
+
+    def test_unsuccessful_ci_denies_healthy(self):
+        for conclusion in ("failure", "cancelled", "neutral", None):
+            with self.subTest(conclusion=conclusion):
+                result = self.check(("ci", "unknown"),
+                                    ci={**self.ci, "conclusion": conclusion})
+                self.assertEqual(result["production"], "unverified")
+
+    def test_unhealthy_production_status_denies_healthy(self):
+        for status in ("failed", "pending", "unknown", None):
+            with self.subTest(status=status):
+                self.check(("production", "unverified"),
+                           production={**self.prod, "status": status})
+
+    def test_freshness_boundaries(self):
+        for timestamp in (1940, 2000):
+            with self.subTest(timestamp=timestamp):
+                self.check(("production", "observed_healthy"),
+                           production={**self.prod, "observed_at": timestamp})
+
     def test_boolean_attempt_not_integer(self):
         self.check(("ci", "unknown"), ci={**self.ci, "attempt": True})
 
