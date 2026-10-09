@@ -222,6 +222,19 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(200, self.send(self.command_id, status="failed", result="diagnostic"))
         self.assertEqual(("failed", "diagnostic"), self.state()[:2])
 
+    def test_failed_receipt_is_removed_from_pending_poll(self):
+        # A worker failure is terminal too: returning it in the pending poll
+        # would cause the same failed task to be redispatched.
+        url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
+        with urllib.request.urlopen(url, timeout=5) as response:
+            before = {row["id"] for row in json.load(response)["commands"]}
+        self.assertIn(self.command_id, before)
+        self.assertEqual(200, self.send(self.command_id, "failed", "worker error"))
+        self.assertEqual(("failed", "worker error"), self.state()[:2])
+        with urllib.request.urlopen(url, timeout=5) as response:
+            after = {row["id"] for row in json.load(response)["commands"]}
+        self.assertNotIn(self.command_id, after)
+
     def test_pending_get_excludes_acknowledged_command(self):
         url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
         self.assertEqual(200, self.send(self.command_id, result="acknowledged"))
