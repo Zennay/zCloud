@@ -235,6 +235,25 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(200, self.send(self.command_id, result=payload))
         self.assertEqual(("completed", "R" * 300), self.state()[:2])
 
+    def test_result_payload_does_not_execute_sql(self):
+        injected = "x'); DELETE FROM runner_commands; --"
+        with server.connect() as conn:
+            before_count = conn.execute(
+                "SELECT COUNT(*) FROM runner_commands"
+            ).fetchone()[0]
+        self.assertEqual(200, self.send(self.command_id, result=injected))
+        self.assertEqual(("completed", injected), self.state()[:2])
+        with server.connect() as conn:
+            after_count = conn.execute(
+                "SELECT COUNT(*) FROM runner_commands"
+            ).fetchone()[0]
+        self.assertEqual(before_count, after_count)
+
+    def test_result_is_exactly_300_characters_at_boundary(self):
+        boundary = "x" * 300
+        self.assertEqual(200, self.send(self.command_id, result=boundary))
+        self.assertEqual(("completed", boundary), self.state()[:2])
+
     def test_result_unicode_truncation_counts_python_characters(self):
         payload = "😀" * 301
         self.assertEqual(200, self.send(self.command_id, result=payload))
