@@ -115,5 +115,15 @@ class ClassifierTests(unittest.TestCase):
                 self.assertEqual({"label": "Status unknown", "authorizes_action": False},
                                  classify(item, now=NOW, expected_worker_id="w1", expected_assignment_id="a1"))
 
+
+    def test_correlation_requires_boolean_even_for_denied_generation(self):
+        for value in (1, 0, "true", None, [], {}):
+            with self.subTest(value=value):
+                item = evidence("generation_started", worker_id="w1", assignment_id="a1",
+                                correlated=value)
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(item, now=NOW, expected_worker_id="w1",
+                                          expected_assignment_id="a1"))
+
 if __name__ == "__main__":
     unittest.main()
