@@ -30,6 +30,7 @@ class ClassifierTests(unittest.TestCase):
             evidence("generation_started", worker_id="w1", assignment_id=""), evidence("api_responding", source=""),
             evidence("api_responding", observed_at="garbage"),
             evidence("api_responding", observed_at="2026-10-09T07:53:00"),
+            evidence("api_responding", observed_at="2026-10-09T09:53:00+02:00"),
             evidence("api_responding", observed_at=(NOW - timedelta(minutes=3)).isoformat()),
             evidence("api_responding", observed_at=(NOW + timedelta(seconds=1)).isoformat()),
             evidence("missing"),
