@@ -1,0 +1,93 @@
+name: zCloud NEEDS_AI packet contract proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_needs_ai_packet_contract.py
+      - tests/test_needs_ai_packet_contract.py
+      - tests/test_needs_ai_packet_workflow.py
+      - docs/control-plane-needs-ai-packet.md
+      - .github/workflows/zcloud-needs-ai-packet-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-needs-ai-packet-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact requested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "ZCLOUD_NEEDS_AI_EXACT_CHECKOUT_GREEN=$actual"
+
+      - name: Run focused NEEDS_AI regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_needs_ai_packet_contract tests.test_needs_ai_packet_workflow
+
+      - name: Audit live escalation coverage without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from scripts.zcloud_needs_ai_packet_contract import audit_needs_ai_coverage
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          before = (db.stat().st_size, db.stat().st_mtime_ns)
+          report = audit_needs_ai_coverage(db, limit=200)
+          after = (db.stat().st_size, db.stat().st_mtime_ns)
+
+          if before != after:
+              raise SystemExit("live history.db changed during read-only NEEDS_AI audit")
+          if not report.get("database_fingerprint_unchanged"):
+              raise SystemExit("audit did not prove database fingerprint immutability")
+          if report.get("invalid_packets"):
+              raise SystemExit("existing NEEDS_AI packets violate the versioned contract")
+
+          bounded = {
+              "schema_version": report["schema_version"],
+              "failure_receipts_observed": report["failure_receipts_observed"],
+              "packets_present": report["packets_present"],
+              "valid_packets": report["valid_packets"],
+              "invalid_packets": report["invalid_packets"],
+              "missing_packets": report["missing_packets"],
+              "malformed_evidence_rows": report["malformed_evidence_rows"],
+              "coverage_state": report["coverage_state"],
+              "coverage_complete": report["coverage_complete"],
+          }
+          print("ZCLOUD_NEEDS_AI_PACKET_COVERAGE=" + json.dumps(
+              bounded, sort_keys=True, separators=(",", ":")
+          ))
+          print("ZCLOUD_NEEDS_AI_PACKET_READONLY_GREEN=1")
+          PY
