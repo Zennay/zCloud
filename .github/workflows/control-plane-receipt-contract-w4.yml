@@ -62,6 +62,24 @@ jobs:
           fi
           # Include the names of every remaining expected failure for reviewer
           # visibility; counts alone can conceal changes in the set of defects.
+          # Verbose unittest output can interleave with HTTP server logging:
+          # detect missing individual labels instead of assuming the listed
+          # rows always account for every expected failure.
+          if [[ "${count:-}" =~ ^[0-9]+$ ]]; then
+            listed="$(grep -cE '^test_[A-Za-z0-9_]+ .*\.\.\. expected failure
+          if grep -F '... expected failure' receipt-test-results.log |
+               sed -E 's/ \(test_runner_command_/ (test_runner_command_/' |
+               sed 's/^/- `/;s/$/`/' >> "$GITHUB_STEP_SUMMARY"; then
+            :
+          else
+            echo 'No expected-failure probes were reported.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+ receipt-test-results.log || true)"
+            if (( listed != count )); then
+              echo "::warning title=Incomplete expected-failure list::Unittest reported ${count} xfails but only ${listed} individually labelled results; inspect interleaved runner output."
+              echo "**Log formatting caveat:** ${listed}/${count} expected-failure test names were extractable from interleaved HTTP output." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
           echo '### Known-defect probes' >> "$GITHUB_STEP_SUMMARY"
           if grep -F '... expected failure' receipt-test-results.log |
                sed -E 's/ \(test_runner_command_/ (test_runner_command_/' |
