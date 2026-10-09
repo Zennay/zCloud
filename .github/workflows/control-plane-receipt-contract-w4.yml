@@ -29,4 +29,10 @@ jobs:
             count="$(grep -oE 'expected failures=[0-9]+' receipt-test-results.log | tail -1 | cut -d= -f2)"
             echo "::warning title=Known production contract gaps::Receipt contract suite passed with ${count} expected failures; green CI does not establish remediation."
             echo "**Known production defects remain:** ${count} expected-failure probes. Do not treat this job as a production remediation gate." >> "$GITHUB_STEP_SUMMARY"
+            # Keep the known gap budget from silently growing. Decreasing
+            # this count is allowed only when production defects are fixed.
+            if (( count > 13 )); then
+              echo "::error title=New masked regressions::Expected failures increased above the reviewed baseline of 13."
+              exit 1
+            fi
           fi
