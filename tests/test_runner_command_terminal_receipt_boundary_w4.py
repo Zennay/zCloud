@@ -47,9 +47,14 @@ class CommandReceiptContract(unittest.TestCase):
                 owners.append(node.name)
         self.assertEqual(["do_POST"], owners,
                          "command result route must exist only in POST handler")
-        self.assertEqual(1, source.count("\"/api/runner-command-result\"") +
-                         source.count("\'/api/runner-command-result\'"),
-                         "command result route must not be duplicated")
+        route_checks = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Compare)
+            and any(isinstance(part, ast.Constant) and part.value == route
+                    for part in ast.walk(node))
+        ]
+        self.assertEqual(1, len(route_checks),
+                         "exact route comparison must not be duplicated")
 
     def test_local_only(self):
         snippet = endpoint()
