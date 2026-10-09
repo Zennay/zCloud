@@ -251,3 +251,36 @@ to normal passing tests only after the serialized production owner lands the
 pending-only CAS, strict ID validation and affected-row acknowledgement logic.
 Do not treat the focused workflow as a substitute for full exact-head smoke,
 production-owner sign-off or staged rollout gates.
+
+
+## Structured-evidence handoff, exact-head checkpoint (2026-10-09)
+
+The evidence-only branch now runs `tests/run_receipt_contract_w4.py`, which
+records individual expected-failure IDs and full tracebacks in
+`receipt-results.json`; the workflow preserves it and
+`receipt-test-results.log` as a downloadable GitHub Actions artifact.
+The gate enforces at least 67 discovered tests, no skips, an exact reviewed
+expected-failure identity allowlist and no unreviewed expected failures.
+The observed three chained exception traces require recognizing explicit
+`AssertionError:` headings throughout a traceback, not only its final line.
+
+* [Exact-head focused run 37870661564](https://github.com/Zennay/zCloud/actions/runs/37870661564)
+  at `bede3709ba1f737349e0c58e73c62e9bddaf08a5`: **SUCCESS**;
+  the 13 known expected-failure probes still remain.
+* The same commit's CPU diagnostic `37870661584` succeeded; the independent
+  dashboard recovery `37870661583` **failed**. Its exact-head full smoke
+  `37870661594` was **in progress at inspection**; no success is claimed.
+* [Earlier focused run 37870552553](https://github.com/Zennay/zCloud/actions/runs/37870552553)
+  correctly failed a too-strict terminal-line assertion gate, while still
+  uploading evidence artifact `11589659798`. Corrected focused runs
+  `37870643443` and `37870661564` were successful. The underlying
+  production callback has **not** been fixed by this CI-only correction.
+
+**Integration-owner acceptance remains separate:** patch callback input validation
+(positive and JavaScript-safe integer), pending-only atomic SQL update with
+affected-row confirmation, reject replay/unknown ID without a false 200,
+and independently align userscript/extension ID handling. Run the focused
+suite after removing `@expectedFailure` only from actually fixed tests,
+then require full exact-head regression and explicitly handle the independent
+dashboard-health 503 failure under its separate owner. No production/runtime
+authority is transferred to this evidence-only PR.
