@@ -47,6 +47,16 @@ class WorkerEvidenceTests(unittest.TestCase):
     def test_completed_does_not_prove_materiality(self):
         self.check(sample("generation-completed"), "completed")
 
+    def test_later_new_generation_overrides_old_completion(self):
+        record = sample("generation-completed", ts=(NOW - timedelta(seconds=20)).isoformat())
+        record["events"].append(sample("generation-started")["events"][0])
+        self.check(record, "generating")
+
+    def test_input_event_order_does_not_override_timestamp(self):
+        record = sample("generation-started")
+        record["events"].append(sample("generation-completed", ts=(NOW - timedelta(seconds=20)).isoformat())["events"][0])
+        self.check(record, "generating")
+
     def test_completion_does_not_authorize_recovery(self):
         result = classify_worker_evidence(sample("generation-completed"), now=NOW)
         self.assertNotEqual(result["state"], "material_progress")
