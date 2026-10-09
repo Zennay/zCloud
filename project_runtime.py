@@ -31,7 +31,12 @@ def load_contracts(path: Path | None = None) -> dict:
     if not isinstance(pools, dict) or not pools:
         raise ValueError("project-contracts.json resource_pools must be a non-empty object")
     for name, pool in pools.items():
-        if not isinstance(pool, dict) or not isinstance(pool.get("slots"), int) or pool["slots"] < 0:
+        if (
+            not isinstance(pool, dict)
+            or not isinstance(pool.get("slots"), int)
+            or isinstance(pool["slots"], bool)
+            or pool["slots"] < 0
+        ):
             raise ValueError(f"resource pool {name!r} requires non-negative integer slots")
     for project_id, contract in projects.items():
         if not isinstance(contract, dict):
@@ -233,8 +238,14 @@ def receipt_coverage(
     project_ids = sorted({str(project_id).strip() for project_id in project_ids if str(project_id).strip()})
     max_age_seconds = max(60, int(max_age_seconds or 24 * 3600))
     try:
-        reference = datetime.fromisoformat(str(now_value)).astimezone(timezone.utc) if now_value else datetime.now(timezone.utc)
-    except Exception as exc:
+        if now_value is None:
+            reference = datetime.now(timezone.utc)
+        else:
+            reference = datetime.fromisoformat(str(now_value))
+            if reference.tzinfo is None or reference.utcoffset() is None:
+                raise ValueError("receipt coverage reference time requires a timezone")
+            reference = reference.astimezone(timezone.utc)
+    except (TypeError, ValueError) as exc:
         raise ValueError("invalid receipt coverage reference time") from exc
     receipts = latest_receipts(connection)
     missing = []
@@ -251,8 +262,16 @@ def receipt_coverage(
             invalid.append(project_id)
             continue
         try:
-            observed = datetime.fromisoformat(str(receipt.get("observed_at") or "")).astimezone(timezone.utc)
-        except Exception:
+            observed = datetime.fromisoformat(str(receipt.get("observed_at") or ""))
+            if observed.tzinfo is None or observed.utcoffset() is None:
+                raise ValueError("receipt timestamp requires a timezone")
+            observed = observed.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            invalid.append(project_id)
+            continue
+        # A bounded one-minute skew accommodates small clock differences. Far-future
+        # receipts must not keep a worker/project permanently marked as fresh.
+        if observed > reference + timedelta(seconds=60):
             invalid.append(project_id)
             continue
         age_seconds = max(0, int((reference - observed).total_seconds()))
