@@ -209,7 +209,9 @@ def _normal_scope(scope):
     # List-shaped queue/claim metadata remains fully backwards compatible.
     for value in _scope_entries(scope.get("capabilities"), "capabilities"):
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
-        if item and item not in capabilities:
+        if not item:
+            raise ValueError("invalid conflict_scope.capabilities: empty entry")
+        if item not in capabilities:
             capabilities.append(item)
     files = []
     for value in _scope_entries(scope.get("files"), "files"):
@@ -217,13 +219,13 @@ def _normal_scope(scope):
         while item.startswith("./"):
             item = item[2:]
         item = item.strip("/")
-        if not item:
-            continue
+        if not item or any(ord(char) < 32 or ord(char) == 127 for char in item):
+            raise ValueError("invalid conflict_scope.files: empty or control-character path")
         parts = [part for part in item.split("/") if part not in ("", ".")]
         if any(part == ".." for part in parts):
             raise ValueError("invalid conflict_scope.files: parent traversal")
         if not parts:
-            continue
+            raise ValueError("invalid conflict_scope.files: empty path")
         item = "/".join(parts)
         if item not in files:
             files.append(item)
