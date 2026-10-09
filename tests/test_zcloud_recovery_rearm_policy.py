@@ -35,6 +35,17 @@ class RecoveryRearmPolicyTests(unittest.TestCase):
         self.assertEqual(decide(regression_runs=(run(branch="other"),)), "wait_exact_green")
         self.assertEqual(decide(regression_runs=(run(sha=T),)), "wait_exact_green")
 
+    def test_failed_or_cancelled_dispatch_does_not_loop(self):
+        for outcome in ("failure", "cancelled", "timed_out"):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(decide(regression_runs=(run(), run(event="workflow_dispatch", conclusion=outcome))), "noop_already_rearmed")
+
+    def test_failed_deploy_requires_explicit_approval(self):
+        for outcome in ("failure", "cancelled", "timed_out"):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(decide(deploy_runs=(run(conclusion=outcome),)), "deny_failed_deploy")
+                self.assertEqual(decide(deploy_runs=(run(conclusion=outcome),), explicit_retry_approved=True), "eligible_for_owner_review")
+
     def test_explicit_retry_not_implicit(self):
         self.assertEqual(decide(regression_runs=(run(), run(event="workflow_dispatch")), explicit_retry_approved=True), "eligible_for_owner_review")
 
