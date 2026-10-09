@@ -44,8 +44,8 @@ def sanitize(value: Any, *, _depth: int = 0) -> Any:
     if isinstance(value, str):
         # Remove terminal controls before redaction so handoff text cannot
         # manipulate log rendering or visually hide a credential.
-        value = re.sub(r"\\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\x07]*(?:\\x07|\\x1b\\\\))", "", value)
-        value = "".join(c if c in "\\n\\r\\t" or ord(c) >= 32 and ord(c) != 127 else "?" for c in value)
+        value = re.sub(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))", "", value)
+        value = "".join(c if c in "\n\r\t" or (32 <= ord(c) < 127) or ord(c) >= 160 else "?" for c in value)
         return _QUERY_SECRET.sub(lambda m: m.group(1) + _REDACTED, _ASSIGNMENT.sub(lambda m: m.group(1) + _REDACTED, _INLINE.sub(_REDACTED, value[:_MAX_CHARS]))) + (
             _TRUNCATED if len(value) > _MAX_CHARS else ""
         )
