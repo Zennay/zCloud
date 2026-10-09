@@ -22,7 +22,7 @@ def classify_worker_evidence(
     events = record.get("events")
     if not isinstance(events, list):
         return {"state": "unknown", "reason": "missing_events", "recovery_authorized": False}
-    rank = {"prompt-sent": 1, "generation-started": 2, "generation-completed": 2}
+    rank = {"prompt-sent": 1, "generation-started": 2, "generation-completed": 3}
     best = 0
     for event in events:
         if not isinstance(event, dict):
@@ -46,4 +46,6 @@ def classify_worker_evidence(
         return {"state": "unknown", "reason": "no_fresh_correlated_events", "recovery_authorized": False}
     if best == 1:
         return {"state": "attempted", "reason": "prompt_only", "recovery_authorized": False}
+    if best == 3:
+        return {"state": "completed", "reason": "generation_completed_not_materiality", "recovery_authorized": False}
     return {"state": "generating", "reason": "generation_observed", "recovery_authorized": False}
