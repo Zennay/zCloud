@@ -124,6 +124,26 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
             ).fetchall()]
         self.assertEqual(before, after)
 
+    def test_receipt_only_mutates_target_command(self):
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_commands (project_id,action,status,created_at,updated_at,result)"
+                " VALUES ('cloud','push','pending','2026-10-09','2026-10-09','untouched')"
+            )
+            other_id = conn.execute("SELECT max(id) FROM runner_commands").fetchone()[0]
+            before = tuple(conn.execute(
+                "SELECT status,result,updated_at FROM runner_commands WHERE id=?",
+                (other_id,),
+            ).fetchone())
+        self.assertEqual(200, self.send(self.command_id, result="target only"))
+        with server.connect() as conn:
+            after = tuple(conn.execute(
+                "SELECT status,result,updated_at FROM runner_commands WHERE id=?",
+                (other_id,),
+            ).fetchone())
+        self.assertEqual(before, after)
+        self.assertEqual(("completed", "target only"), self.state()[:2])
+
     @unittest.expectedFailure
     def test_scheduler_expired_terminal_state_cannot_be_revived(self):
         # Simulate the watchdog marking an overdue command failed before
