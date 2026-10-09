@@ -21,6 +21,18 @@ def connect(path: Path):
     return conn
 
 
+def _validated_owner(value: str) -> str:
+    """Reject ambiguous/truncated CLI lease identities before opening SQLite.
+
+    The runtime currently persists owner_id with a 200-character maximum.
+    Do not silently truncate or normalize: callers must be able to renew and
+    release with exactly the identity supplied at acquisition.
+    """
+    if not value or not value.strip() or len(value) > 200 or "\x00" in value:
+        raise ValueError("--owner must be nonempty, NUL-free and <= 200 characters")
+    return value
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, default=ROOT / "history.db")
@@ -50,6 +62,8 @@ def main(argv=None) -> int:
     sub.add_parser("status")
 
     args = parser.parse_args(argv)
+    if args.command in {"acquire", "release"}:
+        _validated_owner(args.owner)
     conn = connect(args.db)
     try:
         if args.command == "receipt":
