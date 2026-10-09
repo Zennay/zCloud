@@ -57,10 +57,23 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
                                          headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
-                return response.status
+                status_code = response.status
+                body = json.load(response)
         except urllib.error.HTTPError as error:
-            error.close()
-            return error.code
+            status_code = error.code
+            try:
+                body = json.load(error)
+            finally:
+                error.close()
+        # A transport-level 200 with malformed or false success JSON is not
+        # a valid acknowledgement; reject it even in normal-path assertions.
+        self.assertIsInstance(body, dict, "callback must return JSON object")
+        if status_code == 200:
+            self.assertIs(body.get("ok"), True, "HTTP 200 must acknowledge success")
+        elif status_code in (400, 403, 409):
+            self.assertIsInstance(body.get("error"), str,
+                                  "rejected callback must return structured error")
+        return status_code
 
     def state(self):
         with server.connect() as conn:
