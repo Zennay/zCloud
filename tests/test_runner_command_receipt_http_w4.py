@@ -115,6 +115,32 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
             ).fetchone()
             return tuple(row)
 
+    def test_fixture_cleanup_restores_server_paths_and_closes_listener(self):
+        # Verify the actual registered cleanup callbacks, not merely their
+        # presence. Exercise a second, independent mini-fixture so this test
+        # does not shut down its own HTTP server prematurely.
+        old_db, old_layout, old_cache = server.DB, server.LAYOUT_FILE, server.CACHE
+        temp_dir = tempfile.TemporaryDirectory(prefix="zcloud-cleanup-probe-")
+        probe = unittest.TestCase()
+        probe.addCleanup(temp_dir.cleanup)
+        probe.addCleanup(
+            lambda: (setattr(server, "DB", old_db),
+                     setattr(server, "LAYOUT_FILE", old_layout),
+                     setattr(server, "CACHE", old_cache))
+        )
+        probe_db = Path(temp_dir.name) / "probe.db"
+        probe_layout = Path(temp_dir.name) / "probe-layout.json"
+        try:
+            server.DB, server.LAYOUT_FILE, server.CACHE = probe_db, probe_layout, None
+            self.assertEqual(probe_db, server.DB)
+            self.assertEqual(probe_layout, server.LAYOUT_FILE)
+        finally:
+            probe.doCleanups()
+        self.assertEqual(old_db, server.DB)
+        self.assertEqual(old_layout, server.LAYOUT_FILE)
+        self.assertIs(old_cache, server.CACHE)
+        self.assertFalse(Path(temp_dir.name).exists())
+
     def test_http_fixture_uses_isolated_paths(self):
         self.assertEqual(Path(self.tmp.name) / "history.db", server.DB)
         self.assertEqual(Path(self.tmp.name) / "project-layout.json", server.LAYOUT_FILE)
