@@ -36,6 +36,24 @@ REVIEWED_XFAIL_NAMES = frozenset([
 
 
 
+def approved_xfail_ids():
+    """Reviewed exact module/class/method identities, not bare method names."""
+    terminal = {"test_pending_compare_and_swap_required",
+                "test_positive_id_must_be_validated"}
+    return frozenset(
+        ("test_runner_command_terminal_receipt_boundary_w4.CommandReceiptContract."
+         if name in terminal
+         else "test_runner_command_receipt_http_w4.RunnerCommandReceiptHttpW4.")
+        + name
+        for name in REVIEWED_XFAIL_NAMES
+    )
+
+
+def has_assertion_heading(trace):
+    """Match traceback exception headings, not inline quoted source text."""
+    return any(line.startswith("AssertionError:") for line in trace.splitlines())
+
+
 def main():
     tests = unittest.defaultTestLoader.discover(
         start_dir=str(Path(__file__).resolve().parent),
@@ -78,7 +96,7 @@ def main():
     # accept only unindented exception headings, not source-code text.
     non_assertion_xfails = sorted(
         name for name, trace in summary["expected_failure_details"].items()
-        if not any(line.startswith("AssertionError:") for line in trace.splitlines())
+        if not has_assertion_heading(trace)
     )
     if non_assertion_xfails:
         print("ERROR: expected-failure probes failed without an assertion: " +
@@ -96,14 +114,7 @@ def main():
         return 1
     # The approved names belong to precisely two known test classes.
     # A second class reusing a method name must not inherit xfail approval.
-    approved_ids = {
-        ("test_runner_command_terminal_receipt_boundary_w4.CommandReceiptContract."
-         if name in {"test_pending_compare_and_swap_required",
-                     "test_positive_id_must_be_validated"}
-         else "test_runner_command_receipt_http_w4.RunnerCommandReceiptHttpW4.")
-        + name
-        for name in REVIEWED_XFAIL_NAMES
-    }
+    approved_ids = approved_xfail_ids()
     unexpected_xfails = sorted(set(failures) - approved_ids)
     if unexpected_xfails:
         print("ERROR: unreviewed expected-failure tests: " +
