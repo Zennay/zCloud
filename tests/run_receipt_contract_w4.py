@@ -50,10 +50,19 @@ def main():
         "unexpected_successes": [test.id() for test in result.unexpectedSuccesses],
         "failures": len(result.failures),
         "errors": len(result.errors),
+        "skipped": [{"test": test.id(), "reason": reason}
+                    for test, reason in result.skipped],
     }
     Path("receipt-results.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    # unittest considers skipped tests successful. In this focused contract
+    # suite, skipping even one test could conceal a production regression.
+    if result.skipped:
+        print("ERROR: receipt contract tests were skipped: " +
+              ", ".join(test.id() for test, _ in result.skipped),
+              file=sys.stderr)
+        return 1
     if result.testsRun < BASELINE_TESTS:
         print(f"ERROR: only {result.testsRun} tests discovered (minimum {BASELINE_TESTS})", file=sys.stderr)
         return 1
