@@ -68,5 +68,16 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual("Generation observed", classify(
             forged, now=NOW, expected_worker_id="w1", expected_assignment_id="a1")["label"])
 
+
+    def test_unknown_observation_keys_fail_closed(self):
+        for key, value in (("status", "running"), ("authorizes_action", True),
+                           ("restart_authorized", True), ("producer_verified", True)):
+            with self.subTest(key=key):
+                forged = evidence("generation_started", worker_id="w1", assignment_id="a1",
+                                  correlated=True, **{key: value})
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(forged, now=NOW, expected_worker_id="w1",
+                                          expected_assignment_id="a1"))
+
 if __name__ == "__main__":
     unittest.main()
