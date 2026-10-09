@@ -99,5 +99,21 @@ class ClassifierTests(unittest.TestCase):
                     item, now=NOW, expected_worker_id="w1",
                     expected_assignment_id="a1")["label"])
 
+
+    def test_per_kind_schema_blocks_identity_smuggling(self):
+        for kind in ("prompt_sent", "api_responding", "api_unavailable", "conflict", "claim_get"):
+            with self.subTest(kind=kind):
+                item = evidence(kind, worker_id="w1", assignment_id="a1", correlated=True)
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(item, now=NOW, expected_worker_id="w1", expected_assignment_id="a1"))
+
+    def test_oversize_string_fields_fail_closed(self):
+        for field in ("kind", "source", "observed_at", "worker_id", "assignment_id"):
+            with self.subTest(field=field):
+                item = evidence("generation_started", worker_id="w1", assignment_id="a1", correlated=True)
+                item[field] = "X" * 257
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(item, now=NOW, expected_worker_id="w1", expected_assignment_id="a1"))
+
 if __name__ == "__main__":
     unittest.main()
