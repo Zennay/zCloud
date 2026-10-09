@@ -83,7 +83,9 @@ jobs:
           set -euo pipefail
           test "$(git hash-object memory-fixture-owner/tests/test_autonomy_policy.py)" = "$FIXTURE_BLOB"
           SNAPSHOT="$(mktemp -d "${RUNNER_TEMP}/sqlite-backup-composition.XXXXXX")"
-          git archive "$EXPECTED_SHA" | tar -x -C "$SNAPSHOT"
+          git clone --quiet --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$SNAPSHOT"
+          git -C "$SNAPSHOT" checkout --quiet --detach "$EXPECTED_SHA"
+          test "$(git -C "$SNAPSHOT" rev-parse HEAD)" = "$EXPECTED_SHA"
           echo "COMPOSITION_SNAPSHOT=$SNAPSHOT" >> "$GITHUB_ENV"
           export SNAPSHOT
           python3 - <<'PY'
