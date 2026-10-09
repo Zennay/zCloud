@@ -74,5 +74,13 @@ class DegradedStatusCopyContract(unittest.TestCase):
         self.assertIn("do not pick the most optimistic state", self.text)
         self.assertIn("cannot authorize recovery actions", self.text)
 
+
+    def test_recovery_failure_does_not_grant_action_authority(self):
+        self.assertIn("Dashboard recovery check failed", self.text)
+        self.assertIn("overall operational readiness is unverified", self.text)
+        self.assertIn("does not authorize a restart, rollback or dispatch", self.text)
+        self.assertIn("Historical dashboard recovery failure", self.text)
+        self.assertIn("exact failing run URL and exact commit identity", self.text)
+
 if __name__ == "__main__":
     unittest.main()
