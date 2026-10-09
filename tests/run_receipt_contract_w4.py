@@ -73,6 +73,17 @@ def main():
     if any(not trace.strip() for trace in summary["expected_failure_details"].values()):
         print("ERROR: empty expected-failure traceback", file=sys.stderr)
         return 1
+    # expectedFailure accepts *any* exception, including a broken test
+    # fixture. Require the reviewed red probes to fail on an assertion,
+    # rather than silently accepting NameError/ImportError/HTTP timeouts.
+    non_assertion_xfails = sorted(
+        name for name, trace in summary["expected_failure_details"].items()
+        if "AssertionError:" not in trace
+    )
+    if non_assertion_xfails:
+        print("ERROR: expected-failure probes failed without an assertion: " +
+              ", ".join(non_assertion_xfails), file=sys.stderr)
+        return 1
     # unittest considers skipped tests successful. In this focused contract
     # suite, skipping even one test could conceal a production regression.
     if result.skipped:
