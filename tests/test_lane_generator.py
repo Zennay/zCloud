@@ -292,6 +292,34 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("task_claim_scope_conflict",
                          runtime["blocked_by"][0]["reason"])
 
+    def test_rejected_candidate_does_not_leave_blockers_on_safe_fallback(self):
+        """The selected fallback is admitted and must report zero conflicts."""
+        project = self.project("cloud", "platform")
+        running = {
+            **self.item("control-running", "Implement queue scheduler",
+                        status="running",
+                        metadata={"conflict_scope": {"files": ["shared.py"]}}),
+            "project_id": "cloud",
+        }
+        rejected = {
+            **self.item("runtime-rejected", "Repair Firefox automation",
+                        priority="P0",
+                        metadata={"conflict_scope": {"files": ["shared.py"]}}),
+            "project_id": "cloud",
+        }
+        fallback = {
+            **self.item("runtime-safe", "Repair Firefox tab state",
+                        priority="P2",
+                        metadata={"conflict_scope": {"files": ["browser/tab.py"]}}),
+            "project_id": "cloud",
+        }
+        lanes = generate_execution_lanes(project, [fallback, rejected, running])
+        runtime = next(x for x in lanes
+                       if x["lane_id"] == "runtime-automation")
+        self.assertEqual("queued", runtime["status"])
+        self.assertEqual("runtime-safe", runtime["queue_id"])
+        self.assertEqual([], runtime["blocked_by"])
+
 
 
 if __name__ == "__main__":
