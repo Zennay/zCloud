@@ -212,6 +212,28 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(("completed", "target only"), self.state()[:2])
 
+    def test_cross_project_receipt_does_not_modify_other_project(self):
+        # zCloud's control-plane shares one command table across projects.
+        # A cloud receipt must never mutate Supa's pending command.
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_commands (project_id,action,status,created_at,updated_at,result)"
+                " VALUES ('supa','push','pending','2026-10-09','2026-10-09','private')"
+            )
+            other_id = conn.execute("SELECT max(id) FROM runner_commands").fetchone()[0]
+            before = tuple(conn.execute(
+                "SELECT project_id,status,result,updated_at FROM runner_commands WHERE id=?",
+                (other_id,),
+            ).fetchone())
+        self.assertEqual(200, self.send(self.command_id, "completed", "cloud done"))
+        with server.connect() as conn:
+            after = tuple(conn.execute(
+                "SELECT project_id,status,result,updated_at FROM runner_commands WHERE id=?",
+                (other_id,),
+            ).fetchone())
+        self.assertEqual(before, after)
+        self.assertEqual(("completed", "cloud done"), self.state()[:2])
+
     @unittest.expectedFailure
     def test_scheduler_expired_terminal_state_cannot_be_revived(self):
         # Simulate the watchdog marking an overdue command failed before
