@@ -27,7 +27,7 @@ def _valid(w):
         return False
     if not isinstance(w.head_sha, str) or not _SHA.fullmatch(w.head_sha):
         return False
-    if not isinstance(w.observed_at, str) or not w.observed_at.endswith("Z"):
+    if not isinstance(w.observed_at, str) or not _UTC_TIMESTAMP.fullmatch(w.observed_at):
         return False
     try:
         parsed = datetime.fromisoformat(w.observed_at.replace("Z", "+00:00"))
