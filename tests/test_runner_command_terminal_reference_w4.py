@@ -77,6 +77,25 @@ class RunnerTerminalReferenceModel(unittest.TestCase):
         self.assertEqual(("pending", None), self.row(1))
 
 
+    def test_javascript_number_precision_collision_requires_transport_gate(self):
+        # JavaScript JSON.parse uses IEEE-754 Number for numeric command IDs.
+        # SQLite can allocate IDs beyond 2**53 - 1. This test documents
+        # the precision collision; it does not claim production validation.
+        safe_limit = 2**53 - 1
+        self.assertEqual(safe_limit, int(float(safe_limit)))
+        unsafe_id = safe_limit + 2
+        self.assertNotEqual(unsafe_id, int(float(unsafe_id)))
+        self.assertEqual(int(float(unsafe_id)), int(float(unsafe_id - 1)))
+
+    def test_sqlite_accepts_ids_beyond_javascript_safe_range(self):
+        unsafe_id = 2**53 + 1
+        self.db.execute(
+            "INSERT INTO runner_commands (id,status,result) VALUES (?,?,?)",
+            (unsafe_id, "pending", None),
+        )
+        self.assertTrue(finish(self.db, unsafe_id, "completed", "server-only"))
+        self.assertEqual(("completed", "server-only"), self.row(unsafe_id))
+
     def test_sql_injection_like_result_remains_inert_data(self):
         payload = "x'); DELETE FROM runner_commands; --"
         self.assertTrue(finish(self.db, 1, "completed", payload))
