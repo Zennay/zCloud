@@ -74,8 +74,8 @@ def main():
         print("ERROR: empty expected-failure traceback", file=sys.stderr)
         return 1
     # expectedFailure accepts *any* exception, including a broken test
-    # fixture. Require the terminal exception to be an assertion,
-    # rather than matching incidental 'AssertionError:' text within frames.
+    # fixture. Chained exceptions can append frames after an assertion;
+    # accept only unindented exception headings, not source-code text.
     non_assertion_xfails = sorted(
         name for name, trace in summary["expected_failure_details"].items()
         if not any(line.startswith("AssertionError:") for line in trace.splitlines())
