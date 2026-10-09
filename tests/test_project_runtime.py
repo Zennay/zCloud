@@ -253,5 +253,80 @@ class ProjectRuntimeTests(unittest.TestCase):
             runtime.load_contracts()
 
 
+    def test_boolean_resource_pool_slots_rejected_instead_of_cast_to_capacity(self):
+        data = json.loads(self.contracts.read_text(encoding="utf-8"))
+        for value in (True, False):
+            with self.subTest(slots=value):
+                data["resource_pools"]["protected"]["slots"] = value
+                self.contracts.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "non-negative integer slots"):
+                    runtime.load_contracts()
+        data["resource_pools"]["protected"]["slots"] = 2
+        self.contracts.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(2, runtime.load_contracts()["resource_pools"]["protected"]["slots"])
+
+    def test_receipt_coverage_rejects_far_future_observation(self):
+        runtime.record_receipt(
+            self.conn, "cloud",
+            observed_at="2026-10-04T00:00:00+00:00",
+            action="incorrect clock", source="fixture",
+        )
+        coverage = runtime.receipt_coverage(
+            self.conn, ["cloud"],
+            max_age_seconds=7200,
+            now_value="2026-10-03T23:00:00+00:00",
+        )
+        self.assertFalse(coverage["ready"])
+        self.assertEqual(["cloud"], coverage["invalid"])
+        self.assertEqual([], coverage["current"])
+
+    def test_receipt_coverage_rejects_naive_observed_timestamp(self):
+        runtime.record_receipt(
+            self.conn, "cloud",
+            observed_at="2026-10-03T22:30:00",
+            action="ambiguous local clock", source="fixture",
+        )
+        coverage = runtime.receipt_coverage(
+            self.conn, ["cloud"], now_value="2026-10-03T23:00:00+00:00",
+        )
+        self.assertFalse(coverage["ready"])
+        self.assertEqual(["cloud"], coverage["invalid"])
+
+    def test_receipt_coverage_rejects_naive_reference_timestamp(self):
+        with self.assertRaisesRegex(ValueError, "invalid receipt coverage reference time"):
+            runtime.receipt_coverage(self.conn, ["cloud"], now_value="2026-10-03T23:00:00")
+
+    def test_receipt_coverage_accepts_timezone_offset_observation(self):
+        runtime.record_receipt(
+            self.conn, "cloud",
+            observed_at="2026-10-04T00:30:00+02:00",
+            action="offset-aware timestamp", source="fixture",
+        )
+        coverage = runtime.receipt_coverage(
+            self.conn, ["cloud"], max_age_seconds=7200,
+            now_value="2026-10-03T23:00:00+00:00",
+        )
+        self.assertTrue(coverage["ready"])
+        self.assertEqual(["cloud"], coverage["current"])
+
+    def test_receipt_coverage_has_bounded_future_clock_skew(self):
+        reference = "2026-10-03T23:00:00+00:00"
+        for value, is_valid in (
+            ("2026-10-03T23:01:00+00:00", True),
+            ("2026-10-03T23:01:01+00:00", False),
+        ):
+            with self.subTest(observed_at=value):
+                self.conn.execute("DELETE FROM project_state_receipts")
+                runtime.record_receipt(
+                    self.conn, "cloud", observed_at=value,
+                    action="clock skew threshold", source="fixture",
+                )
+                coverage = runtime.receipt_coverage(
+                    self.conn, ["cloud"], now_value=reference,
+                )
+                self.assertEqual(is_valid, coverage["ready"])
+                self.assertEqual([] if is_valid else ["cloud"], coverage["invalid"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
