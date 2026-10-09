@@ -55,6 +55,11 @@ class CommandReceiptContract(unittest.TestCase):
         ]
         self.assertEqual(1, len(route_checks),
                          "exact route comparison must not be duplicated")
+        comparison = route_checks[0]
+        self.assertIsInstance(comparison.left, ast.Attribute)
+        self.assertEqual("path", comparison.left.attr)
+        self.assertEqual(1, len(comparison.ops))
+        self.assertIsInstance(comparison.ops[0], ast.Eq)
 
     def test_local_only(self):
         snippet = endpoint()
