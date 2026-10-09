@@ -57,10 +57,17 @@ def main():
     if result.testsRun < BASELINE_TESTS:
         print(f"ERROR: only {result.testsRun} tests discovered (minimum {BASELINE_TESTS})", file=sys.stderr)
         return 1
-    unexpected_xfails = sorted(
-        name for name in failures
-        if name.rsplit(".", 1)[-1] not in REVIEWED_XFAIL_NAMES
-    )
+    # The approved names belong to precisely two known test classes.
+    # A second class reusing a method name must not inherit xfail approval.
+    approved_ids = {
+        ("test_runner_command_terminal_receipt_boundary_w4.CommandReceiptContract."
+         if name in {"test_pending_compare_and_swap_required",
+                     "test_positive_id_must_be_validated"}
+         else "test_runner_command_receipt_http_w4.RunnerCommandReceiptHttpW4.")
+        + name
+        for name in REVIEWED_XFAIL_NAMES
+    }
+    unexpected_xfails = sorted(set(failures) - approved_ids)
     if unexpected_xfails:
         print("ERROR: unreviewed expected-failure tests: " +
               ", ".join(unexpected_xfails), file=sys.stderr)
