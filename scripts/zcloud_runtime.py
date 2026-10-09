@@ -67,7 +67,15 @@ def main(argv=None) -> int:
             raise ValueError("--project must be nonempty and NUL-free")
     if args.command in {"acquire", "release"}:
         _validated_owner(args.owner)
+    # The runtime will reject these projects anyway. Check before sqlite3
+    # initialization so invalid requests cannot create an empty live DB.
+    if args.command in {"receipt", "acquire"}:
+        runtime.project_contract(args.project)
     if args.command == "receipt":
+        if str(args.ci_status or "").lower() not in {
+            "", "queued", "in_progress", "success", "failure", "cancelled", "skipped"
+        }:
+            raise ValueError("unsupported ci_status")
         args.validated_evidence = json.loads(args.evidence_json)
         if not isinstance(args.validated_evidence, dict):
             raise ValueError("--evidence-json must be an object")
