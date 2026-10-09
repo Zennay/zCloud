@@ -27,6 +27,19 @@ def apply(previous: dict, incoming: Observation) -> dict:
             or type(incoming.observed_at) is not int or incoming.observed_at < 0
             or not isinstance(incoming.values, dict)):
         raise ValueError("ambiguous observation identity, cursor, clock, or fields")
+    # A source/subject cursor is a snapshot identity, not a per-field revision.
+    # Reject stale additions and contradictory snapshot clocks even for new fields.
+    matching = [entry for (source, subject, _), entry in previous.items()
+                if source == incoming.source and subject == incoming.subject]
+    if matching:
+        latest_cursor = max(entry[2] for entry in matching)
+        if incoming.cursor < latest_cursor:
+            return dict(previous)
+        latest_times = {entry[1] for entry in matching if entry[2] == latest_cursor}
+        if incoming.cursor == latest_cursor and latest_times != {incoming.observed_at}:
+            raise ValueError("same-cursor snapshot timestamp conflict")
+        if incoming.cursor > latest_cursor and incoming.observed_at < max(latest_times):
+            raise ValueError("snapshot timestamp regression")
     result = dict(previous)
     for field, value in incoming.values.items():
         if not isinstance(field, str) or not field:
@@ -96,6 +109,20 @@ class PartialObservationContractTests(unittest.TestCase):
     def test_none_field_map_rejected(self):
         with self.assertRaises(ValueError):
             apply({}, Observation("vps", "worker-1", 1, 100, None))
+
+    def test_stale_cursor_cannot_introduce_new_field(self):
+        latest = apply({}, Observation("vps", "worker-1", 4, 400, {"cpu": 60}))
+        self.assertEqual(apply(latest, Observation("vps", "worker-1", 3, 300, {"heartbeat": "dead"})), latest)
+
+    def test_same_snapshot_cursor_requires_consistent_clock_across_fields(self):
+        old = apply({}, Observation("vps", "worker-1", 4, 400, {"cpu": 60}))
+        with self.assertRaises(ValueError):
+            apply(old, Observation("vps", "worker-1", 4, 401, {"heartbeat": "alive"}))
+
+    def test_new_field_cannot_hide_source_clock_regression(self):
+        old = apply({}, Observation("vps", "worker-1", 4, 400, {"cpu": 60}))
+        with self.assertRaises(ValueError):
+            apply(old, Observation("vps", "worker-1", 5, 399, {"heartbeat": "alive"}))
 
     def test_missing_identity_rejected(self):
         with self.assertRaises(ValueError):
