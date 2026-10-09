@@ -68,3 +68,11 @@ Exit code 75 means the pool is currently occupied; callers must queue/retry rath
 New projects are fail-closed. An active project is incomplete until it has an explicit runtime contract. Runtime code must not silently invent autonomy or compute defaults for an unregistered project.
 
 The compatibility `autonomy-policy.json` is now an empty metadata-only placeholder. Production runtime reads use `project-contracts.json`; only explicitly redirected test/recovery paths may still provide an isolated legacy policy. A regression test prevents runtime truth from being reintroduced into the placeholder.
+
+## Worker Completion Controller
+
+`portfolio_queue_audit`'s refill step prefers resuming a project's own
+unfinished GitHub PR work over handing out a brand-new roadmap package. See
+[`worker-completion-controller.md`](worker-completion-controller.md) for the
+classification rules, the `/api/completion` API, and the auto-merge
+guardrails.

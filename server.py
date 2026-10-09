@@ -7,6 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
+import completion_controller
 from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
 
@@ -1055,6 +1056,7 @@ def init_db():
         GLOBAL_CHATGPT_WORKER_LIMIT=DYNAMIC_CHATGPT_WORKERS+DYNAMIC_CLAUDE_WORKERS
         c.execute("CREATE TABLE IF NOT EXISTS autonomy_runtime(project_id TEXT PRIMARY KEY, initialized_at TEXT NOT NULL, manual_pause INTEGER NOT NULL DEFAULT 0, last_dispatch_at TEXT, last_reason TEXT NOT NULL DEFAULT '')")
         project_runtime.init_tables(c)
+        completion_controller.init_tables(c)
         if PORTFOLIO_QUEUE_SEED_FILE.exists():
             try:
                 seed=json.loads(PORTFOLIO_QUEUE_SEED_FILE.read_text(encoding='utf-8'))
@@ -2792,6 +2794,40 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         parent_queue_id=parent_queue_id,
     )
 
+def portfolio_completion_first_continuation(project_id,parent_queue_id=None):
+    """Prefer resuming a project's own unfinished GitHub PR work over handing
+    out a brand-new 'roadmap work package'. Returns the enqueued completion
+    item, or None when the project has no unfinished work on record (either
+    because everything is merged, or because no completion-controller sync
+    has ingested PR state for it yet)."""
+    project_id=str(project_id or '').strip().lower()
+    project=PROJECT_INDEX.get(project_id) or {}
+    if str(project.get('queue_mode') or '').lower()=='human-gated':
+        return None
+    with connect() as c:
+        unfinished=completion_controller.open_unfinished_work(c,project_id)
+    if not unfinished:
+        return None
+    pr_row=unfinished[0]
+    name=str(project.get('name') or project_id or 'project').strip()
+    criteria=completion_controller.completion_queue_criteria(name,pr_row)
+    if parent_queue_id is None:
+        parent_queue_id=f'completion-{project_id}-{pr_row["repo"]}-{pr_row["pr_number"]}'
+    priority='P0' if pr_row['label'] in ('conflicting','ci_failing') else 'P1'
+    if project_id=='haxlab':
+        priority='P2' if priority=='P0' else priority
+    item=portfolio_queue_enqueue(
+        project_id,
+        f'Finish {name} PR #{pr_row["pr_number"]} ({pr_row["label"]})',
+        priority,
+        criteria,
+        pr_row.get('html_url') or '',
+        parent_queue_id=parent_queue_id,
+    )
+    with connect() as c:
+        completion_controller.record_task_started(c,project_id)
+    return item
+
 def portfolio_queue_audit(refill=True):
     """Keep the execution queue write-only, broad enough, and separate from human gates."""
     removed=[]
@@ -2828,7 +2864,13 @@ def portfolio_queue_audit(refill=True):
         if str(project.get('queue_mode') or '').lower()=='human-gated' or project_id in represented:
             continue
         try:
-            item=portfolio_write_continuation(project_id)
+            # Worker Completion Controller: finishing an already-open PR
+            # outranks starting a brand-new roadmap work package. Only fall
+            # back to portfolio_write_continuation when the project has no
+            # unfinished GitHub work on record.
+            item=portfolio_completion_first_continuation(project_id)
+            if not item:
+                item=portfolio_write_continuation(project_id)
             if item:
                 created.append(item['queue_id'])
                 represented.add(project_id)
@@ -4471,6 +4513,55 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({'error':'Ongeldige attention actie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
+            if u.path=='/api/completion':
+                if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
+                action=str(payload.get('action') or '').lower()
+                try:
+                    if action=='sync-pr-state':
+                        project_id=str(payload.get('project_id') or '').strip().lower()
+                        repo=str(payload.get('repo') or '').strip()
+                        if project_id not in PROJECT_INDEX:
+                            return self.reply({'error':'Onbekend project'},400)
+                        if not repo:
+                            return self.reply({'error':'repo is verplicht'},400)
+                        pulls=payload.get('pulls') or []
+                        if not isinstance(pulls,list):
+                            return self.reply({'error':'pulls moet een lijst zijn'},400)
+                        recorded=[]
+                        with connect() as c:
+                            for entry in pulls:
+                                pr=entry.get('pr') or {}
+                                checks=entry.get('checks') or []
+                                number=pr.get('number')
+                                if number is None:
+                                    continue
+                                classification=completion_controller.classify_pr(pr,checks)
+                                row=completion_controller.record_pr_state(c,project_id,repo,int(number),pr,classification)
+                                recorded.append({'pr_number':int(number),'label':classification['label'],'auto_merge_eligible':classification['auto_merge_eligible']})
+                            open_numbers=[p.get('pr',{}).get('number') for p in pulls if p.get('pr',{}).get('number') is not None]
+                            dropped=completion_controller.drop_missing_pr_state(c,project_id,repo,open_numbers) if open_numbers or payload.get('authoritative') else 0
+                        return self.reply({'ok':True,'recorded':recorded,'dropped':dropped,'time':now()})
+                    if action=='progress-event':
+                        project_id=str(payload.get('project_id') or '').strip().lower()
+                        if project_id not in PROJECT_INDEX:
+                            return self.reply({'error':'Onbekend project'},400)
+                        with connect() as c:
+                            result=completion_controller.record_progress_event(
+                                c,project_id,str(payload.get('kind') or ''),
+                                detail=payload.get('detail') or '',source_url=payload.get('source_url') or '',
+                                amount=payload.get('amount') or 1,
+                            )
+                        return self.reply({'ok':True,'metrics':result,'time':now()})
+                    if action=='task-completed':
+                        project_id=str(payload.get('project_id') or '').strip().lower()
+                        if project_id not in PROJECT_INDEX:
+                            return self.reply({'error':'Onbekend project'},400)
+                        with connect() as c:
+                            completion_controller.record_task_completed(c,project_id)
+                        return self.reply({'ok':True,'time':now()})
+                    return self.reply({'error':'Ongeldige completion actie'},400)
+                except ValueError as e:
+                    return self.reply({'error':str(e)},400)
             if u.path=='/api/feature-flags':
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 actor=request_actor(self)
@@ -4611,6 +4702,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_resolved=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
             return self.reply({'items':portfolio_attention_items(include_resolved),'notion_url':PORTFOLIO_ATTENTION_NOTION_URL,'time':now()})
+        if u.path=='/api/completion':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            with connect() as c:
+                status=completion_controller.completion_status(c)
+            return self.reply(status)
         if u.path=='/api/autonomy':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             states=autonomy_states()

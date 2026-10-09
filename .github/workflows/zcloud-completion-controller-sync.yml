@@ -1,0 +1,58 @@
+name: zCloud completion controller sync
+
+# Worker Completion Controller: classify this repo's own open PRs
+# (mergeable / conflicting / ci_failing / needs_review / draft_in_progress /
+# stale) into the portfolio dashboard, and — only for the subset the
+# dashboard re-confirms as auto-merge-eligible at merge time — land them.
+#
+# This workflow intentionally only ever touches zCloud's own PRs with the
+# run's own GITHUB_TOKEN (correctly scoped to this repo only). Extending
+# completion-controller coverage to another portfolio repo means adding the
+# same two steps to that repo's own workflow, posting to the same dashboard
+# project_id used in project-contracts.json; see docs/worker-completion-controller.md.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-completion-controller-sync.yml"
+      - "scripts/zcloud_completion_sync.py"
+      - "completion_controller.py"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: zcloud-completion-controller-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-and-merge:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/zcloud_completion_sync.py
+          sparse-checkout-cone-mode: false
+
+      - name: Classify open PRs and apply safe auto-merges
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_completion_sync.py \
+            --repo "$REPO" \
+            --project-id cloud \
+            --token "$GH_TOKEN" \
+            --dashboard-url http://127.0.0.1:8765 \
+            --apply-merge \
+            --merge-method squash
