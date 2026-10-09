@@ -64,7 +64,7 @@ class IncidentTriageContract(unittest.TestCase):
 
     def test_contradictory_authorization_must_fail(self) -> None:
         doc = DOC.read_text(encoding="utf-8")
-        self.assertTrue(validate(doc + "\\nmutation_authorized: true\\n"))
+        self.assertTrue(validate(doc + "\nmutation_authorized: true\n"))
 
     def test_redaction_override_must_fail(self) -> None:
         doc = DOC.read_text(encoding="utf-8")
