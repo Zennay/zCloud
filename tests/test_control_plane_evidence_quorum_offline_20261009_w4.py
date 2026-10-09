@@ -61,5 +61,26 @@ class QuorumEvidenceTests(unittest.TestCase):
         self.assert_non_authorizing([DictSubclass(source="a", status="running")], "invalid")
 
 
+    def test_source_length_boundaries(self):
+        self.assert_non_authorizing([{"source": "x" * 64, "status": "running"}],
+                                    "unverified_running")
+        for source in ("", "x" * 65, "x\\n", "x/y", "x\\u200b"):
+            with self.subTest(source=repr(source)):
+                self.assert_non_authorizing([{"source": source, "status": "running"}],
+                                            "invalid")
+
+    def test_full_capacity_does_not_grant_authority(self):
+        observations = [
+            {"source": f"worker-{i}", "status": "running"} for i in range(32)
+        ]
+        self.assert_non_authorizing(observations, "unverified_running")
+
+    def test_input_is_not_mutated(self):
+        observations = [{"source": "worker-1", "status": "running"}]
+        original = [entry.copy() for entry in observations]
+        self.assert_non_authorizing(observations, "unverified_running")
+        self.assertEqual(observations, original)
+
+
 if __name__ == "__main__":
     unittest.main()
