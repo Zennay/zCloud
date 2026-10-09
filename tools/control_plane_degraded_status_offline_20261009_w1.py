@@ -23,7 +23,7 @@ def classify(observation, *, now, expected_worker_id=None, expected_assignment_i
     base_fields = {"kind", "source", "observed_at"}
     identity_fields = {"worker_id", "assignment_id", "correlated"}
     if kind == "generation_started":
-        if set(observation) != base_fields | identity_fields:
+        if set(observation) != base_fields | identity_fields or type(observation["correlated"]) is not bool:
             return result
     elif set(observation) != base_fields:
         return result
