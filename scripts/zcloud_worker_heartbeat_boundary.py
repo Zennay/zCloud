@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Offline, deny-only check of purported worker heartbeat evidence.
+"""Offline, deny-only shape/freshness check of untrusted heartbeat input.
 
-No network, SQLite, browser, or service access.  Not an authorization gate.
+Never use its output as authentication or recovery/deployment authorization.
 """
 import argparse
 import datetime as dt
@@ -13,7 +13,10 @@ MAX_AGE_SECONDS = 180
 def validate(record, now):
     reasons = []
     if not isinstance(record, dict):
-        return {"trusted": False, "reasons": ["not_an_object"]}
+        return {"trusted": False, "reasons": ["not_an_object"], "mutation_performed": False,
+                "authorization_granted": False}
+    if not isinstance(now, dt.datetime) or now.tzinfo is None or now.utcoffset() is None:
+        reasons.append("invalid_reference_clock")
     if record.get("source") != "vps_sqlite_observed":
         reasons.append("untrusted_source")
     if record.get("kind") != "worker_generation_heartbeat":
@@ -29,16 +32,18 @@ def validate(record, now):
         observed = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
         if observed.utcoffset() != dt.timedelta(0):
             raise ValueError("UTC required")
-        age = (now - observed).total_seconds()
-        if age < 0:
-            reasons.append("future_observation")
-        elif age > MAX_AGE_SECONDS:
-            reasons.append("stale_observation")
+        if "invalid_reference_clock" not in reasons:
+            age = (now - observed).total_seconds()
+            if age < 0:
+                reasons.append("future_observation")
+            elif age > MAX_AGE_SECONDS:
+                reasons.append("stale_observation")
     except (ValueError, TypeError, OverflowError):
         reasons.append("invalid_observed_at")
     if record.get("generation_started") is not True:
         reasons.append("generation_not_proven")
-    return {"trusted": not reasons, "reasons": reasons, "mutation_performed": False}
+    return {"trusted": not reasons, "reasons": reasons, "mutation_performed": False,
+            "authorization_granted": False}
 
 def main():
     parser = argparse.ArgumentParser()
@@ -49,7 +54,8 @@ def main():
         record = json.loads(args.record.read_text(encoding="utf-8"))
         result = validate(record, now)
     except (OSError, json.JSONDecodeError, UnicodeError):
-        result = {"trusted": False, "reasons": ["invalid_input"], "mutation_performed": False}
+        result = {"trusted": False, "reasons": ["invalid_input"],
+                  "mutation_performed": False, "authorization_granted": False}
     print(json.dumps(result, sort_keys=True))
     return 0 if result["trusted"] else 1
 
