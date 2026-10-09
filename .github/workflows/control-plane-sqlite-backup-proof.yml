@@ -21,6 +21,7 @@ jobs:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Guard canonical VPS before checkout
+        id: host_guard
         run: |
           test "$(hostname)" = vps-bb300bba
           test "$RUNNER_NAME" = zcloud-vps-1
@@ -29,19 +30,23 @@ jobs:
           ref: ${{ env.EXPECTED_SHA }}
           persist-credentials: false
       - name: Guard immutable candidate and permanent runner
+        id: candidate_guard
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Focused real SQLite backup proof
+        id: focused
         run: |
           python3 -m compileall -q scripts/zcloud_sqlite_backup_probe.py tests/test_zcloud_sqlite_backup_probe.py
           python3 -m unittest -v tests.test_zcloud_sqlite_backup_probe
       - name: Existing runtime and recovery compatibility
+        id: compatibility
         run: python3 -m unittest -v tests.test_project_runtime tests.test_zcloud_recovery tests.test_control_plane_recovery_runbook
       - name: Record raw full-suite result with exact known-failure boundary
+        id: raw_suite
         run: |
           python3 - <<'PY'
-          import json, os, unittest
+          import json, os, pathlib, unittest
           suite = unittest.defaultTestLoader.discover(".")
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           failures = sorted(test.id() for test, detail in result.failures)
@@ -50,7 +55,11 @@ jobs:
               "tests.test_autonomy_policy.AutonomyPolicyTests.test_scheduler_bootstraps_once_and_manual_pause_wins",
               "tests.test_autonomy_policy.AutonomyPolicyTests.test_vps_scheduler_pushes_active_ai_worker_and_rate_limits_it",
           }
-          print("RAW_SUITE_RESULT=" + json.dumps({"tests": result.testsRun, "failures": failures, "errors": errors}))
+          summary = {"candidate_sha": os.environ["EXPECTED_SHA"], "run_id": os.environ["GITHUB_RUN_ID"],
+                     "tests": result.testsRun, "failures": failures, "errors": errors}
+          raw_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / ("sqlite-backup-raw-" + os.environ["GITHUB_RUN_ID"] + ".json")
+          raw_path.write_text(json.dumps(summary, sort_keys=True))
+          print("RAW_SUITE_RESULT=" + json.dumps(summary))
           if errors or not set(failures).issubset(known):
               raise SystemExit("Unexpected failure; composition proof refused")
           state = "passed" if result.wasSuccessful() else "known_host_memory_failure"
@@ -58,6 +67,7 @@ jobs:
               handle.write("RAW_SUITE_STATUS=" + state + "\n")
           PY
       - name: Read immutable fixture from existing owner PR646
+        id: fixture
         uses: actions/checkout@v4
         with:
           ref: b734ab0216c2147eab056f5800606afd9cf7155b
@@ -66,6 +76,7 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Compose only owner fixture in isolated candidate copy
+        id: compose
         env:
           FIXTURE_BLOB: d38873afed33266fcda0d093a2b8e35787082f34
         run: |
@@ -109,27 +120,40 @@ jobs:
           print("OWNER_FIXTURE_COMPOSED_WITH_ALL_CURRENT_TEST_METHODS_PRESERVED", len(original_tests))
           PY
       - name: Require all tests green in owner-fixture composition
+        id: composed
         run: |
           cd "$COMPOSITION_SNAPSHOT"
           python3 -m unittest discover -v
           python3 -m unittest -v tests.test_worker_memory_guard
       - name: Publish bounded proof receipt
+        id: receipt
+        if: always() && steps.host_guard.outcome == 'success'
         env:
           PROOF_PATH: ${{ runner.temp }}/sqlite-backup-proof-${{ github.run_id }}.json
+          STEP_RESULTS: '{"host_guard":"${{ steps.host_guard.outcome }}","candidate_guard":"${{ steps.candidate_guard.outcome }}","focused":"${{ steps.focused.outcome }}","compatibility":"${{ steps.compatibility.outcome }}","raw_suite":"${{ steps.raw_suite.outcome }}","fixture":"${{ steps.fixture.outcome }}","compose":"${{ steps.compose.outcome }}","composed":"${{ steps.composed.outcome }}"}'
         run: |
           python3 - <<'PY'
           import json, os, pathlib, socket
+          outcomes = json.loads(os.environ["STEP_RESULTS"])
+          success = bool(outcomes) and all(value == "success" for value in outcomes.values())
+          raw_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / ("sqlite-backup-raw-" + os.environ["GITHUB_RUN_ID"] + ".json")
+          raw = json.loads(raw_path.read_text()) if raw_path.exists() else None
+          if raw is not None and (raw.get("candidate_sha") != os.environ["EXPECTED_SHA"] or raw.get("run_id") != os.environ["GITHUB_RUN_ID"]):
+              raise SystemExit("Raw evidence identity mismatch")
           report = {"schema_version": 1, "candidate_sha": os.environ["EXPECTED_SHA"],
                     "host": socket.gethostname(), "runner": os.environ["RUNNER_NAME"],
-                    "run_id": os.environ["GITHUB_RUN_ID"], "status": "success",
+                    "run_id": os.environ["GITHUB_RUN_ID"], "status": "success" if success else "incomplete",
+                    "step_outcomes": outcomes, "raw_suite": raw,
                     "evidence_mode": "temporary-real-sqlite-with-owner-memory-fixture",
-                    "raw_suite_status": os.environ["RAW_SUITE_STATUS"],
+                    "raw_suite_status": os.environ.get("RAW_SUITE_STATUS", "not_accepted"),
                     "fixture_owner_pr": 646, "fixture_owner_sha": "b734ab0216c2147eab056f5800606afd9cf7155b",
-                    "production_restore_performed": False, "live_database_opened": False}
+                    "production_restore_performed": False, "live_database_opened": False,
+                    "authority_granted": False}
           pathlib.Path(os.environ["PROOF_PATH"]).write_text(json.dumps(report, sort_keys=True))
           print(json.dumps(report, sort_keys=True))
           PY
       - uses: actions/upload-artifact@v4
+        if: always() && steps.receipt.outcome == 'success'
         with:
           name: sqlite-backup-readability-proof
           path: ${{ runner.temp }}/sqlite-backup-proof-${{ github.run_id }}.json
