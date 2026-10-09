@@ -23,6 +23,29 @@ class RestartAdmissionTests(unittest.TestCase):
                 del sample[key]
                 self.assertFalse(assess_restart(sample).allowed)
 
+    def test_invalid_mapping_fails_closed(self):
+        for value in (None, [], "", True):
+            with self.subTest(value=value):
+                decision = assess_restart(value)
+                self.assertFalse(decision.allowed)
+                self.assertEqual(decision.reason, "invalid_evidence")
+
+    def test_malformed_identifiers_fail_closed(self):
+        for identity in ("", " ", " worker", "worker\\nname", "../escape",
+                         "x" * 129, "worker/child"):
+            for key in ("worker_id", "generation_id", "observed_generation_id"):
+                with self.subTest(identity=identity, key=key):
+                    sample = valid()
+                    sample[key] = identity
+                    self.assertEqual(assess_restart(sample).reason, "invalid_identity")
+
+    def test_age_boundaries(self):
+        for age in (0, 30, 0.25):
+            with self.subTest(age=age):
+                sample = valid()
+                sample["observation_age_seconds"] = age
+                self.assertTrue(assess_restart(sample).allowed)
+
     def test_stale_and_malformed_age(self):
         for age in (-1, 31, None, True, "0", float("nan"), float("inf")):
             with self.subTest(age=age):
