@@ -104,5 +104,19 @@ class DegradedStatusCopyContract(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, self.text)
 
+
+    def test_release_veto_and_integration_ownership(self):
+        for fragment in (
+            "Integration handoff — blocked until owner review",
+            "serialized control-plane owner",
+            "authenticated producer",
+            "independent review",
+            "Release veto",
+            "do not merge/deploy",
+            "not a deployment gate",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, self.text)
+
 if __name__ == "__main__":
     unittest.main()
