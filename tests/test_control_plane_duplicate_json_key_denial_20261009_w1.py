@@ -58,6 +58,16 @@ class DuplicateJSONKeyEvidenceTests(unittest.TestCase):
     def test_nested_list_object_duplicate_is_denied(self):
         self.assert_denied('{"events":[{"attempt":1,"attempt":2}]}')
 
+    def test_escaped_equivalent_keys_denied(self):
+        self.assert_denied('{"run_id":1,"run_\\u0069d":2}')
+
+    def test_unicode_key_alias_denied(self):
+        self.assert_denied('{"\\u0061uthorized":true,"authorized":false}')
+
+    def test_nonfinite_infinity_denied(self):
+        self.assert_denied('{"cpu":Infinity}')
+        self.assert_denied('{"cpu":-Infinity}')
+
     def test_nonfinite_literal_denied(self):
         self.assert_denied('{"cpu":NaN}')
 
