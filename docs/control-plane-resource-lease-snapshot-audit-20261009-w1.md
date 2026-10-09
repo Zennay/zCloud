@@ -1,7 +1,7 @@
 # Resource-lease snapshot integrity audit (offline, control-plane)
 
 This is a **non-authorizing** auditor for zCloud's existing `project_runtime.resource_status()` read model.
-It reads two exported UTF-8 JSON files and cannot open SQLite, call a service, dispatch a job,
+It reads two exported UTF-8 JSON files (maximum 4 MiB each, bounded before parsing) and cannot open SQLite, call a service, dispatch a job,
 repair a VPS, change a resource allocation, or authorize integration/deployment.
 
 ## Why this exists
