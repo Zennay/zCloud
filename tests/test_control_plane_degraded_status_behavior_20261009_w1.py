@@ -156,5 +156,17 @@ class ClassifierTests(unittest.TestCase):
                         item, now=NOW, expected_worker_id=values["worker_id"],
                         expected_assignment_id=values["assignment_id"])["label"])
 
+
+    def test_unicode_format_chars_are_not_trusted_in_identifiers(self):
+        for marker in map(chr, (0x200B, 0x200D, 0x202E, 0x2060)):
+            with self.subTest(codepoint=ord(marker)):
+                self.assertEqual("Status unknown", classify(
+                    evidence("api_responding", source="source" + marker), now=NOW)["label"])
+                values = {"worker_id": "w1" + marker, "assignment_id": "a1", "correlated": True}
+                self.assertEqual("Status unknown", classify(
+                    evidence("generation_started", **values), now=NOW,
+                    expected_worker_id=values["worker_id"],
+                    expected_assignment_id="a1")["label"])
+
 if __name__ == "__main__":
     unittest.main()
