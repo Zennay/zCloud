@@ -5,7 +5,7 @@ This fixture never loads zCloud runtime, a worker queue or production credential
 It documents a proposed acceptance boundary; it does not authorize any live action.
 """
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 
 def evidence_is_fresh(evidence_at: str, now_at: str, max_age_seconds: int = 300) -> bool:
@@ -57,6 +57,23 @@ class EvidenceTimezoneBoundary(unittest.TestCase):
         self.assertFalse(evidence_is_fresh("2026-10-09T03:30:00Z", "2026-10-09T03:30:00Z", -1))
         self.assertFalse(evidence_is_fresh("2026-10-09T03:30:00Z", "2026-10-09T03:30:00Z", True))
 
+
+    def test_dst_spring_forward_uses_elapsed_time_not_wall_clock(self):
+        self.assertTrue(evidence_is_fresh("2026-03-29T01:58:00+01:00", "2026-03-29T03:02:00+02:00"))
+        self.assertFalse(evidence_is_fresh("2026-03-29T01:58:00+01:00", "2026-03-29T03:04:00+02:00"))
+
+    def test_negative_offset_and_cross_midnight(self):
+        self.assertTrue(evidence_is_fresh("2026-10-08T23:59:59-04:00", "2026-10-09T04:00:00Z", 1))
+
+    def test_fractional_second_edges(self):
+        self.assertTrue(evidence_is_fresh("2026-10-09T03:29:59.999999Z", "2026-10-09T03:30:00Z", 1))
+        self.assertFalse(evidence_is_fresh("2026-10-09T03:30:00.000001Z", "2026-10-09T03:30:00Z", 1))
+        self.assertFalse(evidence_is_fresh("2026-10-09T03:29:58.999999Z", "2026-10-09T03:30:00Z", 1))
+
+    def test_noninteger_age_never_widens_admission(self):
+        for bad_age in (0.0, 300.5, "300", None, False):
+            with self.subTest(bad_age=bad_age):
+                self.assertFalse(evidence_is_fresh("2026-10-09T03:30:00Z", "2026-10-09T03:30:00Z", bad_age))
 
 if __name__ == "__main__":
     unittest.main()
