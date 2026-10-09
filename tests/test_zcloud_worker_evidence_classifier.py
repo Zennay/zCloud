@@ -57,6 +57,13 @@ class WorkerEvidenceTests(unittest.TestCase):
         record["events"].append(sample("generation-completed", ts=(NOW - timedelta(seconds=20)).isoformat())["events"][0])
         self.check(record, "generating")
 
+    def test_conflicting_events_at_same_timestamp_fail_closed(self):
+        record = sample("generation-completed")
+        record["events"].append(sample("generation-started")["events"][0])
+        self.check(record, "unknown")
+        record["events"].reverse()
+        self.check(record, "unknown")
+
     def test_completion_does_not_authorize_recovery(self):
         result = classify_worker_evidence(sample("generation-completed"), now=NOW)
         self.assertNotEqual(result["state"], "material_progress")
