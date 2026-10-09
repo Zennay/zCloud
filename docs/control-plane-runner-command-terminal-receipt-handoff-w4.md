@@ -99,3 +99,34 @@ Do not modify `updated_at` on rejected or duplicate receipts. Preserve the
 the public result contract. Repeat the race test with independent SQLite
 connections and the real HTTP handler; the offline reference tests only
 demonstrate intended SQL semantics.
+
+## Producer compatibility audit (default-branch source inspection)
+
+Two known callback producers have now been inspected on the default branch:
+
+* `public/zcloud-worker.user.js`, `commandResult(commandId, resultStatus, result)`,
+  posts `{command_id: commandId, status: resultStatus, result}` through `gmRequest`.
+  It treats any rejected HTTP request as `false`. Thus a 409 duplicate is
+  **not automatically treated as an idempotent success** by this producer.
+* `firefox-extension/background.js`, `commandResult(commandId, status, result)`,
+  serializes `command_id` with `JSON.stringify` into a `fetch` using
+  `mode: "no-cors"` and ignores transport failures. The client cannot reliably
+  inspect the 409 body/status under this mode.
+
+Neither producer converts the supplied ID to a numeric type at the immediate
+callback callsite. Before integrating the strict `type(raw_id) is int` guard,
+the owner must trace the command-fetch/dispatch paths in both producers and
+verify the command ID type received from the server (including legacy
+commands). A mismatch could reject legitimate receipts and cause stale
+commands. The offline fixture does not establish this compatibility.
+
+### Retry and observability decision
+
+If the owner retains the proposed `409` for stale/duplicate receipts, ensure
+workers do not respond with unbounded retry loops or falsely classify an
+already-final command as an operational failure. An alternative is a **non-mutating
+200** for terminal/unknown IDs, but only if the API deliberately specifies this
+behavior and limits disclosure. Either policy must preserve the atomic
+`WHERE id=? AND status='pending'` update and must be tested through both
+producers. Do not change producer retry behavior or the live runner protocol from
+this draft test-only PR.
