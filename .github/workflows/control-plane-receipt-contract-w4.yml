@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths:
       - 'tests/test_runner_command_*_w4.py'
+      # Re-run when the runner/gate or production receipt handler changes.
+      - 'tests/run_receipt_contract_w4.py'
+      - 'server.py'
       - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
       - '.github/workflows/control-plane-receipt-contract-w4.yml'
 
