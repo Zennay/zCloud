@@ -13,7 +13,7 @@ _SECRET_KEY = re.compile(
     re.IGNORECASE,
 )
 _INLINE = re.compile(
-    r"(?i)(?:bearer\\s+)[a-z0-9._~+/-]+|(?:gh[pousr]_[a-z0-9_]{10,})|"
+    r"(?i)(?:bearer\s+)[a-z0-9._~+/-]+|(?:gh[pousr]_[a-z0-9_]{10,})|"
     r"(?:github_pat_[a-z0-9_]{10,})|(?:sk-[a-z0-9_-]{10,})"
 )
 _MAX_DEPTH = 12
