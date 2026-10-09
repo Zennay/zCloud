@@ -179,7 +179,9 @@ def audit_snapshot(snapshot, contracts, *, now=None, max_age_seconds=MAX_SNAPSHO
 
 
 def _load(path):
-    raw = Path(path).read_bytes()
+    # Enforce the bound *during* input, not after an unbounded read into RAM.
+    with Path(path).open("rb") as stream:
+        raw = stream.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         raise ValueError("oversized_input")
     return _strict_json(raw.decode("utf-8"))
