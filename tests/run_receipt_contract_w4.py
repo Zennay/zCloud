@@ -46,10 +46,19 @@ def main():
     summary = {
         "tests_run": result.testsRun,
         "expected_failures": failures,
+        # Keep exact assertion traces for the serialized implementation owner.
+        # Python's runner reports these as expected, so they otherwise vanish
+        # from the human-readable terminal failure summary.
+        "expected_failure_details": {
+            test.id(): traceback
+            for test, traceback in result.expectedFailures
+        },
         "expected_failure_count": len(failures),
         "unexpected_successes": [test.id() for test in result.unexpectedSuccesses],
         "failures": len(result.failures),
+        "failure_details": {test.id(): traceback for test, traceback in result.failures},
         "errors": len(result.errors),
+        "error_details": {test.id(): traceback for test, traceback in result.errors},
         "skipped": [{"test": test.id(), "reason": reason}
                     for test, reason in result.skipped],
     }
