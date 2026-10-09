@@ -39,5 +39,23 @@ class ClassifierTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual({"label": "Status unknown", "authorizes_action": False}, classify(value, now=NOW))
 
+
+    def test_forged_authority_flags_never_grant_permission(self):
+        for kind in ("generation_started", "api_responding", "prompt_sent", "api_unavailable"):
+            item = evidence(kind, worker_id="worker-1", assignment_id="a-1",
+                            correlated=True, authorizes_action=True,
+                            restart_authorized=True, deploy_authorized=True)
+            with self.subTest(kind=kind):
+                actual = classify(item, now=NOW)
+                self.assertIs(actual["authorizes_action"], False)
+                self.assertEqual({"label", "authorizes_action"}, set(actual))
+
+    def test_invalid_current_clock_fails_closed(self):
+        for now in (None, "2026-10-09", datetime(2026, 10, 9, 7, 53),
+                    datetime(2026, 10, 9, 9, 53, tzinfo=timezone(timedelta(hours=2)))):
+            with self.subTest(now=now):
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(evidence("api_responding"), now=now))
+
 if __name__ == "__main__":
     unittest.main()
