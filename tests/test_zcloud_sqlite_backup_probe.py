@@ -132,6 +132,108 @@ class SQLiteBackupProbeTests(unittest.TestCase):
             self.assertEqual(0, probe.main(["--db", str(self.db)]))
         self.assertTrue(json.loads(out.getvalue())["readable"])
 
+    def test_backup_preserves_full_receipt_and_lease_payloads(self):
+        expected = self.rows()
+        copied = []
+        real_connect = sqlite3.connect
+
+        class CopyConnection(sqlite3.Connection):
+            def close(copy):
+                copied.append({
+                    table: list(copy.execute("SELECT * FROM " + table))
+                    for table in ("project_state_receipts", "resource_leases")
+                })
+                super().close()
+
+        def connect(database, **kwargs):
+            if database == ":memory:":
+                kwargs["factory"] = CopyConnection
+            return real_connect(database, **kwargs)
+
+        with patch.object(probe.sqlite3, "connect", side_effect=connect):
+            self.assertTrue(probe.probe_backup(self.db)["readable"])
+        self.assertEqual([expected], copied)
+
+    def test_concurrent_source_growth_aborts_copy_and_preserves_writer_commit(self):
+        self.writer.execute("CREATE TABLE growth_canary(payload BLOB)")
+        self.writer.execute("INSERT INTO growth_canary VALUES(zeroblob(524288))")
+        self.writer.commit()
+        limit = self.writer.execute("PRAGMA page_count").fetchone()[0] + 2
+        real_connect = sqlite3.connect
+        grown = []
+
+        class GrowingSource(sqlite3.Connection):
+            def backup(source, destination, *, pages, progress, sleep):
+                def grow_then_check(status, remaining, total):
+                    if not grown and remaining:
+                        self.writer.execute("INSERT INTO growth_canary VALUES(zeroblob(1048576))")
+                        self.writer.commit()
+                        grown.append(True)
+                    progress(status, remaining, total)
+                return super().backup(destination, pages=pages,
+                                      progress=grow_then_check, sleep=sleep)
+
+        def connect(database, **kwargs):
+            if database != ":memory:":
+                kwargs["factory"] = GrowingSource
+            return real_connect(database, **kwargs)
+
+        with patch.object(probe.sqlite3, "connect", side_effect=connect):
+            with self.assertRaisesRegex(ValueError, "exceeded"):
+                probe.probe_backup(self.db, max_pages=limit)
+        self.assertEqual([True], grown)
+        self.assertEqual(2, self.writer.execute("SELECT COUNT(*) FROM growth_canary").fetchone()[0])
+        self.assertEqual(1, len(self.rows()["project_state_receipts"]))
+
+    def test_source_connection_is_read_only_even_when_caller_attempts_write(self):
+        real_connect = sqlite3.connect
+        attempts = []
+
+        class ReadOnlySource(sqlite3.Connection):
+            def backup(source, destination, **kwargs):
+                with self.assertRaises(sqlite3.OperationalError):
+                    source.execute("DELETE FROM resource_leases")
+                attempts.append(True)
+                return super().backup(destination, **kwargs)
+
+        def connect(database, **kwargs):
+            if database != ":memory:":
+                self.assertTrue(kwargs["uri"])
+                self.assertTrue(database.endswith("?mode=ro"))
+                kwargs["factory"] = ReadOnlySource
+            return real_connect(database, **kwargs)
+
+        before = self.rows()
+        with patch.object(probe.sqlite3, "connect", side_effect=connect):
+            self.assertTrue(probe.probe_backup(self.db)["readable"])
+        self.assertEqual([True], attempts)
+        self.assertEqual(before, self.rows())
+
+    def test_optional_queue_and_claim_state_is_counted_without_replay(self):
+        self.writer.executescript(
+            "CREATE TABLE portfolio_queue(queue_id TEXT PRIMARY KEY,status TEXT,evidence TEXT);"
+            "CREATE TABLE task_claims(claim_key TEXT PRIMARY KEY,lease_until TEXT,metadata_json TEXT);"
+            "INSERT INTO portfolio_queue VALUES('private-queue','done','private-evidence');"
+            "INSERT INTO task_claims VALUES('private-claim','2000-01-01','private-metadata');")
+        before = list(self.writer.execute("SELECT * FROM portfolio_queue"))
+        report = probe.probe_backup(self.db)
+        self.assertEqual(1, report["row_counts"]["portfolio_queue"])
+        self.assertEqual(1, report["row_counts"]["task_claims"])
+        self.assertEqual(before, list(self.writer.execute("SELECT * FROM portfolio_queue")))
+        self.assertFalse(report["authority_granted"])
+        self.assertNotIn("private-", json.dumps(report))
+
+    def test_many_foreign_key_failures_return_bounded_observation(self):
+        self.writer.executescript(
+            "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
+            "CREATE TABLE child(id INTEGER REFERENCES parent(id));")
+        self.writer.executemany("INSERT INTO child VALUES(?)", [(i,) for i in range(20000)])
+        self.writer.commit()
+        report = probe.probe_backup(self.db)
+        self.assertFalse(report["readable"])
+        self.assertFalse(report["foreign_keys_ok"])
+        self.assertLess(len(json.dumps(report)), 1000)
+
 
 if __name__ == "__main__":
     unittest.main()
