@@ -245,5 +245,31 @@ class LaneGeneratorTests(unittest.TestCase):
             classify_backlog_item(project, item)
 
 
+    def test_all_active_writers_block_conflicting_queued_other_lane(self):
+        """A second active item in one lane must not disappear from admission."""
+        active_first = self.item(
+            "ftmo-active-1", "Implement strategy candidate", status="running",
+            metadata={"conflict_scope": {"files": ["src/first.py"]}},
+        )
+        active_second = self.item(
+            "ftmo-active-2", "Implement research recovery", status="verifying",
+            metadata={"conflict_scope": {"files": ["src/shared.py"]}},
+        )
+        queued_qa = self.item(
+            "ftmo-waiting", "Run frozen walk-forward validation",
+            priority="P0",
+            metadata={"conflict_scope": {"files": ["src/shared.py"]}},
+        )
+        lanes = generate_execution_lanes(
+            self.project(), [queued_qa, active_second, active_first]
+        )
+        qa_lane = next(lane for lane in lanes if lane["lane_id"] == "qa-validation")
+        self.assertEqual("blocked", qa_lane["status"])
+        self.assertIsNone(qa_lane["queue_id"])
+        self.assertEqual("ftmo-active-2", qa_lane["blocked_by"][0]["queue_id"])
+        self.assertEqual(["src/shared.py"], qa_lane["blocked_by"][0]["overlap"]["files"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
