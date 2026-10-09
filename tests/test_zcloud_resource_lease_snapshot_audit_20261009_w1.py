@@ -178,8 +178,8 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
 
     def test_rejects_control_character_in_owner_identity(self):
         def change(s, c):
-            s["leases"][0]["owner_id"] = "worker-one\\nspoof"
-            s["pools"]["protected"]["holders"][0]["owner_id"] = "worker-one\\nspoof"
+            s["leases"][0]["owner_id"] = "worker-one" + chr(10) + "spoof"
+            s["pools"]["protected"]["holders"][0]["owner_id"] = "worker-one" + chr(10) + "spoof"
         self.denied(self.audit(change), "invalid_lease")
 
     def test_accepts_snapshot_at_exact_staleness_boundary(self):
