@@ -16,6 +16,11 @@ _INLINE = re.compile(
     r"(?i)(?:bearer\s+)[a-z0-9._~+/-]+|(?:gh[pousr]_[a-z0-9_]{10,})|"
     r"(?:github_pat_[a-z0-9_]{10,})|(?:sk-[a-z0-9_-]{10,})"
 )
+_ASSIGNMENT = re.compile(
+    r"(?i)\b((?:password|passwd|api[_-]?key|access[_-]?token|"
+    r"client[_-]?secret|authorization|cookie)\s*[:=]\s*)"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s&;,]+)"
+)
 _MAX_DEPTH = 12
 _MAX_ITEMS = 200
 _MAX_CHARS = 4096
@@ -30,7 +35,7 @@ def sanitize(value: Any, *, _depth: int = 0) -> Any:
     if value is None or type(value) in (bool, int, float):
         return value
     if isinstance(value, str):
-        return _INLINE.sub(_REDACTED, value[:_MAX_CHARS]) + (
+        return _ASSIGNMENT.sub(lambda m: m.group(1) + _REDACTED, _INLINE.sub(_REDACTED, value[:_MAX_CHARS])) + (
             _TRUNCATED if len(value) > _MAX_CHARS else ""
         )
     if isinstance(value, dict):
