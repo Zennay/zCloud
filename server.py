@@ -463,6 +463,73 @@ def restart_firefox_runtime():
     status['allocation_preserved']=bool(browser_was_dead)
     return status
 
+# --- Firefox crash watchdog -------------------------------------------------
+# The external zcloud-firefox-supervisor (systemd timer, /usr/local/sbin) only
+# triggers a recovery when workers are currently allocated to the browser. That
+# leaves a real gap: if Firefox crashes while idle (no allocated workers), it
+# previously stayed dead until something happened to re-allocate a worker, even
+# though the hard requirement is a visible, interactive Firefox at all times on
+# the VPS desktop. This in-process watchdog closes that gap by monitoring
+# firefox_runner_status() unconditionally and calling the same
+# restart_firefox_runtime() recovery path used everywhere else, so there is
+# still exactly one recovery implementation -- just an additional, allocation
+# independent trigger for it. It uses its own confirmation counter and cooldown
+# so it never fights the external supervisor; whichever notices the crash first
+# brings Firefox back, and the other sees it active and stays quiet.
+FIREFOX_WATCHDOG_INTERVAL_SECONDS=int(os.environ.get('ZCLOUD_FIREFOX_WATCHDOG_INTERVAL_SECONDS','15'))
+FIREFOX_WATCHDOG_CONFIRMATIONS=max(1,int(os.environ.get('ZCLOUD_FIREFOX_WATCHDOG_CONFIRMATIONS','2')))
+FIREFOX_WATCHDOG_COOLDOWN_SECONDS=max(10,int(os.environ.get('ZCLOUD_FIREFOX_WATCHDOG_COOLDOWN_SECONDS','60')))
+_firefox_watchdog_state={'missing_confirmations':0,'last_restart_at':0.0,'last_reason':None}
+
+def _firefox_watchdog_log_event(kind,text):
+    try:
+        eid=f"{kind}:{int(time.time()*1000)}"
+        with connect() as c:
+            c.execute('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)',(eid,now(),'cloud',kind,text,''))
+    except Exception:
+        logging.exception('firefox-watchdog: could not log %s event',kind)
+
+def firefox_watchdog_tick():
+    state=_firefox_watchdog_state
+    status=firefox_runner_status()
+    if status.get('active'):
+        if state['missing_confirmations']:
+            state['missing_confirmations']=0
+            state['last_reason']=None
+        return status
+    state['missing_confirmations']+=1
+    reason=status.get('service_state') or status.get('state') or 'unknown'
+    state['last_reason']=reason
+    if state['missing_confirmations']<FIREFOX_WATCHDOG_CONFIRMATIONS:
+        return status
+    now_ts=time.time()
+    if now_ts-state['last_restart_at']<FIREFOX_WATCHDOG_COOLDOWN_SECONDS:
+        return status
+    logging.warning('firefox-watchdog: Firefox down (%s); requesting recovery (idle-safe path)',reason)
+    _firefox_watchdog_log_event('firefox-crash',f"Firefox niet actief ({reason}); automatisch herstel gestart door idle-watchdog")
+    state['last_restart_at']=now_ts
+    state['missing_confirmations']=0
+    try:
+        result=restart_firefox_runtime()
+    except Exception:
+        logging.exception('firefox-watchdog: recovery attempt raised')
+        _firefox_watchdog_log_event('firefox-recovery','Firefox herstelpoging mislukt met een fout')
+        return status
+    ok=bool(result.get('active'))
+    _firefox_watchdog_log_event('firefox-recovery','Firefox automatisch hersteld' if ok else 'Firefox herstelpoging zonder succes')
+    if not ok:
+        logging.warning('firefox-watchdog: recovery attempt did not bring Firefox active: %s',result.get('recovery_error') or result.get('state'))
+    return result
+
+def firefox_watchdog():
+    time.sleep(20)
+    while True:
+        try:
+            firefox_watchdog_tick()
+        except Exception:
+            logging.exception('firefox-watchdog: unexpected failure in tick')
+        time.sleep(FIREFOX_WATCHDOG_INTERVAL_SECONDS)
+
 def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
     """Return host RAM/swap admission state for browser workers.
 
@@ -4606,4 +4673,5 @@ if __name__=='__main__':
     init_db()
     threading.Thread(target=sampler,daemon=True,name='cloud-monitor').start()
     threading.Thread(target=autonomy_scheduler,daemon=True,name='zcloud-autonomy').start()
+    threading.Thread(target=firefox_watchdog,daemon=True,name='zcloud-firefox-watchdog').start()
     ThreadingHTTPServer((os.getenv('ZENNAY_BIND','0.0.0.0'),int(os.getenv('ZENNAY_PORT','8765'))),Handler).serve_forever()
