@@ -27,6 +27,14 @@ class CommandReceiptContract(unittest.TestCase):
     def test_status_allowlist(self):
         self.assertIn("status not in ('completed','failed')", endpoint())
 
+    def test_live_endpoint_truncates_result_to_300_characters(self):
+        self.assertIn("str(payload.get('result') or '')[:300]", endpoint())
+
+    def test_live_endpoint_uses_bound_parameters(self):
+        snippet = endpoint()
+        self.assertIn("WHERE id=?", snippet)
+        self.assertIn("(status,now(),", snippet)
+
     @unittest.expectedFailure  # Existing server.py gap; unexpected success requires review.
     def test_pending_compare_and_swap_required(self):
         snippet = endpoint()
