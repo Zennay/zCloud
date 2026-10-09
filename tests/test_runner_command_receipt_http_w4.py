@@ -170,6 +170,28 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
             ).fetchall()]
         self.assertEqual(before, after)
 
+    def test_pending_poll_retains_other_commands_after_one_ack(self):
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_commands (project_id,action,status,created_at,updated_at,result)"
+                " VALUES ('cloud','push','pending','2026-10-09','2026-10-09',NULL)"
+            )
+            other_id = conn.execute("SELECT max(id) FROM runner_commands").fetchone()[0]
+        url = "http://127.0.0.1:%d/api/runner-commands" % self.http.server_port
+        with urllib.request.urlopen(url, timeout=5) as response:
+            before = {row["id"] for row in json.load(response)["commands"]}
+        self.assertTrue({self.command_id, other_id}.issubset(before))
+        self.assertEqual(200, self.send(self.command_id, result="one of two"))
+        with urllib.request.urlopen(url, timeout=5) as response:
+            after = {row["id"] for row in json.load(response)["commands"]}
+        self.assertNotIn(self.command_id, after)
+        self.assertIn(other_id, after)
+        with server.connect() as conn:
+            other_state = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?", (other_id,)
+            ).fetchone()
+        self.assertEqual(("pending", None), tuple(other_state))
+
     def test_receipt_only_mutates_target_command(self):
         with server.connect() as conn:
             conn.execute(
