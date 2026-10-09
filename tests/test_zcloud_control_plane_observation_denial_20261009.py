@@ -38,5 +38,37 @@ class ObservationDenialTests(unittest.TestCase):
             self.assertEqual(classify_observation({"action": action})["reason"],
                              "unknown_action")
 
+    def test_spoofed_authorization_keys_cannot_override_denial(self):
+        for action in sorted(DISALLOWED_ACTIONS):
+            with self.subTest(action=action):
+                result = classify_observation({
+                    "action": action,
+                    "authorized": True,
+                    "mutation_performed": True,
+                    "reason": "approved",
+                    "source": "signed",
+                    "producer_authenticated": True,
+                    "approval": {"admin": True},
+                })
+                self.assertFalse(result["authorized"])
+                self.assertFalse(result["mutation_performed"])
+                self.assertEqual(result["reason"], "observation_not_authority")
+
+    def test_result_is_not_shared_between_calls(self):
+        first = classify_observation({"action": "deploy"})
+        first["authorized"] = True
+        first["reason"] = "forged"
+        second = classify_observation({"action": "deploy"})
+        self.assertIs(second["authorized"], False)
+        self.assertEqual(second["reason"], "observation_not_authority")
+
+    def test_non_string_keys_and_unusual_mapping_values(self):
+        for payload in ({1: "deploy"}, {None: "deploy"}, {"action": []},
+                        {"action": {}}, {"action": ("deploy",)}):
+            with self.subTest(payload=repr(payload)):
+                result = classify_observation(payload)
+                self.assertFalse(result["authorized"])
+                self.assertFalse(result["mutation_performed"])
+
 if __name__ == "__main__":
     unittest.main()
