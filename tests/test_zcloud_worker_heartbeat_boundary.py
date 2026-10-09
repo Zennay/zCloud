@@ -32,6 +32,16 @@ class WorkerHeartbeatBoundaryTests(unittest.TestCase):
     def test_missing_identity_denied(self):
         row = sample(); row.pop("assignment_id")
         self.assertIn("invalid_assignment_id", validate(row, NOW)["reasons"])
+    def test_naive_reference_clock_denied(self):
+        self.assertIn("invalid_reference_clock", validate(sample(), NOW.replace(tzinfo=None))["reasons"])
+    def test_reference_clock_wrong_type_denied(self):
+        self.assertFalse(validate(sample(), "2026-10-09")["trusted"])
+    def test_exact_age_limit_accepted(self):
+        row = sample(); row["observed_at"] = "2026-10-09T03:57:00Z"
+        self.assertTrue(validate(row, NOW)["trusted"])
+    def test_authorization_never_granted(self):
+        self.assertFalse(validate(sample(), NOW)["authorization_granted"])
+        self.assertFalse(validate([], NOW)["authorization_granted"])
     def test_no_side_effects_claim(self):
         self.assertFalse(validate(sample(), NOW)["mutation_performed"])
 
