@@ -79,5 +79,14 @@ class ClassifierTests(unittest.TestCase):
                                  classify(forged, now=NOW, expected_worker_id="w1",
                                           expected_assignment_id="a1"))
 
+
+    def test_nonstring_observation_keys_fail_closed(self):
+        for key in (1, None, ("kind",), False):
+            with self.subTest(key=key):
+                value = evidence("api_responding")
+                value[key] = "spoofed"
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(value, now=NOW))
+
 if __name__ == "__main__":
     unittest.main()
