@@ -141,7 +141,8 @@ class ResourceCLIReceiptTransactionTests(unittest.TestCase):
                     "--" + field.replace("_", "-"), value,
                 )
                 self.assertEqual(0, rc)
-                self.assertEqual(value, response["receipt"][field])
+                stored_key = "commit_sha" if field == "commit" else field
+                self.assertEqual(value, response["receipt"][stored_key])
         with sqlite3.connect(self.db) as connection:
             rows = connection.execute(
                 "SELECT phase, action, commit_sha, blocker, next_gate, source "
