@@ -3,7 +3,7 @@
 This module has no runtime, database or worker integration and confers no authority.
 """
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 import re
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -49,6 +49,8 @@ def compare(previous, candidate):
             return "stale_sequence"
         if candidate.sequence == previous.sequence:
             return "duplicate" if candidate == previous else "conflicting_receipt"
+        if candidate.observed_at < previous.observed_at:
+            return "regressed_observation_time"
         return "forward"
     if candidate.sequence != 0:
         return "unanchored_generation"
