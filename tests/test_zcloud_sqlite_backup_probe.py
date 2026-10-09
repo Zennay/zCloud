@@ -75,7 +75,8 @@ class SQLiteBackupProbeTests(unittest.TestCase):
 
     def test_bounds_reject_invalid_values_without_opening_sqlite(self):
         for options in ({"max_pages": True}, {"max_pages": 0}, {"max_pages": 10001},
-                        {"timeout_seconds": True}, {"timeout_seconds": float("nan")},
+                        {"timeout_seconds": True}, {"timeout_seconds": 10 ** 1000},
+                        {"timeout_seconds": -(10 ** 1000)}, {"timeout_seconds": float("nan")},
                         {"timeout_seconds": float("inf")}, {"timeout_seconds": 0},
                         {"timeout_seconds": 31}):
             with self.subTest(options=options), patch.object(probe.sqlite3, "connect") as connect:
