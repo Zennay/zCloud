@@ -1,0 +1,24 @@
+name: Control-plane lease-clock reference (hosted)
+on:
+  pull_request:
+    paths:
+      - 'tests/test_control_plane_lease_clock_boundary_reference_w1.py'
+      - '.github/workflows/control-plane-lease-clock-reference-w1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lease-clock-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated UTC lease-clock reference tests
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_lease_clock_boundary_reference_w1.py' -v
