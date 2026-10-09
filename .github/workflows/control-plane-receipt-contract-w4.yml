@@ -32,7 +32,9 @@ jobs:
           # unittest exits 0 even when discovery finds zero tests. Require
           # the reviewed suite's minimum size so path/rename regressions
           # cannot yield a misleading green result.
-          total="$(grep -oE '^Ran [0-9]+ tests?' receipt-test-results.log | tail -1 | awk '{print $2}')"
+          # A missing summary must reach our explicit error rather than
+          # aborting the shell early through errexit/pipefail.
+          total="$(grep -oE '^Ran [0-9]+ tests?' receipt-test-results.log | tail -1 | awk '{print $2}' || true)"
           if [[ ! "$total" =~ ^[0-9]+$ ]] || (( total < 67 )); then
             echo "::error title=Receipt test discovery gap::Expected at least 67 tests, found ${total:-none}."
             exit 1
