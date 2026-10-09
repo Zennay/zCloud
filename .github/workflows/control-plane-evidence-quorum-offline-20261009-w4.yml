@@ -1,0 +1,23 @@
+name: Offline control-plane observation disagreement contract
+on:
+  pull_request:
+    paths:
+      - 'scripts/control_plane_evidence_quorum_offline_20261009_w4.py'
+      - 'tests/test_control_plane_evidence_quorum_offline_20261009_w4.py'
+      - 'docs/control-plane-evidence-quorum-offline-20261009-w4.md'
+      - '.github/workflows/control-plane-evidence-quorum-offline-20261009-w4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-evidence-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify standalone contract
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_evidence_quorum_offline_20261009_w4.py' -v
