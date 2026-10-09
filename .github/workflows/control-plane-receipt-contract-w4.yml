@@ -19,5 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run isolated control-plane receipt contracts
+        shell: bash
         run: |
-          python3 -m unittest discover -s tests -p 'test_runner_command_*_w4.py' -v
+          set -o pipefail
+          python3 -m unittest discover -s tests -p 'test_runner_command_*_w4.py' -v 2>&1 | tee receipt-test-results.log
+          echo '## Control-plane receipt contract' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^Ran [0-9]+ tests|^OK \(expected failures=[0-9]+\)|^OK receipt-test-results.log >> "$GITHUB_STEP_SUMMARY" || true
+          if grep -q '^OK (expected failures=' receipt-test-results.log; then
+            count="$(sed -n 's/^OK (expected failures=\([0-9][0-9]*\)).*/\1/p' receipt-test-results.log | tail -1)"
+            echo "::warning title=Known production contract gaps::Receipt contract suite passed with ${count} expected failures; green CI does not establish remediation."
+            echo "**Known production defects remain:** ${count} expected-failure probes. Do not treat this job as a production remediation gate." >> "$GITHUB_STEP_SUMMARY"
+          fi
