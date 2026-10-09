@@ -228,6 +228,21 @@ class LeaseSnapshotAuditTests(unittest.TestCase):
         self.assertTrue(result["ready_for_review"])
         self.assertFalse(result["safe_to_act"])
 
+    def test_cli_rejects_oversized_input_before_parsing(self):
+        from scripts.zcloud_resource_lease_snapshot_audit import MAX_INPUT_BYTES
+        _, contracts = fixture()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            sp = root / "snapshot.json"
+            cp = root / "contracts.json"
+            sp.write_bytes(b" " * (MAX_INPUT_BYTES + 1))
+            cp.write_text(json.dumps(contracts), encoding="utf-8")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                status = main(["--snapshot", str(sp), "--contracts", str(cp), "--now", NOW])
+        self.assertEqual(1, status)
+        self.assertEqual(["input_unreadable_or_ambiguous"], json.loads(stream.getvalue())["errors"])
+
     def test_cli_fails_closed_on_ambiguous_input_json(self):
         _, contracts = fixture()
         with tempfile.TemporaryDirectory() as temp:
