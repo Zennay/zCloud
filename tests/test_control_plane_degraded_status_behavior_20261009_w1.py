@@ -88,5 +88,16 @@ class ClassifierTests(unittest.TestCase):
                 self.assertEqual({"label": "Status unknown", "authorizes_action": False},
                                  classify(value, now=NOW))
 
+
+    def test_generation_identity_fields_require_exact_strings(self):
+        for worker, assignment in ((1, "a1"), ("w1", 1), (None, "a1"),
+                                   ("w1", None), (["w1"], "a1"), ("w1", ["a1"])):
+            with self.subTest(worker=worker, assignment=assignment):
+                item = evidence("generation_started", worker_id=worker,
+                                assignment_id=assignment, correlated=True)
+                self.assertEqual("Status unknown", classify(
+                    item, now=NOW, expected_worker_id="w1",
+                    expected_assignment_id="a1")["label"])
+
 if __name__ == "__main__":
     unittest.main()
