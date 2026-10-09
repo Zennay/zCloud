@@ -155,7 +155,7 @@ class InvalidScopeAdmissionTests(unittest.TestCase):
                            "invalid conflict_scope.capabilities")
 
     def test_control_characters_in_file_path_denied(self):
-        self.assert_denied({"files": ["src/secret\\x00.py"]},
+        self.assert_denied({"files": ["src/secret\x00.py"]},
                            "control-character path")
 
     def test_valid_scope_with_optional_empty_lists_remains_valid(self):
@@ -166,19 +166,19 @@ class InvalidScopeAdmissionTests(unittest.TestCase):
         self.assertEqual({"files": [], "capabilities": []}, result)
 
     def test_trailing_newline_file_path_denied_before_stripping(self):
-        self.assert_denied({"files": ["src/server.py\\n"]},
+        self.assert_denied({"files": ["src/server.py\n"]},
                            "control-character path")
 
     def test_leading_tab_file_path_denied_before_stripping(self):
-        self.assert_denied({"files": ["\\tsrc/server.py"]},
+        self.assert_denied({"files": ["\tsrc/server.py"]},
                            "control-character path")
 
     def test_capability_embedded_control_character_denied(self):
-        self.assert_denied({"capabilities": ["queue\\x00owner"]},
+        self.assert_denied({"capabilities": ["queue\x00owner"]},
                            "control character")
 
     def test_capability_trailing_control_character_denied(self):
-        self.assert_denied({"capabilities": ["queue-owner\\n"]},
+        self.assert_denied({"capabilities": ["queue-owner\n"]},
                            "control character")
 
     def test_blank_metadata_json_does_not_mean_empty_scope(self):
