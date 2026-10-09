@@ -370,13 +370,16 @@ def generate_execution_lanes(project, backlog, claims=()):
             if str(item.get("status") or "").lower() in ACTIVE_STATUSES
         ]
         if active:
-            chosen = active[0]
-            chosen_by_lane[lane_id] = chosen
-            occupied_scopes.append({
-                "queue_id": str(chosen.get("queue_id") or ""),
-                "lane_id": lane_id,
-                "scope": chosen["scope"],
-            })
+            # One lane has one displayed representative, but *every* active
+            # task owns its declared write scope. Never hide a second active
+            # writer from cross-lane conflict detection.
+            chosen_by_lane[lane_id] = active[0]
+            for existing in active:
+                occupied_scopes.append({
+                    "queue_id": str(existing.get("queue_id") or ""),
+                    "lane_id": lane_id,
+                    "scope": existing["scope"],
+                })
 
     queued = sorted(
         [
