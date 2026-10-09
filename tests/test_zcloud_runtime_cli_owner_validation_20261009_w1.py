@@ -59,6 +59,29 @@ class ResourceCLIOwnerTests(unittest.TestCase):
                     self.invoke("release", invalid)
                 self.assertFalse(self.db.exists(), "invalid release must not open SQLite")
 
+    def test_invalid_acquire_metadata_never_opens_database(self):
+        for raw in ("{invalid", "[]", "null", "true", "123", '"text"'):
+            with self.subTest(metadata=raw):
+                with self.assertRaises((ValueError, json.JSONDecodeError)):
+                    with redirect_stdout(io.StringIO()):
+                        cli.main([
+                            "--db", str(self.db), "acquire", "--project", "ftmo",
+                            "--owner", "valid", "--metadata-json", raw
+                        ])
+                self.assertFalse(self.db.exists(), "invalid metadata must not initialize SQLite")
+
+    def test_valid_acquire_metadata_survives_round_trip(self):
+        with redirect_stdout(io.StringIO()) as output:
+            rc = cli.main([
+                "--db", str(self.db), "acquire", "--project", "ftmo",
+                "--owner", "valid", "--metadata-json", '{"source":"offline-test"}'
+            ])
+        self.assertEqual(0, rc)
+        self.assertEqual(
+            {"source": "offline-test"},
+            json.loads(output.getvalue())["lease"]["metadata"],
+        )
+
     def test_exact_two_hundred_character_owner_is_preserved_and_releasable(self):
         owner = "é" * 200
         rc, acquired = self.invoke("acquire", owner)
