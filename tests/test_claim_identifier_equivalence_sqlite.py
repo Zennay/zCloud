@@ -3,6 +3,7 @@
 This contract tests database key semantics only. HTTP admission and visual
 rendering remain unverified until isolated handler fixtures are approved.
 """
+import json
 import sqlite3
 import unittest
 import unicodedata
@@ -64,6 +65,39 @@ class IdentifierEquivalenceContract(unittest.TestCase):
         )
         self.assertEqual([("cloud", "notion:api", "cloud-owner")],
                          self.db.execute("SELECT * FROM claims").fetchall())
+
+    def test_json_round_trip_preserves_machine_identifiers(self):
+        keys = [
+            "notion:é", "notion:e\\u0301", "task:\\u0430",
+            "task:x\\u202ey", "task:x\\u2066y", "task:x\\u200dy",
+            "notion\\uff1aapi",
+        ]
+        for key in keys:
+            with self.subTest(key=repr(key)):
+                wire = json.dumps({"project_id": "cloud", "claim_key": key}, ensure_ascii=True)
+                decoded = json.loads(wire)
+                self.assertEqual(key, decoded["claim_key"])
+                self.db.execute("INSERT INTO claims VALUES (?, ?, ?)", ("cloud", decoded["claim_key"], "owner-a"))
+                stored = self.db.execute(
+                    "SELECT claim_key FROM claims WHERE project_id=? AND claim_key=?",
+                    ("cloud", key),
+                ).fetchone()[0]
+                self.assertEqual(key, stored)
+                self.db.execute("DELETE FROM claims")
+
+    def test_owner_mismatch_never_deletes_unicode_claim(self):
+        for claim_key in ("notion:é", "notion:e\\u0301", "task:\\u202e", "notion\\uff1aapi"):
+            with self.subTest(key=repr(claim_key)):
+                self.db.execute("INSERT INTO claims VALUES (?, ?, ?)", ("cloud", claim_key, "owner-a"))
+                self.db.execute(
+                    "DELETE FROM claims WHERE project_id=? AND claim_key=? AND owner_id=?",
+                    ("cloud", claim_key, "owner-b"),
+                )
+                self.assertEqual(("owner-a",), self.db.execute(
+                    "SELECT owner_id FROM claims WHERE project_id=? AND claim_key=?",
+                    ("cloud", claim_key),
+                ).fetchone())
+                self.db.execute("DELETE FROM claims")
 
     def test_normalization_would_collapse_an_existing_pair(self):
         first, second = "notion:é", "notion:e\u0301"
