@@ -328,5 +328,20 @@ class ProjectRuntimeTests(unittest.TestCase):
                 self.assertEqual([] if is_valid else ["cloud"], coverage["invalid"])
 
 
+    def test_explicit_zero_receipt_window_does_not_restore_24_hour_default(self):
+        runtime.record_receipt(
+            self.conn, "cloud",
+            observed_at="2026-10-03T22:58:30+00:00",
+            source="fixture",
+        )
+        coverage = runtime.receipt_coverage(
+            self.conn, ["cloud"], max_age_seconds=0,
+            now_value="2026-10-03T23:00:00+00:00",
+        )
+        self.assertEqual(60, coverage["max_age_seconds"])
+        self.assertFalse(coverage["ready"])
+        self.assertEqual(["cloud"], [item["project_id"] for item in coverage["stale"]])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
