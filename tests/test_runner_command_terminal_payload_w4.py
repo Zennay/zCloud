@@ -60,5 +60,25 @@ class TerminalReceiptPayloadReference(unittest.TestCase):
                 finally:
                     db.close()
 
+    def test_unicode_truncation_uses_character_count(self):
+        payload = "🧪" * 350
+        db = sqlite3.connect(":memory:")
+        self.addCleanup(db.close)
+        db.execute(
+            "CREATE TABLE runner_commands "
+            "(id INTEGER PRIMARY KEY, status TEXT NOT NULL, result TEXT)"
+        )
+        db.execute("INSERT INTO runner_commands VALUES (1,'pending',NULL)")
+        db.execute(
+            "UPDATE runner_commands SET status=?,result=? "
+            "WHERE id=? AND status='pending'",
+            ("completed", payload[:300], 1),
+        )
+        stored = db.execute(
+            "SELECT result FROM runner_commands WHERE id=1"
+        ).fetchone()[0]
+        self.assertEqual(300, len(stored))
+        self.assertEqual("🧪" * 300, stored)
+
 if __name__ == "__main__":
     unittest.main()
