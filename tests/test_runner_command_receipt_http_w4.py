@@ -105,6 +105,26 @@ class RunnerCommandReceiptHttpW4(unittest.TestCase):
         self.assertEqual(("completed", "preflight"), self.state()[:2])
 
     @unittest.expectedFailure
+    def test_unsafe_javascript_integer_id_must_be_rejected(self):
+        # SQLite can represent this integer, but JSON numeric transport through
+        # browser Number cannot preserve it. Reject rather than risk ACKing an
+        # adjacent command after the value has been rounded.
+        unsafe_id = (1 << 53) + 1
+        with server.connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_commands "
+                "(id,project_id,action,status,created_at,updated_at,result) "
+                "VALUES (?, 'cloud', 'push', 'pending', '2026-10-09', '2026-10-09', NULL)",
+                (unsafe_id,),
+            )
+        self.assertEqual(400, self.send(unsafe_id, result="unsafe"))
+        with server.connect() as conn:
+            row = conn.execute(
+                "SELECT status,result FROM runner_commands WHERE id=?", (unsafe_id,)
+            ).fetchone()
+        self.assertEqual(("pending", None), tuple(row))
+
+    @unittest.expectedFailure
     def test_unknown_id_must_not_report_success(self):
         # Current endpoint returns {"ok":true} despite UPDATE rowcount=0.
         # Avoid claiming dispatch success for a command that never existed.
