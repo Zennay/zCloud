@@ -36,5 +36,29 @@ class TerminalReceiptPayloadReference(unittest.TestCase):
         self.assertEqual(300, len(result))
 
 
+    def test_payload_length_boundaries(self):
+        for length in (0, 1, 299, 300, 301, 16384):
+            with self.subTest(length=length):
+                db = sqlite3.connect(":memory:")
+                try:
+                    db.execute(
+                        "CREATE TABLE runner_commands "
+                        "(id INTEGER PRIMARY KEY, status TEXT NOT NULL, result TEXT)"
+                    )
+                    db.execute("INSERT INTO runner_commands VALUES(1,'pending',NULL)")
+                    payload = "x" * length
+                    update = db.execute(
+                        "UPDATE runner_commands SET status=?,result=? "
+                        "WHERE id=? AND status='pending'",
+                        ("completed", payload[:300], 1),
+                    )
+                    self.assertEqual(1, update.rowcount)
+                    saved = db.execute(
+                        "SELECT result FROM runner_commands WHERE id=1"
+                    ).fetchone()[0]
+                    self.assertEqual("x" * min(length, 300), saved)
+                finally:
+                    db.close()
+
 if __name__ == "__main__":
     unittest.main()
