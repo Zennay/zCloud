@@ -137,5 +137,12 @@ class ClassifierTests(unittest.TestCase):
                 self.assertEqual("Status unknown", classify(item, now=NOW,
                     expected_worker_id=expected_worker, expected_assignment_id=expected_assignment)["label"])
 
+
+    def test_source_control_characters_are_denied(self):
+        for source in ("source\x00", "source\x1b", "source\n", "source\x7f", "source\x85"):
+            with self.subTest(source=repr(source)):
+                self.assertEqual({"label": "Status unknown", "authorizes_action": False},
+                                 classify(evidence("api_responding", source=source), now=NOW))
+
 if __name__ == "__main__":
     unittest.main()
