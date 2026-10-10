@@ -18,6 +18,7 @@ Supported comment bodies (one line, no extra Markdown):
 - `/zssh service zssh-public` — systemd state (read-only)
 - `/zssh run write-probe` — write, verify and delete a temporary VPS file
 - `/zssh run zcloud-guard-test` — execute the reviewed VPS identity unit test
+- `/zssh run zcloud-health-smoke` — run a separate, checked-in Python recipe for a real VPS guard smoke test
 
 Example user request: "Check the VPS via the zSSH GitHub runner route. Comment
 `/zssh status` on zCloud issue #1278, then inspect the resulting Actions run
@@ -42,10 +43,14 @@ arbitrary shell as commands. The bridge intentionally does not accept generic
 `ssh`, `bash -c`, `sudo`, file reads or unrestricted commands.
 
 To perform new VPS work from ChatGPT, have ChatGPT implement the exact operation
-as a reviewed, tested *named recipe* in
-`scripts/zcloud_chatgpt_runner_bridge.py`, update the anchored command
-allowlist and regression tests, and merge it through the existing protected
-main-branch approval checks. Only then request it as `/zssh run <recipe-name>`.
+as a reviewed, tested *Python recipe* at
+`ops/zssh-runner-recipes/<recipe-name>.py` and merge it through the protected
+main branch. The fixed parser accepts a lowercase recipe slug, never shell
+text or a filesystem path. The runner executes that exact checked-in Python
+file as the non-root account with a 20-second deadline, suppresses its raw
+stdout/stderr, and returns only a machine-owned success/failure receipt. To
+run it, post `/zssh run <recipe-name>` on issue #1278. No additional workflow
+or interpreter change is required for each new recipe.
 This gives the same self-hosted VPS execution mechanism without exposing an
 unreviewed public remote shell. Use dedicated least-privileged service identities
 or protected GitHub environments for more powerful recipes.
