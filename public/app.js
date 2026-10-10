@@ -385,7 +385,7 @@ function globalWorkerRows(){
       +'<div class="global-worker-state '+statusClass+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
       +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Preferred project for worker '+slot+'"><option value=""'+(!draft?' selected':'')+'>Automatic (queue)</option>'+optionsFor(draft)+'</select></label>'
       +'<div class="global-worker-actions">'
-      +'<button type="button" class="project-secondary-button" data-global-worker-assign="'+slot+'" '+(!draft||unchanged||busySlot||waiting?'disabled':'')+' title="Request this project through the existing scheduler">'+assignLabel+'</button>'
+      +'<button type="button" class="project-secondary-button" data-global-worker-assign="'+slot+'"'+(!draft||unchanged||busySlot||waiting?' disabled':'')+' title="Request this project through the existing scheduler">'+assignLabel+'</button>'
       +(hasWorkerId
         ?'<button type="button" class="project-secondary-button" data-worker-action="'+(w.desired_state==='paused'?'start':'pause')+'" data-worker-id="'+esc(w.worker)+'">'+(w.desired_state==='paused'?'Start':'Stop')+'</button><button type="button" class="project-secondary-button" data-runner-new-chat="'+esc(w.worker)+'">New chat</button>'
         :'')
