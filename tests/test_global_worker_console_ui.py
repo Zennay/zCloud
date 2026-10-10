@@ -27,20 +27,29 @@ let rows = vm.runInContext('globalWorkerRows()',ctx);
 assert.equal((rows.match(/class="global-worker-row"/g) || []).length,3);
 assert.match(rows,/value="supa" selected/);
 assert.match(rows,/data-worker-id="supa::w1"/);
-assert.match(rows,/data-global-worker-assign="3" disabled/);
+assert.match(rows,/data-global-worker-play="3"[^>]*disabled/);
+assert.equal((rows.match(/data-global-worker-play=/g)||[]).length,3);
+assert.equal((rows.match(/data-worker-action="pause"/g)||[]).length,3);
+assert.equal((rows.match(/data-worker-action="push"/g)||[]).length,3);
+assert.match(rows,/Signaal:/);
+assert.match(rows,/Prompt:/);
+assert.match(rows,/Taak:/);
 assert.match(rows,/https:\/\/chatgpt.com\/c\/a123/);
 assert.match(rows,/https:\/\/claude.ai\/chat\/b234/);
 vm.runInContext('GLOBAL_WORKER_PROJECT_REQUESTS[2]="supa"',ctx);
 rows=vm.runInContext('globalWorkerRows()',ctx);
 assert.match(rows,/data-global-worker-project="2"[^>]*>[\s\S]*?value="supa" selected/);
-assert.match(rows,/data-global-worker-assign="2" title=/);
+assert.match(rows,/data-global-worker-play="2" aria-label="Play worker 2"/);
+assert.match(rows,/Kies een project…/);
+assert.doesNotMatch(rows,/data-global-worker-project="1"[^>]*>[\s\S]*?value="supa" selected/);
 vm.runInContext('WORKER_DEBUG=null;',ctx);
 rows=vm.runInContext('globalWorkerRows()',ctx);
 assert.match(rows,/Waiting for verified status/);
 assert.doesNotMatch(rows,/data-worker-id="supa::w1"/);
 const ui=vm.runInContext('globalWorkerConsole()',ctx);
 assert.match(ui,/data-save-dynamic-workers/);
-assert.match(ui,/Worker assignments/);
+assert.match(ui,/Live workers/);
+assert.ok(ui.indexOf('id="globalWorkerRows"') < ui.indexOf('data-dynamic-worker-control'), 'live worker cards precede pool settings');
 assert.match(source,/fetch\('\/api\/runner-control'/);
 assert.match(source,/action:'start'/);
 assert.match(source,/No immediate slot switch is guaranteed|no immediate slot switch is guaranteed/);
@@ -62,6 +71,9 @@ assert.match(source,/No immediate slot switch is guaranteed|no immediate slot sw
         self.assertNotIn("mobileRunnerControls(p)", cards)
         self.assertNotIn("projectPrimaryActions(p,'detail')", detail)
         self.assertIn("data-global-worker-project", source)
+        self.assertIn("data-global-worker-play", source)
+        self.assertIn("playGlobalWorker", source)
+        self.assertNotIn("data-global-worker-assign=", source)
         self.assertIn("requestGlobalWorkerProject", source)
 
     def test_layout_breakpoints_and_panel_prominence(self):
@@ -69,6 +81,8 @@ assert.match(source,/No immediate slot switch is guaranteed|no immediate slot sw
         self.assertIn(".worker-console-heading", css)
         self.assertIn(".global-worker-row", css)
         self.assertIn(".global-worker-actions", css)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", css)
+        self.assertIn(".global-worker-telemetry", css)
         self.assertIn("@media(max-width:760px)", css)
         self.assertIn("@media(max-width:360px)", css)
         self.assertIn("min-width:0", css)
