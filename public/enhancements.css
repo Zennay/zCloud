@@ -314,3 +314,397 @@
 .worker-scaling-row p{margin:7px 0;color:var(--muted);font-size:12px;line-height:1.45}
 .worker-scaling-row small{color:var(--muted);font-size:11px}
 @media(max-width:640px){.worker-scaling-row>div{align-items:flex-start;flex-direction:column;gap:3px}.project-scaling-chip{margin-left:10px;margin-right:10px}}
+
+/* zCloud design-system.css bundled for the server's static-file allowlist */
+/*
+ * zCloud dashboard design primitives.
+ * Loaded after legacy styles so older screens share the same semantic palette.
+ * Keep project-specific --accent overrides: this only supplies a safe default.
+ */
+:root {
+  --accent: var(--lime);
+  --line: var(--edge);
+  --panel-soft: var(--panel);
+  --success: #9ad8b8;
+  --warning: #ffcb86;
+  --ui-min-touch: 44px;
+}
+
+/* Cards and disclosures must shrink inside grids, not push adjacent content. */
+:where(
+  .panel,
+  .project-card,
+  .detail-summary,
+  .attention-panel,
+  .dynamic-worker-control,
+  .project-primary-actions,
+  .project-scaling-chip,
+  .worker-scaling-row
+) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* State labels, long project names and worker statuses can wrap safely. */
+.project-scaling-chip {
+  flex-wrap: wrap;
+}
+.project-scaling-chip > *,
+.worker-scaling-row > div > *,
+.project-action-copy,
+.project-primary-actions .project-action-buttons {
+  min-width: 0;
+}
+.project-scaling-chip strong,
+.worker-scaling-row span,
+.worker-scaling-row p,
+.project-action-copy span {
+  overflow-wrap: anywhere;
+}
+.worker-scaling-row > div {
+  flex-wrap: wrap;
+}
+
+/* Actions keep their labels and hit areas when translated or zoomed. */
+.project-action-buttons > button {
+  min-width: 0;
+  min-height: var(--ui-min-touch);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Narrow phones: no forced horizontal action rows or truncated status. */
+@media (max-width: 430px) {
+  .project-scaling-chip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .project-scaling-chip strong {
+    text-align: left;
+  }
+  .worker-scaling-row > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .project-action-buttons {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .project-action-buttons > button {
+    width: 100%;
+  }
+}
+
+
+/* Worker console: the primary overview control surface, before the project grid. */
+.worker-console {
+  --console-edge: #354153;
+  margin: 14px 0 24px;
+  border: 1px solid var(--console-edge);
+  border-radius: var(--ux-radius,14px);
+  background: linear-gradient(145deg,#171f28 0%,#111820 58%,#11151b 100%);
+  box-shadow: 0 12px 34px rgba(0,0,0,.17);
+  overflow: hidden;
+}
+.worker-console-heading {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:22px 24px 14px;
+}
+.worker-console-heading h2 {font-size:22px;letter-spacing:-.4px;margin:4px 0 6px}
+.worker-console-heading p {font-size:12px;line-height:1.55;color:var(--muted);max-width:67ch}
+.worker-console-status {font-size:12px;white-space:nowrap;color:var(--lime);flex-shrink:0}
+.worker-console .dynamic-worker-control {
+  min-width:0;
+  margin:0 20px 14px;
+  width:calc(100% - 40px);
+  background:#10161e;
+  grid-template-columns:minmax(180px,1fr) minmax(230px,auto) auto;
+  grid-template-areas:"copy counts save" "advanced advanced advanced";
+  gap:14px;
+}
+.worker-console .dynamic-worker-counts{grid-template-columns:repeat(2,minmax(94px,1fr))}
+.worker-console .dynamic-worker-counts input{min-width:84px}
+.worker-console .dynamic-worker-advanced {margin-top:0}
+.worker-console .dynamic-worker-save {font-weight:700;min-width:112px;font-size:13px}
+.global-worker-subhead {
+  padding:12px 24px 8px;
+  border-top:1px solid #2b3542;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+}
+.global-worker-subhead strong {font-size:13px}
+.global-worker-subhead small {font-size:11px;color:var(--muted)}
+.global-worker-list {display:grid;gap:8px;padding:8px 20px 20px}
+.global-worker-empty {margin:0 20px 20px;padding:20px;color:var(--muted);font-size:13px;border:1px dashed #354153;border-radius:11px}
+.global-worker-row {
+  display:grid;
+  grid-template-columns:minmax(120px,1.05fr) minmax(128px,.9fr) minmax(165px,1fr) minmax(175px,1.2fr);
+  gap:12px;align-items:center;min-width:0;
+  background:#0e141c;border:1px solid #2d3846;border-radius:12px;
+  padding:13px 14px;
+}
+.global-worker-identity {display:flex;align-items:center;gap:11px;min-width:0}
+.global-worker-identity div {min-width:0}
+.global-worker-identity strong {font-size:13px;display:block}
+.global-worker-identity small {font-size:11px;color:var(--muted);display:block;overflow-wrap:anywhere}
+.global-worker-index {flex:0 0 32px;height:32px;display:grid;place-items:center;border:1px solid #354458;border-radius:9px;background:#18212d;font-size:12px;font-weight:700;color:#cbd6e5}
+.global-worker-state {display:flex;align-items:center;gap:8px;font-size:11px;color:#a9b7c7;min-width:0;overflow-wrap:anywhere}
+.global-worker-dot {flex:0 0 7px;width:7px;height:7px;border-radius:50%;background:#738497}
+.global-worker-state.ok .global-worker-dot{background:var(--lime)}
+.global-worker-state.bad .global-worker-dot{background:#ff888e}
+.global-worker-project {display:grid;min-width:0;gap:4px}
+.global-worker-project span {color:#8e9bad;font-size:10px}
+.global-worker-project select {
+  width:100%;min-width:0;min-height:44px;border:1px solid #465267;
+  background:#17202b;color:#f0f4f9;border-radius:9px;padding:7px 30px 7px 10px;font-size:12px;
+}
+.global-worker-actions {display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;min-width:0}
+.global-worker-actions button,.global-worker-chat {
+  min-height:40px;padding:8px 10px;font-size:11px;line-height:1.25;font-weight:650;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:9px;
+}
+.global-worker-chat {color:#d8e1ee;border:1px solid #465267;background:#17202b}
+.global-worker-actions [data-global-worker-assign]:not(:disabled){background:var(--lime);color:#131a13;border-color:var(--lime)}
+.global-worker-feedback {grid-column:1 / -1;font-size:11px;color:#e6cb91;line-height:1.4}
+.worker-console-diagnostics {border-top:1px solid #303b49;padding:0 20px}
+.worker-console-diagnostics>summary {cursor:pointer;min-height:46px;display:flex;align-items:center;font-size:12px;color:#a6b5c5}
+.worker-console-diagnostics .panel {margin:0 0 14px}
+@media(max-width:1180px) {
+  .global-worker-row {grid-template-columns:minmax(140px,1fr) minmax(150px,1fr)}
+  .global-worker-actions {justify-content:flex-start}
+  .global-worker-feedback {grid-column:1 / -1}
+}
+@media(max-width:760px) {
+  .worker-console {margin:12px 0 22px}
+  .worker-console-heading {padding:18px 16px 12px;align-items:flex-start;flex-direction:column;gap:9px}
+  .worker-console-heading h2 {font-size:20px}
+  .worker-console-status {white-space:normal}
+  .worker-console .dynamic-worker-control {
+    margin:0 12px 12px;width:calc(100% - 24px);
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    grid-template-areas:"copy copy" "counts counts" "save save" "advanced advanced";
+    padding:14px;gap:10px;
+  }
+  .worker-console .dynamic-worker-counts {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .worker-console .dynamic-worker-counts input{min-width:0}
+  .global-worker-subhead {padding:12px 16px 8px;align-items:flex-start;flex-direction:column;gap:4px}
+  .global-worker-list {padding:8px 12px 14px}
+  .global-worker-row {grid-template-columns:minmax(0,1fr);gap:10px;padding:12px}
+  .global-worker-identity {grid-column:1}
+  .global-worker-state {grid-column:1}
+  .global-worker-project {grid-column:1}
+  .global-worker-actions {grid-column:1;justify-content:stretch;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .global-worker-actions button,.global-worker-chat {width:100%;min-width:0;min-height:44px;overflow-wrap:anywhere;white-space:normal}
+  .global-worker-feedback {grid-column:1}
+  .worker-console-diagnostics {padding:0 12px}
+}
+@media(max-width:360px){
+  .worker-console .dynamic-worker-counts{grid-template-columns:minmax(0,1fr)}
+  .global-worker-actions{grid-template-columns:minmax(0,1fr)}
+}
+
+
+/*
+ * Phone-specific worker control layout. The mobile project-strip duplicates
+ * the primary Overview navigation, so only show it when viewing project pages.
+ * Keep navigation and controls thumb-sized with safe-area clearance.
+ */
+@media (max-width: 760px) {
+  html {scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom))}
+  main {
+    min-width: 0;
+    padding: 16px 14px calc(104px + env(safe-area-inset-bottom));
+  }
+  .mobile-project-nav.is-overview {display:none}
+  .mobile-nav {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:2px;
+    align-items:stretch;
+    padding:7px max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));
+  }
+  .mobile-nav a {
+    min-width:0;
+    min-height:48px;
+    padding:5px 2px;
+    display:flex;
+    justify-content:center;
+    text-align:center;
+    font-size:11px;
+    line-height:1.25;
+    border-radius:9px;
+  }
+  .mobile-nav [data-jump-workers] {
+    color:#c6e3af;
+  }
+  .mobile-nav [data-jump-workers]:focus-visible {
+    outline-offset:-2px;
+  }
+
+  /* Keep the primary Worker card above the first mobile fold. */
+  #view > .page-heading:has(+ .worker-console) {
+    margin-bottom:10px;
+    align-items:flex-start;
+  }
+  #view > .page-heading:has(+ .worker-console) h1 {
+    font-size:clamp(24px,6.7vw,29px);
+    letter-spacing:-.8px;
+  }
+  #view > .page-heading:has(+ .worker-console) .date-label {display:none}
+  #view > .page-heading:has(+ .worker-console) .eyebrow {margin-bottom:5px}
+  #view > .page-heading:has(+ .worker-console) p {margin-top:5px;line-height:1.45;font-size:12px}
+  #workers {scroll-margin-top:12px}
+  .worker-console {margin:0 0 20px;overflow:clip}
+  .worker-console-heading {padding:16px 14px 9px;gap:5px}
+  .worker-console-heading h2 {font-size:19px;margin:0 0 4px}
+  .worker-console-heading p {font-size:12px;line-height:1.45}
+  .worker-console-status {display:none}
+  .worker-console .dynamic-worker-control {
+    margin:0 10px 12px;
+    width:calc(100% - 20px);
+    padding:12px;
+    gap:10px;
+  }
+  .worker-console .dynamic-worker-copy {gap:3px}
+  .worker-console .dynamic-worker-copy strong {font-size:15px}
+  .worker-console .dynamic-worker-counts {gap:8px}
+  .worker-console .dynamic-worker-control label span {text-align:left;font-size:11px}
+  .worker-console .dynamic-worker-control input {
+    min-width:0;
+    min-height:46px;
+    font-size:16px; /* prevent iOS focus zoom */
+  }
+  .worker-console .dynamic-worker-save {
+    min-height:48px;
+    border-color:var(--lime);
+    background:var(--lime);
+    color:#11160b;
+    font-size:14px;
+  }
+  .worker-console .dynamic-worker-save:disabled {opacity:.6}
+  .worker-console .dynamic-worker-advanced summary {
+    min-height:44px;
+    display:flex;
+    align-items:center;
+    font-size:12px;
+  }
+  .worker-console .dynamic-worker-provider-grid {grid-template-columns:minmax(0,1fr)}
+  .global-worker-subhead {padding:4px 14px 9px;gap:3px}
+  .global-worker-subhead strong {font-size:14px}
+  .global-worker-subhead small {font-size:11px;line-height:1.4}
+  .global-worker-list {padding:4px 10px 14px;gap:9px}
+  .global-worker-row {
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(92px,auto);
+    gap:10px 8px;
+    padding:12px;
+    border-radius:11px;
+  }
+  .global-worker-identity {grid-column:1;grid-row:1}
+  .global-worker-identity strong {font-size:14px}
+  .global-worker-identity small {font-size:11px}
+  .global-worker-state {
+    grid-column:2;
+    grid-row:1;
+    align-self:center;
+    justify-self:end;
+    justify-content:flex-end;
+    min-width:0;
+    max-width:130px;
+    text-align:right;
+    font-size:11px;
+    line-height:1.3;
+  }
+  .global-worker-project {grid-column:1 / -1;grid-row:2;gap:5px}
+  .global-worker-project span {font-size:11px}
+  .global-worker-project select {
+    font-size:16px; /* prevent iOS select zoom */
+    min-height:48px;
+    padding:10px 32px 10px 12px;
+    border-radius:10px;
+  }
+  .global-worker-actions {
+    display:grid;
+    grid-column:1 / -1;
+    grid-row:3;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:8px;
+  }
+  .global-worker-actions button,.global-worker-chat {
+    min-width:0;
+    width:100%;
+    min-height:44px;
+    font-size:13px;
+    padding:9px 8px;
+    white-space:normal;
+    overflow-wrap:anywhere;
+  }
+  .global-worker-feedback {
+    grid-column:1 / -1;
+    grid-row:4;
+    font-size:12px;
+    overflow-wrap:anywhere;
+  }
+  .worker-console-diagnostics {padding:0 12px}
+  .worker-console-diagnostics>summary {min-height:48px;font-size:13px}
+}
+@media (max-width: 380px) {
+  main {padding-left:12px;padding-right:12px}
+  .global-worker-row {grid-template-columns:minmax(0,1fr)}
+  .global-worker-state {
+    grid-column:1;
+    grid-row:2;
+    justify-self:start;
+    justify-content:flex-start;
+    max-width:100%;
+    text-align:left;
+  }
+  .global-worker-project {grid-row:3}
+  .global-worker-actions {grid-row:4}
+  .global-worker-feedback {grid-row:5}
+}
+
+/* Worker console primary controls */
+.global-worker-row{grid-template-columns:minmax(140px,1fr) minmax(105px,.65fr) minmax(160px,1fr) minmax(205px,1.25fr);grid-template-areas:"identity status project actions" "telemetry telemetry telemetry chat" "hint hint hint hint" "feedback feedback feedback feedback"}
+.global-worker-identity{grid-area:identity}
+.global-worker-state{grid-area:status}
+.global-worker-project{grid-area:project}
+.global-worker-actions{grid-area:actions;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.global-worker-telemetry{grid-area:telemetry;display:flex;flex-wrap:wrap;gap:4px 12px;min-width:0;font-size:11px;color:#aab5c3;overflow-wrap:anywhere}
+.global-worker-chat{grid-area:chat;justify-self:end;text-decoration:none}
+.global-worker-hint{grid-area:hint;margin:0;font-size:11px;color:#cdbf94;overflow-wrap:anywhere}
+.global-worker-feedback{grid-area:feedback;grid-column:auto;margin:0}
+.global-worker-actions button{min-width:0;min-height:44px;padding:8px 4px;gap:4px}
+.global-worker-actions button:disabled{opacity:.45}
+.global-worker-actions .worker-play:not(:disabled){background:var(--lime);color:#111b0a;border-color:var(--lime)}
+.global-worker-actions .worker-push:not(:disabled){color:var(--lime)}
+.global-worker-project select{font-size:16px}
+.global-worker-pool-heading{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px 12px;padding:12px 20px 8px;border-top:1px solid #2b3542}
+.global-worker-pool-heading strong{font-size:14px}
+.global-worker-pool-heading small{font-size:11px;color:var(--muted)}
+@media(max-width:1180px){
+.global-worker-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"identity status" "telemetry telemetry" "project project" "actions actions" "chat chat" "hint hint" "feedback feedback"}
+.global-worker-chat{justify-self:start}
+}
+@media(max-width:760px){
+.global-worker-row{grid-template-columns:minmax(0,1fr) minmax(100px,auto);grid-template-areas:"identity status" "telemetry telemetry" "project project" "actions actions" "chat chat" "hint hint" "feedback feedback";gap:8px}
+.global-worker-identity,.global-worker-state,.global-worker-project,.global-worker-actions,.global-worker-feedback{grid-column:auto;grid-row:auto}
+.global-worker-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
+.global-worker-actions button{font-size:12px;min-height:48px;padding:9px 4px}
+.global-worker-telemetry{font-size:11px}
+.global-worker-project select{min-height:48px}
+.global-worker-chat{width:auto;min-height:44px}
+.global-worker-pool-heading{padding:12px 14px 8px}
+}
+@media(max-width:380px){
+.global-worker-row{grid-template-columns:minmax(0,1fr);grid-template-areas:"identity" "status" "telemetry" "project" "actions" "chat" "hint" "feedback"}
+.global-worker-identity,.global-worker-state,.global-worker-project,.global-worker-actions,.global-worker-feedback{grid-column:auto;grid-row:auto}
+.global-worker-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+
+/* Explain permission failures where the worker controls are visible. */
+.global-worker-access{margin:0;padding:10px 12px;border:1px solid #856d48;border-radius:9px;color:#f1d7a9;background:#2a241d;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
