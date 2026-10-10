@@ -162,8 +162,8 @@ def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
-        'Maak eerst bestaand open werk af: los de bug op, bewijs tests, merge veilig en sluit gekoppelde issues. '
-        'Start geen nieuw issue of test-PR zolang een bestaande wijziging veilig afgemaakt kan worden. '
+        'Maak eerst bestaand open werk af: fix, test, merge veilig en sluit issues. '
+        'Maak geen nieuw issue of test-PR zolang afmaakwerk bestaat. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet '
         'na één actie, commit, retrigger of statuscheck. Als iets wacht op CI, VPS, review of een andere dependency, '
         'pak direct ander veilig uitvoerbaar werk binnen hetzelfde project. Kies steeds een vrij onderdeel en ga door '
