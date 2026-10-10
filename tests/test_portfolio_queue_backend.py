@@ -911,6 +911,26 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(item["queue_id"], still["queue_id"])
         self.assertEqual("claimed", still["status"])
 
+    def test_done_rejects_reusing_another_completed_tasks_pull_request(self):
+        evidence = "https://github.com/Zennay/zCloud/pull/646"
+        previously_done = server.portfolio_queue_enqueue(
+            "cloud", "already delivered elsewhere", "P1", "Validate older implementation."
+        )
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='done',eligible=0,evidence=? WHERE queue_id=?",
+                (evidence, previously_done["queue_id"]),
+            )
+        fresh = server.portfolio_queue_enqueue(
+            "cloud", "Implement next unique fix", "P0", "Implement and test the next change."
+        )
+        server.portfolio_queue_allocate()
+        self.assertEqual(fresh["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+        with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
+            with self.assertRaisesRegex(ValueError, "al gebruikt"):
+                server.portfolio_queue_finish(1, fresh["queue_id"], "DONE", evidence)
+        self.assertEqual(fresh["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+
     def test_haxlab_done_creates_p3_write_first_continuation(self):
         item = server.portfolio_queue_enqueue("haxlab", "close evidence gate", "P2", "prove current gate")
         server.portfolio_queue_allocate()
