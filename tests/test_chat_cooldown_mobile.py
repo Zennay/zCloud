@@ -149,7 +149,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         css = (ROOT / "public" / "style.css").read_text(encoding="utf-8")
 
         self.assertIn('id="mobileProjectNav"', index)
-        self.assertIn("if(mobileProjects)mobileProjects.innerHTML=", app)
+        self.assertIn("mobileProjects.classList.toggle('is-overview',route==='overview')", app)
         self.assertIn("(pointer: coarse)", app)
         self.assertIn('draggable="${draggable}"', app)
         self.assertIn(".mobile-project-nav{display:flex", css)
