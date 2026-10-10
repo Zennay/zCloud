@@ -44,7 +44,7 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn("--ux-radius:14px", css)
         self.assertIn(".project-primary-actions", css)
         self.assertIn(".overview-advanced", css)
-        self.assertIn("/app.js?v=r4", index)
+        self.assertIn("/app.js?v=r5", index)
         self.assertIn("/enhancements.css?v=r3", index)
         self.assertIn("/design-system.css?v=r1", index)
         self.assertIn("function globalWorkerRows()", (ROOT / "public" / "app.js").read_text(encoding="utf-8"))
