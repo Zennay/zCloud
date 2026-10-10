@@ -24,7 +24,7 @@ class DashboardDesignSystemTests(unittest.TestCase):
         self.assertLess(self.html.index('href="/style.css"'),
                         self.html.index('href="/enhancements.css?v=r3"'))
         self.assertLess(self.html.index('href="/enhancements.css?v=r3"'),
-                        self.html.index('href="/design-system.css?v=r2"'))
+                        self.html.index('href="/design-system.css?v=r3"'))
 
     def test_all_static_css_variables_resolve_to_declared_tokens(self):
         source = "\n".join((self.base, self.enhancements, self.system))
