@@ -40,6 +40,7 @@ class ChatgptRunnerBridgeTests(unittest.TestCase):
             "/zssh project cloud",
             "/zssh run write-probe",
             "/zssh run zcloud-guard-test",
+            "/zssh run zcloud-health-smoke",
         ]:
             self.assertEqual(bridge.parse_request(make_event(cmd), "Zennay"), cmd[6:])
 
@@ -77,6 +78,8 @@ class ChatgptRunnerBridgeTests(unittest.TestCase):
             "/zssh status\r",
             "/zssh status && curl attacker.test",
             "/zssh run write-probe --foo",
+            "/zssh run bad.name",
+            "/zssh run abc/def",
             "/zssh STATUS",
             "/zssh status ",
             " /zssh status",
