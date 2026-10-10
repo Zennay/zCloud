@@ -355,6 +355,8 @@ async function loadWorkerDebug(){
    it never claims to rebind a busy worker or an existing SQLite claim. */
 const GLOBAL_WORKER_PROJECT_REQUESTS={};
 const GLOBAL_WORKER_REQUEST_RESULTS={};
+const GLOBAL_WORKER_REQUEST_AT={};
+const WORKER_REQUEST_RETRY_MS=30000;
 function globalWorkerRows(){
   const settings=DATA?.dynamic_workers||{};
   const count=Math.max(0,Math.min(16,Number(settings.chatgpt_count??0)+Number(settings.claude_count??0)));
@@ -369,17 +371,19 @@ function globalWorkerRows(){
     if(assigned&&assigned===GLOBAL_WORKER_PROJECT_REQUESTS[slot]&&String(GLOBAL_WORKER_REQUEST_RESULTS[slot]||'').startsWith('Project priority requested')){
       delete GLOBAL_WORKER_PROJECT_REQUESTS[slot];
       delete GLOBAL_WORKER_REQUEST_RESULTS[slot];
+      delete GLOBAL_WORKER_REQUEST_AT[slot];
     }
     // Explicit choice: the live allocation is displayed separately and never silently chosen in the select.
     const choice=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:'';
     const options=(DATA?.projects||[]).map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
     const pending=GLOBAL_WORKER_REQUEST_RESULTS[slot]||'';
+    const waiting=pending.startsWith('Project priority requested')&&Date.now()-Number(GLOBAL_WORKER_REQUEST_AT[slot]||0)<WORKER_REQUEST_RETRY_MS;
     const verdict=verified?(w?(VERDICT_LABEL[w.verdict]||w.verdict):'Beschikbaar'):'Status niet geverifieerd';
     const workerId=verified?String(w?.worker||''):'';
     const paused=w?.desired_state==='paused';
     const busySlot=Boolean(w&&['generating','prompt-sent'].includes(w.verdict));
     const switching=Boolean(choice&&choice!==assigned);
-    const canPlay=verified&&!pending&&(switching&&!busySlot||!switching&&workerId&&paused||!workerId&&Boolean(choice));
+    const canPlay=verified&&!waiting&&(switching&&!busySlot||!switching&&workerId&&paused||!workerId&&Boolean(choice));
     const canPause=verified&&Boolean(workerId)&&!paused;
     const canPush=verified&&Boolean(workerId)&&w.desired_state==='running';
     const signal=w?.last_event_age_s==null?'Geen signaal':ageText(w.last_event_age_s);
@@ -388,7 +392,7 @@ function globalWorkerRows(){
     const chatId=workerId?((DATA?.chatgpt_runners||{})[assigned]?.workers||[]).find(x=>x.worker_id===workerId)?.conversation_id:'';
     const chatUrl=chatId?(provider==='Claude'?'https://claude.ai/chat/':'https://chatgpt.com/c/')+encodeURIComponent(chatId):'';
     const disabled=reason=>reason?' disabled title="'+esc(reason)+'"':'';
-    const playReason=!verified?'Wacht op live status':busySlot&&switching?'Worker is bezig; wisselen kan pas na afronding':!choice&&!paused?'Kies eerst een project':'';
+    const playReason=!verified?'Wacht op live status':waiting?'Aanvraag loopt. Na 30 seconden kun je opnieuw proberen.':busySlot&&switching?'Worker is bezig; wisselen kan pas na afronding':!choice&&!paused?'Kies eerst een project':'';
     return '<article class="global-worker-row" data-global-slot="'+slot+'">'
       +'<div class="global-worker-identity"><span class="global-worker-index">'+String(slot).padStart(2,'0')+'</span><div><strong>Worker '+slot+'</strong><small>'+esc(provider)+' · '+esc(name)+'</small></div></div>'
       +'<div class="global-worker-state '+(w?verdictClass(w.verdict):'idle')+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
@@ -401,7 +405,7 @@ function globalWorkerRows(){
       +'</div>'
       +(chatUrl?'<a class="global-worker-chat" target="_blank" rel="noopener noreferrer" href="'+esc(chatUrl)+'">Chat openen ↗</a>':'')
       +(switching?'<p class="global-worker-hint">Projectwissel is een schedulerverzoek; een bezette worker wordt nooit automatisch onderbroken.</p>':'')
-      +(pending?'<p class="global-worker-feedback" role="status">'+esc(pending)+'</p>':'')
+      +(pending?'<p class="global-worker-feedback" role="status">'+esc(waiting?pending:pending.startsWith('Project priority requested')?'Nog niet toegewezen aan dit slot. Je kunt opnieuw op Play drukken.':pending)+'</p>':'')
       +'</article>';
   }).join('')+'</div>';
 }
@@ -444,9 +448,10 @@ async function requestGlobalWorkerProject(slot,button){
     if(!response.ok)throw new Error(result.error||'Could not request project');
     // This API requests project admission; the scheduler can still select another slot.
     GLOBAL_WORKER_REQUEST_RESULTS[slot]='Project priority requested. Waiting for queue allocation; no immediate slot switch is guaranteed.';
+    GLOBAL_WORKER_REQUEST_AT[slot]=Date.now();
     GLOBAL_WORKER_PROJECT_REQUESTS[slot]=target;
     setTimeout(()=>refresh(true),650);render();
-  }catch(error){GLOBAL_WORKER_REQUEST_RESULTS[slot]='Assignment request failed: '+(error.message||error);render()}
+  }catch(error){delete GLOBAL_WORKER_REQUEST_AT[slot];GLOBAL_WORKER_REQUEST_RESULTS[slot]='Projectaanvraag mislukt; druk opnieuw op Play. '+(error.message||error);render()}
   finally{button.disabled=false;button.textContent=old}
 }
 
