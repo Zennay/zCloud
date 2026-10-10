@@ -3245,7 +3245,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         if not current:
             return {'updated':False,'reason':'assignment-mismatch'}
         repo_url=str((PROJECT_INDEX.get(str(current['project_id'])) or {}).get('repo_url') or '')
-        github_repo=re.fullmatch(r'https://github\\.com/Zennay/([a-zA-Z0-9_.-]+)/?',repo_url,re.I)
+        github_repo=re.fullmatch(r'https://github\.com/Zennay/([a-zA-Z0-9_.-]+)/?',repo_url,re.I)
         if not github_repo:
             raise ValueError('DONE vereist een bekend GitHub-projectrepo')
         from scripts.zcloud_queue_closeout import PR, verified_merged_delivery
