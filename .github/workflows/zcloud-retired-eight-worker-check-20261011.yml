@@ -1,0 +1,18 @@
+name: zCloud expired worker timer retirement (hosted)
+
+on:
+  push:
+    branches: [fix/retire-dated-eight-worker-timer-20261011]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest -v tests.test_retired_eight_worker_timer_20261011 tests.test_worker_recovery_loop_guard_20261011 tests.test_worker_bulk_recovery_safe_20261011
