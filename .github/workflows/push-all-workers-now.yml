@@ -1,14 +1,8 @@
-# owner-requested targeted all-worker recovery trigger 2026-10-07T11:37Z
+# Emergency/manual-only bulk recovery. Automatic per-worker recovery is owned by
+# zcloud-self-heal; hourly all-worker pushes interrupted live generations.
 name: Push all zCloud workers now
-# enforce seven desired ChatGPT workers + push all 2026-10-06T07:36Z
 
 on:
-  schedule:
-    - cron: "0 * * * *"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/push-all-workers-now.yml"
   workflow_dispatch:
 
 permissions:
@@ -42,9 +36,8 @@ jobs:
               with urllib.request.urlopen(req, timeout=20) as response:
                   return json.load(response)
 
-          # Keep the owner-requested seven ChatGPT workers as desired capacity.
-          # The backend memory/OOM admission guard remains authoritative and may
-          # safely admit fewer slots when the VPS does not have enough headroom.
+          # Respect the operator's existing memory-safe pool configuration.
+          # Never increase the configured count from a bulk recovery workflow.
           dynamic = (call("GET", "/api/dynamic-workers").get("dynamic_workers") or {})
           desired = {
               key: dynamic.get(key)
@@ -61,11 +54,12 @@ jobs:
               )
               if key in dynamic
           }
-          desired["chatgpt_count"] = 7
-          reconciled = call("POST", "/api/dynamic-workers", desired)
+          # Do not mutate settings just to send a push. A settings POST may
+          # reallocate or revive slots even if its values appear unchanged.
+          reconciled = {"ok": True, "dynamic_workers": dynamic}
           print("WORKER_CAPACITY_RECONCILED=" + json.dumps(reconciled, sort_keys=True))
           if not reconciled.get("ok"):
-              raise SystemExit("failed to reconcile seven-worker desired capacity")
+              raise SystemExit("worker settings unavailable")
 
           desired_total = int(
               ((reconciled.get("dynamic_workers") or {}).get("count") or 0)
@@ -109,30 +103,25 @@ jobs:
               raise SystemExit("no allocated active workers to push")
 
           print("ACTIVE_WORKERS=" + json.dumps(active, sort_keys=True))
-          # Supersede recovery-era pending commands first. They are stale control
-          # intents from the browser restart and must not interrupt a worker after
-          # this scheduled/manual push-all request.
-          with sqlite3.connect(DB, timeout=10) as conn:
+          # An outstanding command may be a valid in-flight handoff.
+          # Fail closed rather than discard another controller's command.
+          with sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10) as conn:
               conn.row_factory = sqlite3.Row
-              conn.execute("PRAGMA busy_timeout=10000")
-              conn.execute("BEGIN IMMEDIATE")
-              ts = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-              superseded = []
+              pending_controls = []
               for item in active:
-                  worker = item["worker"]
                   rows = conn.execute(
                       "SELECT id,action FROM runner_commands "
                       "WHERE project_id=? AND status='pending' ORDER BY id",
-                      (worker,),
+                      (item["worker"],),
                   ).fetchall()
                   for row in rows:
-                      superseded.append({"worker": worker, "id": int(row["id"]), "action": str(row["action"])})
-                      conn.execute(
-                          "UPDATE runner_commands SET status='failed',updated_at=?,result=? "
-                          "WHERE id=? AND status='pending'",
-                          (ts, "scheduled/manual push-all superseded stale pending control command", int(row["id"])),
-                      )
-          print("SUPERSEDED_PENDING=" + json.dumps(superseded, sort_keys=True))
+                      pending_controls.append({
+                          "worker": item["worker"], "id": int(row["id"]),
+                          "action": str(row["action"]),
+                      })
+          print("EXISTING_PENDING_CONTROLS=" + json.dumps(pending_controls, sort_keys=True))
+          if pending_controls:
+              raise SystemExit("bulk push deferred: allocated worker has pending controls")
 
           pushed = call("POST", "/api/dynamic-workers/force-push", {})
           print("FORCE_PUSH=" + json.dumps(pushed, sort_keys=True))
