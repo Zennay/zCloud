@@ -3234,10 +3234,26 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     try: slot=int(global_slot)
     except Exception: raise ValueError('geldige global worker slot vereist')
     if result=='DONE':
-        from scripts.zcloud_queue_closeout import verified_merged_delivery
-        accepted, reason = verified_merged_delivery(evidence)
+        # Read the exact active claim BEFORE contacting GitHub. The network
+        # roundtrip must never hold a SQLite write transaction.
+        with connect() as c:
+            current=c.execute(
+                "SELECT project_id,claimed_at FROM portfolio_queue WHERE queue_id=? "
+                "AND worker_slot=? AND status IN ('claimed','running','verifying')",
+                (queue_id,slot),
+            ).fetchone()
+        if not current:
+            return {'updated':False,'reason':'assignment-mismatch'}
+        repo_url=str((PROJECT_INDEX.get(str(current['project_id'])) or {}).get('repo_url') or '')
+        github_repo=re.fullmatch(r'https://github\\.com/Zennay/([a-zA-Z0-9_.-]+)/?',repo_url,re.I)
+        if not github_repo:
+            raise ValueError('DONE vereist een bekend GitHub-projectrepo')
+        from scripts.zcloud_queue_closeout import PR, verified_merged_delivery
+        accepted, reason = verified_merged_delivery(
+            evidence,expected_repo=github_repo.group(1),claimed_after=current['claimed_at']
+        )
         if not accepted:
-            raise ValueError('DONE niet toegestaan: '+reason+'. Gebruik CONTINUE tot de merge en CI aantoonbaar groen zijn.')
+            raise ValueError('DONE niet toegestaan: '+reason+'. Gebruik CONTINUE tot merge en CI groen zijn.')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -3247,6 +3263,20 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         if not row:
             return {'updated':False,'reason':'assignment-mismatch'}
         if result=='DONE':
+            canonical=PR.search(str(evidence or ''))
+            if not canonical:
+                raise ValueError('DONE vereist GitHub mergebewijs')
+            linked_url=canonical.group(0).lower()
+            previous=c.execute(
+                "SELECT queue_id,evidence FROM portfolio_queue WHERE status='done' "
+                "AND queue_id<>? AND evidence IS NOT NULL",
+                (queue_id,),
+            ).fetchall()
+            if any(
+                any(match.group(0).lower()==linked_url for match in PR.finditer(str(p['evidence'] or '')))
+                for p in previous
+            ):
+                raise ValueError('DONE bewijs is al gebruikt voor een andere queue taak')
             c.execute("""UPDATE portfolio_queue SET status='done',eligible=0,evidence=?,blocker='',
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
