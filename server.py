@@ -2770,6 +2770,9 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         parent_queue_id=f'auto-refill-{project_id}-{sequence}'
     criteria=(
         f'Read the current {name} HQ/handoff and execute a substantial multi-step work package, not a single micro-task. '
+        'Before creating issues or new PRs, check the existing issue and PR backlog in the assigned lane; '
+        'finish an unblocked code fix with tests, review, safe merge and linked issue closure first. '
+        'An opened issue, draft PR, red regression or status report never counts as delivered work. '
         'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
         'then complete as many adjacent write-capable steps as can be safely finished in the same lane before yielding. '
         'Completion requires at least three material implementation actions across code/config/workflows/experiments/runtime state '
