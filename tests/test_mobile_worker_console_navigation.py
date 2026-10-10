@@ -88,8 +88,8 @@ const click = () => registered.click({
         self.assertIn('data-jump-workers',nav.group(1))
         self.assertIn('aria-label="Jump to worker management"',nav.group(1))
         self.assertIn('viewport-fit=cover',html)
-        self.assertIn('/design-system.css?v=r2',html)
-        self.assertIn('/app.js?v=r6',html)
+        self.assertIn('/design-system.css?v=r3',html)
+        self.assertIn('/app.js?v=r7',html)
 
     def test_phone_workers_remain_visible_and_readable(self):
         css = (ROOT / "public" / "design-system.css").read_text(encoding="utf-8")
@@ -110,6 +110,9 @@ const click = () => registered.click({
         self.assertNotIn('data-global-worker-start=',app)
         self.assertIn("tabindex=\"-1\"",app)
         self.assertIn("data-global-worker-project",app)
+        self.assertIn("data-global-worker-play",app)
+        self.assertIn("data-worker-action=\"pause\"",app)
+        self.assertIn("data-worker-action=\"push\"",app)
         self.assertNotIn("min-height:32px",css)
 
 
