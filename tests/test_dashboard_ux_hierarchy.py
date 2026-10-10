@@ -46,7 +46,7 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn(".overview-advanced", css)
         self.assertIn("/app.js?v=r7", index)
         self.assertIn("/enhancements.css?v=r4", index)
-        self.assertIn("/enhancements.css?v=r4", index)
+        self.assertNotIn("/design-system.css?v=", index)
         self.assertIn("function globalWorkerRows()", (ROOT / "public" / "app.js").read_text(encoding="utf-8"))
 
     def test_dashboard_javascript_parses(self):
