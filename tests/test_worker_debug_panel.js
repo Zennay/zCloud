@@ -56,9 +56,9 @@ assert.strictEqual(api.ageText(3600), "60 min ago");
 
 // wiring: overview renders the panel, refresh loads it, click handler + endpoint are hooked up
 const overview = src.slice(src.indexOf("function overview(){"), src.indexOf("\nfunction aiRunPanel"));
-assert.ok(overview.includes("${workerDebugPanel()}"));
-assert.ok(overview.includes('data-disclosure="automation-settings"'));
-assert.ok(overview.indexOf('class="project-grid" id="projectGrid"') < overview.indexOf("${workerDebugPanel()}"), "worker diagnostics must stay below primary project actions");
+assert.ok(overview.includes('globalWorkerConsole()'));
+assert.ok(src.includes('data-disclosure="worker-diagnostics"'));
+assert.ok(overview.indexOf('globalWorkerConsole()') < overview.indexOf('class="project-grid" id="projectGrid"'), "workers must precede projects");
 assert.ok(src.includes("if(route==='overview')loadWorkerDebug()"));
 assert.ok(src.includes("[data-worker-action]") && src.includes("/api/runner-control"));
 assert.ok(!src.includes("data-force-push-all"), "global dynamic-worker push must stay removed");
