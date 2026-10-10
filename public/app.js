@@ -364,7 +364,7 @@ function globalWorkerRows(){
   const bySlot=new Map(workers.filter(w=>Number.isInteger(Number(w.global_slot))).map(w=>[Number(w.global_slot),w]));
   const verified=Boolean(WORKER_DEBUG&&!WORKER_DEBUG_ERROR);
   if(!count)return '<div class="global-worker-empty" id="globalWorkerRows">Geen workers ingesteld. Stel hieronder eerst het aantal in en klik op Opslaan.</div>';
-  return '<div class="global-worker-list" id="globalWorkerRows">'+Array.from({length:count},(_,i)=>{
+  return '<div class="global-worker-list" id="globalWorkerRows">'+(WORKER_DEBUG_ERROR?'<p class="global-worker-access" role="alert">'+esc(WORKER_DEBUG_ERROR)+' · Controleer je vertrouwde beheerverbinding.</p>':'')+Array.from({length:count},(_,i)=>{
     const slot=i+1,w=bySlot.get(slot),provider=slot<=Number(settings.chatgpt_count||0)?'ChatGPT':'Claude';
     const assigned=verified?(w?.project||''):'';
     const name=(DATA?.projects||[]).find(p=>p.id===assigned)?.name||assigned||'Geen project toegewezen';
