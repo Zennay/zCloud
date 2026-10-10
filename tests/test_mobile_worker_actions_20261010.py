@@ -44,6 +44,11 @@ const button=(project)=>({closest:()=>({querySelector:()=>({value:project})})});
   second=retryMarkup.split('data-global-slot="2"')[1].split('</article>')[0];
   assert.match(second,/data-global-worker-play="2"[^>]*aria-label="Play worker 2">/,'stale request must permit retry');
   assert.match(second,/Nog niet toegewezen aan dit slot/);
+  vm.runInContext('WORKER_DEBUG=null; WORKER_DEBUG_ERROR="Diagnostics are only visible from a trusted admin device.";',ctx);
+  const unavailable=vm.runInContext('globalWorkerRows()',ctx);
+  assert.match(unavailable,/global-worker-access/);
+  assert.match(unavailable,/trusted admin device/);
+  assert.equal((unavailable.match(/data-global-worker-play=\\"[0-9]+\\"[^>]*disabled/g)||[]).length,3,'unverified device may not control workers');
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
         result=subprocess.run(
