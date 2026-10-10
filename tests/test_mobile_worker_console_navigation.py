@@ -88,7 +88,7 @@ const click = () => registered.click({
         self.assertIn('data-jump-workers',nav.group(1))
         self.assertIn('aria-label="Jump to worker management"',nav.group(1))
         self.assertIn('viewport-fit=cover',html)
-        self.assertIn('/design-system.css?v=r3',html)
+        self.assertIn('/enhancements.css?v=r4',html)
         self.assertIn('/app.js?v=r7',html)
 
     def test_phone_workers_remain_visible_and_readable(self):
