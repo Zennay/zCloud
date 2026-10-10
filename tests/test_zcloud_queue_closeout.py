@@ -136,7 +136,7 @@ class QueueCloseoutTests(unittest.TestCase):
 
         def incomplete(path):
             data = run_data(path)
-            return {"total_count": 101, **data} if "/artifacts?" in path else data
+            return {**data, "total_count": 101} if "/artifacts?" in path else data
         self.assertFalse(verified_merged_delivery(url, incomplete)[0])
 
     def test_denies_github_errors_and_oversized_evidence(self):
