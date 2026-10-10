@@ -12,15 +12,12 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         end = app.index("\nfunction aiRunPanel", start)
         overview = app[start:end]
 
-        self.assertIn("projectPrimaryActions", app)
-        self.assertIn("Start work", app)
-        self.assertIn("Continue work", app)
+        self.assertIn("function globalWorkerConsole()", app)
+        self.assertLess(overview.index("globalWorkerConsole()"), overview.index("attentionPanel()"))
+        self.assertLess(overview.index("globalWorkerConsole()"), overview.index('class="project-grid"'))
         self.assertLess(overview.index('class="project-grid"'), overview.index('class="stat-grid"'))
-        self.assertLess(overview.index('class="project-grid"'), overview.index("dynamicWorkerControl()"))
-        self.assertIn('class="overview-advanced"', overview)
-        self.assertIn("Automation settings", overview)
+        self.assertNotIn('data-disclosure="automation-settings"', overview)
         self.assertIn("System controls", overview)
-        self.assertIn('data-disclosure="automation-settings"', overview)
         self.assertIn('data-disclosure="system-controls"', overview)
 
     def test_project_detail_keeps_primary_action_above_context_and_hides_worker_detail(self):
@@ -29,10 +26,12 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         end = app.index("\nfunction workerDetailPanel", start)
         detail = app[start:end]
 
-        self.assertLess(detail.index("projectPrimaryActions(p,'detail')"), detail.index('class="detail-summary"'))
+        self.assertNotIn("projectPrimaryActions(p,'detail')", detail)
+        card = app[app.index("function projectCard(p)"):app.index("\\nfunction attentionPanel", app.index("function projectCard(p)"))]
+        self.assertNotIn("projectPrimaryActions(p)", card)
+        self.assertNotIn("mobileRunnerControls(p)", card)
         self.assertIn("project-worker-advanced", detail)
         self.assertIn("Worker details", detail)
-        self.assertIn("worker-count-only", app)
         self.assertIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
         self.assertIn("openDisclosures", app)
         self.assertIn("details[data-disclosure][open]", app)
@@ -47,6 +46,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn(".overview-advanced", css)
         self.assertIn("/app.js?v=r4", index)
         self.assertIn("/enhancements.css?v=r3", index)
+        self.assertIn("/design-system.css?v=r1", index)
+        self.assertIn("function globalWorkerRows()", (ROOT / "public" / "app.js").read_text(encoding="utf-8"))
 
     def test_dashboard_javascript_parses(self):
         result = subprocess.run(
