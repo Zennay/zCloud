@@ -162,6 +162,8 @@ def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
+        'Maak eerst bestaand open werk af: los de bug op, bewijs tests, merge veilig en sluit gekoppelde issues. '
+        'Start geen nieuw issue of test-PR zolang een bestaande wijziging veilig afgemaakt kan worden. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet '
         'na één actie, commit, retrigger of statuscheck. Als iets wacht op CI, VPS, review of een andere dependency, '
         'pak direct ander veilig uitvoerbaar werk binnen hetzelfde project. Kies steeds een vrij onderdeel en ga door '
@@ -3231,6 +3233,11 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     queue_id=str(queue_id or '').strip()
     try: slot=int(global_slot)
     except Exception: raise ValueError('geldige global worker slot vereist')
+    if result=='DONE':
+        from scripts.zcloud_queue_closeout import verified_merged_delivery
+        accepted, reason = verified_merged_delivery(evidence)
+        if not accepted:
+            raise ValueError('DONE niet toegestaan: '+reason+'. Gebruik CONTINUE tot de merge en CI aantoonbaar groen zijn.')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
