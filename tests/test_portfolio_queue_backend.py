@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import server
@@ -880,7 +881,8 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         server.portfolio_queue_allocate()
         self.assertEqual(second["queue_id"], server.portfolio_queue_current_for_slot(2)["queue_id"])
 
-        result = server.portfolio_queue_finish(1, first["queue_id"], "DONE", "commit abc; tests green")
+        with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
+            result = server.portfolio_queue_finish(1, first["queue_id"], "DONE", "commit abc; tests green")
         self.assertTrue(result["updated"])
 
         server.portfolio_queue_allocate()
@@ -898,11 +900,23 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertIn("at least three material implementation actions", continuation["completion_criteria"])
         self.assertIn("read-only inspection", continuation["completion_criteria"])
 
+    def test_unverified_done_preserves_running_assignment(self):
+        item = server.portfolio_queue_enqueue("cloud", "Implement source fix", "P0", "Implement code and validate.")
+        server.portfolio_queue_allocate()
+        slot = server.portfolio_queue_current_for_slot(1)
+        self.assertEqual(item["queue_id"], slot["queue_id"])
+        with self.assertRaisesRegex(ValueError, "DONE niet toegestaan"):
+            server.portfolio_queue_finish(1, item["queue_id"], "DONE", "Opened issue 1278 and PR 646")
+        still = server.portfolio_queue_current_for_slot(1)
+        self.assertEqual(item["queue_id"], still["queue_id"])
+        self.assertEqual("claimed", still["status"])
+
     def test_haxlab_done_creates_p3_write_first_continuation(self):
         item = server.portfolio_queue_enqueue("haxlab", "close evidence gate", "P2", "prove current gate")
         server.portfolio_queue_allocate()
 
-        result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate closed with current evidence")
+        with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
+            result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate closed with current evidence")
 
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
@@ -918,7 +932,8 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         item = server.portfolio_queue_enqueue("ftmo", "advance research gate", "P1", "Implement the next safe FTMO gate with tests.")
         server.portfolio_queue_allocate()
 
-        result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate advanced with current evidence")
+        with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
+            result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate advanced with current evidence")
 
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
