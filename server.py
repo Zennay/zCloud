@@ -3265,6 +3265,10 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                       (queue_id,slot)).fetchone()
         if not row:
             return {'updated':False,'reason':'assignment-mismatch'}
+        if result=='DONE' and str(row['claimed_at'] or '')!=str(current['claimed_at'] or ''):
+            # Scheduler reassigned/restarted this claim while GitHub was queried.
+            # Its older proof cannot close the new assignment.
+            return {'updated':False,'reason':'assignment-changed-during-closeout'}
         if result=='DONE':
             canonical=PR.search(str(evidence or ''))
             if not canonical:
