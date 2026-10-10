@@ -1,0 +1,23 @@
+name: zCloud worker bulk recovery safety (hosted)
+
+on:
+  push:
+    branches:
+      - fix/worker-continuity-stop-hourly-force-seven-20261011
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run bulk recovery and existing workflow regression tests
+        run: python3 -m unittest -v tests.test_worker_bulk_recovery_safe_20261011 tests.test_push_all_workers_workflow
+      - name: Inspect Python-only control-plane regression subset
+        run: python3 -m unittest -v tests.test_worker_progress_watchdog tests.test_worker_memory_guard
