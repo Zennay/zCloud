@@ -25,7 +25,7 @@ vm.runInContext('DATA = {dynamic_workers:{chatgpt_count:2,claude_count:1},projec
 vm.runInContext('WORKER_DEBUG = {workers:[{global_slot:1,project:"supa",worker:"supa::w1",provider:"chatgpt",verdict:"waiting",desired_state:"running"},{global_slot:3,project:"lightup",worker:"lightup::w1",provider:"claude",verdict:"generating",desired_state:"running"}]};', ctx);
 let rows = vm.runInContext('globalWorkerRows()',ctx);
 assert.equal((rows.match(/class="global-worker-row"/g) || []).length,3);
-assert.match(rows,/value="supa" selected/);
+assert.match(rows,/ChatGPT · Supa/);
 assert.match(rows,/data-worker-id="supa::w1"/);
 assert.match(rows,/data-global-worker-play="3"[^>]*disabled/);
 assert.equal((rows.match(/data-global-worker-play=/g)||[]).length,3);
