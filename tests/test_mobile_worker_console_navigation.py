@@ -22,7 +22,7 @@ const start = src.indexOf("document.addEventListener('click',async e=>{");
 const end = src.indexOf("document.addEventListener('focusin'", start);
 assert.ok(start > 0 && end > start, 'delegated click handler missing');
 const handlerSource = src.slice(start, end);
-let scrolled = 0, focused = 0, prevented = 0, stopped = 0;
+let scrolled = 0, focused = 0, prevented = 0, stopped = 0, navSynced = 0;
 const panel = {
   scrollIntoView: args => {assert.equal(args.block,'start'); scrolled++},
   focus: args => {assert.equal(args.preventScroll,true);focused++}
@@ -39,6 +39,8 @@ const ctx = vm.createContext({
   routeVersion: 0,
   DATA: null,
   scrollToWorkersOnOverview: false,
+  mobileWorkersActive: false,
+  syncNav: () => navSynced++,
 });
 vm.runInContext(handlerSource, ctx, {timeout:2000});
 assert.equal(typeof registered.click, 'function');
@@ -51,6 +53,8 @@ const click = () => registered.click({
   await click();
   assert.equal(scrolled,1,'Overview shortcut must scroll to worker panel');
   assert.equal(focused,1,'Overview shortcut must focus worker panel');
+  assert.equal(navSynced,1,'Active mobile navigation should refresh');
+  assert.equal(ctx.mobileWorkersActive,true,'Workers must become the selected nav item');
   vm.runInContext("route='project/supa';location.hash='#project/supa'",ctx);
   await click();
   assert.equal(ctx.location.hash,'#overview');
@@ -62,6 +66,7 @@ const click = () => registered.click({
   assert.equal(scrolled,2,'Project → Overview navigation must scroll');
   assert.equal(focused,2,'New Overview panel receives focus');
   assert.equal(ctx.scrollToWorkersOnOverview,false,'One-shot navigation flag resets');
+  assert.equal(ctx.mobileWorkersActive,true,'Workers tab stays selected after project → Overview');
   assert.equal(prevented,2);
   assert.equal(stopped,2);
 })().catch(err=>{console.error(err);process.exitCode=1});
@@ -99,6 +104,8 @@ const click = () => registered.click({
         self.assertIn("min-height:48px",css)
         self.assertIn("overflow-wrap:anywhere",css)
         self.assertIn("mobileProjects.classList.toggle('is-overview',route==='overview')",app)
+        self.assertIn("a.classList.toggle('active',route==='overview'&&mobileWorkersActive)",app)
+        self.assertNotIn('data-global-worker-start=',app)
         self.assertIn("tabindex=\"-1\"",app)
         self.assertIn("data-global-worker-project",app)
         self.assertNotIn("min-height:32px",css)
