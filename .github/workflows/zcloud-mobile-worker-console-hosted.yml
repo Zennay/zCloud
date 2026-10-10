@@ -7,6 +7,7 @@ on:
     paths:
       - public/app.js
       - public/design-system.css
+      - public/enhancements.css
       - public/index.html
       - tests/test_*.py
       - tests/test_worker_debug_panel.js
