@@ -8,6 +8,8 @@ on:
       - public/app.js
       - public/design-system.css
       - public/index.html
+      - tests/test_*.py
+      - tests/test_worker_debug_panel.js
       - tests/test_global_worker_console_ui.py
       - tests/test_mobile_worker_console_navigation.py
       - tests/test_mobile_worker_actions_20261010.py
