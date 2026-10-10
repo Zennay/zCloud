@@ -2,16 +2,10 @@
 # FTMO verify72 recovery: restart standalone Violentmonkey Firefox 2026-10-02T09:27Z
 name: zCloud restart allocated workers
 
+# Manual emergency recovery only. Hourly Firefox recycling interrupted
+# active model generation; the per-worker progress watchdog handles idle stalls.
 on:
   workflow_dispatch:
-  schedule:
-    # Forced hourly refresh for the seven ChatGPT workers. The workflow itself
-    # prefers fresh chats and already recovers by recycling the Firefox consumer.
-    - cron: "3 * * * *"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/zcloud-restart-workers.yml"
 
 permissions:
   contents: read
