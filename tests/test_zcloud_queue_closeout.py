@@ -83,6 +83,10 @@ class QueueCloseoutTests(unittest.TestCase):
             obj = github_fixture(path)
             return {"check_runs": []} if "/check-runs?" in path else obj
         self.assertFalse(verified_merged_delivery(PR_URL, none)[0])
+        def incomplete(path):
+            obj = github_fixture(path)
+            return {"total_count": 101, "check_runs": obj["check_runs"]} if "/check-runs?" in path else obj
+        self.assertFalse(verified_merged_delivery(PR_URL, incomplete)[0])
 
     def test_denies_github_errors_and_oversized_evidence(self):
         def down(_):
