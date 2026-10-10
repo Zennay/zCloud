@@ -882,7 +882,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(second["queue_id"], server.portfolio_queue_current_for_slot(2)["queue_id"])
 
         with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
-            result = server.portfolio_queue_finish(1, first["queue_id"], "DONE", "commit abc; tests green")
+            result = server.portfolio_queue_finish(1, first["queue_id"], "DONE", "https://github.com/Zennay/zCloud/pull/646")
         self.assertTrue(result["updated"])
 
         server.portfolio_queue_allocate()
@@ -916,7 +916,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         server.portfolio_queue_allocate()
 
         with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
-            result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate closed with current evidence")
+            result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "https://github.com/Zennay/Haxlab/pull/646")
 
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
@@ -933,7 +933,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         server.portfolio_queue_allocate()
 
         with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", return_value=(True, "Verified")):
-            result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "gate advanced with current evidence")
+            result = server.portfolio_queue_finish(1, item["queue_id"], "DONE", "https://github.com/Zennay/Ftmo/pull/646")
 
         continuation = result["next_task"]
         self.assertIsNotNone(continuation)
