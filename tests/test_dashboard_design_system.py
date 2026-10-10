@@ -28,14 +28,14 @@ class DashboardDesignSystemTests(unittest.TestCase):
 
     def test_all_static_css_variables_resolve_to_declared_tokens(self):
         source = "\n".join((self.base, self.enhancements, self.system))
-        declared = set(re.findall(r"(--[a-zA-Z][\\w-]*)\\s*:", source))
-        used = set(re.findall(r"var\\(\\s*(--[a-zA-Z][\\w-]*)", source))
+        declared = set(re.findall(r"(--[a-zA-Z][\w-]*)\s*:", source))
+        used = set(re.findall(r"var\(\s*(--[a-zA-Z][\w-]*)", source))
         self.assertEqual(set(), used - declared,
                          f"Unresolved dashboard CSS variables: {sorted(used - declared)}")
 
     def test_scaling_panels_have_defined_border_background_and_state_colors(self):
         for name in ("--line", "--panel-soft", "--success", "--warning", "--accent"):
-            self.assertRegex(self.system, rf"{re.escape(name)}\\s*:")
+            self.assertRegex(self.system, rf"{re.escape(name)}\s*:")
         self.assertIn(".project-scaling-chip", self.system)
         self.assertIn(".worker-scaling-row", self.system)
         self.assertIn("overflow-wrap: anywhere", self.system)
