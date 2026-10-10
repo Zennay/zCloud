@@ -931,6 +931,30 @@ class VpsPortfolioQueueTests(unittest.TestCase):
                 server.portfolio_queue_finish(1, fresh["queue_id"], "DONE", evidence)
         self.assertEqual(fresh["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
 
+    def test_done_rechecks_claim_identity_after_github_verification(self):
+        item = server.portfolio_queue_enqueue(
+            "cloud", "Finish current main code fix", "P0", "Implement and validate a main code fix."
+        )
+        server.portfolio_queue_allocate()
+        self.assertEqual(item["queue_id"], server.portfolio_queue_current_for_slot(1)["queue_id"])
+
+        def reassign_during_verification(*args, **kwargs):
+            with server.connect() as conn:
+                conn.execute(
+                    "UPDATE portfolio_queue SET claimed_at=? WHERE queue_id=?",
+                    ("2099-01-01T00:00:00+00:00", item["queue_id"]),
+                )
+            return True, "Verified"
+
+        with patch("scripts.zcloud_queue_closeout.verified_merged_delivery", side_effect=reassign_during_verification):
+            outcome = server.portfolio_queue_finish(
+                1, item["queue_id"], "DONE", "https://github.com/Zennay/zCloud/pull/646"
+            )
+        self.assertEqual("assignment-changed-during-closeout", outcome["reason"])
+        current = server.portfolio_queue_current_for_slot(1)
+        self.assertEqual(item["queue_id"], current["queue_id"])
+        self.assertEqual("claimed", current["status"])
+
     def test_haxlab_done_creates_p3_write_first_continuation(self):
         item = server.portfolio_queue_enqueue("haxlab", "close evidence gate", "P2", "prove current gate")
         server.portfolio_queue_allocate()
