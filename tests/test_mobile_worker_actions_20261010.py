@@ -31,6 +31,19 @@ const button=(project)=>({closest:()=>({querySelector:()=>({value:project})})});
   assert.match(markup,/data-global-worker-play="3"[^>]*disabled/);
   assert.match(markup,/Signaal:.*Prompt:.*Taak:/s);
   assert.match(markup,/Kies een project…/);
+  vm.runInContext('GLOBAL_WORKER_PROJECT_REQUESTS[2]="supa"; GLOBAL_WORKER_REQUEST_RESULTS[2]="Projectaanvraag mislukt";',ctx);
+  let retryMarkup=vm.runInContext('globalWorkerRows()',ctx);
+  let second=retryMarkup.match(/<article class="global-worker-row" data-global-slot="2">([\\s\\S]*?)<\\/article>/)[1];
+  assert.match(second,/data-global-worker-play="2"[^>]*aria-label="Play worker 2">/,'failure must permit retry');
+  vm.runInContext('GLOBAL_WORKER_REQUEST_RESULTS[2]="Project priority requested"; GLOBAL_WORKER_REQUEST_AT[2]=Date.now();',ctx);
+  retryMarkup=vm.runInContext('globalWorkerRows()',ctx);
+  second=retryMarkup.match(/<article class="global-worker-row" data-global-slot="2">([\\s\\S]*?)<\\/article>/)[1];
+  assert.match(second,/data-global-worker-play="2"[^>]*disabled/,'fresh request should prevent duplicate');
+  vm.runInContext('GLOBAL_WORKER_REQUEST_AT[2]=Date.now()-WORKER_REQUEST_RETRY_MS-1000;',ctx);
+  retryMarkup=vm.runInContext('globalWorkerRows()',ctx);
+  second=retryMarkup.match(/<article class="global-worker-row" data-global-slot="2">([\\s\\S]*?)<\\/article>/)[1];
+  assert.match(second,/data-global-worker-play="2"[^>]*aria-label="Play worker 2">/,'stale request must permit retry');
+  assert.match(second,/Nog niet toegewezen aan dit slot/);
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
         result=subprocess.run(
