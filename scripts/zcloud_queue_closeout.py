@@ -32,8 +32,9 @@ def verified_merged_delivery(evidence, fetcher=None, *, expected_repo=None, clai
     This checks GitHub's current state rather than accepting claims from the
     worker. It does not perform a deploy and does not prove user acceptance.
     """
-    raw = str(evidence or "").strip()
-    if not raw or len(raw) > 4000:
+    submitted = str(evidence or "")
+    raw = submitted.strip()
+    if not raw or len(submitted) > 4000:
         return False, "Missing or oversized closeout evidence"
     matches = list(PR.finditer(raw))
     if len(matches) != 1:
