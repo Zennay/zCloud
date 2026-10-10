@@ -19,6 +19,23 @@ permissions:
 
 jobs:
   observe:
+    # PR/worker-head regression runs cannot authorize queue cancellation or
+    # actions on the VPS. Reject stale main SHAs, forks and manual non-owners.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      (
+        github.event_name == 'schedule' ||
+        (github.event_name == 'workflow_dispatch' && github.actor == 'Zennay') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          github.event.workflow_run.head_sha == github.sha
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 3
     concurrency:
@@ -189,24 +206,14 @@ jobs:
               with urllib.request.urlopen(req,timeout=20) as r:
                   return json.load(r)
 
+          # Recover only the Actions listener. Do not change the dynamic pool,
+          # force-push prompts or invalidate active browser generations as a
+          # side effect of queued GitHub jobs. zcloud-self-heal owns per-worker
+          # recovery and its memory-pressure guard.
           current=call("GET","/api/dynamic-workers").get("dynamic_workers") or {}
-          desired={
-              key:current.get(key)
-              for key in (
-                  "chatgpt_count","claude_count",
-                  "chatgpt_cooldown_seconds","claude_cooldown_seconds",
-                  "check_interval_ms","tick_interval_ms","heartbeat_interval_ms",
-                  "generation_start_timeout_ms","scheduler_interval_seconds",
-              )
-              if current.get(key) is not None
-          }
-          desired["chatgpt_count"]=7
-          reconciled=call("POST","/api/dynamic-workers",desired)
-          print("WORKER_CAPACITY_RECONCILED",json.dumps(reconciled,sort_keys=True))
-          pushed=call("POST","/api/dynamic-workers/force-push",{})
-          print("WORKERS_FORCE_PUSHED",json.dumps(pushed,sort_keys=True))
-          if not reconciled.get("ok"):
-              raise SystemExit("dynamic worker reconcile returned ok=false")
-          if not pushed.get("ok"):
-              raise SystemExit("force-push returned ok=false")
+          print("WORKER_POOL_PRESERVED",json.dumps({
+              "configured_chatgpt":current.get("chatgpt_count"),
+              "configured_claude":current.get("claude_count"),
+              "configured_total":current.get("count"),
+          },sort_keys=True))
           PY
