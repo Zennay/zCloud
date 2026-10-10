@@ -88,6 +88,57 @@ class QueueCloseoutTests(unittest.TestCase):
             return {"total_count": 101, "check_runs": obj["check_runs"]} if "/check-runs?" in path else obj
         self.assertFalse(verified_merged_delivery(PR_URL, incomplete)[0])
 
+    def test_successful_main_workflow_with_real_artifact_can_close_noncode_work(self):
+        url = "https://github.com/Zennay/Ftmo/actions/runs/12345"
+
+        def run_data(path):
+            if path == "/repos/Zennay/Ftmo/actions/runs/12345":
+                return {
+                    "status": "completed", "conclusion": "success", "head_branch": "main",
+                    "event": "schedule", "created_at": "2026-10-10T13:20:00Z",
+                }
+            if path == "/repos/Zennay/Ftmo/actions/runs/12345/artifacts?per_page=100":
+                return {"total_count": 1, "artifacts": [
+                    {"name": "validated-experiment", "size_in_bytes": 2048, "expired": False}
+                ]}
+            raise AssertionError("Unexpected GitHub endpoint " + path)
+
+        self.assertTrue(verified_merged_delivery(
+            url, run_data, expected_repo="Ftmo", claimed_after="2026-10-10T13:00:00Z",
+        )[0])
+        self.assertFalse(verified_merged_delivery(
+            url, run_data, expected_repo="zCloud", claimed_after="2026-10-10T13:00:00Z",
+        )[0])
+        self.assertFalse(verified_merged_delivery(
+            url, run_data, expected_repo="Ftmo", claimed_after="2026-10-10T14:00:00Z",
+        )[0])
+
+        for update in (
+            {"status": "in_progress"},
+            {"conclusion": "failure"},
+            {"head_branch": "feature"},
+            {"event": "pull_request"},
+        ):
+            def invalid_run(path):
+                data = run_data(path)
+                return {**data, **update} if path.endswith("/runs/12345") else data
+            self.assertFalse(verified_merged_delivery(url, invalid_run)[0])
+
+        for artifacts in (
+            [],
+            [{"size_in_bytes": 0, "expired": False}],
+            [{"size_in_bytes": 20, "expired": True}],
+        ):
+            def invalid_artifact(path):
+                data = run_data(path)
+                return {"artifacts": artifacts} if "/artifacts?" in path else data
+            self.assertFalse(verified_merged_delivery(url, invalid_artifact)[0])
+
+        def incomplete(path):
+            data = run_data(path)
+            return {"total_count": 101, **data} if "/artifacts?" in path else data
+        self.assertFalse(verified_merged_delivery(url, incomplete)[0])
+
     def test_denies_github_errors_and_oversized_evidence(self):
         def down(_):
             raise OSError("Network unavailable")
