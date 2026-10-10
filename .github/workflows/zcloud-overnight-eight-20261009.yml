@@ -1,14 +1,10 @@
 # One-night owner-requested recovery; file-disjoint from PRs #580/#938/#948/#1087.
 name: zCloud overnight eight-worker watchdog
 
+# Dated 2026-10-09 recovery is retired from automatic execution.
+# Leave explicit owner dispatch available for controlled incident response.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [".github/workflows/zcloud-overnight-eight-20261009.yml"]
-  schedule:
-    # 23:00 UTC = 01:00 Amsterdam on 2026-10-09.
-    - cron: "*/5 23,0-6 * * *"
 
 permissions:
   contents: read
