@@ -1,0 +1,31 @@
+name: zCloud worker finish-first hosted validation
+
+on:
+  push:
+    branches:
+      - fix/worker-finish-first-closeout-20261010
+    paths:
+      - server.py
+      - scripts/zcloud_queue_closeout.py
+      - tests/test_zcloud_queue_closeout.py
+      - tests/test_portfolio_queue_backend.py
+      - tests/test_worker_prompt_style.py
+      - .github/workflows/zcloud-worker-finish-first-hosted.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  finish-first-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact branch commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify queue closeout, existing queue behavior and worker prompts
+        run: python3 -m unittest -v tests.test_zcloud_queue_closeout tests.test_portfolio_queue_backend tests.test_worker_prompt_style
+      - name: Run complete Python regression discovery on same head
+        run: python3 -m unittest discover -v
