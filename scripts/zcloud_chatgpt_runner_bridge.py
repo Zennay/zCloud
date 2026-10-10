@@ -23,7 +23,7 @@ CHATGPT_APP_ID = 1144995
 HOST = "vps-bb300bba"
 USER = "ubuntu"
 COMMAND = re.compile(
-    r"/zssh (status|project cloud|service (?:zennay-cloud|zssh|zssh-public)|run (?:write-probe|zcloud-guard-test))\Z"
+    r"/zssh (status|project cloud|service (?:zennay-cloud|zssh|zssh-public)|run [a-z][a-z0-9-]{1,40})\Z"
 )
 
 
@@ -132,6 +132,21 @@ def execute(request: str) -> dict:
         if code:
             raise RuntimeError("zcloud_guard_test_failed")
         return {"ok": True, "operation": request, "effect": "unit_test_passed"}
+    if request.startswith("run "):
+        # Only execute a checked-in recipe from the exact main revision.
+        # Issue comments never supply code, shell flags, or file paths.
+        name = request.removeprefix("run ")
+        root = Path(__file__).resolve().parents[1]
+        recipes_dir = root / "ops" / "zssh-runner-recipes"
+        recipe = recipes_dir / (name + ".py")
+        if recipe.is_symlink() or not recipe.is_file():
+            raise RequestRejected("reviewed_recipe_not_found")
+        if recipe.resolve().parent != recipes_dir.resolve():
+            raise RequestRejected("reviewed_recipe_outside_root")
+        code, _ = run_checked([sys.executable, str(recipe)], cwd=str(root))
+        if code:
+            raise RuntimeError("reviewed_recipe_failed")
+        return {"ok": True, "operation": request, "effect": "reviewed_recipe_passed"}
     raise RequestRejected("unsupported_operation")
 
 

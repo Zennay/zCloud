@@ -40,6 +40,7 @@ class ChatgptRunnerBridgeTests(unittest.TestCase):
             "/zssh project cloud",
             "/zssh run write-probe",
             "/zssh run zcloud-guard-test",
+            "/zssh run zcloud-health-smoke",
         ]:
             self.assertEqual(bridge.parse_request(make_event(cmd), "Zennay"), cmd[6:])
 
@@ -77,6 +78,8 @@ class ChatgptRunnerBridgeTests(unittest.TestCase):
             "/zssh status\r",
             "/zssh status && curl attacker.test",
             "/zssh run write-probe --foo",
+            "/zssh run bad.name",
+            "/zssh run abc/def",
             "/zssh STATUS",
             "/zssh status ",
             " /zssh status",
@@ -121,6 +124,26 @@ class ChatgptRunnerBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual([v[0] for v in calls], ["/usr/bin/uptime", "/usr/bin/df", "/usr/bin/free"])
         self.assertTrue(all(isinstance(v, list) for v in calls))
+
+    def test_reviewed_python_recipe_is_checked_in(self):
+        calls = []
+        def fake_runner(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return 0, "hidden"
+        with patch.object(bridge, "ensure_runner"):
+            with patch.object(bridge, "run_checked", side_effect=fake_runner):
+                result = bridge.execute("run zcloud-health-smoke")
+        self.assertEqual(result["effect"], "reviewed_recipe_passed")
+        self.assertNotIn("hidden", str(result))
+        self.assertEqual(
+            Path(calls[0][0][1]).resolve(),
+            ROOT / "ops/zssh-runner-recipes/zcloud-health-smoke.py",
+        )
+
+    def test_nonexistent_recipe_is_rejected(self):
+        with patch.object(bridge, "ensure_runner"):
+            with self.assertRaises(bridge.RequestRejected):
+                bridge.execute("run nonexistent-recipe")
 
     def test_workflow_never_runs_pr_code_on_self_hosted_runner(self):
         content = (ROOT / ".github/workflows/zssh-chatgpt-runner-bridge.yml").read_text()
