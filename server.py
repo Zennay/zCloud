@@ -3251,12 +3251,12 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         github_repo=re.fullmatch(r'https://github\.com/Zennay/([a-zA-Z0-9_.-]+)/?',repo_url,re.I)
         if not github_repo:
             raise ValueError('DONE vereist een bekend GitHub-projectrepo')
-        from scripts.zcloud_queue_closeout import PR, verified_merged_delivery
+        from scripts.zcloud_queue_closeout import proof_reference, verified_merged_delivery
         accepted, reason = verified_merged_delivery(
             evidence,expected_repo=github_repo.group(1),claimed_after=current['claimed_at']
         )
         if not accepted:
-            raise ValueError('DONE niet toegestaan: '+reason+'. Gebruik CONTINUE tot merge en CI groen zijn.')
+            raise ValueError('DONE niet toegestaan: '+reason+'. Gebruik CONTINUE tot extern resultaatbewijs groen is.')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -3270,19 +3270,15 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             # Its older proof cannot close the new assignment.
             return {'updated':False,'reason':'assignment-changed-during-closeout'}
         if result=='DONE':
-            canonical=PR.search(str(evidence or ''))
-            if not canonical:
-                raise ValueError('DONE vereist GitHub mergebewijs')
-            linked_url=canonical.group(0).lower()
+            linked_url=proof_reference(evidence)
+            if not linked_url:
+                raise ValueError('DONE vereist één GitHub resultaatbewijs')
             previous=c.execute(
                 "SELECT queue_id,evidence FROM portfolio_queue WHERE status='done' "
                 "AND queue_id<>? AND evidence IS NOT NULL",
                 (queue_id,),
             ).fetchall()
-            if any(
-                any(match.group(0).lower()==linked_url for match in PR.finditer(str(p['evidence'] or '')))
-                for p in previous
-            ):
+            if any(proof_reference(p['evidence'])==linked_url for p in previous):
                 raise ValueError('DONE bewijs is al gebruikt voor een andere queue taak')
             c.execute("""UPDATE portfolio_queue SET status='done',eligible=0,evidence=?,blocker='',
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
