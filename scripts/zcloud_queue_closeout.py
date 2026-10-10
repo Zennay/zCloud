@@ -11,6 +11,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 PR = re.compile(r"https://github\.com/(Zennay)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)\b", re.I)
 SHA = re.compile(r"\b[0-9a-f]{40}\b", re.I)
@@ -25,7 +26,7 @@ def _github_json(path):
         return json.load(response)
 
 
-def verified_merged_delivery(evidence, fetcher=None):
+def verified_merged_delivery(evidence, fetcher=None, *, expected_repo=None, claimed_after=None):
     """Return (allowed, reason), never raise for untrusted external evidence.
 
     This checks GitHub's current state rather than accepting claims from the
@@ -39,11 +40,18 @@ def verified_merged_delivery(evidence, fetcher=None):
         return False, "DONE requires exactly one Zennay GitHub pull-request URL"
     owner, repo, number = matches[0].groups()
     repo = repo.strip()
+    if expected_repo and repo.casefold() != str(expected_repo).casefold():
+        return False, "Merged PR does not belong to this queue project's repository"
     github = fetcher or _github_json
     try:
         pr = github("/repos/Zennay/" + repo + "/pulls/" + number)
         if not isinstance(pr, dict) or not pr.get("merged_at"):
             return False, "Referenced PR is not merged"
+        if claimed_after:
+            merged_time = datetime.fromisoformat(str(pr["merged_at"]).replace("Z", "+00:00")).astimezone(timezone.utc)
+            claimed_time = datetime.fromisoformat(str(claimed_after).replace("Z", "+00:00")).astimezone(timezone.utc)
+            if merged_time < claimed_time:
+                return False, "PR was merged before this work assignment began"
         if (pr.get("base") or {}).get("ref") != "main":
             return False, "Referenced PR was not merged to main"
         sha = str(pr.get("merge_commit_sha") or "")
