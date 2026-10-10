@@ -1,0 +1,286 @@
+# Runner-command result fencing — integration handoff
+
+Status: **observed defect, not fixed**. Scope: `/api/runner-command-result` in
+`server.py`; owned by serialized #580/PWQ-41 + #576 integration lane.
+This document and PR #1221 do **not** authorize server, worker or live database changes.
+
+## Exact evidence
+
+PR #1221 predecessor head `67724046360259a1f0db5175ab03b50d5110d303`
+was tested by GitHub Actions regression run
+[37859691920](https://github.com/Zennay/zCloud/actions/runs/37859691920):
+644 tests, 2 failures, both in the source-contract file. The failures are:
+
+* callback UPDATE lacks `AND status='pending'` (terminal replay may overwrite prior outcome);
+* callback converts the command ID with `int(... or 0)` without positive-ID prevalidation.
+
+CPU diagnostic 37859692047 succeeded; dashboard access recovery
+37859691946 failed separately. None of this proves a live attack or a
+successful server endpoint integration.
+
+## Owner acceptance contract
+
+1. Authenticate/authorize the callback as currently required; do not
+   weaken the existing loopback restriction.
+2. Validate integer command IDs, rejecting null, booleans, negatives, zero,
+   malformed strings and out-of-range values with a controlled 4xx response.
+3. Accept only `completed` and `failed` states.
+4. Atomically update only a matching **pending** command; report non-match
+   without changing rows or leaking whether an ID exists.
+5. Keep result truncation and existing storage constraints. Decide the
+   response status for stale/duplicate receipts explicitly (e.g. a bounded
+   conflict, or idempotent non-mutating success).
+6. Test duplicate same-status reports, opposite-status late reports,
+   scheduler-staled commands, unknown IDs, and concurrent attempts against
+   the actual endpoint, not only the in-memory reference model.
+7. Once the production change is implemented, remove the two
+   `@unittest.expectedFailure` annotations in
+   `tests/test_runner_command_terminal_receipt_boundary_w4.py`, make both
+   tests green, and add behavioral endpoint assertions for the HTTP contract.
+8. Require exact-head regression and owner review before integration; do
+   not bypass #580/#576 gates or deploy from this draft branch.
+
+Current PR #1221 contains only add-only offline reference/contract checks
+and this handoff. It does not establish production readiness.
+
+## Proposed minimal endpoint implementation (owner-only; not deployed)
+
+The integration owner can preserve the existing loopback restriction and status
+allowlist while replacing the ID parse and unconditional UPDATE with the following
+explicit validation and atomic transition. This is illustrative integration
+code, **not** an applied patch to `server.py`.
+
+```python
+raw_id = payload.get("command_id")
+if type(raw_id) is not int or not (0 < raw_id <= 2**53 - 1):
+    return self.reply({"error": "Ongeldig command_id"}, 400)
+command_id = raw_id
+
+status = str(payload.get("status") or "")
+if status not in ("completed", "failed"):
+    return self.reply({"error": "Ongeldige status"}, 400)
+
+with connect() as c:
+    changed = c.execute(
+        "UPDATE runner_commands SET status=?,updated_at=?,result=? "
+        "WHERE id=? AND status='pending'",
+        (status, now(), str(payload.get("result") or "")[:300], command_id),
+    ).rowcount
+
+if changed != 1:
+    # Same bounded response for an unknown command and any already-terminal ID.
+    # No second read is necessary; do not disclose command existence.
+    return self.reply({"error": "Command niet pending"}, 409)
+return self.reply({"ok": True})
+```
+
+The above chooses strict positive JSON integer IDs inside the cross-client\nJavaScript safe range (1 through 2**53 - 1), rather than coercing digit\nstrings. This is a proposed transport contract and must be coordinated with\nthe server-side ID allocator: reject or alarm on newly allocated IDs above\nthis range instead of creating unacknowledgeable pending commands.
+If existing runner clients send IDs as strings, the owner must first verify and
+migrate that contract; do **not** silently deploy this stricter behavior.
+The code also assumes `connect()` commits context-manager writes exactly as the
+current endpoint does.
+
+### Acceptance matrix for owner HTTP tests
+
+| Request / database before | Expected HTTP | Database after |
+| --- | --- | --- |
+| localhost, integer ID 1 pending, completed | 200 | ID 1 completed, result capped at 300 |
+| localhost, same receipt replay to completed ID 1 | 409 | Prior result and timestamp untouched |
+| localhost, failed after completed ID 1 | 409 | Prior result and timestamp untouched |
+| localhost, completed after scheduler marks ID 1 failed | 409 | Scheduler result and timestamp untouched |
+| localhost, unknown positive ID | 409 | No rows added or changed |
+| localhost, ID 0 / -1 / true / null / string | 400 | No rows changed |
+| localhost, unsupported status | 400 | No rows changed |
+| remote source IP (even with valid ID) | 403 | No rows changed |
+| two competing terminal reports to pending ID | one 200, one 409 | Exactly one winner; no lost update |
+
+Do not modify `updated_at` on rejected or duplicate receipts. Preserve the
+300-character Python string slicing policy unless the owner explicitly revises
+the public result contract. Repeat the race test with independent SQLite
+connections and the real HTTP handler; the offline reference tests only
+demonstrate intended SQL semantics.
+
+## Producer compatibility audit (default-branch source inspection)
+
+Two known callback producers have now been inspected on the default branch:
+
+* `public/zcloud-worker.user.js`, `commandResult(commandId, resultStatus, result)`,
+  posts `{command_id: commandId, status: resultStatus, result}` through `gmRequest`.
+  It treats any rejected HTTP request as `false`. Thus a 409 duplicate is
+  **not automatically treated as an idempotent success** by this producer.
+* `firefox-extension/background.js`, `commandResult(commandId, status, result)`,
+  serializes `command_id` with `JSON.stringify` into a `fetch` using
+  `mode: "no-cors"` and ignores transport failures. The client cannot reliably
+  inspect the 409 body/status under this mode.
+
+Neither producer converts the supplied ID to a numeric type at the immediate
+callback callsite. Before integrating the strict `type(raw_id) is int` guard,
+the owner must trace the command-fetch/dispatch paths in both producers and
+verify the command ID type received from the server (including legacy
+commands). A mismatch could reject legitimate receipts and cause stale
+commands. The offline fixture does not establish this compatibility.
+
+### Retry and observability decision
+
+If the owner retains the proposed `409` for stale/duplicate receipts, ensure
+workers do not respond with unbounded retry loops or falsely classify an
+already-final command as an operational failure. An alternative is a **non-mutating
+200** for terminal/unknown IDs, but only if the API deliberately specifies this
+behavior and limits disclosure. Either policy must preserve the atomic
+`WHERE id=? AND status='pending'` update and must be tested through both
+producers. Do not change producer retry behavior or the live runner protocol from
+this draft test-only PR.
+
+## Producer ID type trace (verified 2026-10-09)
+
+Tracing the consumer logic beyond the immediate callback callsites resolves part
+of the earlier compatibility question:
+
+* **Violentmonkey/userscript**: `handleCommands()` fetches
+  `/runner-commands`, filters and sorts using `Number(command.id || 0)`,
+  then explicitly assigns `const id = Number(command.id || 0)` before passing
+  `id` to `commandResult(id, ...)`. Normal delivered finite IDs therefore
+  serialize as JSON numbers. This path is compatible with a strict JSON
+  integer contract for ordinary IDs; the owner must still reject
+  fractional, unsafe, nonfinite or overflowed values.
+* **Firefox extension**: `pollCommands()` fetches the same route and forwards
+  `command.id` directly to `pushProject`, `startProject`,
+  `pauseProject`, `drainProject`, or `newProjectChat`, which invoke
+  `commandResult`. There is **no ID coercion** in this path: compatibility
+  depends on the JSON type emitted by the server's `/runner-commands`
+  endpoint. Require a real fetched response fixture/test before enforcing
+  strict server-side integer-only validation.
+* `Number(...)` in the userscript does **not** prove a safe integer:
+  `Number.isSafeInteger(id)` and `id > 0` should be asserted for incoming
+  commands before dispatch. That producer change is separately owned and
+  must not be silently folded into this draft branch.
+
+This trace is a **static source audit**, not live production evidence. The
+integration owner should pair it with a real `/runner-commands` JSON sample
+and a POST callback contract test on the same exact-head build.
+
+## Server response serialization — source-verified contract
+
+The default-branch `GET /api/runner-commands` handler selects
+`id,project_id,action,created_at` directly from the SQLite
+`runner_commands` table using `fetchall()`, then serializes each row with
+`dict(r)` under `{"commands": [...]}`. It **does not convert `id` to a
+string**. Python SQLite maps INTEGER values to Python `int`, and the normal
+JSON encoder emits those values as JSON numbers; both callback clients should
+therefore receive numeric IDs from this endpoint under the current schema.
+This resolves the earlier *string-versus-number* concern for the standard
+delivery path, subject to verifying the live database schema and HTTP response.
+
+**Remaining compatibility gate:** JavaScript numbers represent integers
+exactly only through `Number.MAX_SAFE_INTEGER` (2^53 - 1). SQLite INTEGER
+can be larger. The owner should document a max-ID policy, fail safely on
+out-of-range IDs in both producers, and cover such a case in an isolated
+HTTP/JSON fixture. In particular, the userscript's `Number(command.id || 0)`
+would silently round an unsafe integer before acknowledgement.
+
+The production callback is **still unpatched on inspected default branch**:
+`int(payload.get('command_id') or 0)` remains unguarded and its UPDATE still
+has `WHERE id=?` without `status='pending'`. Successful execution of
+offline reference tests is not evidence of remediation.
+
+## Enforce the range at both ends (integration-owner follow-up)
+
+The HTTP callback guard alone does **not** solve numeric aliasing: by the
+moment a JavaScript client sends an unsafe integer, precision may already have
+been lost. Before rollout, add a producer-side predicate
+`Number.isSafeInteger(command.id) && command.id > 0` to both userscript and
+extension command-poll paths. Reject out-of-range commands before dispatch,
+report a bounded diagnostic, and do not acknowledge a rounded ID. The command
+allocator must fail closed or migrate to an explicitly specified string-ID
+protocol before it could reach `2**53`; otherwise the worker would be stuck.
+
+Validate boundaries 0, 1, `2**53-1`, `2**53`, `2**53+1`, floats, booleans,
+strings, null, and replay/cross-command races in isolated real HTTP tests.
+Do not deploy this partial server-only guard without corresponding producer
+and allocation checks. The offline reference test demonstrates the problem,
+not full implementation correctness.
+
+## Additional observed defect: phantom positive acknowledgement
+
+The default-branch callback unconditionally replies `{"ok":true}` after
+`UPDATE runner_commands ... WHERE id=?`, without inspecting SQLite
+`rowcount`. An unknown positive command ID matches zero rows but still
+receives HTTP **200**. This is a semantic false acknowledgement even when the
+database stays unchanged. The isolated live-handler HTTP regression
+`test_unknown_id_must_not_report_success` records this as a tracked
+`expectedFailure` until integration. The proposed conditional update above
+already handles this case via `changed != 1` -> a bounded `409` response.
+
+Verify the worker acceptance policy before implementing `409`: userscript
+`commandResult` returns `false` on non-2xx; the Firefox extension sends a
+`no-cors` request and does not inspect the status. This is distinct from the
+late-terminal-overwrite and invalid-ID-validation defects. Unknown and
+already-terminal IDs should receive a consistent non-disclosing response.
+
+## Independent dashboard-recovery CI diagnosis (not owned by this PR)
+
+At [run 37868539167](https://github.com/Zennay/zCloud/actions/runs/37868539167)
+(recovery job 113620968090), the systemd unit was **active**, Python listened
+on `0.0.0.0:8765`, and the SQLite writeability probe printed
+`ZCLOUD_SQLITE_WRITE_PROBE_GREEN`. The following local `curl -fsS`
+request returned HTTP **503** and the JSON parser then failed on empty input.
+The run therefore failed at the local dashboard status/health step, **not**
+at the filesystem write-permission step. The companion job “Verify dashboard
+from external runner” succeeded in the same run. This difference warrants
+route-specific diagnosis; it does not prove the dashboard is universally down.
+
+**Dashboard workflow owner follow-up (separate from receipt integration):**
+record HTTP status and a safely bounded body for both `127.0.0.1:8765/api/status`
+and the public-IP `/api/status` probe, compare response headers and any reverse
+proxy/load balancer path, and distinguish `503` from malformed JSON. Do not
+blindly chmod/restart SQLite or hide a genuine 503 under retries. This PR
+must not edit the shared live recovery workflow, service, or VPS.
+
+## Verified focused CI disclosure (2026-10-09)
+
+At head `6cd07239676d2d9f6b4b9f39c797e5d26e2f73e2`, [GitHub Actions
+receipt-contract run 37868962698](https://github.com/Zennay/zCloud/actions/runs/37868962698)
+completed successfully: **67 tests in 1.375 seconds, 13 expected failures**.
+The updated workflow emitted the actual warning:
+
+> Receipt contract suite passed with 13 expected failures; green CI does not establish remediation.
+
+This verifies both the test runner and the explicit outstanding-defect
+warning, **not** the production callback fix. The xfail tests must be converted
+to normal passing tests only after the serialized production owner lands the
+pending-only CAS, strict ID validation and affected-row acknowledgement logic.
+Do not treat the focused workflow as a substitute for full exact-head smoke,
+production-owner sign-off or staged rollout gates.
+
+
+## Structured-evidence handoff, exact-head checkpoint (2026-10-09)
+
+The evidence-only branch now runs `tests/run_receipt_contract_w4.py`, which
+records individual expected-failure IDs and full tracebacks in
+`receipt-results.json`; the workflow preserves it and
+`receipt-test-results.log` as a downloadable GitHub Actions artifact.
+The gate enforces at least 67 discovered tests, no skips, an exact reviewed
+expected-failure identity allowlist and no unreviewed expected failures.
+The observed three chained exception traces require recognizing explicit
+`AssertionError:` headings throughout a traceback, not only its final line.
+
+* [Exact-head focused run 37870661564](https://github.com/Zennay/zCloud/actions/runs/37870661564)
+  at `bede3709ba1f737349e0c58e73c62e9bddaf08a5`: **SUCCESS**;
+  the 13 known expected-failure probes still remain.
+* The same commit's CPU diagnostic `37870661584` succeeded; the independent
+  dashboard recovery `37870661583` **failed**. Its exact-head full smoke
+  `37870661594` was **in progress at inspection**; no success is claimed.
+* [Earlier focused run 37870552553](https://github.com/Zennay/zCloud/actions/runs/37870552553)
+  correctly failed a too-strict terminal-line assertion gate, while still
+  uploading evidence artifact `11589659798`. Corrected focused runs
+  `37870643443` and `37870661564` were successful. The underlying
+  production callback has **not** been fixed by this CI-only correction.
+
+**Integration-owner acceptance remains separate:** patch callback input validation
+(positive and JavaScript-safe integer), pending-only atomic SQL update with
+affected-row confirmation, reject replay/unknown ID without a false 200,
+and independently align userscript/extension ID handling. Run the focused
+suite after removing `@expectedFailure` only from actually fixed tests,
+then require full exact-head regression and explicitly handle the independent
+dashboard-health 503 failure under its separate owner. No production/runtime
+authority is transferred to this evidence-only PR.
