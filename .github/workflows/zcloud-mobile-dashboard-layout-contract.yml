@@ -1,0 +1,41 @@
+name: zCloud mobile dashboard layout contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - public/app.js
+      - public/style.css
+      - tests/test_mobile_dashboard_layout_contract.py
+      - .github/workflows/zcloud-mobile-dashboard-layout-contract.yml
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-mobile-layout-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify exact candidate
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Prove mobile layout contract
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/test_mobile_dashboard_layout_contract.py
+          python3 -m unittest -v tests.test_mobile_dashboard_layout_contract
+          echo "ZCLOUD_MOBILE_LAYOUT_CONTRACT_GREEN=1"
