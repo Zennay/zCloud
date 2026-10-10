@@ -1,0 +1,21 @@
+name: zCloud recovery loop safety (hosted)
+
+on:
+  push:
+    branches: [fix/worker-continuity-disable-restart-loop-20261011]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate timed recovery and current regression contract
+        run: python3 -m unittest -v tests.test_worker_recovery_loop_guard_20261011 tests.test_queue_watchdog_event_trigger tests.test_restart_workers_workflow tests.test_restart_workers_busy_deferred tests.test_restart_workers_pending_reconcile
+      - name: Validate worker memory-pressure recovery unit contract
+        run: python3 -m unittest -v tests.test_worker_memory_guard tests.test_worker_progress_watchdog
