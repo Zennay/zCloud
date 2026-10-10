@@ -49,6 +49,29 @@ class QueueCloseoutTests(unittest.TestCase):
         self.assertFalse(verified_merged_delivery(PR_URL, other_branch)[0])
         self.assertFalse(verified_merged_delivery(PR_URL, wrong_sha)[0])
 
+    def test_requires_repository_and_current_claim_window(self):
+        self.assertFalse(
+            verified_merged_delivery(PR_URL, github_fixture, expected_repo="Supa")[0]
+        )
+        self.assertTrue(
+            verified_merged_delivery(
+                PR_URL, github_fixture, expected_repo="zcloud",
+                claimed_after="2026-10-10T12:40:00Z",
+            )[0]
+        )
+        self.assertFalse(
+            verified_merged_delivery(
+                PR_URL, github_fixture, expected_repo="zCloud",
+                claimed_after="2026-10-10T13:40:00Z",
+            )[0]
+        )
+        self.assertFalse(
+            verified_merged_delivery(
+                PR_URL, github_fixture, expected_repo="zCloud",
+                claimed_after="malformed-clock",
+            )[0]
+        )
+
     def test_denies_pending_failed_or_missing_checks(self):
         for conclusion, status in (("failure", "completed"), ("success", "in_progress"), ("skipped", "completed")):
             with self.subTest(conclusion=conclusion, status=status):
