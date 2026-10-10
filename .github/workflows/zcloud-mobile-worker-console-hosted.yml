@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-mobile-worker-console-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   phone-ui:
     name: Phone UI only (no VPS)
