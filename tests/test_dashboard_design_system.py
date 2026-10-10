@@ -20,11 +20,11 @@ class DashboardDesignSystemTests(unittest.TestCase):
         cls.html = (PUBLIC / "index.html").read_text(encoding="utf-8")
 
     def test_shared_styles_load_after_existing_dashboard_styles(self):
-        self.assertIn('href="/design-system.css?v=r1"', self.html)
+        self.assertIn('href="/design-system.css?v=r2"', self.html)
         self.assertLess(self.html.index('href="/style.css"'),
                         self.html.index('href="/enhancements.css?v=r3"'))
         self.assertLess(self.html.index('href="/enhancements.css?v=r3"'),
-                        self.html.index('href="/design-system.css?v=r1"'))
+                        self.html.index('href="/design-system.css?v=r2"'))
 
     def test_all_static_css_variables_resolve_to_declared_tokens(self):
         source = "\n".join((self.base, self.enhancements, self.system))
