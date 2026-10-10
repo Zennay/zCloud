@@ -387,3 +387,6 @@
 .global-worker-identity,.global-worker-state,.global-worker-project,.global-worker-actions,.global-worker-feedback{grid-column:auto;grid-row:auto}
 .global-worker-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+
+/* Explain permission failures where the worker controls are visible. */
+.global-worker-access{margin:0;padding:10px 12px;border:1px solid #856d48;border-radius:9px;color:#f1d7a9;background:#2a241d;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
