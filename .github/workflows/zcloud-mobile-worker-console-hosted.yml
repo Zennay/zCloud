@@ -30,3 +30,5 @@ jobs:
         run: node --check public/app.js
       - name: Test worker console, three controls and mobile navigation
         run: python3 -m unittest -v tests.test_global_worker_console_ui tests.test_mobile_worker_console_navigation tests.test_mobile_worker_actions_20261010
+      - name: Run all repository Python regression tests (hosted only)
+        run: python3 -m unittest discover -v
