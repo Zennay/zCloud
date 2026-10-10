@@ -167,7 +167,7 @@ def project_runner_prompt(project_id, name):
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet '
         'na één actie, commit, retrigger of statuscheck. Als iets wacht op CI, VPS, review of een andere dependency, '
         'pak direct ander veilig uitvoerbaar werk binnen hetzelfde project. Kies steeds een vrij onderdeel en ga door '
-        'tot de runlimiet, echte projectafronding of totdat er werkelijk geen veilige uitvoerbare vervolgstap meer is.'
+        'tot de runlimiet, echte projectafronding of een echte blokkade.'
     )
 
 
