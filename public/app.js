@@ -360,7 +360,7 @@ function globalWorkerRows(){
   const count=Math.max(0,Math.min(16,Number(settings.chatgpt_count??0)+Number(settings.claude_count??0)));
   const workers=Array.isArray(WORKER_DEBUG?.workers)?WORKER_DEBUG.workers:[];
   const bySlot=new Map(workers.filter(w=>Number.isInteger(Number(w.global_slot))).map(w=>[Number(w.global_slot),w]));
-  const options=(DATA?.projects||[]).map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('');
+  const optionsFor=selected=>(DATA?.projects||[]).map(p=>'<option value="'+esc(p.id)+'"'+(p.id===selected?' selected':'')+'>'+esc(p.name)+'</option>').join('');
   if(!count)return '<div class="global-worker-empty" id="globalWorkerRows">No workers configured yet. Set a worker count above and save the pool.</div>';
   return '<div class="global-worker-list" id="globalWorkerRows">'+Array.from({length:count},(_,i)=>{
     const slot=i+1,w=bySlot.get(slot),provider=slot<=Number(settings.chatgpt_count||0)?'ChatGPT':'Claude';
@@ -378,7 +378,7 @@ function globalWorkerRows(){
     return '<article class="global-worker-row" data-global-slot="'+slot+'">'
       +'<div class="global-worker-identity"><span class="global-worker-index">'+String(slot).padStart(2,'0')+'</span><div><strong>Worker '+slot+'</strong><small>'+esc(provider)+' · '+esc(name||'Scheduler allocation')+'</small></div></div>'
       +'<div class="global-worker-state '+statusClass+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
-      +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Preferred project for worker '+slot+'"><option value="">Automatic (queue)</option>'+options+'</select></label>'
+      +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Preferred project for worker '+slot+'"><option value=""'+(!draft?' selected':'')+'>Automatic (queue)</option>'+optionsFor(draft)+'</select></label>'
       +'<div class="global-worker-actions">'
       +'<button type="button" class="project-secondary-button" data-global-worker-assign="'+slot+'" '+(!draft||unchanged||busySlot?'disabled':'')+' title="Request this project through the existing scheduler">Assign</button>'
       +(hasWorkerId
