@@ -1,0 +1,84 @@
+name: zSSH ChatGPT VPS runner bridge
+
+# The workflow file is taken from default branch for issue_comment events.
+# No pull_request or user-controlled branch is executed on the VPS.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-chatgpt-vps-bridge
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event.issue.number == 1278 &&
+      !github.event.issue.pull_request &&
+      github.actor == 'Zennay' &&
+      github.event.comment.user.login == 'Zennay' &&
+      github.event.comment.author_association == 'OWNER' &&
+      startsWith(github.event.comment.body, '/zssh ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout trusted default-branch bridge
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify full event shape, connector identity and command allowlist
+        run: python3 scripts/zcloud_chatgpt_runner_bridge.py validate
+
+  execute:
+    needs: authorize
+    if: needs.authorize.result == 'success'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact authorized default-branch revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          clean: true
+      - name: Enforce permanent VPS identity guard
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname -s)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+      - name: Execute bounded owner-authorized operation
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_chatgpt_runner_bridge.py execute
+
+  report:
+    needs: [authorize, execute]
+    if: always() && needs.authorize.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+    steps:
+      - name: Reply with execution result and traceable run ID
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXEC_RESULT: ${{ needs.execute.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          case "$EXEC_RESULT" in
+            success) outcome="SUCCESS" ;;
+            failure) outcome="FAILURE" ;;
+            cancelled) outcome="CANCELLED" ;;
+            *) outcome="NOT_EXECUTED" ;;
+          esac
+          body="zSSH ChatGPT runner bridge: ${outcome}. Verified VPS operations and any sanitized receipt are in Actions run ${RUN_URL}. No secrets or raw shell output are posted to this issue."
+          gh api "repos/Zennay/zCloud/issues/1278/comments" -f body="$body" >/dev/null
