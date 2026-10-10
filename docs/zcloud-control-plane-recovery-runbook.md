@@ -26,6 +26,15 @@ Require green regression evidence for current `main`, let the workflow reconfirm
 
 Do not manually copy repository files into the live tree to bypass these gates.
 
+### Automatic bounded re-arm paths
+
+Two hosted recovery coordinators may re-arm the normal regression -> guarded deploy chain. Neither is a second production writer.
+
+- `.github/workflows/zcloud-safe-idle-retry.yml` reacts only when a failed guarded deploy contains the exact `ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED` timeout signature and every reported blocker was still actively generating or sending. It waits **read-only** on the permanent VPS until the original blockers and all current allocations are stably idle/unallocated, reconfirms unchanged `main`, and dispatches one fresh `zcloud-regression-smoke.yml` run. The `zcloud/vps-safe-idle-retry` commit status makes this one-shot per SHA. It must never force-stop a worker or shorten the 480-second production safe-idle gate.
+- `.github/workflows/zcloud-production-status-recovery.yml` handles only a completely **missing** `zcloud/vps-production` status. It exits when any production status already exists, when an exact-main deploy is active, or when exact-green regression evidence is absent. Its only recovery action is to dispatch `zcloud-regression-smoke.yml` for current `main`.
+
+Once a guarded deploy has marked `zcloud/vps-production` pending, the deploy workflow's GitHub-hosted `finalize-production-status` job is authoritative for converting that status to terminal success/failure even if the self-hosted VPS job fails. Do not add another direct status writer or a second production mutation path.
+
 ## Last-known-good rollback
 
 Use rollback when the deployed control-plane source/config is unhealthy and a guarded forward recovery is not the right immediate action:
@@ -58,6 +67,7 @@ For every control-plane recovery, retain enough evidence to reconstruct the deci
 
 - canonical `main` SHA;
 - `zcloud/vps-production` state and workflow run;
+- `zcloud/vps-safe-idle-retry` state when the one-shot transient retry coordinator was involved;
 - regression run ID and evidence mode;
 - pre-recovery health result;
 - recovery `status` output and LKG snapshot ID;

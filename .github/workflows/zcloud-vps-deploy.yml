@@ -1006,6 +1006,7 @@ jobs:
           python3 scripts/zcloud_deploy_summary.py \
             --output "$GITHUB_STEP_SUMMARY" \
             --evidence "$ZCLOUD_RUN_STATE_DIR/zcloud-production-deploy-evidence.json" \
+            --safe-idle-state "$ZCLOUD_RUN_STATE_DIR/zcloud-deploy-safe-idle.json" \
             --deploy-sha "$DEPLOY_SHA" \
             --deploy-decision "$DEPLOY_DECISION" \
             --prewrite-decision "$PREWRITE_DECISION" \
