@@ -364,14 +364,19 @@ function globalWorkerRows(){
   if(!count)return '<div class="global-worker-empty" id="globalWorkerRows">No workers configured yet. Set a worker count above and save the pool.</div>';
   return '<div class="global-worker-list" id="globalWorkerRows">'+Array.from({length:count},(_,i)=>{
     const slot=i+1,w=bySlot.get(slot),provider=slot<=Number(settings.chatgpt_count||0)?'ChatGPT':'Claude';
-    const assigned=w?.project||'',draft=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:assigned;
+    const assigned=w?.project||'';
+    if(assigned&&assigned===GLOBAL_WORKER_PROJECT_REQUESTS[slot]&&String(GLOBAL_WORKER_REQUEST_RESULTS[slot]||'').startsWith('Project priority requested')){
+      delete GLOBAL_WORKER_PROJECT_REQUESTS[slot];
+      delete GLOBAL_WORKER_REQUEST_RESULTS[slot];
+    }
+    const draft=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:assigned;
     const pending=GLOBAL_WORKER_REQUEST_RESULTS[slot];
     const name=(DATA?.projects||[]).find(p=>p.id===assigned)?.name||assigned;
     const hasVerifiedStatus=Boolean(WORKER_DEBUG&&!WORKER_DEBUG_ERROR);
     const verdict=hasVerifiedStatus?(w?(VERDICT_LABEL[w.verdict]||w.verdict):'Available / queued'):'Waiting for verified status';
     const statusClass=w?verdictClass(w.verdict):'idle';
     const busySlot=w&&['generating','prompt-sent'].includes(w.verdict);
-    const unchanged=assigned===draft;
+    const unchanged=assigned===draft,waiting=String(pending||'').startsWith('Project priority requested');
     const hasWorkerId=Boolean(w?.worker);
     const chatId=hasWorkerId?((DATA?.chatgpt_runners||{})[assigned]?.workers||[]).find(x=>x.worker_id===w.worker)?.conversation_id:'';
     const chatUrl=chatId?(provider==='Claude'?'https://claude.ai/chat/':'https://chatgpt.com/c/')+encodeURIComponent(chatId):'';
@@ -380,7 +385,7 @@ function globalWorkerRows(){
       +'<div class="global-worker-state '+statusClass+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
       +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Preferred project for worker '+slot+'"><option value=""'+(!draft?' selected':'')+'>Automatic (queue)</option>'+optionsFor(draft)+'</select></label>'
       +'<div class="global-worker-actions">'
-      +'<button type="button" class="project-secondary-button" data-global-worker-assign="'+slot+'" '+(!draft||unchanged||busySlot?'disabled':'')+' title="Request this project through the existing scheduler">Assign</button>'
+      +'<button type="button" class="project-secondary-button" data-global-worker-assign="'+slot+'" '+(!draft||unchanged||busySlot||waiting?'disabled':'')+' title="Request this project through the existing scheduler">Assign</button>'
       +(hasWorkerId
         ?'<button type="button" class="project-secondary-button" data-worker-action="'+(w.desired_state==='paused'?'start':'pause')+'" data-worker-id="'+esc(w.worker)+'">'+(w.desired_state==='paused'?'Start':'Stop')+'</button><button type="button" class="project-secondary-button" data-runner-new-chat="'+esc(w.worker)+'">New chat</button>'
         :(draft?'<button type="button" class="project-secondary-button" data-global-worker-start="'+slot+'">Start</button>':''))
@@ -417,7 +422,7 @@ async function requestGlobalWorkerProject(slot,button){
     if(!response.ok)throw new Error(result.error||'Could not request project');
     // This API requests project admission; the scheduler can still select another slot.
     GLOBAL_WORKER_REQUEST_RESULTS[slot]='Project priority requested. Waiting for queue allocation; no immediate slot switch is guaranteed.';
-    delete GLOBAL_WORKER_PROJECT_REQUESTS[slot];
+    GLOBAL_WORKER_PROJECT_REQUESTS[slot]=target;
     setTimeout(()=>refresh(true),650);render();
   }catch(error){GLOBAL_WORKER_REQUEST_RESULTS[slot]='Assignment request failed: '+(error.message||error);render()}
   finally{button.disabled=false;button.textContent=old}
