@@ -1,0 +1,32 @@
+name: zCloud mobile worker console hosted checks
+
+on:
+  push:
+    branches:
+      - fix/ui-consistency-tokens-and-mobile-20261010
+    paths:
+      - public/app.js
+      - public/design-system.css
+      - public/index.html
+      - tests/test_global_worker_console_ui.py
+      - tests/test_mobile_worker_console_navigation.py
+      - tests/test_mobile_worker_actions_20261010.py
+      - .github/workflows/zcloud-mobile-worker-console-hosted.yml
+
+permissions:
+  contents: read
+
+jobs:
+  phone-ui:
+    name: Phone UI only (no VPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Parse dashboard source
+        run: node --check public/app.js
+      - name: Test worker console, three controls and mobile navigation
+        run: python3 -m unittest -v tests.test_global_worker_console_ui tests.test_mobile_worker_console_navigation tests.test_mobile_worker_actions_20261010
