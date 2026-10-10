@@ -45,7 +45,7 @@ const firstSelect=rows.match(/<select data-global-worker-project="1"[^>]*>(.*?)<
 assert.doesNotMatch(firstSelect,/value="supa" selected/);
 vm.runInContext('WORKER_DEBUG=null;',ctx);
 rows=vm.runInContext('globalWorkerRows()',ctx);
-assert.match(rows,/Waiting for verified status/);
+assert.match(rows,/Status niet geverifieerd/);
 assert.doesNotMatch(rows,/data-worker-id="supa::w1"/);
 const ui=vm.runInContext('globalWorkerConsole()',ctx);
 assert.match(ui,/data-save-dynamic-workers/);
