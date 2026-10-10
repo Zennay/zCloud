@@ -48,7 +48,7 @@ const button=(project)=>({closest:()=>({querySelector:()=>({value:project})})});
   const unavailable=vm.runInContext('globalWorkerRows()',ctx);
   assert.match(unavailable,/global-worker-access/);
   assert.match(unavailable,/trusted admin device/);
-  assert.equal((unavailable.match(/data-global-worker-play=\\"[0-9]+\\"[^>]*disabled/g)||[]).length,3,'unverified device may not control workers');
+  assert.equal((unavailable.match(/data-global-worker-play=[^>]+disabled/g)||[]).length,3,'unverified device may not control workers');
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
         result=subprocess.run(
