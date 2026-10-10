@@ -62,6 +62,9 @@ def verified_merged_delivery(evidence, fetcher=None, *, expected_repo=None, clai
         jobs = checks.get("check_runs") if isinstance(checks, dict) else None
         if not isinstance(jobs, list) or not jobs:
             return False, "No exact-merge-SHA CI checks found"
+        reported=checks.get("total_count")
+        if isinstance(reported, int) and reported > len(jobs):
+            return False, "CI check list is incomplete; cannot declare terminal green"
         if any(not isinstance(job, dict) or job.get("status") != "completed"
                or job.get("conclusion") not in ("success", "skipped", "neutral") for job in jobs):
             return False, "Exact merge commit has unfinished or failing checks"
