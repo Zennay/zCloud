@@ -27,7 +27,7 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         detail = app[start:end]
 
         self.assertNotIn("projectPrimaryActions(p,'detail')", detail)
-        card = app[app.index("function projectCard(p)"):app.index("\\nfunction attentionPanel", app.index("function projectCard(p)"))]
+        card = app[app.index("function projectCard(p)"):app.index("\nfunction attentionPanel", app.index("function projectCard(p)"))]
         self.assertNotIn("projectPrimaryActions(p)", card)
         self.assertNotIn("mobileRunnerControls(p)", card)
         self.assertIn("project-worker-advanced", detail)
