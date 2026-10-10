@@ -1,0 +1,79 @@
+/*
+ * zCloud dashboard design primitives.
+ * Loaded after legacy styles so older screens share the same semantic palette.
+ * Keep project-specific --accent overrides: this only supplies a safe default.
+ */
+:root {
+  --accent: var(--lime);
+  --line: var(--edge);
+  --panel-soft: var(--panel);
+  --success: #9ad8b8;
+  --warning: #ffcb86;
+  --ui-min-touch: 44px;
+}
+
+/* Cards and disclosures must shrink inside grids, not push adjacent content. */
+:where(
+  .panel,
+  .project-card,
+  .detail-summary,
+  .attention-panel,
+  .dynamic-worker-control,
+  .project-primary-actions,
+  .project-scaling-chip,
+  .worker-scaling-row
+) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* State labels, long project names and worker statuses can wrap safely. */
+.project-scaling-chip {
+  flex-wrap: wrap;
+}
+.project-scaling-chip > *,
+.worker-scaling-row > div > *,
+.project-action-copy,
+.project-primary-actions .project-action-buttons {
+  min-width: 0;
+}
+.project-scaling-chip strong,
+.worker-scaling-row span,
+.worker-scaling-row p,
+.project-action-copy span {
+  overflow-wrap: anywhere;
+}
+.worker-scaling-row > div {
+  flex-wrap: wrap;
+}
+
+/* Actions keep their labels and hit areas when translated or zoomed. */
+.project-action-buttons > button {
+  min-width: 0;
+  min-height: var(--ui-min-touch);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Narrow phones: no forced horizontal action rows or truncated status. */
+@media (max-width: 430px) {
+  .project-scaling-chip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .project-scaling-chip strong {
+    text-align: left;
+  }
+  .worker-scaling-row > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .project-action-buttons {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .project-action-buttons > button {
+    width: 100%;
+  }
+}
