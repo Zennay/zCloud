@@ -20,6 +20,9 @@ class DashboardResilienceTests(unittest.TestCase):
         self.assertIn("http://${public_ip}:${port}/api/status", text)
         self.assertIn("http://198.244.191.182:8765/api/status", text)
         self.assertIn("ZCLOUD_DASHBOARD_EXTERNAL_STATUS_GREEN", text)
+        self.assertIn("ZCLOUD_DASHBOARD_RECOVERY_NOT_NEEDED", text)
+        self.assertIn("status_json_green() {", text)
+        self.assertGreaterEqual(text.count("status_json_green; then"), 2)
 
 if __name__ == "__main__":
     unittest.main()

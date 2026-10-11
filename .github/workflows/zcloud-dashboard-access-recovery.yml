@@ -29,6 +29,23 @@ jobs:
           port='8765'
           status_url="http://127.0.0.1:${port}/api/status"
 
+          status_json_green() {
+            curl -fsS --max-time 30 "$status_url" \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("time") and isinstance(d.get("projects"), list)' \
+              >/dev/null 2>&1
+          }
+
+          listener_before_recovery="$(ss -lntp | awk '$4 ~ /:8765$/ {print $4; exit}')"
+          if sudo -n systemctl is-active --quiet "$service" &&
+             curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null 2>&1 &&
+             status_json_green &&
+             [[ -n "${listener_before_recovery:-}" ]] &&
+             [[ "${listener_before_recovery:-}" != 127.0.0.1:8765 ]] &&
+             [[ "${listener_before_recovery:-}" != localhost:8765 ]]; then
+            echo "ZCLOUD_DASHBOARD_RECOVERY_NOT_NEEDED listener=$listener_before_recovery"
+            exit 0
+          fi
+
           echo '=== before ==='
           sudo -n systemctl is-active "$service" || true
           sudo -n systemctl status "$service" --no-pager -n 60 || true
@@ -86,14 +103,15 @@ jobs:
           sudo -n systemctl restart "$service"
           for _ in $(seq 1 30); do
             if sudo -n systemctl is-active --quiet "$service" &&
-               curl -fsS --max-time 4 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+               curl -fsS --max-time 4 "http://127.0.0.1:${port}/" >/dev/null 2>&1 &&
+               status_json_green; then
               break
             fi
             sleep 2
           done
           sudo -n systemctl is-active "$service"
           curl -fsS --max-time 6 "http://127.0.0.1:${port}/" >/dev/null
-          curl -fsS --max-time 30 "$status_url" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("time") and isinstance(d.get("projects"), list)'
+          status_json_green
           echo 'ZCLOUD_DASHBOARD_STATUS_GREEN'
 
           listener="$(ss -lntp | awk '$4 ~ /:8765$/ {print $4; exit}')"
@@ -114,7 +132,8 @@ jobs:
             sudo -n systemctl daemon-reload
             sudo -n systemctl restart "$service"
             for _ in $(seq 1 30); do
-              if curl -fsS --max-time 4 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+              if curl -fsS --max-time 4 "http://127.0.0.1:${port}/" >/dev/null 2>&1 &&
+                 status_json_green; then
                 break
               fi
               sleep 2
