@@ -1,0 +1,50 @@
+name: zCloud v2 activate existing Firefox addon in-place
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-activate-addon-in-place.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  activate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Switch only addon controller, no process or tab changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = ubuntu
+          addon="$HOME/snap/firefox/common/chatgpt-project-extension"
+          script="$HOME/.local/state/zcloud/worker-v2-addon-activation-$GITHUB_RUN_ID.txt"
+          mkdir -p "$(dirname "$script")"
+          test -f "$addon/worker-controller-v2.js"
+          test -f "$addon/background.js"
+          test -f "$addon/manifest.json"
+          grep -Fq 'ZCLOUD_SINGLE_TAB_CONTROLLER_V2 = true' "$addon/background.js"
+          python3 - "$addon/manifest.json" <<'PY'
+          import json,sys
+          m=json.load(open(sys.argv[1]))
+          assert m["background"]["scripts"][-1]=="worker-controller-v2.js"
+          print("V2_CONTROLLER_MANIFEST_VERIFIED=1")
+          PY
+          before="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
+          test -n "$before"
+          kill -0 "$before"
+          echo "FIREFOX_MAIN_PID_BEFORE=$before"
+          node scripts/zcloud_reload_extension.mjs | tee "$script"
+          sleep 3
+          after="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
+          test "$before" = "$after"
+          echo "FIREFOX_MAIN_PID_AFTER=$after"
+          echo "V2_ADDON_ACTIVATED_WITHOUT_FIREFOX_RESTART=1"
+          echo "NO_TABS_CLOSED_OR_BROWSER_WINDOWS_STARTED_BY_WORKFLOW=1"
