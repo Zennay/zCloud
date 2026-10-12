@@ -35,6 +35,7 @@ jobs:
           cp virtual-office/scene.js /tmp/virtual-office-scene.mjs
           node --check /tmp/virtual-office-scene.mjs
           node --check virtual-office/office-relay.user.js
+          python3 -m unittest discover -s virtual-office/tests -p test_penthouse.py -v
       - name: Local API smoke (no account needed)
         run: |
           OFFICE_ZCLOUD_URL=http://127.0.0.1:18998 OFFICE_DB_PATH="$RUNNER_TEMP/office-smoke-$GITHUB_RUN_ID.db" OFFICE_PORT=18999 python3 virtual-office/server.py all &
