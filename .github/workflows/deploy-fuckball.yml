@@ -49,8 +49,11 @@ jobs:
           git reset --hard "$wanted_sha"
           npm run build:solo
           npm test
-          # Ensure this release contains the soft-contact dribbling collision solver.
+          # Require the new natural-contact solver, explicit kicks and 0 ms visual default.
           grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
+          grep -q 'return collide(p,ball,g.rebound)' shared/physics.js
+          grep -q "p.lastKick='full';" shared/physics.js
+          grep -q 'const chaserId=humanPossession' shared/bot.js
           grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' shared/physics.js
           grep -q 'const wallRebound=g=>' shared/physics.js
           grep -q 'const cautious=frames>2' shared/prediction.js
@@ -61,7 +64,7 @@ jobs:
           grep -q 'function reconcileVisual' shared/prediction.js
           grep -q 'id="soloTeams"' public/index.html
           # New game UX and bot must ship together with the original stadium.
-          grep -q 'let extrapMs=135,renderScale=1;' public/index.html
+          grep -q 'let extrapMs=0,renderScale=1;' public/index.html
           grep -q 'id="optionsScreen"' public/index.html
           grep -q 'id="chatDock"' public/index.html
           grep -q 'function cameraTransform(state,dt)' public/index.html
@@ -93,8 +96,8 @@ jobs:
           grep -q 'id="optionsScreen"' /tmp/fuckball-deployed.html
           grep -q 'id="chatDock"' /tmp/fuckball-deployed.html
           grep -q 'id="soloTeams"' /tmp/fuckball-deployed.html
-          grep -q 'let extrapMs=135,renderScale=1;' /tmp/fuckball-deployed.html
-          grep -q "pulseball.extrapolation.v2" /tmp/fuckball-deployed.html
+          grep -q 'let extrapMs=0,renderScale=1;' /tmp/fuckball-deployed.html
+          grep -q "pulseball.extrapolation.v3" /tmp/fuckball-deployed.html
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" -o /tmp/fuckball-bot-deployed.js
           grep -q 'function reply(message,g,bot)' /tmp/fuckball-bot-deployed.js
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/physics.js" -o /tmp/fuckball-physics-deployed.js
