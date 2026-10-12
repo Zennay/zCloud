@@ -156,18 +156,92 @@ def plan(root: Path, baseline: str, candidate: str) -> dict:
     }
 
 
+# The currently integrated cockpit UI publishes this three-file bundle. The
+# optional design-system CSS is included only when it is a normal Git blob.
+SNAPSHOT_REQUIRED = (
+    "public/index.html",
+    "public/app.js",
+    "public/enhancements.css",
+)
+
+
+def snapshot(root: Path, revision: str) -> dict:
+    """Inventory immutable Git tree bytes, NEVER read live or authorize publish.
+
+    This is a source-revision manifest, NOT a verified VPS / deployed manifest.
+    Callers may compare its digests to separately authorized live observations.
+    """
+    revision = require_sha(revision)
+    if git(root, "rev-parse", "HEAD").decode("ascii").strip() != revision:
+        raise PlanError("candidate_does_not_equal_checked_out_head")
+    if git(root, "cat-file", "-t", revision).strip() != b"commit":
+        raise PlanError("revision_not_commit")
+    result = []
+    total = 0
+    required = set(SNAPSHOT_REQUIRED)
+    for path in sorted(STATIC_ALLOWLIST):
+        blob = blob_at(root, revision, path)
+        if blob is None:
+            if path in required:
+                raise PlanError("required_dashboard_asset_missing")
+            continue
+        try:
+            size = int(git(root, "cat-file", "-s", blob).strip())
+        except (ValueError, UnicodeError):
+            raise PlanError("invalid_static_size") from None
+        if size < 0 or size > MAX_ASSET_BYTES or total + size > MAX_TOTAL_BYTES:
+            raise PlanError("static_byte_budget_exceeded")
+        raw = git(root, "cat-file", "blob", blob)
+        if len(raw) != size or b"\\0" in raw:
+            raise PlanError("untrusted_static_asset_bytes")
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise PlanError("non_utf8_static_asset") from None
+        total += size
+        result.append({
+            "path": path,
+            "git_blob_sha": blob,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": size,
+        })
+    return {
+        "schema": "zcloud-dashboard-git-snapshot-v1",
+        "source_revision_sha": revision,
+        "source_bytes_only": True,
+        "runtime_bytes_observed": False,
+        "baseline_proven_deployed": False,
+        "production_status_proven": False,
+        "live_runtime_compatibility_proven": False,
+        "sqlite_ownership_proven": False,
+        "release_authorized": False,
+        "promotion_authorized": False,
+        "total_bytes": total,
+        "assets": result,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd())
-    parser.add_argument("--baseline-sha", required=True)
-    parser.add_argument("--candidate-sha", required=True)
+    parser.add_argument("--baseline-sha")
+    parser.add_argument("--candidate-sha")
+    parser.add_argument("--snapshot-sha")
     args = parser.parse_args(argv)
     try:
-        evidence = plan(args.root, args.baseline_sha, args.candidate_sha)
+        if args.snapshot_sha is not None:
+            if args.baseline_sha is not None or args.candidate_sha is not None:
+                raise PlanError("incompatible_modes")
+            evidence = snapshot(args.root, args.snapshot_sha)
+        else:
+            if args.baseline_sha is None or args.candidate_sha is None:
+                raise PlanError("baseline_and_candidate_required")
+            evidence = plan(args.root, args.baseline_sha, args.candidate_sha)
     except PlanError as exc:
         print(json.dumps({
-            "schema": "zcloud-dashboard-static-candidate-plan-v1",
+            "schema": "zcloud-dashboard-git-snapshot-v1" if args.snapshot_sha is not None else "zcloud-dashboard-static-candidate-plan-v1",
             "static_diff_eligible": False,
+            "runtime_bytes_observed": False,
             "release_authorized": False,
             "promotion_authorized": False,
             "reason": str(exc),
