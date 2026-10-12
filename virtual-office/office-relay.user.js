@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.2
+// @version      0.3.3
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
@@ -21,19 +21,34 @@
  const status=document.createElement('div');
  Object.assign(status.style,{position:'fixed',bottom:'12px',left:'12px',zIndex:'99999',background:'#182329',color:'#d9c19b',font:'11px system-ui',border:'1px solid #8d7652',padding:'8px 12px',borderRadius:'8px'});
  status.textContent='Office Relay · uit';status.title='Klik om Office Relay te verbinden of opnieuw in te stellen';status.setAttribute('role','status');document.body.append(status);
+ // Probe the expected Office server BEFORE requesting an access code. A localhost
+ // endpoint can belong to an unrelated app if the SSH tunnel is not running.
+ const checkOffice=origin=>new Promise((resolve,reject)=>GM_xmlhttpRequest({
+  method:'GET',url:origin+'/api/health',timeout:6500,
+  onload:r=>{
+   if(r.status!==200)return reject(Error('Office reageert met HTTP '+r.status+'. Controleer je PC→VPS SSH-tunnel.'));
+   let info;try{info=JSON.parse(r.responseText)}catch{return reject(Error('Lokaal poort 3422 is niet de Office-server. Controleer je SSH-tunnel.'))}
+   if(info?.mode!=='zcloud_chatgpt_chats'||info.online!==true)return reject(Error('Poort 3422 toont niet de zCloud Office-server. Controleer je SSH-tunnel.'));
+   resolve();
+  },
+  onerror:()=>reject(Error('Geen Office op deze pc bereikbaar. Start eerst de SSH-tunnel naar je VPS.')),
+  ontimeout:()=>reject(Error('Office time-out. Controleer de SSH-tunnel op je pc.'))
+ }));
  const request=(path,body)=>new Promise((resolve,reject)=>GM_xmlhttpRequest({
   method:'POST',url:config.origin+path,headers:{'Content-Type':'application/json','X-Office-Token':config.token},
   data:JSON.stringify(body),timeout:12000,onload:r=>{let d;try{d=JSON.parse(r.responseText)}catch{return reject(Error('Office antwoordt niet met JSON (HTTP '+r.status+'). Controleer de server-URL.'))}if(r.status===401)return reject(Error('Toegangscode geweigerd (401). Verbind opnieuw met dezelfde Office-code.'));r.status>=200&&r.status<300?resolve(d):reject(Error(d.error||'Office HTTP '+r.status))},
   ontimeout:()=>reject(Error('Office time-out')),onerror:()=>reject(Error('Office niet bereikbaar'))
  }));
- function connect(){
+ async function connect(){
   if(active)return alert('Rond het huidige bericht eerst af.');
   if(!/^\/c\/[0-9a-f-]{16,80}$/i.test(location.pathname))return alert('Open eerst een aparte bestaande ChatGPT-conversatie voor deze medewerker.');
   if(document.documentElement.hasAttribute('data-zcloud-worker-id'))return alert('Deze tab is al een zCloud-worker. Gebruik een aparte gesprekstab.');
-  const origin=prompt('Office-adres op de VPS (lokaal: http://127.0.0.1:3422):','http://127.0.0.1:3422');if(!origin)return;
+  const origin=prompt('Office bereikbaar vanaf DIT apparaat (start op je eigen pc de SSH-tunnel naar je VPS):','http://127.0.0.1:3422');if(!origin)return;
   let u;try{u=new URL(origin)}catch{return alert('Ongeldig Office-adres.')}
   if(!['127.0.0.1','localhost','198.244.191.182'].includes(u.hostname)||u.pathname!=='/'||u.search||u.hash||u.username||u.password||!['http:','https:'].includes(u.protocol))return alert('Gebruik alleen het vaste Office-adres.');
-  if(u.protocol==='http:'&&!['127.0.0.1','localhost'].includes(u.hostname))return alert('Gebruik de lokale VPS-browser of een beveiligd HTTPS-adres. De relay verstuurt geen toegangscode via publiek HTTP.');
+  if(u.protocol==='http:'&&!['127.0.0.1','localhost'].includes(u.hostname))return alert('VPS via publiek HTTP is onveilig. Start op je eigen pc: ssh -N -L 127.0.0.1:3422:127.0.0.1:3422 <ssh-gebruiker>@198.244.191.182 en gebruik http://127.0.0.1:3422, of gebruik een vertrouwde HTTPS-proxy.');
+  status.textContent='Office Relay · PC→VPS controleren…';
+  try{await checkOffice(u.origin)}catch(e){status.textContent='Office Relay · '+e.message;alert(e.message);return}
   const employee=prompt('Medewerker: maya, noah of lina','maya');if(!['maya','noah','lina'].includes(employee))return;
   const token=prompt('Office-toegangscode (alleen in geheugen van deze tab)');if(!token)return;
   config={origin:u.origin,employee,token,conversation:'https://chatgpt.com'+location.pathname};
