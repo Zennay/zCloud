@@ -88,6 +88,11 @@ def workstation(core, command):
     return {"output": result.stdout[:6000] or "Geen uitvoer.", "exit_code": result.returncode,
             "source": "vps", "checked_at": core.timestamp()}
 
+# Browsers may throttle setInterval in long-hidden tabs to once per minute.
+# Allow two delayed beats plus network jitter; all relay ownership and enqueue
+# checks must use the same expiry. No replay occurs on reconnect.
+RELAY_HEARTBEAT_TIMEOUT = 130
+
 def relay_status(core):
     """Expose only authenticated, actionable relay health; never expose claim tokens."""
     with core.connect() as db:
@@ -97,7 +102,7 @@ def relay_status(core):
     for employee in PROFILE_IDS:
         row = rows.get(employee)
         age = max(0, int(now - row["heartbeat"])) if row else None
-        online = row is not None and age < 35
+        online = row is not None and age < RELAY_HEARTBEAT_TIMEOUT
         employees[employee] = {
             "online": online,
             "last_seen_seconds": age,
@@ -114,7 +119,7 @@ def chat_enqueue(core, body):
     with core.connect() as db:
         db.execute("BEGIN IMMEDIATE")
         relay = db.execute("SELECT heartbeat FROM office_relay WHERE employee=?", (employee,)).fetchone()
-        if not relay or time.time() - relay["heartbeat"] >= 35:
+        if not relay or time.time() - relay["heartbeat"] >= RELAY_HEARTBEAT_TIMEOUT:
             raise ValueError("Geen ChatGPT Relay verbonden voor deze medewerker. Open ChatGPT ↗ of verbind de Office Relay.")
         if db.execute("SELECT COUNT(*) FROM office_chat WHERE employee=? AND status IN ('queued','claimed')", (employee,)).fetchone()[0] >= 3:
             raise ValueError("Deze medewerker heeft al drie open gespreksberichten")
@@ -134,7 +139,7 @@ def relay_poll(core, body):
     with core.connect() as db:
         db.execute("BEGIN IMMEDIATE")
         prior = db.execute("SELECT * FROM office_relay WHERE employee=?", (employee,)).fetchone()
-        if prior and prior["client_id"] != client and time.time() - prior["heartbeat"] < 35:
+        if prior and prior["client_id"] != client and time.time() - prior["heartbeat"] < RELAY_HEARTBEAT_TIMEOUT:
             raise ValueError("Deze medewerker is al aan een actieve tab gekoppeld")
         db.execute("INSERT INTO office_relay VALUES(?,?,?,?) ON CONFLICT(employee) DO UPDATE SET client_id=excluded.client_id,conversation=excluded.conversation,heartbeat=excluded.heartbeat", (employee, client, conversation, time.time()))
         job = None
