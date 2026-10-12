@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from scripts.zcloud_dashboard_static_candidate_plan_20261012_w1 import (
-    PlanError, plan,
+    PlanError, plan, snapshot,
 )
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_dashboard_static_candidate_plan_20261012_w1.py"
@@ -168,6 +168,100 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         after = self.git("status", "--porcelain")
         self.assertEqual(before, after)
         self.assertEqual(expected, observed)
+
+    def write_snapshot_bundle(self):
+        self.write("public/app.js", b"'use strict'; const cockpit=1;\n")
+        self.write("public/enhancements.css", b".worker-cockpit{display:grid}\n")
+        return self.commit("static cockpit bundle")
+
+    def test_git_snapshot_has_exact_asset_sha256_and_no_authority(self):
+        sha = self.write_snapshot_bundle()
+        inventory = snapshot(self.repo, sha)
+        self.assertEqual(inventory["schema"], "zcloud-dashboard-git-snapshot-v1")
+        self.assertEqual(inventory["source_revision_sha"], sha)
+        self.assertEqual(
+            [r["path"] for r in inventory["assets"]],
+            ["public/app.js", "public/enhancements.css", "public/index.html"],
+        )
+        self.assertEqual(
+            inventory["total_bytes"],
+            sum(item["bytes"] for item in inventory["assets"]),
+        )
+        expected = {
+            "public/index.html": b"<!doctype html><title>Before</title>",
+            "public/app.js": b"'use strict'; const cockpit=1;\n",
+            "public/enhancements.css": b".worker-cockpit{display:grid}\n",
+        }
+        for asset in inventory["assets"]:
+            with self.subTest(path=asset["path"]):
+                self.assertEqual(asset["sha256"], hashlib.sha256(expected[asset["path"]]).hexdigest())
+                self.assertEqual(asset["bytes"], len(expected[asset["path"]]))
+                self.assertEqual(len(asset["git_blob_sha"]), 40)
+        self.assertTrue(inventory["source_bytes_only"])
+        for key in (
+            "runtime_bytes_observed", "baseline_proven_deployed",
+            "live_runtime_compatibility_proven", "sqlite_ownership_proven",
+            "production_status_proven", "release_authorized", "promotion_authorized",
+        ):
+            self.assertFalse(inventory[key], key)
+
+    def test_snapshot_is_immune_to_modified_working_tree(self):
+        head = self.write_snapshot_bundle()
+        immutable = snapshot(self.repo, head)
+        self.write("public/app.js", b"uncommitted attack bytes\n")
+        self.assertEqual(snapshot(self.repo, head), immutable)
+
+    def test_snapshot_requires_complete_three_asset_bundle(self):
+        with self.assertRaisesRegex(PlanError, "required_dashboard_asset_missing"):
+            snapshot(self.repo, self.base)
+        self.write("public/app.js", b"present but CSS missing")
+        sha = self.commit("partial cockpit")
+        with self.assertRaisesRegex(PlanError, "required_dashboard_asset_missing"):
+            snapshot(self.repo, sha)
+
+    def test_snapshot_rejects_new_symlink_and_invalid_text(self):
+        self.write("public/app.js", b"normal JS")
+        (self.repo / "public" / "enhancements.css").symlink_to("../server.py")
+        sha = self.commit("symlink CSS")
+        with self.assertRaisesRegex(PlanError, "non_regular_dashboard_asset"):
+            snapshot(self.repo, sha)
+        (self.repo / "public" / "enhancements.css").unlink()
+        self.write("public/enhancements.css", b"not\x00CSS")
+        sha = self.commit("NUL css")
+        with self.assertRaisesRegex(PlanError, "untrusted_static_asset_bytes"):
+            snapshot(self.repo, sha)
+
+    def test_snapshot_rejects_stale_or_invalid_git_ref(self):
+        head = self.write_snapshot_bundle()
+        self.write("public/index.html", b"another revision")
+        self.commit("main moved")
+        with self.assertRaisesRegex(PlanError, "candidate_does_not_equal_checked_out_head"):
+            snapshot(self.repo, head)
+        with self.assertRaisesRegex(PlanError, "invalid_commit_sha"):
+            snapshot(self.repo, "deadbeef")
+
+    def test_snapshot_cli_never_authorizes_and_modes_are_exclusive(self):
+        head = self.write_snapshot_bundle()
+        good = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.repo),
+             "--snapshot-sha", head],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(good.returncode, 0, good.stderr)
+        obj = json.loads(good.stdout)
+        self.assertTrue(obj["source_bytes_only"])
+        self.assertFalse(obj["runtime_bytes_observed"])
+        self.assertFalse(obj["release_authorized"])
+        self.assertFalse(obj["promotion_authorized"])
+        bad = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.repo),
+             "--snapshot-sha", head, "--baseline-sha", self.base],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(bad.returncode, 2)
+        obj = json.loads(bad.stdout)
+        self.assertEqual(obj["reason"], "incompatible_modes")
+        self.assertFalse(obj["release_authorized"])
 
     def test_cli_json_never_grants_promotion_even_on_success(self):
         self.write("public/index.html", b"compatible-looking")
