@@ -56,3 +56,9 @@ jobs:
           ss -ltn | grep -E ':(3422|8765|443|80) ' || true
           echo "## Available TLS proxy tools"
           for prog in cloudflared caddy nginx; do command -v "$prog" || true; done
+          echo "## Port 443 process (name only)"
+          sudo ss -ltnp '( sport = :443 )' 2>/dev/null | head -8 || true
+          echo "## TLS service labels"
+          systemctl list-units --type=service --all --no-pager | grep -Ei '(nginx|caddy|traefik|apache|cloudflare|tunnel|haproxy)' | head -15 || true
+          echo "## TLS response of current proxy"
+          curl --insecure --max-time 5 --silent -o /dev/null -w 'https localhost code=%{http_code}\n' https://127.0.0.1/ || true
