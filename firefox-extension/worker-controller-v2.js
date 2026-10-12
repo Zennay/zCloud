@@ -31,10 +31,14 @@
       !!String(t.queue_item?.queue_id || "") && String(t.prompt || "").startsWith("Werk verder aan ");
   }
   async function tagOf(tab) {
-    try {
-      const value = await browser.sessions.getTabValue(tab.id, TAG);
-      if (value) return String(value);
-    } catch (_) {}
+    for (const sessionKey of [TAG, "zcloud-worker-id"]) {
+      try {
+        // Migrate the legacy Firefox session tag without adopting any expert
+        // ChatGPT tab by URL/conversation similarity.
+        const value = await browser.sessions.getTabValue(tab.id, sessionKey);
+        if (value) return String(value);
+      } catch (_) {}
+    }
     return workerMarker(tab.url);
   }
   async function note(event, id, reason) {
