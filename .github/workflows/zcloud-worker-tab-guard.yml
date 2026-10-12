@@ -4,12 +4,14 @@ on:
     paths:
       - firefox-extension/background.js
       - tests/test_worker_tab_spam_guard.js
+      - tests/test_firefox_recovery_contract.js
       - .github/workflows/zcloud-worker-tab-guard.yml
   push:
     branches: [main, fix/worker-tab-spam-circuit-breaker-20261012]
     paths:
       - firefox-extension/background.js
       - tests/test_worker_tab_spam_guard.js
+      - tests/test_firefox_recovery_contract.js
       - .github/workflows/zcloud-worker-tab-guard.yml
 permissions:
   contents: read
