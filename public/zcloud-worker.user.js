@@ -164,9 +164,17 @@
       const action=String(command.action||"");
       if(!["start","push","new_chat"].includes(action))continue;
       if(awaiting||generating()||sending)continue;
-      const done=action==="new_chat"?await newChat("explicit-worker-command"):
-        await send("database-"+action);
-      if(!done)continue;
+      // Legacy watchdogs queue new_chat after a stale heartbeat, which used
+      // to steal a tab straight after Send. In v2, ONLY a visible load error
+      // or the 1-hour idle policy may reset the conversation.
+      if(action==="new_chat"){
+        try{await api("/runner-command-result","POST",{
+          command_id:command.id,status:"failed",
+          result:"v2 preserved tab; in-tab rotation limited to error or one-hour idle"
+        });lastCommand=Number(command.id)}catch(_){}
+        continue;
+      }
+      if(!(await send("database-"+action)))continue;
       try{await api("/runner-command-result","POST",{
         command_id:command.id,status:"completed",result:"single-tab worker v2 action"
       });lastCommand=Number(command.id)}catch(_){}
