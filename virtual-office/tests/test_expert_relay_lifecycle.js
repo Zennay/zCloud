@@ -85,7 +85,7 @@ async function flush() {for(let i=0;i<20;i++)await Promise.resolve()}
   assert.equal(restored.requests.some(r=>r.url.endsWith("/api/relay/reply")),false);
 
   // A different new chat is *not* adopted just because Maya was saved.
-  const unrelated=mount({storage:saved,url:URL_B});
+  const unrelated=mount({storage:saved,url:URL_B,prompts:["maya"]});
   await unrelated.timerQueue.find(t=>t.ms===1200).fn();
   await flush();
   assert.equal(unrelated.requests.length,0);
