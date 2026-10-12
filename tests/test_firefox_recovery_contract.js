@@ -40,7 +40,7 @@ for (const marker of [
   "worker-handoff-opened",
   "worker-handoff-failed",
   "intentionalTabClosures.delete(tabId)",
-  'recoverClosedWorker(target, "unexpected-tab-closed")',
+  'tabCloseCooldownUntil.set(target.project_id, Date.now() + CLOSED_TAB_COOLDOWN_MS)',
   'target.desired_state === "paused"',
   'const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1"',
   "async function prepareReplacementHandoff",
