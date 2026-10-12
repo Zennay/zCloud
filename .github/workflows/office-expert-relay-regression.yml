@@ -1,0 +1,36 @@
+name: Office expert relay regression
+on:
+  pull_request:
+    paths:
+      - "virtual-office/office-relay.user.js"
+      - "virtual-office/office-relay-vps.service"
+      - "virtual-office/tests/test_expert_relay_lifecycle.js"
+      - "virtual-office/tests/test_relay_vps_launcher.py"
+      - ".github/workflows/office-expert-relay-regression.yml"
+  push:
+    branches:
+      - feat/office-expert-autoreconnect-personas-20261012
+      - feature/virtual-ai-office-mvp-20261012
+    paths:
+      - "virtual-office/office-relay.user.js"
+      - "virtual-office/office-relay-vps.service"
+      - "virtual-office/tests/test_expert_relay_lifecycle.js"
+      - "virtual-office/tests/test_relay_vps_launcher.py"
+      - ".github/workflows/office-expert-relay-regression.yml"
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and Tampermonkey recovery simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check virtual-office/office-relay.user.js
+          node --check virtual-office/tests/test_expert_relay_lifecycle.js
+          node virtual-office/tests/test_expert_relay_lifecycle.js
+          python3 -m unittest discover -s virtual-office/tests -p test_relay_vps_launcher.py -v
+          echo "Office expert relay regression PASS"
