@@ -338,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self)->None:
         url=urlsplit(self.path)
-        static = {"/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
+        static = {"/skyline.jpg": ("skyline.jpg", "image/jpeg"), "/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
                   "/office-relay.user.js": ("office-relay.user.js", "text/javascript; charset=utf-8")}
         if url.path in static:
             filename, mime = static[url.path]

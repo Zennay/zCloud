@@ -11,7 +11,7 @@ export async function startOffice(ui){
  const material=(color,roughness=.65,metalness=0)=>{const m=new THREE.MeshStandardMaterial({color,roughness,metalness});materials.push(m);return m};
  const ink=material('#202d33',.37,.55),brass=material('#b49662',.26,.8),walnut=material('#584031',.53),lightWood=material('#ad8a61',.54),ivory=material('#ded4c3',.76),leather=material('#786049',.84),darkLeather=material('#243438',.85),stone=material('#bcbab0',.26,.16),green=material('#3f5742',.9),black=material('#121b23',.4),white=material('#e8e2d3',.7);
  const glow=material('#ffe2b3',.3);glow.emissive=new THREE.Color('#ffcb84');glow.emissiveIntensity=2.2;
- const glass=new THREE.MeshPhysicalMaterial({color:'#b8d3d6',transparent:true,opacity:.24,roughness:.085,metalness:.15,depthWrite:false});materials.push(glass);
+ const glass=new THREE.MeshPhysicalMaterial({color:'#b8d3d6',transparent:true,opacity:.12,roughness:.055,metalness:.15,depthWrite:false});materials.push(glass);
  const boxGeo=new THREE.BoxGeometry(1,1,1),sphereGeo=new THREE.SphereGeometry(1,18,14),cylGeo=new THREE.CylinderGeometry(1,1,1,20);
  geometries.push(boxGeo,sphereGeo,cylGeo);
  function mesh(geo,m,x,y,z,sx=1,sy=1,sz=1,parent=scene){const o=new THREE.Mesh(geo,m);o.position.set(x,y,z);o.scale.set(sx,sy,sz);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o}
@@ -38,8 +38,10 @@ export async function startOffice(ui){
  box(-.5,2.3,1.2,5.4,4.6,.3,walnut);collision(-.5,1.2,5.4,.3);
  for(let x=-3.1;x<=2.15;x+=.16)box(x,2.3,1.4,.035,4.6,.035,brass);
  function wallLabel(text,x,y,z,width){const tex=canvasTex(1024,180,(c)=>{c.fillStyle='#d4bd96';c.font='52px Georgia';c.textAlign='center';c.fillText(text,512,112)});const m=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false});materials.push(m);const p=new THREE.Mesh(new THREE.PlaneGeometry(width,width*180/1024),m);geometries.push(p.geometry);p.position.set(x,y,z);scene.add(p);return p}
- wallLabel('z C L O U D',-.5,3.2,1.58,4.2);wallLabel('THE PENTHOUSE',-.5,2.65,1.59,2.7);
- for(const x of [-5,5]){for(const segment of [{z:6,w:6},{z:13,w:4}]){box(x,2.1,segment.z,.018,4.2,segment.w,glass);box(x,4.2,segment.z,.07,.07,segment.w,ink);/* glass divider is visually present but no invisible collision trap */}for(const z of [3,9,11,15])box(x,2.1,z,.05,4.2,.06,ink)}
+ wallLabel('THE PENTHOUSE',-.5,3.05,1.59,3.6);
+ for(const x of [-5,5]){for(const segment of [{z:6,w:6},{z:13,w:4}]){box(x,2.1,segment.z,.018,4.2,segment.w,glass);box(x,4.2,segment.z,.07,.07,segment.w,ink);collision(x,segment.z,.018,segment.w);box(x,1.05,segment.z,.022,.04,segment.w,brass);}for(const z of [3,9,11,15])box(x,2.1,z,.05,4.2,.06,ink)}
+ // Door portals are deliberately open, with visible jambs and floor thresholds.
+ for(const x of [-5,5]){box(x,4.2,10,.08,.08,2,brass);box(x,.018,10,.32,.025,2,brass);for(const z of [9,11])box(x,2.1,z,.08,4.2,.08,brass);}
  // Layered aerial haze adds distance and prevents toy-like hard skyline silhouettes.
  scene.fog=new THREE.FogExp2('#8cabb7',0.00155);
  const horizonMat=new THREE.MeshBasicMaterial({color:'#8ba7b2',transparent:true,opacity:.28,depthWrite:false,side:THREE.DoubleSide});
@@ -49,14 +51,16 @@ export async function startOffice(ui){
  // Sky gradient and atmospheric city, authored procedural geometry, no proprietary assets.
  const sky=canvasTex(16,512,(c,w,h)=>{const g=c.createLinearGradient(0,0,0,h);g.addColorStop(0,'#486d87');g.addColorStop(.42,'#99adb5');g.addColorStop(.68,'#e2be99');g.addColorStop(1,'#e7bf9d');c.fillStyle=g;c.fillRect(0,0,w,h)});
  scene.background=sky;scene.fog=new THREE.FogExp2('#c6b4a2',.0016);
- const windows=canvasTex(128,256,(c,w,h)=>{c.fillStyle='#4b6470';c.fillRect(0,0,w,h);for(let y=0;y<h;y+=10)for(let x=0;x<w;x+=9){const v=rand();c.fillStyle=v>.85?'#ebc38e':v>.52?'#79919b':'#344d5d';c.fillRect(x+1,y+1,5,6)}});
- windows.wrapS=windows.wrapT=THREE.RepeatWrapping;windows.repeat.set(1,3);
- const cityMat=new THREE.MeshStandardMaterial({map:windows,color:'#a4aeb2',roughness:.55,metalness:.18});materials.push(cityMat);
- const city=new THREE.InstancedMesh(boxGeo,cityMat,240),dummy=new THREE.Object3D();
- for(let i=0;i<240;i++){const angle=rand()*Math.PI*2,r=85+rand()*530,w=10+rand()*22,d=12+rand()*24,h=28+rand()*185;dummy.position.set(Math.sin(angle)*r,-185+h/2,Math.cos(angle)*r);dummy.scale.set(w,h,d);dummy.rotation.y=Math.round(rand()*3)*Math.PI/2;dummy.updateMatrix();city.setMatrixAt(i,dummy.matrix);city.setColorAt(i,new THREE.Color().setHSL(.56+rand()*.03,.12,.54+rand()*.32))}scene.add(city);
- box(0,-185,0,1600,2,1600,material('#737a79',1));box(-330,-183,0,160,1,1700,material('#638899',.25,.5));
- // Signature setbacks and antenna silhouette, suggesting Midtown rather than claiming a map.
- for(let i=0;i<5;i++)box(-55,-92+i*28,-120,28-i*4,28,24-i*3,cityMat);cyl(-55,68,-120,.6,38,ink);
+ // A high-altitude photograph replaces the close, block-shaped city geometry.
+ // Christian David / Wikimedia Commons, CC BY-SA 4.0. Attribution is in settings.
+ const photo=new THREE.TextureLoader().load('/skyline.jpg',t=>{t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());},undefined,()=>ui.hint('Het stadsuitzicht kon niet laden.'));
+ textures.push(photo);
+ const cityPhoto=new THREE.MeshBasicMaterial({map:photo,fog:false,side:THREE.DoubleSide});materials.push(cityPhoto);
+ const cityBackdrop=new THREE.Group();scene.add(cityBackdrop);
+ for(const [x,z,rotation] of [[0,-180,0],[180,0,-Math.PI/2],[0,180,Math.PI],[-180,0,Math.PI/2]]){
+  const geometry=new THREE.PlaneGeometry(580,387);geometries.push(geometry);
+  const image=new THREE.Mesh(geometry,cityPhoto);image.position.set(x,-45,z);image.rotation.y=rotation;cityBackdrop.add(image);
+ }
  const hemi=new THREE.HemisphereLight('#dce7f3','#72604b',2);scene.add(hemi);
  const sun=new THREE.DirectionalLight('#ffcf99',3.8);sun.position.set(-45,37,22);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-28,right:28,top:25,bottom:-25,near:.5,far:150});sun.shadow.bias=-.00015;sun.shadow.normalBias=.045;scene.add(sun);
  const fill=new THREE.DirectionalLight('#bbd9ed',1.05);fill.position.set(25,15,-10);scene.add(fill);
@@ -64,6 +68,7 @@ export async function startOffice(ui){
  const environmentScene=new THREE.Scene();environmentScene.background=new THREE.Color('#aab7c0');const envLight=new THREE.Mesh(new THREE.BoxGeometry(40,15,1),new THREE.MeshBasicMaterial({color:'#fff0d8'}));envLight.position.set(-12,12,-10);environmentScene.add(envLight);
  const pmrem=new THREE.PMREMGenerator(renderer),env=pmrem.fromScene(environmentScene,.08);scene.environment=env.texture;pmrem.dispose();envLight.geometry.dispose();envLight.material.dispose();
  // Soft, individually sculpted desk accessories and greenery.
+ let decor=null;
  function plush(x,z,color='#f0cbb3',scale=.26){
    const fur=material(color,.96),eyes=material('#24242a',.7),blush=material('#d58f8b',.96);
    ball(x,.98,z,.23*scale/.26,.24*scale/.26,.18*scale/.26,fur);
@@ -84,7 +89,7 @@ export async function startOffice(ui){
  function person(id,x,z){const g=new THREE.Group();g.position.set(x,0,z);scene.add(g);g.userData.action=id;targets.push(g);
   const skin=material(id==='noah'?'#ae805f':id==='maya'?'#c99679':'#d6b497',.9),suit=material(id==='maya'?'#414e50':id==='noah'?'#344452':'#796c61',.93),hair=material(id==='lina'?'#aa8650':'#302b28',.94);
   // Anatomical seated pose: hips above the seat, thighs forward, knees and shoes grounded.
-  ball(0,.76,0,.24,.3,.14,suit,g);box(0,1.04,0,.45,.46,.23,suit,g);box(0,1.09,.13,.12,.31,.01,white,g);
+  ball(0,.76,0,.24,.3,.14,suit,g);ball(0,1.04,0,.245,.30,.15,suit,g);box(0,1.09,.13,.12,.31,.01,white,g);
   for(const dx of [-.125,.125]){const lapel=box(dx,1.12,.145,.12,.27,.015,suit,g);lapel.rotation.z=dx>0?-.3:.3}
   cyl(0,1.34,0,.065,.13,skin,g);ball(0,1.51,0,.145,.19,.135,skin,g);
   const h=ball(0,1.61,-.024,.15,.105,.13,hair,g);h.rotation.x=-.15;
@@ -100,8 +105,13 @@ export async function startOffice(ui){
  }
  // Cozy customizable corner, intentionally separate from owner workstations.
  desk(12,11,'CREATIVE CORNER',null);chair(12,9.7);
- plush(11.2,10.9,'#f1d3c0');plush(12.2,10.9,'#c5b3df');
- plant(13.15,10.7,.45);
+ const decorStart=new Set(scene.children);plush(11.2,10.9,'#f1d3c0');plush(12.2,10.9,'#c5b3df');plant(13.15,10.7,.45);
+ const creativeDecor=scene.children.filter(o=>!decorStart.has(o));
+ function customize(style){
+  creativeDecor.forEach(o=>o.visible=style!=='minimal');
+  for(const o of creativeDecor)if(o.material?.color&&o.material!==green&&o.material!==stone&&o.material!==walnut&&o.material.color.getHexString()!=='24242a')o.material.color.set(style==='garden'?'#bbc9a1':'#e4c4dc');
+ }
+ target(box(12,1.39,10.68,1.14,.69,.06,black),'customize');
   // Executive office: front-facing workstation and low credenza.
  desk(-11,6,'ZCLOUD / YOUR WORKSPACE','computer');chair(-11,4.8);box(-11,.7,12.9,8,1.4,.65,walnut);collision(-11,12.9,8,.65);
  for(let x=-14;x<-7;x+=1.2){box(x,1.46,12.9,.7,.06,.38,ivory)}
@@ -126,10 +136,21 @@ export async function startOffice(ui){
  cyl(3.7,1.2,1.7,.3,2.4,stone);const knotGeo=new THREE.TorusKnotGeometry(.31,.07,70,10);geometries.push(knotGeo);const sculpture=new THREE.Mesh(knotGeo,brass);sculpture.position.set(3.7,2.72,1.7);scene.add(sculpture);
  for(const x of [-17.6,17.6]){box(x,1.35,-1,1,2.7,4,walnut);collision(x,-1,1,4);for(let i=0;i<3;i++)box(x,1+i*.65,-1,1.05,.04,4.1,brass);for(let i=0;i<16;i++)box(x+(x<0?.53:-.53),.7+Math.floor(i/8)*.7,-2.6+(i%8)*.42,.15,.45,.23,i%3===0?ivory:lightWood)}
  let yaw=.65,pitch=-.015,last=performance.now(),drag=null,day=false,presenting=false,lastHint='';
- const rooms={lounge:{p:[3.5,1.68,12.6],look:[-3,1.7,1],label:'THE LOUNGE',title:'A higher perspective.',desc:'Jouw team, jouw projecten, jouw verdieping.'},team:{p:[0,1.68,-3.3],look:[0,1.4,-9],label:'THE WORKFLOOR',title:'Good things take a team.',desc:'Maya, Noah en Lina. Geef je volgende idee een plek.'},office:{p:[-11,1.68,3.9],look:[-11,1.3,6],label:'EXECUTIVE OFFICE',title:'Make yourself at home.',desc:'Je eigen kantoor. Een echte verbinding met je VPS.'},boardroom:{p:[11,1.68,12.5],look:[11,2.5,2],label:'THE BOARDROOM',title:'Ideas deserve a stage.',desc:'Van een eerste slide naar je volgende grote plan.'}};
+ const rooms={creative:{p:[14.7,1.68,9.4],look:[12,1.2,11],label:'CREATIEF BUREAU',title:'Jouw eigen plek.',desc:'Planten, plushjes of een rustig bureau.'},lounge:{p:[3.5,1.68,12.6],look:[-3,1.7,1],label:'THE LOUNGE',title:'A higher perspective.',desc:'Jouw team, jouw projecten, jouw verdieping.'},team:{p:[-5.7,1.68,-5.2],look:[-10,1.5,-9.2],label:'THE WORKFLOOR',title:'Good things take a team.',desc:'Maya, Noah en Lina. Geef je volgende idee een plek.'},office:{p:[-8.3,1.68,4.3],look:[-11,1.45,6],label:'EXECUTIVE OFFICE',title:'Make yourself at home.',desc:'Je eigen kantoor. Een echte verbinding met je VPS.'},boardroom:{p:[11,1.68,12.5],look:[11,2.5,2],label:'THE BOARDROOM',title:'Ideas deserve a stage.',desc:'Van een eerste slide naar je volgende grote plan.'}};
  function setLook(p,look){camera.position.set(...p);const d=new THREE.Vector3(...look).sub(camera.position);yaw=Math.atan2(-d.x,-d.z);pitch=Math.atan2(d.y,Math.hypot(d.x,d.z));camera.rotation.set(pitch,yaw,0,'YXZ')}
- function go(name){const r=rooms[name];if(!r)return;setLook(r.p,r.look);keys.clear();ui.room(r.label,r.title,r.desc)}
+ function go(name){if(name==='assistant'){return selectActor('maya')}const r=rooms[name];if(!r)return;setLook(r.p,r.look);keys.clear();ui.room(r.label,r.title,r.desc)}
  go('lounge');
+ function selectActor(id){const a=actors.find(a=>a.id===id);if(a){setLook([a.g.position.x+1.9,1.60,a.g.position.z+.1],[a.g.position.x,1.50,a.g.position.z]);ui.room('JE TEAM',id==='maya'?'Maya · je assistent':id==='noah'?'Noah · ontwikkelaar':'Lina · kwaliteitscontrole','Geef werk en volg het echte resultaat.');}}
+ const monitorCanvas=document.createElement('canvas');monitorCanvas.width=1024;monitorCanvas.height=640;
+ const monitorTexture=new THREE.CanvasTexture(monitorCanvas);monitorTexture.colorSpace=THREE.SRGBColorSpace;textures.push(monitorTexture);
+ const monitorMaterial=new THREE.MeshBasicMaterial({map:monitorTexture});materials.push(monitorMaterial);
+ const monitorGeometry=new THREE.PlaneGeometry(3.2,2);geometries.push(monitorGeometry);
+ const monitorWall=new THREE.Mesh(monitorGeometry,monitorMaterial);monitorWall.position.set(-.5,2.35,.99);monitorWall.rotation.y=Math.PI;scene.add(monitorWall);target(monitorWall,'monitor');
+ function setMonitor(jobs,online){const c=monitorCanvas.getContext('2d');c.fillStyle='#132329';c.fillRect(0,0,1024,640);c.fillStyle='#e8decd';c.font='46px sans-serif';c.fillText('Je team aan het werk',64,90);c.font='22px sans-serif';c.fillStyle='#b4c6be';c.fillText(online?'Werkqueue bereikbaar':'Werkqueue niet bevestigd',64,135);
+  for(let i=0;i<3;i++){const id=['maya','noah','lina'][i],all=jobs.filter(j=>j.employee===id),busy=all.some(j=>['claimed','running','verifying'].includes(j.status));c.fillStyle='#22383c';c.fillRect(60,180+i*130,904,106);c.fillStyle=busy?'#aad3b8':'#d3b991';c.beginPath();c.arc(91,220+i*130,7,0,Math.PI*2);c.fill();c.fillStyle='#ede4d5';c.font='28px sans-serif';c.fillText(['Maya · zCloud','Noah · Supa','Lina · LightUp'][i],115,229+i*130);c.font='21px sans-serif';c.fillStyle='#b5c4be';c.fillText(busy?'Werkt aan een opdracht':all.some(j=>['queued','dispatching','dispatched'].includes(j.status))?'Werk staat klaar':'Geen actieve opdracht bevestigd',115,264+i*130);}
+  monitorTexture.needsUpdate=true;
+ }
+ setMonitor([],false);
  const ray=new THREE.Raycaster(),mouse=new THREE.Vector2(),v=new THREE.Vector3();
  function hitAt(x=0,y=0){mouse.set(x,y);ray.setFromCamera(mouse,camera);const hits=ray.intersectObjects(targets,true);for(const h of hits){if(h.distance>18)continue;let o=h.object;while(o&&!o.userData.action)o=o.parent;if(o)return o.userData.action}return ''}
  on(canvas,'pointerdown',e=>{if(e.button!==0)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false};canvas.setPointerCapture(e.pointerId)});
@@ -152,5 +173,5 @@ export async function startOffice(ui){
   const id=ui.isUIOpen()?'':hitAt();const hint=id?(id==='computer'?'E · Gebruik je VPS-computer':id==='board'?'E · Open presentaties':'E · Praat met '+id[0].toUpperCase()+id.slice(1)):'';if(hint!==lastHint){ui.hint(hint);lastHint=hint}
   renderer.render(scene,camera)
  });
- return {go,setSlide,clearKeys:()=>keys.clear(),key:(k,pressed)=>pressed?keys.add(k):keys.delete(k),select:id=>{const a=actors.find(a=>a.id===id);if(a){setLook([a.g.position.x+1.6,1.68,-5.5],[a.g.position.x,1.45,a.g.position.z]);ui.room('THE WORKFLOOR','Meet '+id[0].toUpperCase()+id.slice(1)+'.','Een plek om samen aan je project te werken.')}},setJobs:jobs=>{for(const a of actors)a.working=jobs.some(j=>j.employee===a.id&&['claimed','running','verifying'].includes(j.status))},present:value=>{presenting=value},toggleDay:()=>{day=!day;sun.color.set(day?'#fff2df':'#ffcf99');sun.intensity=day?3:3.8;hemi.intensity=day?2.5:2;renderer.toneMappingExposure=day?1.2:1.15;return day},quality:q=>{renderer.setPixelRatio(Math.min(devicePixelRatio,q==='high'?1.7:1));renderer.shadowMap.enabled=q==='high';resize()},lock:()=>{try{const p=canvas.requestPointerLock();p?.catch(()=>{})}catch{}},dispose:()=>{renderer.setAnimationLoop(null);observer.disconnect();listeners.forEach(f=>f());scene.traverse(o=>{if(o.isMesh&&o.geometry&&!geometries.includes(o.geometry))o.geometry.dispose()});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());env.dispose();renderer.dispose()}};
+ return {go,setSlide,customize,setMonitor,clearKeys:()=>keys.clear(),key:(k,pressed)=>pressed?keys.add(k):keys.delete(k),select:selectActor,setJobs:jobs=>{for(const a of actors)a.working=jobs.some(j=>j.employee===a.id&&['claimed','running','verifying'].includes(j.status))},present:value=>{presenting=value},toggleDay:()=>{day=!day;sun.color.set(day?'#fff2df':'#ffcf99');sun.intensity=day?3:3.8;hemi.intensity=day?2.5:2;renderer.toneMappingExposure=day?1.2:1.15;return day},quality:q=>{renderer.setPixelRatio(Math.min(devicePixelRatio,q==='high'?1.7:1));renderer.shadowMap.enabled=q==='high';resize()},lock:()=>{try{const p=canvas.requestPointerLock();p?.catch(()=>{})}catch{}},dispose:()=>{renderer.setAnimationLoop(null);observer.disconnect();listeners.forEach(f=>f());scene.traverse(o=>{if(o.isMesh&&o.geometry&&!geometries.includes(o.geometry))o.geometry.dispose()});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());env.dispose();renderer.dispose()}};
 }
