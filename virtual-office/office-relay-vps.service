@@ -1,0 +1,18 @@
+[Unit]
+Description=Virtual Office dedicated ChatGPT Relay Firefox (VPS RDP desktop)
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:10
+Environment=XAUTHORITY=/home/ubuntu/.Xauthority
+Environment=MOZ_ENABLE_WAYLAND=0
+ExecStart=/bin/bash /opt/virtual-office/office-relay-vps.sh
+Restart=on-failure
+RestartSec=15
+StartLimitIntervalSec=120
+StartLimitBurst=4
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
