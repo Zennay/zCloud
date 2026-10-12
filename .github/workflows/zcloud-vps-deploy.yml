@@ -544,6 +544,13 @@ jobs:
             echo "FIREFOX_AUTOMATION_SERVICE=already_active"
             exit 0
           fi
+          # A standalone Violentmonkey desktop is independent of the
+          # chatgpt-firefox.service unit. Starting a second unit while its
+          # Firefox process is alive opens another ChatGPT browser window.
+          if pgrep -u "$(id -u)" -f '(/snap/firefox/.*/usr/lib/firefox/firefox|/usr/lib/firefox/firefox|firefox-bin)' >/dev/null 2>&1; then
+            echo "FIREFOX_AUTOMATION_SERVICE=reused_existing_standalone"
+            exit 0
+          fi
 
           legacy_disable="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
           if [[ -f "$legacy_disable" ]] \
