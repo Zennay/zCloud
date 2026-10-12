@@ -1,11 +1,8 @@
 name: zCloud extension fallback push canary
 
+# This destructive fallback canary must be explicitly operator-triggered;
+# ordinary extension commits use isolated, guarded installs instead.
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/zcloud-extension-fallback-canary.yml"
-      - "firefox-extension/background.js"
   workflow_dispatch:
 
 permissions:
@@ -76,40 +73,12 @@ jobs:
 
           rsync -a --delete --exclude='*.bak-*' "$GITHUB_WORKSPACE/firefox-extension/" "$root/firefox-extension/"
 
+          # systemd's cgroup stop is limited to the worker browser profile.
+          # Never kill every Firefox parent by PID: the dedicated staff Office
+          # Firefox is a separate authenticated browser and must be preserved.
           systemctl --user stop chatgpt-firefox.service || true
-          python3 - <<'PY'
-          import os, signal, subprocess, time
-          from pathlib import Path
-          proc=subprocess.run(
-              ["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],
-              text=True,capture_output=True,check=False,
-          )
-          main=[]
-          for raw in proc.stdout.split():
-              if not raw.isdigit(): continue
-              pid=int(raw)
-              try:
-                  cmd=Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0",b" ").decode("utf-8","replace")
-              except OSError:
-                  continue
-              if " -contentproc " not in f" {cmd} " and "/usr/lib/firefox/firefox" in cmd:
-                  main.append(pid)
-          for pid in main:
-              try: os.kill(pid, signal.SIGTERM)
-              except ProcessLookupError: pass
-          deadline=time.time()+12
-          while time.time()<deadline:
-              alive=[]
-              for pid in main:
-                  try: os.kill(pid,0); alive.append(pid)
-                  except ProcessLookupError: pass
-              if not alive: break
-              time.sleep(.5)
-          for pid in alive if 'alive' in locals() else []:
-              try: os.kill(pid,signal.SIGKILL)
-              except ProcessLookupError: pass
-          print("STALE_VM_FIREFOX_STOPPED="+",".join(map(str,main)))
-          PY
+          # If a standalone worker still owns the profile, its prestart guard
+          # will fail closed rather than deleting live locks or killing sessions.
 
           dropin="$HOME/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf"
           rm -f "$dropin"
