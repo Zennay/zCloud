@@ -20,7 +20,27 @@ The current external URL uses HTTP. Do not enter the code over untrusted public 
 ## Connect actual ChatGPT replies
 The original zCloud worker queue has no arbitrary-chat-response API. This release adds an explicit UI bridge, not a substitute model.
 
-The relay is intended for **your own PC** (Mac, Windows or Linux), running Tampermonkey inside a normal Firefox/Chrome browser at `https://chatgpt.com/c/...`. The VPS hosts the Office HTTP API; ChatGPT does **not** need to run on the VPS. Tampermonkey cannot run inside the native ChatGPT desktop application.
+## Preferred: ChatGPT conversations run on the VPS
+
+The VPS has an existing, **RDP-visible** Firefox desktop on `DISPLAY=:10`. Office now provides a **separate Firefox profile and user service** for real ChatGPT conversations, without touching zCloud workers, their web-ext profile, or their assigned tabs.
+
+1. Log into the VPS RDP desktop as `ubuntu` and start a terminal there. Confirm that the RDP desktop on `:10` is active.
+2. The Office release installs `/opt/virtual-office/office-relay-vps.sh` and the `office-relay-vps.service` **user unit** (installed but deliberately not auto-enabled before first login). Start the dedicated browser from the VPS desktop terminal:
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now office-relay-vps.service
+   systemctl --user status office-relay-vps.service --no-pager
+   ```
+   Or for an initial interactive diagnostic, without enabling the service: `bash /opt/virtual-office/office-relay-vps.sh`. Do not run both at once. If the service fails because `:10` is absent, log into the RDP desktop first and retry. Logs: `journalctl --user -u office-relay-vps.service -n 30 --no-pager`.
+3. In the **Firefox window on the VPS**, install the Tampermonkey extension and then [Office Relay userscript](https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js). Sign into your ChatGPT account **in this VPS Firefox profile**; the local Mac browser's login is unrelated.
+4. In this dedicated profile, open an **existing, saved** ChatGPT conversation (a `https://chatgpt.com/c/...` URL) for each employee. Do not use an existing zCloud worker tab. In that ChatGPT tab, click `Office Relay · uit`, choose `http://127.0.0.1:3422`, the employee `maya`, `noah`, or `lina`, and enter the Office access code from the VPS. The origin refers to **VPS loopback**, so no SSH tunnel is necessary for the relay itself. Keep one relay tab per employee.
+5. Leave this VPS desktop and service running; disconnecting the RDP viewer normally preserves the Xorg desktop session. Use the Office UI from another machine through a trusted HTTPS reverse proxy or a **separate** SSH tunnel for its private access-code endpoints. The UI/browser location is independent of the relay.
+
+**Important:** The systemd service restarts **the browser**, not an authenticated ChatGPT session or an unverified in-flight answer. Firefox may restore its logged-in session and tabs, but **the Office access code is never persisted in the userscript**, so after page reload/restart you must manually reconnect each relay. Remote browser authentication, actual heartbeat and delivery are **not** established by unit tests or automatic deployment. Never paste an access code into the public unencrypted `http://198.244.191.182:3422` page. The private VPS browser profile uses ~additional Firefox process memory; monitor RAM if many workers already run.
+
+## Optional: ChatGPT conversations run on your own PC
+
+Alternatively, Tampermonkey can run on **your own PC** (Mac, Windows or Linux) inside a Firefox/Chrome browser at `https://chatgpt.com/c/...`, forwarding to the VPS through SSH. Tampermonkey cannot run inside the native ChatGPT desktop application.
 
 1. On **your own PC**, open an SSH tunnel to the VPS with your existing SSH account and verified host key. Keep this terminal running:
    ```bash
