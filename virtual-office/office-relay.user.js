@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.1
+// @version      0.3.2
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
@@ -20,10 +20,10 @@
  let config=null,active=null,busy=false,polling=false,client=crypto.randomUUID();
  const status=document.createElement('div');
  Object.assign(status.style,{position:'fixed',bottom:'12px',left:'12px',zIndex:'99999',background:'#182329',color:'#d9c19b',font:'11px system-ui',border:'1px solid #8d7652',padding:'8px 12px',borderRadius:'8px'});
- status.textContent='Office Relay · uit';document.body.append(status);
+ status.textContent='Office Relay · uit';status.title='Klik om Office Relay te verbinden of opnieuw in te stellen';status.setAttribute('role','status');document.body.append(status);
  const request=(path,body)=>new Promise((resolve,reject)=>GM_xmlhttpRequest({
   method:'POST',url:config.origin+path,headers:{'Content-Type':'application/json','X-Office-Token':config.token},
-  data:JSON.stringify(body),timeout:12000,onload:r=>{try{const d=JSON.parse(r.responseText);r.status>=200&&r.status<300?resolve(d):reject(Error(d.error||'Office niet bereikbaar'))}catch{reject(Error('Ongeldig serverantwoord'))}},
+  data:JSON.stringify(body),timeout:12000,onload:r=>{let d;try{d=JSON.parse(r.responseText)}catch{return reject(Error('Office antwoordt niet met JSON (HTTP '+r.status+'). Controleer de server-URL.'))}if(r.status===401)return reject(Error('Toegangscode geweigerd (401). Verbind opnieuw met dezelfde Office-code.'));r.status>=200&&r.status<300?resolve(d):reject(Error(d.error||'Office HTTP '+r.status))},
   ontimeout:()=>reject(Error('Office time-out')),onerror:()=>reject(Error('Office niet bereikbaar'))
  }));
  function connect(){
@@ -41,7 +41,8 @@
  }
  GM_registerMenuCommand('Verbind deze chat met Office',connect);
  GM_registerMenuCommand('Office Relay stoppen',()=>{if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');config=null;status.textContent='Office Relay · uit'});
- status.onclick=()=>{if(!config)connect()};
+ GM_registerMenuCommand('Office Relay opnieuw instellen',()=>{if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');config=null;connect()});
+ status.onclick=()=>{if(!config)return connect();if(active)return alert('Er wordt nog een antwoord verwerkt.');if(confirm('Relay voor '+config.employee+' op '+config.origin+' opnieuw verbinden? De huidige code wordt alleen in deze tab bewaard en moet opnieuw worden ingevuld.')){config=null;connect()}};
  const editor=()=>document.querySelector('#prompt-textarea[contenteditable="true"],textarea#prompt-textarea');
  const generating=()=>!!document.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"]');
  const content=e=>e?.innerText||e?.value||'';
