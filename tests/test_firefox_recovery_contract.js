@@ -274,7 +274,7 @@ assert.ok(
 );
 assert.ok(
   refreshBlock.indexOf("portfolioAssignmentReady(target)") <
-    refreshBlock.indexOf('browser.tabs.create({url: target.url'),
+    refreshBlock.indexOf('createWorkerTab(target, target.url'),
   "invalid assignments must fail closed before opening a worker tab"
 );
 
