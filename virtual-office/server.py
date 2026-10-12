@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Virtual Office: durable local task queue + Codex (ChatGPT subscription) worker.
+"""Virtual Office: browser-facing interface for existing zCloud ChatGPT chat workers.
 
-No OpenAI API key is used. Codex CLI must be installed and signed in by the
-host owner. Never expose this service directly without an access token + TLS.
+No Codex, OpenAI API, token-billed LLM, or ChatGPT browser-session scraping.
+A persistent outbox forwards *actionable project tasks* to zCloud's real
+portfolio queue. zCloud's existing authenticated Firefox ChatGPT chats consume
+that queue independently of the office browser. This is NOT a free-form chat
+relay: zCloud does not expose arbitrary ChatGPT reply text.
 """
 from __future__ import annotations
 
@@ -10,31 +13,44 @@ import argparse
 import hmac
 import json
 import os
-import shutil
 import sqlite3
-import subprocess
-import tempfile
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.getenv("OFFICE_DB_PATH", str(ROOT / "office.db"))).expanduser().resolve()
-WORKSPACE = Path(os.getenv("OFFICE_WORKSPACE_ROOT", str(ROOT / "workspace"))).expanduser().resolve()
 BIND = os.getenv("OFFICE_BIND", "127.0.0.1")
 PORT = int(os.getenv("OFFICE_PORT", "8799"))
 TOKEN = os.getenv("OFFICE_ACCESS_TOKEN", "")
-ALLOW_WRITES = os.getenv("OFFICE_ALLOW_WRITES", "0") == "1"
+ZCLOUD_URL = os.getenv("OFFICE_ZCLOUD_URL", "http://127.0.0.1:8765").rstrip("/")
+# The zCloud management bridge must stay on localhost: never proxy it to a
+# user-provided URL or use this frontend as a general SSRF/network client.
+_parts = urlsplit(ZCLOUD_URL)
+if (_parts.scheme != "http" or _parts.hostname not in ("127.0.0.1", "localhost", "::1")
+        or _parts.username or _parts.password or _parts.path or _parts.query or _parts.fragment):
+    raise SystemExit("OFFICE_ZCLOUD_URL must be a localhost-only HTTP origin")
+
 PERSONAS = {
-    "maya": {"id": "maya", "name": "Maya", "title": "Projectmanager", "role": "Planning, overzicht en prioriteiten", "personality": "Warm, proactief, gestructureerd. Vraagt door bij onduidelijke doelen.", "color": "#f0a878", "x": -4.1, "z": -2.9},
-    "noah": {"id": "noah", "name": "Noah", "title": "Software engineer", "role": "Bouwt en verbetert software", "personality": "Technisch, nuchter, stelt scherpe vragen, onderbouwt wijzigingen.", "color": "#78b8d6", "x": 0.15, "z": -2.9},
-    "lina": {"id": "lina", "name": "Lina", "title": "QA & design", "role": "Test, valideert en verbetert UX", "personality": "Kritisch maar vriendelijk, detailgericht en toegankelijk.", "color": "#b6a0e5", "x": 4.1, "z": -2.9},
+    "maya": {"id": "maya", "name": "Maya", "title": "Projectmanager · zCloud",
+             "role": "Organiseert en begeleidt zCloud-werk", "project_id": "cloud",
+             "personality": "Warm en gestructureerd; ziet eerst de open issues.", "color": "#f0a878", "x": -4.1, "z": -2.9},
+    "noah": {"id": "noah", "name": "Noah", "title": "Developer · Supa",
+             "role": "Ontwikkelt aan Supa", "project_id": "supa",
+             "personality": "Pragmatisch, technisch en direct.", "color": "#78b8d6", "x": 0.15, "z": -2.9},
+    "lina": {"id": "lina", "name": "Lina", "title": "QA · LightUp",
+             "role": "Valideert LightUp en helpt bugs oplossen", "project_id": "lightup",
+             "personality": "Kritisch, precies en security-minded.", "color": "#b6a0e5", "x": 4.1, "z": -2.9},
 }
-AUTH_CACHE = (0.0, False)
+STATUSES = {"queued", "dispatching", "dispatched", "claimed", "running", "verifying",
+            "done", "failed", "dropped", "attention", "waiting_zcloud"}
+MAX_ACTIVE = 12
 
 
 def timestamp() -> str:
@@ -43,9 +59,9 @@ def timestamp() -> str:
 
 def connect() -> sqlite3.Connection:
     DB.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(DB), timeout=10, isolation_level=None)
+    db = sqlite3.connect(str(DB), timeout=8, isolation_level=None)
     db.row_factory = sqlite3.Row
-    db.execute("PRAGMA busy_timeout=10000")
+    db.execute("PRAGMA busy_timeout=8000")
     db.execute("PRAGMA journal_mode=WAL")
     return db
 
@@ -58,53 +74,80 @@ def init_db() -> None:
             instruction TEXT NOT NULL, status TEXT NOT NULL,
             output TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-            attempts INTEGER NOT NULL DEFAULT 0
+            attempts INTEGER NOT NULL DEFAULT 0,
+            remote_queue_id TEXT NOT NULL DEFAULT '',
+            remote_status TEXT NOT NULL DEFAULT ''
         );
-        CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status,created_at);
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             employee TEXT NOT NULL, role TEXT NOT NULL,
             content TEXT NOT NULL, created_at TEXT NOT NULL
         );
         """)
-        # A process may have died mid-execution. Never replay a writing job
-        # automatically: the previous run might already have changed files.
-        db.execute("UPDATE jobs SET status='interrupted', updated_at=? WHERE status='running'", (timestamp(),))
+        columns = {r["name"] for r in db.execute("PRAGMA table_info(jobs)")}
+        for col in ("remote_queue_id", "remote_status"):
+            if col not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''")
+        db.execute("UPDATE jobs SET status='queued' WHERE status='dispatching' AND remote_queue_id=''")
+        # Do NOT replay old Codex jobs: they may already have mutated code.
+        db.execute("UPDATE jobs SET status='interrupted',error='Oud Codex-jobtype vereist handmatige verificatie.' WHERE status='running' AND remote_queue_id=''")
+        db.execute("UPDATE jobs SET status='queued' WHERE status='waiting_zcloud' AND remote_queue_id=''")
+        # Dispatched jobs are idempotent by remote_queue_id; reconciliation is read-only.
 
 
-def available_codex(force: bool = False) -> bool:
-    global AUTH_CACHE
-    now = time.monotonic()
-    if not force and now - AUTH_CACHE[0] < 20:
-        return AUTH_CACHE[1]
-    cli = shutil.which("codex")
-    if not cli:
-        AUTH_CACHE = (now, False)
-        return False
+def zcloud(path: str, payload: dict | None = None, timeout: float = 3.5) -> dict:
+    url = ZCLOUD_URL + path
+    data = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
+    headers = {"Content-Type": "application/json"} if data is not None else {}
+    request = Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
     try:
-        status = subprocess.run([cli, "login", "status"], text=True, capture_output=True, timeout=8)
-        ready = status.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        ready = False
-    AUTH_CACHE = (now, ready)
-    return ready
+        with urlopen(request, timeout=timeout) as response:
+            doc = json.load(response)
+    except HTTPError as exc:
+        message = "zCloud weigerde de opdracht"
+        try:
+            err = json.loads(exc.read(4096))
+            message = str(err.get("error") or message)
+        except (ValueError, UnicodeError):
+            pass
+        raise RuntimeError(message[:260]) from exc
+    except (URLError, OSError, TimeoutError) as exc:
+        raise ConnectionError("zCloud op localhost tijdelijk niet bereikbaar") from exc
+    if not isinstance(doc, dict):
+        raise RuntimeError("Ongeldig antwoord van zCloud")
+    return doc
+
+
+def zcloud_health() -> dict:
+    try:
+        status = zcloud("/api/runner-live", timeout=2.5)
+        workers = status.get("chatgpt_runners") or {}
+        return {"zcloud_online": True, "chatgpt_worker_data": bool(workers),
+                "firefox": (status.get("chatgpt_firefox") or {}).get("active", False)}
+    except (RuntimeError, ConnectionError, ValueError):
+        return {"zcloud_online": False, "chatgpt_worker_data": False, "firefox": False}
 
 
 def enqueue(employee: str, kind: str, instruction: str) -> dict:
-    if employee not in PERSONAS or kind not in ("chat", "task"):
-        raise ValueError("Onbekende medewerker of opdrachttype.")
-    instruction = instruction.strip()
-    if not 1 <= len(instruction) <= 3500:
-        raise ValueError("Een opdracht moet 1–3500 tekens bevatten.")
-    if kind == "task" and not ALLOW_WRITES:
-        raise ValueError("Schrijftaken staan uit. Zet OFFICE_ALLOW_WRITES=1 op een geïsoleerde werkmap.")
-    ident, now = uuid.uuid4().hex, timestamp()
+    if employee not in PERSONAS:
+        raise ValueError("Onbekende medewerker")
+    if kind not in ("task", "chat"):
+        raise ValueError("Onbekend opdrachttype")
+    instruction = str(instruction or "").strip()
+    if not 2 <= len(instruction) <= 2000:
+        raise ValueError("Schrijf een opdracht van 2–2000 tekens")
+    if kind != "task":
+        raise ValueError("Vrije gesprekken worden niet door zCloud gerelayd. Gebruik 'Open ChatGPT-chat' voor gesprekken of 'Geef werkopdracht' voor werk.")
     with connect() as db:
+        active = db.execute("SELECT COUNT(*) FROM jobs WHERE status NOT IN ('done','failed','dropped','interrupted')").fetchone()[0]
+        if active >= MAX_ACTIVE:
+            raise ValueError("Er staan al 12 opdrachten open. Rond er eerst een aantal af.")
+        ident, now = uuid.uuid4().hex, timestamp()
         db.execute("INSERT INTO jobs(id,employee,kind,instruction,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
                    (ident, employee, kind, instruction, "queued", now, now))
-        if kind == "chat":
-            db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
-                       (employee, "user", instruction, now))
+        db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
+                   (employee, "user", instruction, now))
     return get_job(ident)
 
 
@@ -114,225 +157,224 @@ def get_job(ident: str) -> dict | None:
         return dict(row) if row else None
 
 
-def list_jobs(limit: int = 20) -> list:
+def list_jobs(limit: int = 30) -> list:
     with connect() as db:
-        return [dict(x) for x in db.execute("SELECT * FROM jobs ORDER BY created_at DESC,id DESC LIMIT ?", (max(1, min(limit, 50)),))]
+        return [dict(x) for x in db.execute("SELECT * FROM jobs ORDER BY created_at DESC,id DESC LIMIT ?", (max(1,min(limit,50)),))]
 
 
 def retry(ident: str) -> dict | None:
-    now = timestamp()
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        db.execute("UPDATE jobs SET status='queued', error='',updated_at=? WHERE id=? AND status IN ('failed','interrupted','waiting_auth')", (now, ident))
-        if db.execute("SELECT changes()").fetchone()[0] == 0:
-            db.execute("COMMIT")
-            return None
+        cursor = db.execute("UPDATE jobs SET status='queued',error='',updated_at=? WHERE id=? AND status='failed' AND remote_queue_id=''",
+                            (timestamp(),ident))
         db.execute("COMMIT")
-    return get_job(ident)
+        return get_job(ident) if cursor.rowcount else None
 
 
-def claim() -> dict | None:
-    with connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        row = db.execute("SELECT * FROM jobs WHERE status IN ('queued','waiting_auth') ORDER BY created_at,id LIMIT 1").fetchone()
-        if row:
-            db.execute("UPDATE jobs SET status='running',updated_at=?,attempts=attempts+1 WHERE id=?", (timestamp(), row["id"]))
-        db.execute("COMMIT")
-        return dict(row) if row else None
+def office_queue_id(job: dict) -> str:
+    return "office-" + PERSONAS[job["employee"]]["project_id"] + "-" + job["id"]
 
 
-def finish(ident: str, status: str, output: str = "", error: str = "") -> None:
-    if status not in ("done", "failed", "waiting_auth"):
-        raise ValueError("Invalid final state")
-    with connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        current = db.execute("SELECT employee,kind FROM jobs WHERE id=? AND status='running'", (ident,)).fetchone()
-        if current:
-            db.execute("UPDATE jobs SET status=?,output=?,error=?,updated_at=? WHERE id=?",
-                       (status, output[:15000], error[:1000], timestamp(), ident))
-            if status == "done" and current["kind"] == "chat":
-                db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
-                           (current["employee"], "assistant", output[:8000], timestamp()))
-        db.execute("COMMIT")
-
-
-def prompt_for(job: dict) -> str:
+def build_portfolio_payload(job: dict) -> dict:
     persona = PERSONAS[job["employee"]]
-    with connect() as db:
-        history = [dict(r) for r in db.execute(
-            "SELECT role,content FROM messages WHERE employee=? ORDER BY id DESC LIMIT 12", (job["employee"],))]
-    history.reverse()
-    context = "\n".join(m["role"] + ": " + m["content"][:1000] for m in history)
-    instructions = (
-        "Je bent " + persona["name"] + ", " + persona["title"] + " in een virtueel AI-kantoor. "
-        + persona["personality"] + " Antwoord in het Nederlands, natuurlijk en beknopt. "
-        + "Je hebt geen toegang tot live projectstatus buiten de huidige werkmap. Verzin geen uitgevoerde taken. "
-        + "Noem blokkades eerlijk. Werk niet buiten de huidige map. "
+    instruction = job["instruction"]
+    # This is a real zCloud write/build queue, not a general chat interface.
+    # Fail closed on obviously conversation-only messages.
+    first = instruction.lower().strip().split(" ", 1)[0]
+    if first in ("hey", "hoi", "hallo", "hoe", "wat", "waar", "waarom", "wie", "wanneer"):
+        raise ValueError("Dit klinkt als een gesprek. Open de bestaande ChatGPT-chat; de werkqueue is alleen voor uitvoerbare taken.")
+    title = "Implement office-opdracht: " + instruction.replace("\n", " ")[:220]
+    criteria = (
+        "Office opdracht van de eigenaar voor " + persona["name"] + " (" + persona["title"] + "). "
+        "Bestaande open issues/PR's gaan voor nieuw werk; probeer een veilige concrete stap. "
+        "Controleer eigen projectcontext in Notion en GitHub en voer materieel uitvoerbaar werk uit. "
+        "Vereist: werkelijke code- of testwijziging met controleerbaar bewijs; geen verzonnen afronding. "
+        "Geen productie-, secret- of security-scope wijzigingen zonder afzonderlijke toestemming. "
+        "Gebruikersinstructie:\n" + instruction
     )
-    if job["kind"] == "task":
-        instructions += (
-            "Dit is een ECHTE programmeeropdracht. Wijzig bestanden uitsluitend in de ingestelde sandbox-werkmap; "
-            "voer geschikte lokale tests uit; push, deploy, verwijder niets extern en gebruik geen secrets. "
-            "Beschrijf na afloop exact welke bestanden je hebt gewijzigd en wat je hebt getest. "
-        )
-    return instructions + "\nGespreksgeschiedenis:\n" + context + "\nNieuwe opdracht:\n" + job["instruction"]
+    return {"action":"enqueue","project_id":persona["project_id"],"priority":"P3",
+            "title":title,"completion_criteria":criteria,"queue_id":office_queue_id(job)}
 
 
-def execute(job: dict) -> str:
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
-    cli = shutil.which("codex")
-    if not cli:
-        raise RuntimeError("Codex CLI ontbreekt")
-    sandbox = "workspace-write" if job["kind"] == "task" and ALLOW_WRITES else "read-only"
-    with tempfile.TemporaryDirectory(prefix="virtual-office-") as folder:
-        output_file = Path(folder) / "answer.txt"
-        # Codex exec supports ChatGPT-account login; no API key is injected.
-        proc = subprocess.run(
-            [cli, "exec", "--skip-git-repo-check", "--sandbox", sandbox,
-             "--output-last-message", str(output_file), "-"],
-            input=prompt_for(job), text=True, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, cwd=str(WORKSPACE), timeout=360,
-        )
-        if proc.returncode:
-            raise RuntimeError("Codex exit code " + str(proc.returncode) + " (controleer login en CLI-versie)")
-        answer = output_file.read_text(encoding="utf-8").strip() if output_file.exists() else ""
-        if not answer:
-            raise RuntimeError("Codex gaf geen eindantwoord terug")
-        return answer
+def dispatch_once() -> bool:
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM jobs WHERE status='queued' AND remote_queue_id='' ORDER BY created_at,id LIMIT 1").fetchone()
+        if row:
+            db.execute("UPDATE jobs SET status='dispatching',attempts=attempts+1,updated_at=? WHERE id=?",
+                       (timestamp(),row["id"]))
+        db.execute("COMMIT")
+    if not row: return False
+    job = dict(row)
+    try:
+        remote = zcloud("/api/portfolio-queue", build_portfolio_payload(job))
+        item = remote.get("item") or remote.get("result") or {}
+        remote_id = str(item.get("queue_id") or office_queue_id(job))
+        status = str(item.get("status") or "queued")
+        with connect() as db:
+            db.execute("UPDATE jobs SET status='dispatched',remote_queue_id=?,remote_status=?,updated_at=?,error='' WHERE id=? AND status='dispatching'",
+                       (remote_id,status,timestamp(),job["id"]))
+    except ValueError as exc:
+        with connect() as db:
+            db.execute("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='dispatching'",
+                       (str(exc)[:450],timestamp(),job["id"]))
+    except (RuntimeError,ConnectionError) as exc:
+        with connect() as db:
+            db.execute("UPDATE jobs SET status='queued',error=?,updated_at=? WHERE id=? AND status='dispatching'",
+                       (str(exc)[:450],timestamp(),job["id"]))
+        return False
+    return True
+
+
+def sync_remote() -> None:
+    with connect() as db:
+        count = db.execute("SELECT COUNT(*) FROM jobs WHERE remote_queue_id<>'' AND status NOT IN ('done','failed','dropped')").fetchone()[0]
+    if not count: return
+    items = zcloud("/api/portfolio-queue?all=1",timeout=7).get("items",[])
+    lookup = {str(x.get("queue_id")): x for x in items if isinstance(x,dict)}
+    with connect() as db:
+        for job in db.execute("SELECT id,employee,remote_queue_id,status FROM jobs WHERE remote_queue_id<>'' AND status NOT IN ('done','failed','dropped')").fetchall():
+            item = lookup.get(job["remote_queue_id"])
+            if item is None: continue
+            remote_status = str(item.get("status") or "queued")
+            mapped = remote_status if remote_status in ("claimed","running","verifying","done","dropped") else "dispatched"
+            # zCloud queue.done is strong evidence only where zCloud's existing finish-gate
+            # validated it. Do not call this an avatar conversation transcript.
+            msg = ("zCloud markeerde de projectopdracht als afgerond." if mapped == "done" else
+                   "zCloud heeft deze opdracht laten vervallen." if mapped == "dropped" else "")
+            db.execute("UPDATE jobs SET status=?,remote_status=?,output=?,updated_at=? WHERE id=?",
+                       (mapped,remote_status,msg,timestamp(),job["id"]))
+            if mapped in ("done","dropped") and job["status"] not in ("done","dropped"):
+                db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
+                           (job["employee"],"system",msg,timestamp()))
 
 
 def work_forever(stop: threading.Event | None = None) -> None:
     while stop is None or not stop.is_set():
-        if not available_codex():
-            if stop:
-                stop.wait(15)
-            else:
-                time.sleep(15)
-            continue
-        job = claim()
-        if not job:
-            if stop:
-                stop.wait(1)
-            else:
-                time.sleep(1)
-            continue
         try:
-            finish(job["id"], "done", output=execute(job))
-        except subprocess.TimeoutExpired:
-            finish(job["id"], "failed", error="Codex-taak duurde langer dan 6 minuten.")
-        except Exception as exc:
-            finish(job["id"], "failed", error=str(exc)[:500])
+            sync_remote()
+            # Avoid starvation of retries when zCloud is down.
+            dispatch_once()
+        except Exception:
+            # Keep service available and retry after backoff; never fabricate DONE.
+            pass
+        if stop:
+            stop.wait(8)
+        else:
+            time.sleep(8)
+
+
+def employee_chat_links() -> dict:
+    """Return account-owned existing ChatGPT thread URLs from local zCloud config."""
+    data = zcloud("/api/runner-targets",timeout=4)
+    projects = data.get("projects") or {}
+    links={}
+    for employee, profile in PERSONAS.items():
+        pid=profile["project_id"]
+        matching=[v for v in projects.values() if isinstance(v,dict) and v.get("base_project_id")==pid and v.get("provider")=="chatgpt"]
+        conversation = next((str(v.get("conversation_id")) for v in matching if v.get("conversation_id")), "")
+        # IDs originate only from local zCloud, not arbitrary client URLs.
+        if conversation and all(x in "0123456789abcdef-" for x in conversation.lower()) and len(conversation)<80:
+            links[employee]="https://chatgpt.com/c/"+conversation
+        else:
+            links[employee]="https://chatgpt.com/"
+    return links
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "VirtualOffice/0.1"
+    server_version = "VirtualOffice/0.2"
 
-    def json_reply(self, code: int, obj: object) -> None:
-        payload = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    def json_reply(self,code:int,obj:object)->None:
+        payload=json.dumps(obj,ensure_ascii=False).encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Type","application/json; charset=utf-8")
+        self.send_header("Content-Length",str(len(payload)))
+        self.send_header("Cache-Control","no-store")
+        self.send_header("X-Content-Type-Options","nosniff")
+        self.send_header("Referrer-Policy","no-referrer")
         self.end_headers()
         self.wfile.write(payload)
 
-    def authorized(self) -> bool:
-        if not TOKEN:
-            return True  # Server cannot bind publicly without a token.
-        supplied = self.headers.get("X-Office-Token", "")
-        return hmac.compare_digest(TOKEN, supplied)
+    def authorized(self)->bool:
+        return not TOKEN or hmac.compare_digest(TOKEN,self.headers.get("X-Office-Token",""))
 
-    def require_auth(self) -> bool:
+    def require_auth(self)->bool:
         if not self.authorized():
-            self.json_reply(401, {"error": "Voer je Office-toegangscode in."})
+            self.json_reply(401,{"error":"Voer de Office-toegangscode in. Werkopdrachten zijn niet publiek."})
             return False
         return True
 
-    def do_GET(self) -> None:
-        url = urlsplit(self.path)
-        if url.path in ("/", "/index.html"):
-            body = (ROOT / "index.html").read_bytes()
+    def do_GET(self)->None:
+        url=urlsplit(self.path)
+        if url.path in ("/","/index.html"):
+            body=(ROOT/"index.html").read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self.send_header("Content-Type","text/html; charset=utf-8")
+            self.send_header("Content-Length",str(len(body)))
+            self.send_header("Cache-Control","no-store")
+            self.send_header("X-Content-Type-Options","nosniff")
+            self.send_header("Content-Security-Policy","default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.end_headers();self.wfile.write(body);return
+        if url.path=="/api/health":
+            self.json_reply(200,{"online":True,"auth_required":bool(TOKEN),
+                 "mode":"zcloud_chatgpt_chats","tasks_enabled":True, **zcloud_health()})
             return
-        if url.path == "/api/health":
-            self.json_reply(200, {"online": True, "auth_required": bool(TOKEN),
-                                  "codex_ready": available_codex(), "tasks_enabled": ALLOW_WRITES})
-            return
-        if not self.require_auth():
-            return
-        if url.path == "/api/employees":
-            self.json_reply(200, {"employees": list(PERSONAS.values())})
-        elif url.path == "/api/jobs":
-            self.json_reply(200, {"jobs": list_jobs()})
+        if not self.require_auth():return
+        if url.path=="/api/employees":
+            try:links=employee_chat_links()
+            except (ConnectionError,RuntimeError,ValueError):links={k:"https://chatgpt.com/" for k in PERSONAS}
+            self.json_reply(200,{"employees":list(PERSONAS.values()),"chat_links":links})
+        elif url.path=="/api/jobs":
+            self.json_reply(200,{"jobs":list_jobs()})
         elif url.path.startswith("/api/jobs/"):
-            job = get_job(url.path.split("/")[-1])
-            self.json_reply(200 if job else 404, job if job else {"error": "Niet gevonden"})
-        elif url.path == "/api/messages":
-            employee = parse_qs(url.query).get("employee", [""])[0]
-            if employee not in PERSONAS:
-                self.json_reply(400, {"error": "Onbekende medewerker"})
-                return
+            job=get_job(url.path.rsplit("/",1)[-1])
+            self.json_reply(200 if job else 404,job or {"error":"Niet gevonden"})
+        elif url.path=="/api/messages":
+            employee=parse_qs(url.query).get("employee",[""])[0]
+            if employee not in PERSONAS:return self.json_reply(400,{"error":"Onbekende medewerker"})
             with connect() as db:
-                rows = [dict(r) for r in db.execute(
-                    "SELECT role,content,created_at FROM messages WHERE employee=? ORDER BY id DESC LIMIT 30",
-                    (employee,))]
-            self.json_reply(200, {"messages": list(reversed(rows))})
-        else:
-            self.json_reply(404, {"error": "Niet gevonden"})
+                rows=[dict(r) for r in db.execute("SELECT role,content,created_at FROM messages WHERE employee=? ORDER BY id DESC LIMIT 30",(employee,))]
+            self.json_reply(200,{"messages":list(reversed(rows))})
+        else:self.json_reply(404,{"error":"Niet gevonden"})
 
-    def do_POST(self) -> None:
-        url = urlsplit(self.path)
-        if not self.require_auth():
-            return
-        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-            self.json_reply(415, {"error": "Alleen application/json wordt ondersteund"})
-            return
-        length = self.headers.get("Content-Length", "")
-        if not length.isdigit() or int(length) > 10000:
-            self.json_reply(413, {"error": "Ongeldige of te grote aanvraag"})
-            return
+    def do_POST(self)->None:
+        url=urlsplit(self.path)
+        if not self.require_auth():return
+        length=self.headers.get("Content-Length","")
+        if self.headers.get("Content-Type","").split(";")[0].strip()!="application/json":
+            return self.json_reply(415,{"error":"Alleen JSON"})
+        if not length.isdigit() or int(length)>10000:
+            return self.json_reply(413,{"error":"Ongeldige aanvraaglengte"})
         try:
-            body = json.loads(self.rfile.read(int(length)))
-            if not isinstance(body, dict):
-                raise ValueError("JSON object verwacht")
-            if url.path == "/api/jobs":
-                self.json_reply(201, enqueue(body.get("employee", ""), body.get("kind", "chat"), body.get("instruction", "")))
+            body=json.loads(self.rfile.read(int(length)))
+            if not isinstance(body,dict):raise ValueError("JSON object vereist")
+            if url.path=="/api/jobs":
+                self.json_reply(201,enqueue(body.get("employee",""),body.get("kind","task"),body.get("instruction","")))
             elif url.path.startswith("/api/jobs/") and url.path.endswith("/retry"):
-                ident = url.path.split("/")[-2]
-                job = retry(ident)
-                self.json_reply(200 if job else 409, job or {"error": "Taak kan niet opnieuw worden gestart"})
-            else:
-                self.json_reply(404, {"error": "Niet gevonden"})
-        except (ValueError, TypeError, KeyError) as exc:
-            self.json_reply(400, {"error": str(exc)})
+                ident=url.path.split("/")[-2]
+                job=retry(ident)
+                self.json_reply(200 if job else 409,job or {"error":"Opdracht kan niet opnieuw worden gestart"})
+            else:self.json_reply(404,{"error":"Niet gevonden"})
+        except (ValueError,TypeError,KeyError) as exc:self.json_reply(400,{"error":str(exc)})
 
-    def log_message(self, fmt: str, *args: object) -> None:
-        pass  # Avoid request paths or token mishaps in public logs.
+    def log_message(self,fmt:str,*args:object)->None:
+        pass
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("mode", nargs="?", default="all", choices=["all", "server", "worker"])
-    args = p.parse_args()
-    if BIND not in ("127.0.0.1", "::1", "localhost") and not TOKEN:
-        p.error("OFFICE_ACCESS_TOKEN is verplicht bij een niet-lokale bind.")
+def main()->None:
+    p=argparse.ArgumentParser()
+    p.add_argument("mode",nargs="?",default="all",choices=["all","server","worker"])
+    args=p.parse_args()
+    if BIND not in ("127.0.0.1","localhost","::1") and len(TOKEN)<24:
+        p.error("Remote bind vereist OFFICE_ACCESS_TOKEN van minimaal 24 tekens")
     init_db()
-    if args.mode == "worker":
-        work_forever()
-    else:
-        if args.mode == "all":
-            threading.Thread(target=work_forever, name="office-codex-worker", daemon=True).start()
-        with ThreadingHTTPServer((BIND, PORT), Handler) as http:
-            print("Virtual Office op http://" + BIND + ":" + str(PORT), flush=True)
-            http.serve_forever()
+    if args.mode=="worker":return work_forever()
+    if args.mode=="all":
+        threading.Thread(target=work_forever,name="office-zcloud-dispatcher",daemon=True).start()
+    with ThreadingHTTPServer((BIND,PORT),Handler) as server:
+        print("Virtual Office on http://"+BIND+":"+str(PORT),flush=True)
+        server.serve_forever()
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
