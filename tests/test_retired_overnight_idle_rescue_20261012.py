@@ -16,8 +16,21 @@ class ExpiredOvernightRescueRetirementTests(unittest.TestCase):
     def test_privileged_one_shot_is_not_registered(self):
         self.assertFalse((WORKFLOWS / EXPIRED).exists())
 
-    def test_no_workflow_still_dispatches_expired_entrypoint(self):
+    def test_no_other_workflow_still_references_expired_entrypoint(self):
+        # The new hosted-only regression workflow intentionally watches the
+        # deleted path in pull_request/push 'paths:' filters. That is *not*
+        # a workflow_dispatch or recovery target and must remain covered.
+        proof = "zcloud-expired-overnight-rescue-retirement-20261012.yml"
+        watcher = (WORKFLOWS / proof).read_text(encoding="utf-8")
+        self.assertIn('".github/workflows/' + EXPIRED + '"', watcher)
+        self.assertIn("runs-on: ubuntu-latest", watcher)
+        self.assertIn("contents: read", watcher)
+        self.assertNotIn("actions: write", watcher)
+        self.assertNotIn("issues: write", watcher)
+        self.assertNotIn("workflow_dispatch:", watcher)
         for candidate in sorted(WORKFLOWS.glob("*.y*ml")):
+            if candidate.name == proof:
+                continue
             with self.subTest(workflow=candidate.name):
                 self.assertNotIn(EXPIRED, candidate.read_text(encoding="utf-8"))
 
