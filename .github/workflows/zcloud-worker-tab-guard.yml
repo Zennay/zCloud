@@ -8,6 +8,7 @@ on:
       - tests/test_firefox_recovery_contract.js
       - tests/test_worker_tab_reuse.js
       - tests/test_worker_tab_identity_guard.js
+      - tests/test_violentmonkey_send_tab_preservation.js
       - .github/workflows/zcloud-worker-tab-guard.yml
   push:
     branches: [main, fix/worker-tab-spam-circuit-breaker-20261012]
@@ -18,6 +19,7 @@ on:
       - tests/test_firefox_recovery_contract.js
       - tests/test_worker_tab_reuse.js
       - tests/test_worker_tab_identity_guard.js
+      - tests/test_violentmonkey_send_tab_preservation.js
       - .github/workflows/zcloud-worker-tab-guard.yml
 permissions:
   contents: read
@@ -38,6 +40,7 @@ jobs:
           node tests/test_firefox_recovery_contract.js
           node tests/test_worker_tab_reuse.js
           node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
           echo "WORKER_TAB_SPAM_GUARD_GREEN=1"
 
   install:
