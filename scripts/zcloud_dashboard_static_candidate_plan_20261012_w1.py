@@ -20,6 +20,7 @@ STATIC_ALLOWLIST = frozenset((
     "public/index.html",
     "public/app.js",
     "public/design-system.css",
+    "public/enhancements.css",
 ))
 MAX_ASSET_BYTES = 3 * 1024 * 1024
 MAX_TOTAL_BYTES = 5 * 1024 * 1024
