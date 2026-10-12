@@ -87,15 +87,10 @@ jobs:
           install -D -m 0644 deploy/chatgpt-firefox.service "$unit"
           systemctl --user daemon-reload
           echo "SYSTEMD_RESTART_POLICY_INSTALLED=1"
-          # Stop a failed, rapidly-restarting shell only when it has no main
-          # browser PID. We never issue kill, restart or a browser signal.
-          main_pid="$(systemctl --user show chatgpt-firefox.service -p MainPID --value || echo unknown)"
-          restarts="$(systemctl --user show chatgpt-firefox.service -p NRestarts --value || echo 0)"
-          if [ "$main_pid" = "0" ] && [[ "$restarts" =~ ^[0-9]+$ ]] && (( restarts >= 5 )); then
-            echo "FAILED_SERVICE_RESTART_LOOP_DETECTED=1"
-            systemctl --user stop chatgpt-firefox.service
-            echo "FAILED_SERVICE_RESTART_LOOP_STOPPED=1"
-          fi
+          # The new Restart=on-abnormal policy stops profile-lock retry loops
+          # on their own. NEVER issue systemctl stop/restart on the worker
+          # service here: that could terminate the live Firefox cgroup.
+          echo "BROWSER_SERVICE_SIGNAL_SKIPPED=1"
           echo "=== POST DEPLOY (existing Firefox untouched) ==="
           systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
           ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
