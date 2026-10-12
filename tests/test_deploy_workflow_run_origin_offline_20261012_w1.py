@@ -18,6 +18,8 @@ def accepted_fixture():
         "repository": REPOSITORY,
         "workflow_run": {
             "name": "zCloud regression smoke",
+            "workflow_id": 367943538,
+            "path": ".github/workflows/zcloud-regression-smoke.yml",
             "event": "push",
             "head_branch": "main",
             "head_repository": {"full_name": REPOSITORY},
@@ -89,6 +91,22 @@ class WorkflowRunOriginOfflineTests(unittest.TestCase):
             event = accepted_fixture()
             event["workflow_run"]["name"] = value
             self.deny(event, reason="wrong_workflow")
+
+    def test_upstream_workflow_id_is_exact_integer(self):
+        for invalid in (None, True, 0, 367943537, 367943538.0, "367943538"):
+            event = accepted_fixture()
+            event["workflow_run"]["workflow_id"] = invalid
+            with self.subTest(value=repr(invalid)):
+                self.deny(event, reason="wrong_workflow_id")
+
+    def test_upstream_workflow_file_identity_is_exact(self):
+        for invalid in (None, "", ".github/workflows/other.yml",
+                        ".github/workflows/zcloud-regression-smoke.yml@refs/heads/main",
+                        ".github/workflows/Zcloud-regression-smoke.yml"):
+            event = accepted_fixture()
+            event["workflow_run"]["path"] = invalid
+            with self.subTest(value=repr(invalid)):
+                self.deny(event, reason="wrong_workflow_path")
 
     def test_source_must_be_push_not_pr_or_manual(self):
         for value in ("pull_request", "pull_request_target", "workflow_dispatch", "schedule", None):
