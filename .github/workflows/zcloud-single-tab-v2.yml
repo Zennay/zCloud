@@ -92,7 +92,24 @@ jobs:
           # Unlike the old service restart path: no systemctl restart/stop,
           # kill, browser launch, windows.create, tabs.remove, or refresh.
           # Addon-only hot-reload is allowed only if all workers are proven idle.
-          if python3 scripts/zcloud_deploy_safe_idle.py enter --state "$backup/idle.json" --timeout-seconds 0 --json >/dev/null 2>&1; then
+          # Read-only check. The legacy safe_idle enter action mutates runner
+          # commands/drain state; it must NEVER be used just for addon reload.
+          if python3 - <<'PY'
+          import json, urllib.request
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=6) as r:
+                  data=json.load(r)
+              runners=list((data.get("chatgpt_runners") or {}).values())
+              workers=[w for p in runners for w in (p.get("workers") or []) if w.get("active")]
+              if not workers:raise ValueError("No observed active workers")
+              if any(w.get("sending") or w.get("generating") or w.get("desired_state")=="draining" for w in workers):
+                  raise ValueError("An active worker is busy")
+              print("READ_ONLY_IDLE_WORKERS="+str(len(workers)))
+          except Exception as e:
+              print("IDLE_UNVERIFIED="+type(e).__name__)
+              raise SystemExit(1)
+          PY
+          then
             if node scripts/zcloud_reload_extension.mjs; then
               echo "V2_ADDON_HOT_RELOADED_NO_FIREFOX_RESTART=1"
             else
