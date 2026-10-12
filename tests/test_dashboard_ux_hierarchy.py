@@ -32,7 +32,7 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertNotIn("mobileRunnerControls(p)", card)
         self.assertNotIn("project-worker-advanced", detail)
         self.assertNotIn("Worker details", detail)
-        self.assertIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
+        self.assertNotIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
         self.assertIn("openDisclosures", app)
         self.assertIn("details[data-disclosure][open]", app)
 
