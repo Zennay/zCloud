@@ -57,3 +57,89 @@ jobs:
           assert pending["jobs"][0]["id"]==response["id"]
           print("Live browser UI + authenticated-independent SQLite outbox OK")
           PY
+
+  deploy-vps:
+    name: Deploy isolated office on VPS
+    needs: [office-tests]
+    # Explicitly avoid PR/fork/untrusted contexts on a privileged self-hosted runner.
+    if: ${{ github.event_name == 'push' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/feature/virtual-ai-office-mvp-20261012' && github.actor == 'Zennay' }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 9
+    concurrency:
+      group: virtual-office-release
+      cancel-in-progress: false
+    steps:
+      - name: Check out exact tested source (never persist credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install separate, always-on 3D Office service
+        shell: bash
+        env:
+          EXPECTED_HOST: vps-bb300bba
+          OFFICE_PORT: "3422"
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "$EXPECTED_HOST"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/feature/virtual-ai-office-mvp-20261012"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f virtual-office/server.py
+          test -f virtual-office/index.html
+          python3 -m py_compile virtual-office/server.py
+          user="$(id -un)"
+          group="$(id -gn)"
+          sudo install -d -m 0755 -o "$user" -g "$group" /opt/virtual-office
+          sudo install -d -m 0700 -o "$user" -g "$group" /var/lib/virtual-office
+          sudo install -d -m 0700 /etc/virtual-office
+          if ! sudo test -s /etc/virtual-office/office.env; then
+            secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+            printf 'OFFICE_ACCESS_TOKEN=%s\n' "$secret" | sudo tee /etc/virtual-office/office.env >/dev/null
+            unset secret
+          fi
+          sudo chmod 0600 /etc/virtual-office/office.env
+          sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
+          sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
+          sudo chown "$user:$group" /opt/virtual-office/server.py /opt/virtual-office/index.html
+          printf '[Unit]\nDescription=3D Virtual Office ChatGPT worker frontend\nAfter=network-online.target zennay-cloud.service\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=/opt/virtual-office\nEnvironment=OFFICE_BIND=0.0.0.0\nEnvironment=OFFICE_PORT=%s\nEnvironment=OFFICE_DB_PATH=/var/lib/virtual-office/office.db\nEnvironment=OFFICE_ZCLOUD_URL=http://127.0.0.1:8765\nEnvironmentFile=/etc/virtual-office/office.env\nExecStart=/usr/bin/python3 /opt/virtual-office/server.py all\nRestart=always\nRestartSec=5\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=/var/lib/virtual-office\n\n[Install]\nWantedBy=multi-user.target\n' "$user" "$group" "$OFFICE_PORT" | sudo tee /etc/systemd/system/virtual-office.service >/dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl enable virtual-office.service
+          sudo systemctl restart virtual-office.service
+          healthy=0
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 2 "http://127.0.0.1:$OFFICE_PORT/api/health" >/tmp/virtual-office-health.json; then
+              healthy=1; break
+            fi
+            sleep 1
+          done
+          if [ "$healthy" != 1 ]; then
+            sudo journalctl -u virtual-office.service --no-pager -n 30
+            exit 1
+          fi
+          curl -fsS --max-time 3 "http://127.0.0.1:$OFFICE_PORT/" | grep -q 'VIRTUAL OFFICE'
+          python3 - <<'PY'
+          import json
+          with open("/tmp/virtual-office-health.json") as file:
+              state=json.load(file)
+          assert state["online"] is True
+          assert state["auth_required"] is True
+          assert state["mode"] == "zcloud_chatgpt_chats"
+          print("office server healthy, work endpoints access-code protected; zcloud online:",state["zcloud_online"])
+          PY
+          if command -v ufw >/dev/null 2>&1; then
+            sudo ufw allow "$OFFICE_PORT/tcp" comment 'Virtual Office 3D demo' || true
+          fi
+          public_ip="$(curl -fsS --max-time 8 https://api.ipify.org || true)"
+          echo "Source SHA: $GITHUB_SHA"
+          echo "Private task API guarded by a long randomly generated server-side secret."
+          echo "No ChatGPT credentials, Codex CLI, or token API are used."
+          if [ -n "$public_ip" ]; then
+            echo "Candidate browser demo URL: http://$public_ip:$OFFICE_PORT/"
+            {
+              echo "## Virtual Office 0.2"
+              echo "Built and deployed: `$GITHUB_SHA`"
+              echo "Candidate browser demo: http://$public_ip:$OFFICE_PORT/"
+              echo "Interactive office + ChatGPT link. Server-only authenticated task submission."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          sudo systemctl is-active --quiet virtual-office.service
