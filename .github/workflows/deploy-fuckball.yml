@@ -42,6 +42,10 @@ jobs:
           git fetch --depth 1 origin main
           wanted_sha="$(git rev-parse FETCH_HEAD)"
           echo "Deploying source commit: $wanted_sha"
+          if [ "$(git rev-parse HEAD)" = "$wanted_sha" ] && sudo systemctl is-active --quiet fuckball.service && curl -fsS --max-time 3 "http://127.0.0.1:${APP_PORT}/health" >/dev/null; then
+            echo "Same source is running and healthy; skipping restart to preserve multiplayer rooms."
+            exit 0
+          fi
           git reset --hard "$wanted_sha"
           npm run build:solo
           npm test
