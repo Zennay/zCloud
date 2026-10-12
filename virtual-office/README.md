@@ -25,7 +25,7 @@ The original zCloud worker queue has no arbitrary-chat-response API. This releas
 The VPS has an existing, **RDP-visible** Firefox desktop on `DISPLAY=:10`. Office now provides a **separate Firefox profile and user service** for real ChatGPT conversations, without touching zCloud workers, their web-ext profile, or their assigned tabs.
 
 1. Log into the VPS RDP desktop as `ubuntu` and start a terminal there. Confirm that the RDP desktop on `:10` is active.
-2. The Office release installs `/opt/virtual-office/office-relay-vps.sh` and the `office-relay-vps.service` **user unit** (installed but deliberately not auto-enabled before first login). Start the dedicated browser from the VPS desktop terminal:
+2. The Office release installs `/opt/virtual-office/office-relay-vps.sh` and the `office-relay-vps.service` **user unit**. The deployment tries to start this dedicated service automatically only when the existing RDP display and user bus are available; otherwise it leaves it installed for manual activation. To check or start the browser from the VPS desktop terminal:
    ```bash
    systemctl --user daemon-reload
    systemctl --user enable --now office-relay-vps.service
