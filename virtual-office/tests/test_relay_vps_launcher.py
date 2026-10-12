@@ -22,7 +22,7 @@ class RelayVPSLauncherTests(unittest.TestCase):
         service = (ROOT / "office-relay-vps.service").read_text()
         self.assertIn("ExecStart=/bin/bash /opt/virtual-office/office-relay-vps.sh", service)
         self.assertIn("DISPLAY=:10", service)
-        self.assertIn("Restart=on-failure", service)
+        self.assertIn("Restart=always", service)
         self.assertNotIn("User=root", service)
         self.assertNotIn("chatgpt-firefox.service", service)
 

@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.5
+// @version      0.3.7
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
 // @match        https://chatgpt.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @connect      127.0.0.1
 // @connect      localhost
@@ -15,11 +18,12 @@
 // ==/UserScript==
 (() => {
  'use strict';
- // Opt-in per tab, credentials stay in closure memory. No cookie/token extraction,
- // no account-limit bypass, no background-tab ownership theft and no auto resend.
- let config=null,active=null,busy=false,polling=false;
- // Only a NON-SECRET tab identifier survives a ChatGPT reload. The Office
- // access code and pairing remain opt-in, held in memory, never persisted.
+ // Explicit per-browser consent is required before saving an Office code in
+ // Tampermonkey for crash recovery. No ChatGPT cookie/token extraction, no
+ // account-limit bypass, no worker-tab hijack, no uncertain-message replay.
+ let config=null,active=null,busy=false,polling=false,rememberAfterSuccess=false;
+ // A NON-SECRET tab identifier survives a ChatGPT reload. By default the
+ // Office code remains in memory; users may explicitly opt into profile storage.
  // This lets the same tab reclaim its prior lease after manually reconnecting.
  let client=crypto.randomUUID();
  try{
@@ -27,6 +31,51 @@
   if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(prior||''))client=prior;
   else sessionStorage.setItem('zcloud-office-relay-client',client);
  }catch{}
+
+ // Saved pairings are deliberately scoped to EXACT chat URLs. Never bind an
+ // employee to a new conversation simply because its tab or title looks similar.
+ // Tampermonkey local storage is protected by this browser profile but is not
+ // encrypted. It may be used ONLY after the owner explicitly opts in.
+ const PERSIST_KEY='zcloud-office-relay-remembered-v1';
+ const EMPLOYEE_PROMPTS=Object.freeze({
+  maya:'Je bent Maya, projectleider en portfolio-assistent van zCloud. Je helpt prioriteiten, projectvoortgang, risico’s en afhankelijkheden overzichtelijk te houden. Controleer Notion of beschikbare projectbronnen voordat je feiten over voortgang claimt; verzin geen deployments of status. Adviseer concreet, in het Nederlands.',
+  noah:'Je bent Noah, senior product-engineer met Supa als specialisme. Denk vanuit functionaliteit, UX, betrouwbare implementatie, regressietests en bestaande code. Beschrijf wat je werkelijk hebt gecontroleerd; zeg niet dat code is aangepast zonder bewijs. Antwoord doelgericht in het Nederlands.',
+  lina:'Je bent Lina, kwaliteits- en securityexpert met LightUp als specialisme. Geef reproduceerbare testgevallen, veilige validatie, duidelijke risico-inschattingen en herstelstappen. Actieve securitytests alleen op expliciet geautoriseerde scope; neem geen toestemming aan. Antwoord helder in het Nederlands.'
+ });
+ const CHAT_PATH=new RegExp('^/c/[0-9a-f-]{16,80}$','i');
+ const currentChat=()=>CHAT_PATH.test(location.pathname)?'https://chatgpt.com'+location.pathname:'';
+ const safeSavedOrigin=origin=>['http://127.0.0.1:3422','http://localhost:3422'].includes(String(origin||''));
+ function savedPairings(){
+  try{
+   const obj=GM_getValue(PERSIST_KEY,{});
+   if(!obj||obj.version!==1||typeof obj.chats!=='object'||Array.isArray(obj.chats))return {};
+   return {...obj.chats};
+  }catch{return {}}
+ }
+ function savePairing(cfg){
+  if(!cfg||!safeSavedOrigin(cfg.origin)||!CHAT_PATH.test(new URL(cfg.conversation).pathname))return false;
+  const chats=savedPairings();
+  for(const [url,item] of Object.entries(chats)){
+   if(item?.employee===cfg.employee)delete chats[url]; // exactly one chat per expert
+  }
+  chats[cfg.conversation]={origin:cfg.origin,employee:cfg.employee,token:cfg.token};
+  try{GM_setValue(PERSIST_KEY,{version:1,chats});return true}catch{return false}
+ }
+ function clearPairing(url){
+  const chats=savedPairings();
+  if(!Object.prototype.hasOwnProperty.call(chats,url))return;
+  delete chats[url];
+  try{if(Object.keys(chats).length)GM_setValue(PERSIST_KEY,{version:1,chats});
+      else GM_deleteValue(PERSIST_KEY)}catch{}
+ }
+ function validSavedPairing(url,item){
+  return !!url&&!!item&&safeSavedOrigin(item.origin)&&
+    ['maya','noah','lina'].includes(item.employee)&&
+    typeof item.token==='string'&&item.token.length>=16&&item.token.length<=512;
+ }
+ const contextualInstruction=job=>EMPLOYEE_PROMPTS[config.employee]+
+   '\\n\\nBericht van de eigenaar aan '+config.employee+':\\n'+String(job.instruction||'')+
+   '\\n\\nAntwoord alsof je met de eigenaar spreekt, gebruik concrete bewijzen en claim geen uitgevoerde acties zonder verificatie.';
 
  const status=document.createElement('div');
  Object.assign(status.style,{position:'fixed',bottom:'12px',left:'12px',zIndex:'99999',background:'#182329',color:'#d9c19b',font:'11px system-ui',border:'1px solid #8d7652',padding:'8px 12px',borderRadius:'8px'});
@@ -60,28 +109,51 @@
   status.textContent='Office Relay · Office-server controleren…';
   try{await checkOffice(u.origin)}catch(e){status.textContent='Office Relay · '+e.message;alert(e.message);return}
   const employee=prompt('Medewerker: maya, noah of lina','maya');if(!['maya','noah','lina'].includes(employee))return;
-  const token=prompt('Office-toegangscode (alleen in geheugen van deze tab)');if(!token)return;
+  const token=prompt('Office-toegangscode (alleen in geheugen van deze tab, behalve bij expliciet onthouden)');if(!token)return;
+  const remember=confirm('AUTOMATISCH HERSTELLEN NA VPS FIREFOX-CRASH?\\n\\nJa = sla de Office-code lokaal en ONVERSLEUTELD op in Tampermonkey van dit vertrouwde Firefox-profiel. Bij browserherstart wordt uitsluitend DEZE ChatGPT-conversatie opnieuw gekoppeld.\\n\\nNee = alleen tijdelijk verbinden; code na herstart opnieuw invullen.\\n\\nGebruik Ja niet in een gedeeld of onveilig browserprofiel.');
   config={origin:u.origin,employee,token,conversation:'https://chatgpt.com'+location.pathname};
+  rememberAfterSuccess=remember; // persist only after an authenticated relay poll succeeds
+  if(!remember)clearPairing(config.conversation);
   status.textContent='Office Relay · verbinden…';tick();
  }
  GM_registerMenuCommand('Verbind deze chat met Office',connect);
- GM_registerMenuCommand('Office Relay stoppen',()=>{if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');config=null;status.textContent='Office Relay · uit'});
+ GM_registerMenuCommand('Office Relay stoppen + onthouden koppeling wissen',()=>{
+  if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');
+  clearPairing(config?.conversation||currentChat());config=null;rememberAfterSuccess=false;status.textContent='Office Relay · uit';
+ });
  GM_registerMenuCommand('Office Relay opnieuw instellen',()=>{if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');config=null;connect()});
- status.onclick=()=>{if(!config)return connect();if(active)return alert('Er wordt nog een antwoord verwerkt.');if(confirm('Relay voor '+config.employee+' op '+config.origin+' opnieuw verbinden? De huidige code wordt alleen in deze tab bewaard en moet opnieuw worden ingevuld.')){config=null;connect()}};
+ GM_registerMenuCommand('Koppel nieuwe chat aan opgeslagen medewerker',()=>{
+  if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');
+  if(document.documentElement.hasAttribute('data-zcloud-worker-id'))return alert('Een zCloud-worker-tab mag niet aan een Office-medewerker worden gekoppeld.');
+  const conversation=currentChat();
+  if(!conversation)return alert('Open eerst een bestaande opgeslagen nieuwe ChatGPT-conversatie.');
+  const previous=Object.values(savedPairings()).filter(item=>validSavedPairing(conversation,item));
+  if(!previous.length)return alert('Geen onthouden medewerker. Verbind eerst één keer via Office Relay en kies expliciet Onthouden.');
+  const employee=prompt('Koppel deze nieuwe chat aan welke medewerker? maya, noah of lina',previous[0].employee);
+  const pair=previous.find(item=>item.employee===employee);
+  if(!pair)return alert('Geen opgeslagen code voor deze medewerker gevonden.');
+  if(!confirm('Koppel deze chat aan '+employee+'? Dit vervangt na geslaagde verificatie de oude onthouden chat voor deze medewerker.'))return;
+  config={origin:pair.origin,employee,token:pair.token,conversation};
+  rememberAfterSuccess=true;
+  status.textContent='Office Relay · '+employee+' nieuwe chat koppelen…';
+  tick();
+ });
+ status.onclick=()=>{if(!config)return connect();if(active)return alert('Er wordt nog een antwoord verwerkt.');if(confirm('Relay voor '+config.employee+' op '+config.origin+' opnieuw verbinden? Je kunt de vorige opgeslagen koppeling hierbij vervangen.')){clearPairing(config.conversation);config=null;rememberAfterSuccess=false;connect()}};
  const editor=()=>document.querySelector('#prompt-textarea[contenteditable="true"],textarea#prompt-textarea');
  const generating=()=>!!document.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"]');
  const content=e=>e?.innerText||e?.value||'';
  async function send(job){
   active=job;busy=true;status.textContent='Office Relay · bericht versturen';
   const field=editor(),before=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
+  const instruction=contextualInstruction(job);
   try{
    if(!field||content(field).trim()||generating())throw Error('Chat is niet vrij. Bericht is niet automatisch opnieuw verstuurd.');
    field.focus();
-   if(field.tagName==='TEXTAREA'){const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;set.call(field,job.instruction);field.dispatchEvent(new Event('input',{bubbles:true}))}
-   else {const selection=window.getSelection(),range=document.createRange();range.selectNodeContents(field);selection.removeAllRanges();selection.addRange(range);document.execCommand('insertText',false,job.instruction);field.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:job.instruction}))}
+   if(field.tagName==='TEXTAREA'){const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;set.call(field,instruction);field.dispatchEvent(new Event('input',{bubbles:true}))}
+   else {const selection=window.getSelection(),range=document.createRange();range.selectNodeContents(field);selection.removeAllRanges();selection.addRange(range);document.execCommand('insertText',false,instruction);field.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:instruction}))}
    await new Promise(r=>setTimeout(r,350));
    const button=document.querySelector('[data-testid="send-button"],button[aria-label="Send prompt"],button[aria-label="Send message"]');
-   if(!button||button.disabled||content(field).trim()!==job.instruction.trim())throw Error('Verzendknop of invoer niet bevestigd. Controleer je ChatGPT-tab.');
+   if(!button||button.disabled||content(field).trim()!==instruction.trim())throw Error('Verzendknop of invoer niet bevestigd. Controleer je ChatGPT-tab.');
    button.click();status.textContent='Office Relay · ChatGPT antwoordt';
    const started=Date.now();let last='',stable=0;
    while(Date.now()-started<180000){
@@ -104,11 +176,19 @@
   }finally{busy=false;status.textContent=active?'Office Relay · antwoord niet afgeleverd; controleer verbinding':'Office Relay · '+config.employee+' verbonden'}
  }
  async function tick(){
+  // Keep staff relay completely separate from dynamically allocated workers.
+  if(document.documentElement.hasAttribute('data-zcloud-worker-id')){
+   config=null;rememberAfterSuccess=false;status.style.display='none';return;
+  }
   if(!config||polling)return;polling=true;
   try{
    if('https://chatgpt.com'+location.pathname!==config.conversation){status.textContent='Office Relay · gepauzeerd: andere chat';return}
    const f=editor();
    const d=await request('/api/relay/poll',{employee:config.employee,client_id:client,conversation:config.conversation,ready:!busy&&!active&&!!f&&!content(f).trim()&&!generating()});
+   if(rememberAfterSuccess){
+    rememberAfterSuccess=false;
+    if(!savePairing(config))status.title='Verbonden, maar kon opt-in koppeling niet opslaan';
+   }
    if(d.job&&!busy)send(d.job).catch(()=>{status.textContent='Office Relay · afleverfout; controleer Office'});
    else if(!busy&&!active)status.textContent='Office Relay · '+config.employee+' verbonden';
   }catch(e){status.textContent='Office Relay · '+e.message}finally{polling=false}
@@ -117,5 +197,28 @@
  // The server tolerates throttled heartbeats; on returning to the tab probe now.
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});
  window.addEventListener('pageshow',()=>{if(config)tick()});
+ let resuming=false;
+ async function resumeSavedPairing(){
+  if(resuming||config||active||document.documentElement.hasAttribute('data-zcloud-worker-id'))return;
+  const conversation=currentChat();
+  const pair=savedPairings()[conversation];
+  if(!validSavedPairing(conversation,pair))return;
+  resuming=true;
+  status.textContent='Office Relay · '+pair.employee+' VPS-verbinding verifiëren…';
+  try{
+   await checkOffice(pair.origin); // never send a stored token to a wrong loopback service
+   if(config||document.documentElement.hasAttribute('data-zcloud-worker-id')||currentChat()!==conversation)return;
+   config={origin:pair.origin,employee:pair.employee,token:pair.token,conversation};
+   status.textContent='Office Relay · '+pair.employee+' automatisch herstellen…';
+   tick();
+  }catch(e){
+   status.textContent='Office Relay · herstellen wachten: '+e.message;
+   setTimeout(resumeSavedPairing,10000);
+  }finally{resuming=false}
+ }
+ // A restored ChatGPT tab is resumed without a new prompt or stored claim;
+ // only a valid, exact-URL pairing can poll. Browser tab ownership remains
+ // enforced by Office's client-id lease, never bypassed on crash/restart.
+ setTimeout(resumeSavedPairing,1200);
  setInterval(tick,4000);
 })();
