@@ -20,11 +20,20 @@ The current external URL uses HTTP. Do not enter the code over untrusted public 
 ## Connect actual ChatGPT replies
 The original zCloud worker queue has no arbitrary-chat-response API. This release adds an explicit UI bridge, not a substitute model.
 
-1. In the VPS browser, install the userscript using the **HTTPS GitHub source**: [Install Office Relay userscript](https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js). This download remains available even if the Office port 3422 is temporarily down. Do **not** install through the HTTP Office URL, because Tampermonkey can report `Invalid Userscript` when that endpoint is unreachable or a redirect/error page is returned.
-2. Open a **dedicated, existing** ChatGPT conversation for one employee. Do not attach the relay to an already-assigned zCloud work tab.
-3. Choose “Verbind deze chat met Office” in the extension menu (or click its Office Relay badge).
-4. Select http://127.0.0.1:3422, the employee id (maya/noah/lina), and the existing Office access code. Credentials are held in closure memory only.
-5. In the Office settings, unlock the workspace. A live relay heartbeat makes “Gesprek” available.
+The relay is intended for **your own PC** (Mac, Windows or Linux), running Tampermonkey inside a normal Firefox/Chrome browser at `https://chatgpt.com/c/...`. The VPS hosts the Office HTTP API; ChatGPT does **not** need to run on the VPS. Tampermonkey cannot run inside the native ChatGPT desktop application.
+
+1. On **your own PC**, open an SSH tunnel to the VPS with your existing SSH account and verified host key. Keep this terminal running:
+   ```bash
+   ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=25 -o ServerAliveCountMax=3 -L 127.0.0.1:3422:127.0.0.1:3422 YOUR_SSH_USER@198.244.191.182
+   ```
+   Replace `YOUR_SSH_USER` with the account you normally use to SSH into the VPS. For the same command with messages and preconfigured safety options, use [Mac/Linux launcher](./connect-from-pc.sh) (`bash connect-from-pc.sh YOUR_SSH_USER@198.244.191.182`) or [Windows PowerShell launcher](./connect-from-pc.ps1) (`.\\connect-from-pc.ps1 -SshTarget 'YOUR_SSH_USER@198.244.191.182'`). You need working SSH access; neither launcher requests nor logs an Office code.
+2. In your **PC browser** open `http://127.0.0.1:3422/api/health`; it should return JSON with `"mode":"zcloud_chatgpt_chats"`. If it fails, fix the tunnel before entering any token. Open `http://127.0.0.1:3422/` in your PC browser to use Office privately.
+3. Install Tampermonkey in that **same PC browser** and install the userscript from the **HTTPS GitHub source**: [Install Office Relay userscript](https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js). Never install through the public HTTP Office URL, which may return `Invalid Userscript`.
+4. Open a **dedicated, existing** ChatGPT conversation for one employee. Do not attach the relay to an already-assigned zCloud work tab.
+5. Choose “Verbind deze chat met Office” in the PC browser's extension menu (or click its Office Relay badge). Enter `http://127.0.0.1:3422`, the **same employee** as in Office (`maya`/`noah`/`lina`), and your existing Office access code. The userscript first checks the Office server's unauthenticated health to catch accidental port mix-ups before asking for the access code; this is a diagnostic check, not cryptographic authentication of a local process. Use a trusted PC and a verified SSH host key. Credentials are held only in tab memory.
+6. In Office settings, unlock with the same access code. The relay must show `Office Relay · maya verbonden` (or your selected employee), and Office's authenticated connection status should change after a valid heartbeat.
+
+**Important:** `127.0.0.1` here means the **PC's loopback endpoint forwarded over SSH to the VPS**; it does not require a VPS browser. A raw public `http://198.244.191.182:3422` relay URL is deliberately refused to avoid exposing the Office token. Use a trusted HTTPS reverse proxy as an alternative only if one has actually been configured. If the browser tab reloads, the opt-in relay and code must be entered again; the SSH tunnel can remain open. If local port 3422 is already in use, stop that process or coordinate a different port rather than sending the token to an unknown service.
 
 The relay checks that the composer is empty and no reply is running. It submits one prompt, captures only its new assistant turn, waits for a finished reply control and sends the visible text back. It never extracts ChatGPT cookies, navigates around account restrictions, or automatically resends an uncertain prompt. Navigation, expired authentication, changed UI, failed delivery or a response beyond three minutes require checking the ChatGPT tab. A restart makes unresolved claims attention-required rather than replaying them.
 
