@@ -138,7 +138,7 @@ jobs:
             echo "Candidate browser demo URL: http://$public_ip:$OFFICE_PORT/"
             {
               echo "## Virtual Office 0.2"
-              echo "Built and deployed: `$GITHUB_SHA`"
+              echo "Built and deployed SHA: $GITHUB_SHA"
               echo "Candidate browser demo: http://$public_ip:$OFFICE_PORT/"
               echo "Interactive office + ChatGPT link. Server-only authenticated task submission."
             } >> "$GITHUB_STEP_SUMMARY"
