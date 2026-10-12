@@ -85,7 +85,9 @@ jobs:
           grep -q 'id="optionsScreen"' /tmp/fuckball-deployed.html
           grep -q 'id="chatDock"' /tmp/fuckball-deployed.html
           grep -q 'let extrapMs=135,renderScale=1;' /tmp/fuckball-deployed.html
-          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" | grep -q 'function reply(message,g,bot)'
+          grep -q "pulseball.extrapolation.v2" /tmp/fuckball-deployed.html
+          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" -o /tmp/fuckball-bot-deployed.js
+          grep -q 'function reply(message,g,bot)' /tmp/fuckball-bot-deployed.js
           echo "Fullscreen/high-refresh game UI verified on VPS"
           if command -v ufw >/dev/null 2>&1; then
             sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
