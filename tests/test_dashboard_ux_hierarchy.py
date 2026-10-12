@@ -30,8 +30,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         card = app[app.index("function projectCard(p)"):app.index("\nfunction attentionPanel", app.index("function projectCard(p)"))]
         self.assertNotIn("projectPrimaryActions(p)", card)
         self.assertNotIn("mobileRunnerControls(p)", card)
-        self.assertIn("project-worker-advanced", detail)
-        self.assertIn("Worker details", detail)
+        self.assertNotIn("project-worker-advanced", detail)
+        self.assertNotIn("Worker details", detail)
         self.assertIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
         self.assertIn("openDisclosures", app)
         self.assertIn("details[data-disclosure][open]", app)
@@ -44,8 +44,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn("--ux-radius:14px", css)
         self.assertIn(".project-primary-actions", css)
         self.assertIn(".overview-advanced", css)
-        self.assertIn("/app.js?v=r7", index)
-        self.assertIn("/enhancements.css?v=r4", index)
+        self.assertIn("/app.js?v=r8", index)
+        self.assertIn("/enhancements.css?v=r5", index)
         self.assertNotIn("/design-system.css?v=", index)
         self.assertIn("function globalWorkerRows()", (ROOT / "public" / "app.js").read_text(encoding="utf-8"))
 
