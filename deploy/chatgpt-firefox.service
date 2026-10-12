@@ -18,7 +18,12 @@ TimeoutStopSec=30
 Nice=10
 CPUWeight=100
 
-Restart=always
+# A running standalone Firefox can legitimately own the same profile.
+# ExecStartPre then exits 1, which is not a browser crash; retrying every
+# five seconds causes infinite competing launch attempts and window churn.
+# Recover only on abnormal termination. The separate server browser-liveness
+# watchdog handles real browser disappearance without touching live tabs.
+Restart=on-abnormal
 RestartSec=5
 
 [Install]
