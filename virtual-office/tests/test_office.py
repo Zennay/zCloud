@@ -156,6 +156,11 @@ class HTTPTests(OfficeTests):
         self.assertEqual(self.ask("/api/jobs")[0],401)
         self.assertEqual(self.ask("/api/jobs",{"employee":"maya","kind":"task","instruction":"Bouw UI"})[0],401)
         self.assertEqual(self.ask("/api/jobs",{"employee":"maya","kind":"task","instruction":"Bouw UI"},token="wrong")[0],401)
+        # A pasted non-ASCII Office code must yield a JSON 401, not abruptly close
+        # the socket and surface "Failed to fetch" in the browser.
+        self.assertEqual(self.ask("/api/jobs", token="wrong-é")[0], 401)
+        self.assertEqual(self.ask("/api/relay/status", token="ongeldig-é")[0], 401)
+        self.assertEqual(self.ask("/api/jobs", token="x" * 513)[0], 401)
         self.assertEqual(self.ask("/api/jobs",{"employee":"maya","kind":"task","instruction":"Bouw UI"},token="test-only-password",content_type="text/plain")[0],415)
         code,job=self.ask("/api/jobs",{"employee":"maya","kind":"task","instruction":"Bouw UI"},token="test-only-password")
         self.assertEqual(code,201)

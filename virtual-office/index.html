@@ -36,7 +36,26 @@ const people={maya:{name:'Maya',role:'PROJECT LEAD / ZCLOUD'},noah:{name:'Noah',
 let token='',current='maya',mode='task',health={},links={},jobs=[],projectSnapshot={online:false,projects:[]},relay={},world=null,polling=false,pending=false,messageVersion=0,lastMessageIds=new Set(),toastTimer,modalReturn=null;
 const labels={queued:'Opgeslagen · wacht op worker',dispatching:'Naar zCloud versturen',dispatched:'In de zCloud-werkqueue',claimed:'Worker toegewezen',running:'ChatGPT werkt eraan',verifying:'Resultaat controleren',done:'Afgerond volgens zCloud',failed:'Aandacht nodig',dropped:'Vervallen',interrupted:'Onderbroken'};
 function toast(t){$('toast').textContent=t;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,7000)}
-async function api(path,body){const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{...(token?{'X-Office-Token':token}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(14000)});const d=await r.json();if(!r.ok){if(r.status===401)throw Error('Verbind eerst je kantoor met je toegangscode.');throw Error(d.error||'Server niet bereikbaar.')}return d}
+async function api(path,body){
+ let r;
+ try {
+  r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{...(token?{'X-Office-Token':token}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(14000)});
+ } catch (err) {
+  if(err?.name==='TimeoutError'||err?.name==='AbortError')throw Error('Office reageert niet binnen 14 seconden. Controleer de SSH-tunnel en VPS.');
+  if(err instanceof TypeError){
+   const local=['localhost','127.0.0.1'].includes(location.hostname);
+   throw Error('Netwerkfout bij '+path+'. '+(local?'Controleer of je Mac→VPS SSH-tunnel nog draait, herlaad dit lokale kantoor en probeer opnieuw.':'Open het kantoor via http://127.0.0.1:3422/ met de SSH-tunnel; gebruik niet het publieke HTTP-adres.'));
+  }
+  throw err;
+ }
+ let d;
+ try {d=await r.json()}catch{throw Error('Office stuurde geen geldig JSON-antwoord voor '+path+' (HTTP '+r.status+'). Controleer de VPS-service.')}
+ if(!r.ok){
+  if(r.status===401)throw Error('Office-toegangscode onjuist of ontbreekt (HTTP 401). Kopieer uitsluitend de waarde achter OFFICE_ACCESS_TOKEN=.');
+  throw Error(d.error||'Office HTTP '+r.status);
+ }
+ return d;
+}
 function closeAll(){document.querySelectorAll('.panel,.dialog').forEach(x=>x.hidden=true);document.body.classList.remove('panel-open');world?.clearKeys();if(document.pointerLockElement)document.exitPointerLock();if(modalReturn?.isConnected)modalReturn.focus()}
 function show(id){const previous=document.activeElement;closeAll();modalReturn=previous;$(id).hidden=false;document.body.classList.add('panel-open');world?.clearKeys();$(id).querySelector('button,input,textarea')?.focus()}
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeAll());
