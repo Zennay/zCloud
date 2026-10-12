@@ -17,7 +17,17 @@
  'use strict';
  // Opt-in per tab, credentials stay in closure memory. No cookie/token extraction,
  // no account-limit bypass, no background-tab ownership theft and no auto resend.
- let config=null,active=null,busy=false,polling=false,client=crypto.randomUUID();
+ let config=null,active=null,busy=false,polling=false;
+ // Only a NON-SECRET tab identifier survives a ChatGPT reload. The Office
+ // access code and pairing remain opt-in, held in memory, never persisted.
+ // This lets the same tab reclaim its prior lease after manually reconnecting.
+ let client=crypto.randomUUID();
+ try{
+  const prior=sessionStorage.getItem('zcloud-office-relay-client');
+  if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(prior||''))client=prior;
+  else sessionStorage.setItem('zcloud-office-relay-client',client);
+ }catch{}
+
  const status=document.createElement('div');
  Object.assign(status.style,{position:'fixed',bottom:'12px',left:'12px',zIndex:'99999',background:'#182329',color:'#d9c19b',font:'11px system-ui',border:'1px solid #8d7652',padding:'8px 12px',borderRadius:'8px'});
  status.textContent='Office Relay · uit';status.title='Klik om Office Relay te verbinden of opnieuw in te stellen';status.setAttribute('role','status');document.body.append(status);
