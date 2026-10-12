@@ -1,0 +1,69 @@
+name: zCloud emergency no-browser-churn hotfix
+
+# On a trusted main merge, replace ONLY the watchdog script that can issue
+# browser-wide restarts. No Firefox signal, tab close, systemd restart or
+# workflow dispatch is permitted in this activation path.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-no-browser-churn-hotfix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-no-browser-churn-hotfix
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify offline tab-preservation regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate source and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_worker_watchdog.py server.py
+          python3 -m unittest -v tests.test_worker_progress_watchdog
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+
+  install:
+    name: Install non-restarting watchdog on existing VPS
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Disable browser-wide stall recovery without touching Firefox
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          root="/home/ubuntu/zennay-cloud"
+          live="/usr/local/sbin/zcloud-worker-watchdog"
+          test -f "$root/scripts/zcloud_worker_watchdog.py"
+          test -f "$live"
+          python3 -m py_compile scripts/zcloud_worker_watchdog.py
+          # Do not touch the browser/session. The next normal watchdog tick
+          # automatically uses this updated standalone executable.
+          backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
+          mkdir -p "$(dirname "$backup")"
+          cp -p "$live" "$backup"
+          install -m 0755 scripts/zcloud_worker_watchdog.py "$root/scripts/zcloud_worker_watchdog.py"
+          sudo -n install -m 0755 scripts/zcloud_worker_watchdog.py "$live"
+          cmp scripts/zcloud_worker_watchdog.py "$live"
+          echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
+          echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
+          echo "Watchdog backup: $backup"
+          ps -eo pid=,ppid=,args= | grep -E '[/]firefox|[/]web-ext' | head -n 30 || true
