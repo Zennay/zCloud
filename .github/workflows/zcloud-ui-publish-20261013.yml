@@ -20,7 +20,7 @@ jobs:
       github.actor == 'Zennay' &&
       github.ref == 'refs/heads/fix/worker-allocation-cockpit-20261013' &&
       github.event.head_commit.message == 'deploy(ui): publish worker cockpit without worker restart'
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: self-hosted
     timeout-minutes: 7
     steps:
       - name: Checkout trusted exact feature revision
