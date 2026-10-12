@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   inspect:
-    runs-on: self-hosted
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
     steps:
       - name: Inspect Firefox debugger version without changing tabs
