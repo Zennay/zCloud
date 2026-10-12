@@ -47,7 +47,7 @@ for (const marker of [
   "Recovery.selectRecoveryTab(",
   "await setRecoveryTag(opened.id, target.project_id)",
   "await prepareReplacementHandoff(target, reason)",
-  "await drainRunnerBeforeReplacement(oldTab, target, reason)",
+  "await drainRunnerBeforeReplacement(reusableTab.id, target, reason)",
   "await verifyReplacementHandoffStillCurrent(target, handoff)",
   "pendingAdoptions[tab.id] = target.project_id",
   "async function adoptConversation("
@@ -56,4 +56,5 @@ for (const marker of ["zcloud_worker", "zcloud_tab", "zcloud_recover", "conversa
   assert.ok(script.includes(marker), "userscript navigation identity lost: " + marker);
 }
 assert.ok(unit.includes("KillMode=control-group"));
+assert.ok(unit.includes("Restart=on-abnormal"),"profile-lock conflict must not start a restart loop");
 console.log("Worker pool 6/6 recovery and expert tab isolation: PASS");
