@@ -3,17 +3,21 @@ on:
   pull_request:
     paths:
       - firefox-extension/background.js
+      - public/zcloud-worker.user.js
       - tests/test_worker_tab_spam_guard.js
       - tests/test_firefox_recovery_contract.js
       - tests/test_worker_tab_reuse.js
+      - tests/test_worker_tab_identity_guard.js
       - .github/workflows/zcloud-worker-tab-guard.yml
   push:
     branches: [main, fix/worker-tab-spam-circuit-breaker-20261012]
     paths:
       - firefox-extension/background.js
+      - public/zcloud-worker.user.js
       - tests/test_worker_tab_spam_guard.js
       - tests/test_firefox_recovery_contract.js
       - tests/test_worker_tab_reuse.js
+      - tests/test_worker_tab_identity_guard.js
       - .github/workflows/zcloud-worker-tab-guard.yml
 permissions:
   contents: read
@@ -33,6 +37,7 @@ jobs:
           node tests/test_worker_tab_spam_guard.js
           node tests/test_firefox_recovery_contract.js
           node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
           echo "WORKER_TAB_SPAM_GUARD_GREEN=1"
 
   install:
