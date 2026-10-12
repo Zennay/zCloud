@@ -39,7 +39,10 @@ jobs:
           test -f "$BOOTSTRAP_TARGET"
           test ! -L "$BOOTSTRAP_TARGET"
           test -d /opt/haxlab/.git
-          test "$(git -C /opt/haxlab remote get-url origin)" = https://github.com/Zennay/Haxlab.git
+          case "$(git -C /opt/haxlab remote get-url origin)" in
+            https://github.com/Zennay/Haxlab|https://github.com/Zennay/Haxlab.git) ;;
+            *) echo 'HAXLAB_UNEXPECTED_ORIGIN' >&2; exit 1 ;;
+          esac
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
           git -C "$work" init -q
@@ -68,7 +71,10 @@ jobs:
           test "$(hostname)" = vps-bb300bba
           test -f "$BOOTSTRAP_TARGET"
           test ! -L "$BOOTSTRAP_TARGET"
-          test "$(git -C /opt/haxlab remote get-url origin)" = https://github.com/Zennay/Haxlab.git
+          case "$(git -C /opt/haxlab remote get-url origin)" in
+            https://github.com/Zennay/Haxlab|https://github.com/Zennay/Haxlab.git) ;;
+            *) echo 'HAXLAB_UNEXPECTED_ORIGIN' >&2; exit 1 ;;
+          esac
           work="$(mktemp -d)"
           stage="$BOOTSTRAP_TARGET.bootstrap-${{ github.run_id }}"
           trap 'rm -rf "$work"; sudo -n rm -f "$stage" 2>/dev/null || true' EXIT
