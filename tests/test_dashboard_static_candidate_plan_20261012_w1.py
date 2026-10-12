@@ -69,6 +69,18 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         ):
             self.assertFalse(result[field], field)
 
+    def test_worker_cockpit_enhancement_css_is_allowed_as_static_data(self):
+        css = b".worker-cockpit {display: grid}\n"
+        self.write("public/enhancements.css", css)
+        head = self.commit("static cockpit CSS")
+        result = plan(self.repo, self.base, head)
+        self.assertEqual([item["path"] for item in result["assets"]],
+                         ["public/enhancements.css"])
+        self.assertEqual(result["assets"][0]["sha256"], hashlib.sha256(css).hexdigest())
+        self.assertTrue(result["static_diff_eligible"])
+        self.assertFalse(result["promotion_authorized"])
+        self.assertFalse(result["live_runtime_compatibility_proven"])
+
     def test_multiple_static_assets_and_git_blob_identity(self):
         self.write("public/app.js", b"const version = 1;\n")
         self.write("public/design-system.css", b"body {margin: 0}\n")
