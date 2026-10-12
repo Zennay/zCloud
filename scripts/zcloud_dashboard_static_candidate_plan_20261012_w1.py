@@ -192,7 +192,7 @@ def snapshot(root: Path, revision: str) -> dict:
         if size < 0 or size > MAX_ASSET_BYTES or total + size > MAX_TOTAL_BYTES:
             raise PlanError("static_byte_budget_exceeded")
         raw = git(root, "cat-file", "blob", blob)
-        if len(raw) != size or b"\\0" in raw:
+        if len(raw) != size or b"\x00" in raw:
             raise PlanError("untrusted_static_asset_bytes")
         try:
             raw.decode("utf-8")
