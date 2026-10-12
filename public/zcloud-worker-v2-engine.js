@@ -17,6 +17,7 @@
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
   let promptAt=0,awaitingAt=0,baseline="",next=false,lastBlock="",lastCommand=0;
+  let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
   let chatAt=Number(sessionStorage.getItem("zcloud-v2-chat-at")||0);
   if(!chatAt||chatAt>Date.now())chatAt=Date.now();
   sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
@@ -169,6 +170,14 @@
       target=actual;
       if(!ready(actual))return;
       await status("heartbeat",{reason:"worker-v2-check-30s"});
+      const cid=conversation();
+      if(cid && cid!==reportedConversation) {
+        reportedConversation=cid;
+        sessionStorage.setItem("zcloud-v2-reported-conversation",cid);
+        await status("conversation-adopted",{
+          reason:"v2-in-place-conversation",targetConversation:cid
+        });
+      }
       if(generating()){
         everGenerating=true;awaiting=false;
         await status("generation-progress");return;

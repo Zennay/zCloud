@@ -2,7 +2,7 @@ name: zCloud UI-only guarded publish 2026-10-13
 
 on:
   push:
-    branches: [fix/worker-allocation-cockpit-20261013]
+    branches: [main]
     paths: [.github/workflows/zcloud-ui-publish-20261013.yml]
 
 permissions:
@@ -18,12 +18,12 @@ jobs:
     if: >-
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
-      github.ref == 'refs/heads/fix/worker-allocation-cockpit-20261013' &&
-      github.event.head_commit.message == 'deploy(ui): publish worker cockpit without worker restart'
+      github.ref == 'refs/heads/main' &&
+      github.event.head_commit.message == 'deploy(ui): publish verified cockpit from main'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     steps:
-      - name: Checkout trusted exact feature revision
+      - name: Checkout trusted exact main revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
@@ -38,16 +38,11 @@ jobs:
           test "$(hostname -s)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git fetch --no-tags --depth=40 origin main
-          # The UI branch is a descendant of canonical main, with no backend changes.
-          git merge-base --is-ancestor origin/main HEAD
-          changed="$(git diff --name-only origin/main HEAD)"
-          while IFS= read -r path; do
-            case "$path" in
-              public/app.js|public/enhancements.css|public/index.html|tests/*|.github/workflows/zcloud-worker-cockpit-ui-hosted.yml|.github/workflows/zcloud-ui-publish-20261013.yml) ;;
-              *) echo "UNAUTHORIZED_UI_DEPLOY_PATH=$path"; exit 2 ;;
-            esac
-          done <<< "$changed"
+          # Publish ONLY the audited static assets already on the current main.
+          # Never source privileged deploy commands from an unmerged branch.
+          current="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test -n "$current" && test "$current" = "$GITHUB_SHA"
+          echo "TRUSTED_EXACT_MAIN=$current"
           # Require the same UI asset bytes that passed GitHub-hosted checks.
           for path in public/app.js public/enhancements.css public/index.html; do
             git diff --quiet ffacf70e5dd958f9d8a0ff85c6d0d44fbb0b6a19 HEAD -- "$path"
@@ -57,7 +52,7 @@ jobs:
           grep -Fq '.worker-cockpit' public/enhancements.css
           grep -Fq '/app.js?v=r8' public/index.html
           grep -Fq '/enhancements.css?v=r5' public/index.html
-          test "$(git ls-remote origin refs/heads/fix/worker-allocation-cockpit-20261013 | cut -f1)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           echo "UI_PUBLISH_SOURCE_VERIFIED sha=$GITHUB_SHA"
 
       - name: Back up, atomically publish static UI, verify live and rollback on failure
