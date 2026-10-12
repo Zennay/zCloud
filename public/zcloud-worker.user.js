@@ -304,41 +304,21 @@
   }
 
   async function requestFreshConversation(reason, commandId = 0) {
-    if (freshConversationPending || !target?.project_id || generationActive() || sending || awaitingGeneration || sawGeneration) return false;
-    // Automatic recovery after an error/queue change must not change the
-    // active ChatGPT page. Only an explicit database new_chat command may
-    // navigate IN THE SAME tab, after the worker is idle.
-    if (reason !== "database-new-chat" || !commandId) {
-      const now = Date.now();
-      if (now - lastDeferredNewChatReportAt > 60000) {
-        lastDeferredNewChatReportAt = now;
-        await status("auto-chat-navigation-suppressed", {reason});
-      }
-      return false;
+    // The userscript must never navigate or abandon a ChatGPT tab after
+    // sending. Even a database new_chat can be issued by the automatic
+    // watchdog, so it is NOT authorization to replace the conversation.
+    // Keep commands pending for explicit operator intervention; do not
+    // falsely acknowledge a reset that was not performed.
+    if (!target?.project_id) return false;
+    const now = Date.now();
+    if (now - lastDeferredNewChatReportAt > 60000) {
+      lastDeferredNewChatReportAt = now;
+      await status("auto-chat-navigation-suppressed", {
+        reason:String(reason || "preserve-existing-tab").slice(0,120),
+        commandId: Number(commandId || 0)
+      });
     }
-    freshConversationPending = true;
-    const queueId = String(target?.queue_item?.queue_id || "").trim();
-    if (queueId) rememberQueueId(target.project_id, queueId);
-    setPendingProject(target.project_id);
-    await status("conversation-reset-requested", {
-      reason: String(reason || "fresh-chat-policy").slice(0, 120),
-      previousConversation: conversationId(),
-      queueItem: queueId
-    });
-    if (commandId) {
-      const acknowledged = await commandResult(
-        commandId,
-        "completed",
-        "Fresh chat requested by Violentmonkey worker"
-      );
-      if (!acknowledged) {
-        freshConversationPending = false;
-        return false;
-      }
-      lastHandledCommandId = Math.max(lastHandledCommandId, Number(commandId || 0));
-    }
-    location.assign(freshConversationNavigationUrl(target));
-    return true;
+    return false;
   }
 
   function claimKey(projectId) {
