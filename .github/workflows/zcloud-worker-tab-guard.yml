@@ -1,0 +1,63 @@
+name: zCloud background-only worker tab guard
+on:
+  pull_request:
+    paths:
+      - firefox-extension/background.js
+      - tests/test_worker_tab_spam_guard.js
+      - .github/workflows/zcloud-worker-tab-guard.yml
+  push:
+    branches: [main, fix/worker-tab-spam-circuit-breaker-20261012]
+    paths:
+      - firefox-extension/background.js
+      - tests/test_worker_tab_spam_guard.js
+      - .github/workflows/zcloud-worker-tab-guard.yml
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Test bounded tab opening, focus and worker recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: JS syntax + existing recovery regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check firefox-extension/background.js
+          node tests/test_worker_tab_spam_guard.js
+          node tests/test_firefox_recovery_contract.js
+          echo "WORKER_TAB_SPAM_GUARD_GREEN=1"
+
+  install:
+    name: Install worker tab guard on VPS (do not kill live chats)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    needs: unit
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install verified worker browser background code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source="/home/ubuntu/zennay-cloud/firefox-extension"
+          live="$HOME/snap/firefox/common/chatgpt-project-extension"
+          if [ ! -f "$source/manifest.json" ] || [ ! -f "$live/manifest.json" ]; then
+            echo "Worker extension location differs from the verified VPS layout; refuse replacing unknown code."
+            exit 1
+          fi
+          # Update the source and running extension profile independently,
+          # without a service restart, cache eviction or tab reassignment.
+          install -m 0644 firefox-extension/background.js "$source/background.js"
+          install -m 0644 firefox-extension/background.js "$live/background.js"
+          cmp firefox-extension/background.js "$source/background.js"
+          cmp firefox-extension/background.js "$live/background.js"
+          echo "WORKER_TAB_GUARD_INSTALLED=1"
+          echo "Active extension retains its old in-memory code until its next safe restart. Existing Firefox worker and Office expert tabs NOT touched."
