@@ -83,7 +83,7 @@ jobs:
                           resp=msg(sock,4)
                           if resp.get("from")!=chat[0]["actor"]:continue
                           print("RDP_TARGET_RESPONSE_FIELDS="+json.dumps(sorted(resp.keys())))
-                          target_form=resp.get("target") or resp.get("form") or {}
+                          target_form=resp.get("target") or resp.get("form") or resp.get("frame") or {}
                           if isinstance(target_form,dict):
                               print("RDP_TARGET_FORM_FIELDS="+json.dumps(sorted(target_form.keys())))
                               if target_form.get("consoleActor"):
