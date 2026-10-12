@@ -1,0 +1,40 @@
+name: zCloud Worker Cockpit UI (hosted)
+on:
+  push:
+    branches:
+      - fix/worker-allocation-cockpit-20261013
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-cockpit-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-contract:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check JavaScript syntax
+        run: node --check public/app.js
+      - name: Run focused UI contracts
+        run: |
+          set -euo pipefail
+          for name in \
+            test_dashboard_ux_hierarchy.py \
+            test_global_worker_console_ui.py \
+            test_mobile_worker_actions_20261010.py \
+            test_mobile_worker_console_navigation.py \
+            test_mobile_css_delivery_20261010.py \
+            test_dashboard_design_system.py \
+            test_dashboard_start_force_regression.py; do
+              python3 -m unittest discover -s tests -p "$name" -v
+          done
+          node tests/test_worker_debug_panel.js

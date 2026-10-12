@@ -23,7 +23,7 @@ class MobileCssDeliveryTests(unittest.TestCase):
             self.assertIn(urlsplit(url).path, paths,
                           f"Unserved CSS route referenced from dashboard: {url}")
         self.assertNotIn("/design-system.css", [urlsplit(url).path for url in links])
-        self.assertIn("/enhancements.css?v=r4", links)
+        self.assertIn("/enhancements.css?v=r5", links)
 
     def test_complete_design_source_is_bundled_in_delivered_styles(self):
         css = (PUBLIC / "enhancements.css").read_text(encoding="utf-8")
