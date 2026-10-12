@@ -313,6 +313,31 @@ def employee_chat_links() -> dict:
     return links
 
 
+
+_PROJECT_LOCK = threading.Lock()
+_PROJECT_CACHE = {"expires": 0.0, "value": {}}
+def office_projects():
+    """Only expose the fields needed for visual monitoring, never secrets or raw runner config."""
+    with _PROJECT_LOCK:
+        now = time.monotonic()
+        if now < _PROJECT_CACHE["expires"]:
+            return dict(_PROJECT_CACHE["value"])
+        try:
+            data = zcloud("/api/status", timeout=8)
+            rows = data.get("projects", [])
+            projects = []
+            if not isinstance(rows, list):
+                raise ValueError("Invalid project snapshot")
+            for item in rows[:30]:
+                if not isinstance(item, dict):
+                    continue
+                projects.append({key: item.get(key) for key in ("id", "name", "status", "next", "progress", "source_status")})
+            value = {"online": True, "projects": projects, "sample_time": data.get("time"), "checked_at": timestamp()}
+        except (ConnectionError, RuntimeError, ValueError):
+            value = {"online": False, "projects": [], "checked_at": timestamp()}
+        _PROJECT_CACHE.update(expires=time.monotonic()+20, value=value)
+        return dict(value)
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "VirtualOffice/0.3"
 
@@ -369,6 +394,8 @@ class Handler(BaseHTTPRequestHandler):
             try:links=employee_chat_links()
             except (ConnectionError,RuntimeError,ValueError):links={k:"https://chatgpt.com/" for k in PERSONAS}
             self.json_reply(200,{"employees":list(PERSONAS.values()),"chat_links":links})
+        elif url.path=="/api/projects":
+            self.json_reply(200, office_projects())
         elif url.path=="/api/decks":
             self.json_reply(200, features.deck_list(sys.modules[__name__]))
         elif url.path.startswith("/api/decks/"):

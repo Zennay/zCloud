@@ -45,3 +45,8 @@ Unreal Pixel Streaming renders an Unreal application on another machine and stre
 https://dev.epicgames.com/documentation/en-us/unreal-engine/pixel-streaming-in-unreal-engine
 
 This bounded office remains native browser WebGL to work with the current VPS architecture without requiring a GPU rendering service. It is an upgraded architectural prototype; it is not represented as GTA-level production art or verified AAA performance.
+
+## Office rework (12 October)
+The city now uses a licensed high-altitude Manhattan photograph rather than close procedural building boxes. The backdrop is a flat image, not a 360-degree map. Side-on staff camera positions avoid looking through monitors. Glass partitions have marked open portals, brass safety rails and matching collision. Branding and introductory overlays are hidden during exploration. Maya has a dedicated assistant shortcut. The creative desk offers remembered plush, garden and minimal styles in this browser. The 3D wall screen reflects real Office jobs; the monitor also shows filtered live project milestones from zCloud, with explicit offline state.
+
+28 existing API tests passed for the visual rework. Browser visual validation remains unavailable in the cloud browser because it upgrades the HTTP origin to HTTPS and the server does not speak TLS there. Separate project-monitor tests verify privacy filtering, caching, and offline behavior. Shared human presence, invitations/accounts, expandable staff, native desktop packaging, isolated Ubuntu desktop, arbitrary image-to-3D conversion and TLS remain incomplete. This release does not label them connected or working.
