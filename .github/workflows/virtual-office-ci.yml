@@ -48,7 +48,8 @@ jobs:
           root="http://127.0.0.1:18999"
           health=json.load(open("/tmp/office-health.json"))
           assert health["online"] is True
-          assert health["mode"] == "zcloud_chatgpt_chats"\n          assert health["zcloud_online"] is False
+          assert health["mode"] == "zcloud_chatgpt_chats"
+          assert health["zcloud_online"] is False
           body=json.dumps({"employee":"maya","kind":"task","instruction":"Maak een weekplanning"}).encode()
           request=urllib.request.Request(root+"/api/jobs",data=body,headers={"Content-Type":"application/json"})
           response=json.load(urllib.request.urlopen(request))
