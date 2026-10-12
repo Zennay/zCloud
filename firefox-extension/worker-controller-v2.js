@@ -105,7 +105,13 @@
       // could send prompts in Medium and restart chats on stale commands.
       // A cold empty window may bootstrap ONE tab, then prove the installed
       // v2 script before provisioning the next one.
-      let canProvision=true,bootstrapped=ownership.size===0;
+      // If this profile already contains unbound ChatGPT tabs, assume they
+      // may be legacy workers or an expert. Never provision a duplicate
+      // until identity is proven. A genuinely empty profile can bootstrap.
+      const unclaimedChatTabs=tabs.some(t=>isWorkerUrl(t.url) &&
+        ![...ownership.values()].includes(t.id));
+      let canProvision=ownership.size>0||!unclaimedChatTabs,
+          bootstrapped=ownership.size===0;
       for(const [key,tabId] of ownership){
         try{
           const result=await browser.tabs.executeScript(tabId,{
