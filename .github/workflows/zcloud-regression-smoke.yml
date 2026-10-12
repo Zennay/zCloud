@@ -33,6 +33,7 @@ jobs:
           node tests/test_firefox_recovery.js
           node tests/test_firefox_recovery_contract.js
           node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
       - name: Verify Violentmonkey dynamic worker syntax
         run: node --check public/zcloud-worker.user.js
       - name: Verify fail-closed pre-change guard
