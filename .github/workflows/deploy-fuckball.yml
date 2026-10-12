@@ -1,0 +1,80 @@
+name: Deploy Fuckball on VPS
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/deploy-fuckball.yml']
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuckball-vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Sync, test and deploy Fuckball
+        shell: bash
+        env:
+          APP_HOME: /opt/fuckball
+          APP_PORT: '3417'
+        run: |
+          set -euo pipefail
+          echo "Runner: $(hostname); user: $(id -un); node: $(node -v)"
+          sudo mkdir -p "$APP_HOME"
+          sudo chown "$(id -un):$(id -gn)" "$APP_HOME"
+          if [ ! -d "$APP_HOME/.git" ]; then
+            git clone --depth 1 https://github.com/Zennay/fuckball.git "$APP_HOME"
+          fi
+          cd "$APP_HOME"
+          git remote set-url origin https://github.com/Zennay/fuckball.git
+          git fetch --depth 1 origin main
+          wanted_sha="$(git rev-parse FETCH_HEAD)"
+          echo "Deploying source commit: $wanted_sha"
+          git reset --hard "$wanted_sha"
+          npm test
+          npm run build:solo
+          node --check server.js
+          node_binary="$(command -v node)"
+          run_user="$(id -un)"
+          run_group="$(id -gn)"
+          printf '[Unit]\nDescription=Fuckball multiplayer football game\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=/opt/fuckball\nEnvironment=NODE_ENV=production\nEnvironment=PORT=%s\nExecStart=%s /opt/fuckball/server.js\nRestart=always\nRestartSec=3\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\n\n[Install]\nWantedBy=multi-user.target\n' "$run_user" "$run_group" "$APP_PORT" "$node_binary" | sudo tee /etc/systemd/system/fuckball.service >/dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl enable fuckball.service
+          sudo systemctl restart fuckball.service
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 3 "http://127.0.0.1:${APP_PORT}/health"; then
+              echo " Health check passed"
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              sudo journalctl -u fuckball.service --no-pager -n 70
+              exit 1
+            fi
+            sleep 2
+          done
+          if command -v ufw >/dev/null 2>&1; then
+            sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
+          fi
+          public_ip="$(curl -fsS --max-time 8 https://api.ipify.org || true)"
+          echo "Public IPv4: ${public_ip:-unknown}"
+          echo "Local health: http://127.0.0.1:${APP_PORT}/health"
+          if [ -n "$public_ip" ]; then
+            echo "Candidate public URL: http://${public_ip}:${APP_PORT}/"
+            echo "## Fuckball" >> "$GITHUB_STEP_SUMMARY"
+            echo "Deployed commit: \`$wanted_sha\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "Candidate game URL: http://${public_ip}:${APP_PORT}/" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          sudo systemctl is-active --quiet fuckball.service
+          sudo systemctl status fuckball.service --no-pager | head -16
