@@ -51,7 +51,12 @@ jobs:
           npm test
           # Require the new natural-contact solver, explicit kicks and 0 ms visual default.
           grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
-          grep -q 'return collide(p,ball,g.rebound)' shared/physics.js
+          # The ball travels 1.2x its stored velocity: impulses must use world-speed units.
+          grep -Fq 'return collide(p,ball,g.rebound,1,BALL_SPEED_MULTIPLIER);' shared/physics.js
+          grep -Fq 'const rel=(b.vx*scaleB-a.vx*scaleA)*nx' shared/physics.js
+          grep -Fq 'const relative=(ball.vx*BALL_SPEED_MULTIPLIER-p.vx)*nx' shared/physics.js
+          grep -Fq 'ball.vx+=nx*impulse*invB/BALL_SPEED_MULTIPLIER;' shared/physics.js
+          grep -Fq 'if(dx===0&&dy===0)return;' shared/physics.js
           grep -q "p.lastKick='full';" shared/physics.js
           grep -q 'const chaserId=humanPossession' shared/bot.js
           # Require the post-merge contact-timing fixes, not just the older baseline.
@@ -109,6 +114,9 @@ jobs:
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/physics.js" -o /tmp/fuckball-physics-deployed.js
           grep -Fq 'const wallRebound=g=>g.rebound;' /tmp/fuckball-physics-deployed.js
           grep -q 'BALL_SPEED_MULTIPLIER=1.2' /tmp/fuckball-physics-deployed.js
+          grep -Fq 'return collide(p,ball,g.rebound,1,BALL_SPEED_MULTIPLIER);' /tmp/fuckball-physics-deployed.js
+          grep -Fq 'const rel=(b.vx*scaleB-a.vx*scaleA)*nx' /tmp/fuckball-physics-deployed.js
+          grep -Fq 'if(dx===0&&dy===0)return;' /tmp/fuckball-physics-deployed.js
           grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' /tmp/fuckball-physics-deployed.js
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/prediction.js" -o /tmp/fuckball-prediction-deployed.js
           grep -q 'const cautious=frames>2' /tmp/fuckball-prediction-deployed.js
