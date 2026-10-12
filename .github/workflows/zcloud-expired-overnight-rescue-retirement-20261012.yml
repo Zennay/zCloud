@@ -4,12 +4,14 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/**"
       - ".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"
       - "tests/test_retired_overnight_idle_rescue_20261012.py"
       - ".github/workflows/zcloud-expired-overnight-rescue-retirement-20261012.yml"
   push:
     branches: [main]
     paths:
+      - ".github/workflows/**"
       - ".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"
       - "tests/test_retired_overnight_idle_rescue_20261012.py"
       - ".github/workflows/zcloud-expired-overnight-rescue-retirement-20261012.yml"
