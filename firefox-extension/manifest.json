@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "ChatGPT Project Runner",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "permissions": [
     "tabs",
     "sessions",
@@ -14,7 +14,8 @@
   "background": {
     "scripts": [
       "recovery.js",
-      "background.js"
+      "background.js",
+      "worker-controller-v2.js"
     ],
     "persistent": true
   },
