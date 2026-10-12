@@ -51,7 +51,7 @@ button:disabled{cursor:not-allowed;opacity:.5}.actions{display:flex;gap:7px;flex
 <header>
 <div><strong>◈ VIRTUAL OFFICE</strong><div class="sub">Jouw AI-bedrijf · versie 0.1</div></div>
 <div class="grow"></div><div class="badge"><span class="dot" id="indicator"></span><span id="server-status">Verbinden…</span></div>
-<div class="badge" id="brain-status">Codex controleren…</div>
+<div class="badge" id="brain-status">ChatGPT-workers controleren…</div>
 <div class="unlock" id="unlock"><input id="access-code" type="password" placeholder="Office-toegangscode" autocomplete="off"><button class="secondary" id="unlock-button">Ontgrendel</button></div>
 </header>
 <div class="grid">
@@ -63,13 +63,13 @@ button:disabled{cursor:not-allowed;opacity:.5}.actions{display:flex;gap:7px;flex
 <aside class="panel">
 <div class="panelhead"><div class="avatar" id="avatar">👩🏻‍💼</div><div><div class="personname" id="personname">Maya</div><div class="small" id="person-title">Projectmanager</div></div></div>
 <div class="bio" id="bio">Helpt je team aansturen, projecten plannen en de voortgang bespreken.</div>
-<div class="messages" id="messages" role="log" aria-live="polite"><div class="bubble muted">Selecteer iemand in het kantoor en geef een opdracht. Spreek of typ.</div></div>
-<form id="send-form"><textarea id="instruction" aria-label="Bericht of opdracht" maxlength="3500" placeholder="Hé Maya, wat staat er op de planning?" required></textarea>
-<div class="actions"><button class="primary" type="submit" id="send">Stuur bericht</button><button class="secondary" type="button" id="task-button" title="Voer een echte taak uit in een geïsoleerde werkmap">Geef werkopdracht</button><button class="secondary" type="button" id="mic">🎙 Spreek</button><label class="toggle"><input type="checkbox" id="speak-replies" checked> Antwoord hardop</label></div>
+<div class="messages" id="messages" role="log" aria-live="polite"><div class="bubble muted">Selecteer een medewerker om een echte zCloud-werkopdracht te geven, of open diens bestaande ChatGPT-chat voor een gesprek.</div></div>
+<form id="send-form"><textarea id="instruction" aria-label="Bericht of opdracht" maxlength="3500" placeholder="Bouw, test of verbeter een concreet onderdeel van het project…" required></textarea>
+<div class="actions"><button class="primary" type="submit" id="send">Geef werkopdracht</button><button class="secondary" type="button" id="open-chat">Open ChatGPT-chat ↗</button><button class="secondary" type="button" id="mic">🎙 Spreek</button><label class="toggle"><input type="checkbox" id="speak-replies" checked> Antwoord hardop</label></div>
 <div id="feedback" role="status"></div></form>
 </aside></div>
-<section class="jobs"><h2>Live werkvloer <span class="small">· opdrachten blijven in SQLite staan wanneer je weg bent</span></h2><div class="queue" id="queue"><span class="small">Nog geen opdrachten.</span></div>
-<div class="note">De medewerkers gebruiken Codex CLI met je eigen ChatGPT-login, niet een API-key. Echte codewijzigingen zijn alleen mogelijk wanneer de server Codex heeft en OFFICE_ALLOW_WRITES=1 is ingesteld. Zonder ingelogde worker blijven opdrachten zichtbaar in de wachtrij; ze worden niet gefingeerd.</div></section>
+<section class="jobs"><h2>Live werkvloer <span class="small">· zCloud voert taken uit terwijl je browser dicht is</span></h2><div class="queue" id="queue"><span class="small">Nog geen opdrachten.</span></div>
+<div class="note">Werkopdrachten komen in de bestaande zCloud-queue terecht en worden door ingelogde ChatGPT-browserworkers opgepakt zodra capaciteit beschikbaar is. Gesprekken voer je in hun echte ChatGPT-tab: de office-app kan ChatGPT-antwoorden niet rechtstreeks afspelen. Stem in dit kantoor dient voor het dicteren van taken en uitspreken van statusupdates. Je hebt geen Codex of API-tokens nodig.</div></section>
 </div>
 <script type="module">
 const $ = id => document.getElementById(id);
@@ -78,7 +78,8 @@ const employees = {
   noah: {name:"Noah", title:"Software engineer", color:"#78b8d6", icon:"👨🏽‍💻", bio:"Technische collega die code kan lezen, schrijven en testen in zijn geïsoleerde werkmap."},
   lina: {name:"Lina", title:"QA & design", color:"#b6a0e5", icon:"👩🏼‍🎨", bio:"Scherpe tester en UX-denker die risico's, kwaliteit en gebruikerservaring bewaakt."}
 };
-let current="maya", accessToken="", health={online:false,auth_required:false,codex_ready:false,tasks_enabled:false};
+let current="maya", accessToken="", health={online:false,auth_required:false,zcloud_online:false,tasks_enabled:true};
+let chatLinks={maya:"https://chatgpt.com/",noah:"https://chatgpt.com/",lina:"https://chatgpt.com/"};
 let seen=new Set(), jobCache=[], speaking=false, firstLoad=true;
 function authHeaders(){return accessToken?{"X-Office-Token":accessToken}:{};}
 async function request(url, options={}){
@@ -97,10 +98,10 @@ async function selectPerson(id){
   if(!employees[id])return;current=id;
   const p=employees[id];$("personname").textContent=p.name;$("person-title").textContent=p.title;
   $("avatar").textContent=p.icon;$("avatar").style.background=p.color+"38";$("bio").textContent=p.bio;
-  $("messages").replaceChildren();msg("Hoi, ik ben "+p.name+". Wat wil je dat ik doe?",false,true);
+  $("messages").replaceChildren();msg(p.name+" vertegenwoordigt het projectteam. Voor een echt ChatGPT-gesprek klik je op ‘Open ChatGPT-chat’. Voor achtergrondwerk kun je hieronder een opdracht invoeren.",false,true);
   try {const data=await request("/api/messages?employee="+id);
     $("messages").replaceChildren();
-    if(data.messages.length===0)msg("Hoi! Wat gaan we vandaag doen?",false,true);
+    if(data.messages.length===0)msg("Dit is de Office-werkopdrachtgeschiedenis, niet het transcript van een ChatGPT-chat.",false,true);
     data.messages.forEach(m=>msg(m.content,m.role==="user"));
   }catch(e){$("feedback").textContent=e.message;}
   window.dispatchEvent(new CustomEvent("office-select",{detail:{employee:id}}));
@@ -110,7 +111,7 @@ function talk(text){
  speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text.slice(0,1100));u.lang="nl-NL";u.rate=1.02;
  u.onstart=()=>{speaking=true;};u.onend=()=>{speaking=false;};u.onerror=()=>{speaking=false;};speechSynthesis.speak(u);
 }
-function statusLabel(status){return ({queued:"In de wachtrij",running:"Aan het werk",done:"Klaar",failed:"Fout",waiting_auth:"Wacht op ChatGPT-login",interrupted:"Onderbroken"})[status]||status;}
+function statusLabel(status){return ({queued:"Lokaal in de wachtrij",dispatching:"Doorsturen naar zCloud",dispatched:"Aangeboden aan ChatGPT-workers",claimed:"Toegewezen aan zCloud-worker",running:"ChatGPT-worker bezig",verifying:"Wordt geverifieerd",done:"Afgerond volgens zCloud",failed:"Niet doorgestuurd",dropped:"Vervallen",interrupted:"Onderbroken"})[status]||status;}
 function renderJobs(jobs){
   const root=$("queue");root.replaceChildren();
   if(!jobs.length){const empty=document.createElement("span");empty.className="small";empty.textContent="Nog geen opdrachten.";root.append(empty);return;}
@@ -122,7 +123,7 @@ function renderJobs(jobs){
     body.append(title,instr);
     if(j.output||j.error){const answer=document.createElement("div");answer.className="result";answer.textContent=(j.output||j.error).slice(0,1100);body.append(answer);}
     row.append(body);
-    if(["failed","interrupted","waiting_auth"].includes(j.status)){
+    if(["failed"].includes(j.status)){
       const retry=document.createElement("button");retry.className="secondary";retry.textContent="Opnieuw";
       retry.addEventListener("click",async()=>{try{await request("/api/jobs/"+j.id+"/retry",{method:"POST",body:"{}"});refreshJobs();}catch(e){$("feedback").textContent=e.message;}});
       row.append(retry);
@@ -136,7 +137,7 @@ async function refreshJobs(){
     for(const j of jobCache){
       if(j.status==="done"&&!seen.has(j.id)){
         seen.add(j.id);
-        if(!firstLoad&&j.kind==="chat"&&j.employee===current){
+        if(!firstLoad&&j.employee===current&&j.output){
           msg(j.output);talk(j.output);
         }
       }
@@ -148,29 +149,28 @@ async function refreshHealth(){
   try{
     health=await request("/api/health");$("server-status").textContent=health.online?"Kantoor online":"Kantoor offline";
     $("indicator").style.background=health.online?"#79d6a1":"#eab878";
-    $("brain-status").textContent=health.codex_ready?"● AI verbonden":"○ Codex-login vereist";
+    $("brain-status").textContent=health.zcloud_online?(health.firefox?"● zCloud / Firefox verbonden":"○ zCloud online · Firefox-status onbekend"):"○ zCloud niet bereikbaar";
     if(health.auth_required&&!accessToken)$("unlock").style.display="flex";
-    $("task-button").disabled=!health.tasks_enabled;
-    $("task-button").title=health.tasks_enabled?"Opdracht in de sandbox":"Server heeft OFFICE_ALLOW_WRITES=0";
+    $("send").disabled=false;
   }catch(e){$("server-status").textContent="Offline";$("brain-status").textContent="AI offline";}
 }
-async function submit(kind){
+async function submit(){
   const instruction=$("instruction").value.trim();if(!instruction){$("feedback").textContent="Vul eerst een opdracht in.";return;}
-  $("send").disabled=true;$("task-button").disabled=true;
+  $("send").disabled=true;
   try{
-    const job=await request("/api/jobs",{method:"POST",body:JSON.stringify({employee:current,kind,instruction})});
-    if(kind==="chat")msg(instruction,true);
-    $("instruction").value="";$("feedback").textContent="Opdracht #"+job.id.slice(0,6)+" opgeslagen. De worker pakt hem op.";
+    const job=await request("/api/jobs",{method:"POST",body:JSON.stringify({employee:current,kind:"task",instruction})});
+    msg(instruction,true);
+    $("instruction").value="";$("feedback").textContent="Opdracht #"+job.id.slice(0,6)+" lokaal opgeslagen. Wordt naar zCloud gestuurd zodra beschikbaar.";
     await refreshJobs();
   }catch(e){$("feedback").textContent=e.message;}
-  finally{$("send").disabled=false;$("task-button").disabled=!health.tasks_enabled;}
+  finally{$("send").disabled=false;}
 }
-$("send-form").addEventListener("submit",e=>{e.preventDefault();submit("chat");});
-$("task-button").addEventListener("click",()=>submit("task"));
+$("send-form").addEventListener("submit",e=>{e.preventDefault();submit();});
+$("open-chat").addEventListener("click",()=>{const link=chatLinks[current]||"https://chatgpt.com/";window.open(link,"_blank","noopener,noreferrer");});
 $("unlock-button").addEventListener("click",()=>{accessToken=$("access-code").value.trim();$("access-code").value="";
   $("unlock").style.display="none";$("feedback").textContent="Toegangscode wordt gecontroleerd…";
-  refreshJobs().then(()=>selectPerson(current));});
-$("instruction").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();submit("chat");}});
+  refreshJobs().then(()=>loadEmployees()).then(()=>selectPerson(current));});
+$("instruction").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();submit();}});
 const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
 if(Recognition){
   const recog=new Recognition();recog.lang="nl-NL";recog.interimResults=false;recog.continuous=false;
@@ -182,7 +182,8 @@ if(Recognition){
   $("mic").disabled=true;$("mic").title="Gebruik Chrome/Edge op localhost of HTTPS voor spraakherkenning";
   $("mic").textContent="🎙 Niet ondersteund";
 }
-await refreshHealth();await selectPerson(current);await refreshJobs();
+async function loadEmployees(){try{const data=await request("/api/employees");chatLinks={...chatLinks,...data.chat_links};}catch(e){$("feedback").textContent=e.message;}}
+await refreshHealth();await loadEmployees();await selectPerson(current);await refreshJobs();
 const refreshTimer=setInterval(()=>{refreshJobs();refreshHealth();},4500);
 window.addEventListener("pagehide",()=>clearInterval(refreshTimer));
 try{
