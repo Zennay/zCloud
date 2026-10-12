@@ -52,7 +52,7 @@ jobs:
           # Ensure this release contains the soft-contact dribbling collision solver.
           grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
           grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' shared/physics.js
-          grep -q 'function wallRebound' shared/physics.js
+          grep -q 'const wallRebound=g=>' shared/physics.js
           grep -q 'const cautious=frames>2' shared/prediction.js
           grep -q 'const passOptions=' shared/bot.js
           grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
