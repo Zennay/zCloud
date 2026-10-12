@@ -53,10 +53,14 @@ jobs:
                       continue
                   print("RDP_RELEVANT_ADDON_FIELD_NAMES="+json.dumps(sorted(addon.keys())))
                   print("RDP_RELEVANT_ADDON_ID="+str(addon.get("id",""))[:100])
+                  print("RDP_RELEVANT_ADDON_DEBUGGABLE="+str(addon.get("debuggable")))
+                  print("RDP_RELEVANT_ADDON_IS_WEBEXTENSION="+str(addon.get("isWebExtension")))
                   if not addon.get("actor"):continue
                   send({"to":addon["actor"],"type":"getTarget"})
                   result=recv()
                   print("RDP_GET_ADDON_TARGET_FIELDS="+json.dumps(sorted(result.keys())))
+                  print("RDP_GET_ADDON_TARGET_ERROR="+str(result.get("error") or "none")[:80])
+                  print("RDP_GET_ADDON_TARGET_MESSAGE="+str(result.get("message") or "none")[:180])
                   for key in ["form","target","frame"]:
                       if isinstance(result.get(key),dict):
                           print("RDP_ADDON_"+key.upper()+"_FIELDS="+json.dumps(sorted(result[key].keys())))
