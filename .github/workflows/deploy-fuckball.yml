@@ -51,9 +51,13 @@ jobs:
           npm test
           # Ensure this release contains the soft-contact dribbling collision solver.
           grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
+          grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' shared/physics.js
+          grep -q 'function wallRebound' shared/physics.js
+          grep -q 'const cautious=frames>2' shared/prediction.js
+          grep -q 'const passOptions=' shared/bot.js
           grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
           # Fail closed unless this validated contact/modes release is complete.
-          grep -q 'BALL_SPEED_MULTIPLIER=1.44' shared/physics.js
+          grep -q 'BALL_SPEED_MULTIPLIER=1.2' shared/physics.js
           grep -q 'function reconcileVisual' shared/prediction.js
           grep -q 'id="soloTeams"' public/index.html
           # New game UX and bot must ship together with the original stadium.
@@ -94,7 +98,10 @@ jobs:
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" -o /tmp/fuckball-bot-deployed.js
           grep -q 'function reply(message,g,bot)' /tmp/fuckball-bot-deployed.js
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/physics.js" -o /tmp/fuckball-physics-deployed.js
-          grep -q 'BALL_SPEED_MULTIPLIER=1.44' /tmp/fuckball-physics-deployed.js
+          grep -q 'BALL_SPEED_MULTIPLIER=1.2' /tmp/fuckball-physics-deployed.js
+          grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' /tmp/fuckball-physics-deployed.js
+          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/prediction.js" -o /tmp/fuckball-prediction-deployed.js
+          grep -q 'const cautious=frames>2' /tmp/fuckball-prediction-deployed.js
           echo "Fullscreen/high-refresh 4v4 game and new ball pace verified on VPS"
           if command -v ufw >/dev/null 2>&1; then
             sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
