@@ -40,3 +40,12 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_dashboard_static_candidate_plan_20261012_w1.py' -v
           python3 -m py_compile scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py
           echo "DASHBOARD_STATIC_CANDIDATE_PLAN_OFFLINE_GREEN=1"
+      - name: Inventory exact PR-head source dashboard bundle (no deployment)
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py \\
+            --root . --snapshot-sha "$EXPECTED_SHA"
+          echo "DASHBOARD_SOURCE_SNAPSHOT_ONLY=1"
