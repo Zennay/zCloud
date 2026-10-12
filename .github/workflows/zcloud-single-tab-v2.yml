@@ -1,0 +1,105 @@
+name: zCloud one-tab-per-worker v2
+
+on:
+  pull_request:
+    paths:
+      - public/zcloud-worker.user.js
+      - public/zcloud-worker-v2-engine.js
+      - firefox-extension/background.js
+      - firefox-extension/worker-controller-v2.js
+      - firefox-extension/manifest.json
+      - tests/test_single_tab_worker_v2.js
+      - .github/workflows/zcloud-single-tab-v2.yml
+  push:
+    branches: [main]
+    paths:
+      - public/zcloud-worker.user.js
+      - public/zcloud-worker-v2-engine.js
+      - firefox-extension/background.js
+      - firefox-extension/worker-controller-v2.js
+      - firefox-extension/manifest.json
+      - tests/test_single_tab_worker_v2.js
+      - .github/workflows/zcloud-single-tab-v2.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-one-tab-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate v2 one-tab ownership and High-thinking gate
+        run: |
+          set -euo pipefail
+          node --check firefox-extension/background.js
+          node --check firefox-extension/worker-controller-v2.js
+          node --check public/zcloud-worker-v2-engine.js
+          node --check public/zcloud-worker.user.js
+          node tests/test_single_tab_worker_v2.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_firefox_recovery_contract.js
+          python3 -m unittest tests.test_violentmonkey_runner
+          echo 'ONE_TAB_PER_WORKER_V2_TESTS_GREEN=1'
+
+  install:
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install exclusive worker v2 without stopping Firefox
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node tests/test_single_tab_worker_v2.js
+          root="/home/ubuntu/zennay-cloud"
+          addon="$HOME/snap/firefox/common/chatgpt-project-extension"
+          backup="$HOME/.local/state/zcloud/worker-v2-backup-$GITHUB_RUN_ID"
+          mkdir -p "$backup" "$root/public" "$addon"
+          for relative in public/zcloud-worker.user.js public/zcloud-worker-v2-engine.js; do
+            if [ -f "$root/$relative" ]; then
+              cp -p "$root/$relative" "$backup/$(basename "$relative").old"
+            fi
+            install -m 0644 "$relative" "$root/$relative"
+            cmp "$relative" "$root/$relative"
+          done
+          for relative in background.js manifest.json worker-controller-v2.js; do
+            if [ -f "$addon/$relative" ]; then
+              cp -p "$addon/$relative" "$backup/$relative.old"
+            fi
+            install -m 0644 "firefox-extension/$relative" "$addon/$relative"
+            cmp "firefox-extension/$relative" "$addon/$relative"
+          done
+          echo "WORKER_V2_SOURCE_INSTALLED=1"
+          echo "LEGACY_CONTROLLER_DISABLED_ON_NEXT_ADDON_RELOAD=1"
+          echo "VM_SCRIPT_VERSION_SOURCE=$(grep -m1 '^// @version' "$root/public/zcloud-worker.user.js" | awk '{print $3}')"
+          # Unlike the old service restart path: no systemctl restart/stop,
+          # kill, browser launch, windows.create, tabs.remove, or refresh.
+          # Addon-only hot-reload is allowed only if all workers are proven idle.
+          if python3 scripts/zcloud_deploy_safe_idle.py enter --state "$backup/idle.json" --timeout-seconds 0 --json >/dev/null 2>&1; then
+            if node scripts/zcloud_reload_extension.mjs; then
+              echo "V2_ADDON_HOT_RELOADED_NO_FIREFOX_RESTART=1"
+            else
+              echo "V2_ADDON_ACTIVATION_DEFERRED=1"
+            fi
+          else
+            echo "V2_ADDON_ACTIVATION_DEFERRED=busy-or-idle-unverified"
+          fi
+          echo "VM_INSTALLED_SCRIPT_ACTIVATION_REQUIRES_VERSION_CHECK=1"
+          echo "EXISTING_CHAT_TABS_PRESERVED=1"
