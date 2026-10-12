@@ -1,0 +1,78 @@
+name: Worker Firefox session continuity
+on:
+  pull_request:
+    paths:
+      - "deploy/chatgpt-firefox-prestart.sh"
+      - "deploy/chatgpt-firefox.service"
+      - "systemd-user-units/chatgpt-firefox.service"
+      - "tests/test_firefox_worker_prestart.py"
+      - "tests/test_worker_tabs_restore.js"
+      - ".github/workflows/worker-firefox-session-continuity.yml"
+  push:
+    branches:
+      - main
+      - fix/worker-firefox-crash-session-preservation-20261012
+    paths:
+      - "deploy/chatgpt-firefox-prestart.sh"
+      - "deploy/chatgpt-firefox.service"
+      - "systemd-user-units/chatgpt-firefox.service"
+      - "tests/test_firefox_worker_prestart.py"
+      - "tests/test_worker_tabs_restore.js"
+      - ".github/workflows/worker-firefox-session-continuity.yml"
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Offline tab recovery and browser profile checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect prestart, six-tab recovery and unit isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n deploy/chatgpt-firefox-prestart.sh
+          node tests/test_worker_tabs_restore.js
+          python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py -v
+          ! grep -Eq '^rm -[rf]+ .*sessionstore' deploy/chatgpt-firefox-prestart.sh
+          ! grep -q '^ExecStopPost=' deploy/chatgpt-firefox.service
+          echo 'Worker crash session continuity contracts verified (offline).'
+
+  install-on-vps:
+    name: Install next-restart worker protection without touching running tabs
+    needs: verify
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud' && github.actor == 'Zennay' }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    concurrency:
+      group: zcloud-worker-browser-config-install
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install non-destructive recovery prestart, no restart or stop
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # Preserve the owner-specific profile and everything under it.
+          # Do not stop/restart Firefox, trigger work or change queue ownership.
+          install -d -m 0700 "$HOME/.local/bin" "$HOME/.config/systemd/user"
+          install -m 0755 deploy/chatgpt-firefox-prestart.sh "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          # Respect userscript-only mode: preserve existing unit/drop-in state.
+          if [ -f "$HOME/.config/systemd/user/chatgpt-firefox.service" ]; then
+            cp -p "$HOME/.config/systemd/user/chatgpt-firefox.service" "$HOME/.config/systemd/user/chatgpt-firefox.service.backup-$GITHUB_RUN_ID"
+          fi
+          install -m 0644 deploy/chatgpt-firefox.service "$HOME/.config/systemd/user/chatgpt-firefox.service"
+          systemctl --user daemon-reload
+          cmp deploy/chatgpt-firefox-prestart.sh "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          cmp deploy/chatgpt-firefox.service "$HOME/.config/systemd/user/chatgpt-firefox.service"
+          echo 'Installed for next worker Firefox restart; existing browser and Office staff sessions untouched.'
