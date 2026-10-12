@@ -71,6 +71,24 @@ jobs:
                   print("RDP_TAB_COUNT="+str(len(tabs)))
                   print("RDP_CHATGPT_TABS="+str(len(chat)))
                   versions=[]
+                  # Current Firefox listTabs returns TabDescriptor actors,
+                  # which don't include consoleActor until getTarget().
+                  # This is a read-only actor discovery; no tab is navigated,
+                  # reloaded, selected, closed, or paused.
+                  if chat:
+                      send(sock,{"to":chat[0]["actor"],"type":"getTarget"})
+                      target_form=None
+                      deadline=time.monotonic()+4
+                      while time.monotonic()<deadline:
+                          resp=msg(sock,4)
+                          if resp.get("from")!=chat[0]["actor"]:continue
+                          print("RDP_TARGET_RESPONSE_FIELDS="+json.dumps(sorted(resp.keys())))
+                          target_form=resp.get("target") or resp.get("form") or {}
+                          if isinstance(target_form,dict):
+                              print("RDP_TARGET_FORM_FIELDS="+json.dumps(sorted(target_form.keys())))
+                              if target_form.get("consoleActor"):
+                                  chat[0]["consoleActor"]=target_form["consoleActor"]
+                          break
                   for tab in chat[:20]:
                       actor=tab.get("consoleActor")
                       if not actor:continue
