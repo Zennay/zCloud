@@ -74,9 +74,13 @@ vm.runInContext(source.slice(start,end),ctx);
   const server = fs.readFileSync(path.join(root, "server.py"), "utf8");
   const restart = server.slice(server.indexOf("def restart_firefox_runtime()"),
                                server.indexOf("# --- Firefox crash watchdog",server.indexOf("def restart_firefox_runtime()")));
-  assert.ok(restart.includes("if current.get('active'):"));
-  assert.ok(restart.indexOf("if current.get('active'):") < restart.indexOf("os.kill(pid,signal.SIGTERM)"),
-    "active browser guard must precede any process termination");
+  assert.ok(restart.includes("if current.get('active') or existing:"),
+    "any running Firefox process must prevent recovery from opening a window");
+  assert.ok(!restart.includes("os.kill(pid,signal.SIGTERM)") &&
+            !restart.includes("os.kill(pid,signal.SIGKILL)"),
+    "crash recovery must never terminate Firefox main processes");
+  assert.ok(restart.includes("'snap/firefox/common/chatgpt-webext-profile'"),
+    "crash recovery must restore original Firefox worker profile");
   const workflow=fs.readFileSync(path.join(root,".github/workflows/zcloud-restart-workers.yml"),"utf8");
   assert.ok(workflow.includes("if legacy_vm_only and running_browser:"),
     "manual workflow must reuse an already-running standalone browser");
