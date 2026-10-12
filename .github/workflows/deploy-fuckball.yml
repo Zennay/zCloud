@@ -52,6 +52,12 @@ jobs:
           # Ensure this release contains the soft-contact dribbling collision solver.
           grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
           grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
+          # New game UX and bot must ship together with the original stadium.
+          grep -q 'let extrapMs=135,renderScale=1;' public/index.html
+          grep -q 'id="optionsScreen"' public/index.html
+          grep -q 'id="chatDock"' public/index.html
+          grep -q 'function cameraTransform(state,dt)' public/index.html
+          grep -q 'function reply(message,g,bot)' shared/bot.js
           node --check server.js
           node_binary="$(command -v node)"
           run_user="$(id -un)"
@@ -76,6 +82,10 @@ jobs:
           grep -q 'id="fullscreenBtn"' /tmp/fuckball-deployed.html
           grep -q 'id="renderQuality"' /tmp/fuckball-deployed.html
           grep -q 'id="roomSidebar"' /tmp/fuckball-deployed.html
+          grep -q 'id="optionsScreen"' /tmp/fuckball-deployed.html
+          grep -q 'id="chatDock"' /tmp/fuckball-deployed.html
+          grep -q 'let extrapMs=135,renderScale=1;' /tmp/fuckball-deployed.html
+          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" | grep -q 'function reply(message,g,bot)'
           echo "Fullscreen/high-refresh game UI verified on VPS"
           if command -v ufw >/dev/null 2>&1; then
             sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
