@@ -68,6 +68,12 @@ jobs:
             fi
             sleep 2
           done
+          # Verify the newly deployed UI is served to browsers, not only a healthy process.
+          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/" -o /tmp/fuckball-deployed.html
+          grep -q 'id="fullscreenBtn"' /tmp/fuckball-deployed.html
+          grep -q 'id="renderQuality"' /tmp/fuckball-deployed.html
+          grep -q 'id="roomSidebar"' /tmp/fuckball-deployed.html
+          echo "Fullscreen/high-refresh game UI verified on VPS"
           if command -v ufw >/dev/null 2>&1; then
             sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
           fi
