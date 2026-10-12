@@ -5,6 +5,7 @@ on:
       - firefox-extension/background.js
       - tests/test_worker_tab_spam_guard.js
       - tests/test_firefox_recovery_contract.js
+      - tests/test_worker_tab_reuse.js
       - .github/workflows/zcloud-worker-tab-guard.yml
   push:
     branches: [main, fix/worker-tab-spam-circuit-breaker-20261012]
@@ -12,6 +13,7 @@ on:
       - firefox-extension/background.js
       - tests/test_worker_tab_spam_guard.js
       - tests/test_firefox_recovery_contract.js
+      - tests/test_worker_tab_reuse.js
       - .github/workflows/zcloud-worker-tab-guard.yml
 permissions:
   contents: read
@@ -30,6 +32,7 @@ jobs:
           node --check firefox-extension/background.js
           node tests/test_worker_tab_spam_guard.js
           node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
           echo "WORKER_TAB_SPAM_GUARD_GREEN=1"
 
   install:
@@ -123,7 +126,10 @@ jobs:
             echo "Existing worker is busy/unknown: no forced browser restart. Patch will activate on next natural safe restart."
             exit 0
           fi
-          echo "Restarting ONLY worker Firefox in its systemd cgroup. Office staff Firefox is a separate service."
-          timeout 45 systemctl --user restart chatgpt-firefox.service
-          systemctl --user is-active --quiet chatgpt-firefox.service
-          echo "WORKER_TAB_GUARD_ACTIVATED=1"
+          # Reload only the extension, never terminate the visible Firefox
+          # session. Defer activation if there is no debugger connection.
+          if node scripts/zcloud_reload_extension.mjs; then
+            echo "WORKER_TAB_GUARD_ACTIVATED_IN_PLACE=1"
+          else
+            echo "WORKER_TAB_GUARD_RELOAD_DEFERRED=1"
+          fi
