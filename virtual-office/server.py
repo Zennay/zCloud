@@ -353,7 +353,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def authorized(self)->bool:
-        return not TOKEN or hmac.compare_digest(TOKEN,self.headers.get("X-Office-Token",""))
+        if not TOKEN:
+            return True
+        supplied = self.headers.get("X-Office-Token", "")
+        # HTTP headers are decoded as Latin-1 by BaseHTTPRequestHandler.
+        # str compare_digest() raises TypeError for non-ASCII values, which
+        # previously closed the connection instead of sending JSON 401.
+        # Compare encoded bytes and bound untrusted header size.
+        if len(supplied) > 512:
+            return False
+        return hmac.compare_digest(TOKEN.encode("utf-8"), supplied.encode("utf-8"))
 
     def require_auth(self)->bool:
         if not self.authorized():
