@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virtual Office — jouw AI-team</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#e8eefa;background:#0b111d}
+*{box-sizing:border-box}body{margin:0}.shell{max-width:1580px;margin:auto;padding:18px 22px 30px}
+header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:14px}header strong{font-size:21px;letter-spacing:-.03em}
+header .sub{color:#8b9cb8;font-size:12px}.grow{flex:1}.badge{border:1px solid #2b3c54;border-radius:30px;padding:8px 12px;font-size:12px;color:#bdd0ed}
+.dot{width:8px;height:8px;display:inline-block;border-radius:50%;background:#eab878;margin-right:6px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(290px,370px);gap:14px}
+.world{position:relative;border:1px solid #26364c;background:#17243b;min-height:510px;border-radius:16px;overflow:hidden}
+#viewport{width:100%;height:510px;touch-action:pan-y;display:block;cursor:grab}#viewport:active{cursor:grabbing}
+.worldbar{position:absolute;left:15px;top:15px;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none}
+.worldbar span{padding:6px 10px;border-radius:9px;background:#0b1426ce;border:1px solid #32455c;font-size:12px}
+.worldfoot{position:absolute;bottom:14px;left:15px;right:15px;display:flex;justify-content:space-between;gap:12px;align-items:flex-end;pointer-events:none}
+.worldfoot span{font-size:12px;background:#0b1426d8;border-radius:8px;padding:8px;max-width:72%}
+.office-fallback{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;height:100%;min-height:510px;padding:32px}
+.office-fallback button{padding:22px 18px;background:#223654;color:#fff;border:1px solid #4e6588;border-radius:14px}
+.panel{background:#141f31;border:1px solid #26364c;border-radius:16px;display:flex;flex-direction:column;min-width:0}
+.panelhead{padding:18px;border-bottom:1px solid #28394f;display:flex;gap:12px;align-items:center}
+.avatar{height:49px;width:49px;display:grid;place-items:center;border-radius:15px;background:#34435f;font-size:25px;flex-shrink:0}
+.personname{font-weight:750;font-size:18px}.small{font-size:12px;color:#a1b2ca;line-height:1.5}
+.bio{padding:12px 18px;color:#b6c8df;font-size:13px;border-bottom:1px solid #26364c;min-height:54px}
+.messages{height:275px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:15px;flex:1;min-height:220px}
+.bubble{max-width:91%;white-space:pre-wrap;overflow-wrap:anywhere;background:#25344c;border-radius:14px 14px 14px 4px;padding:10px 12px;font-size:13px;line-height:1.5;align-self:flex-start}
+.bubble.user{background:#355272;border-radius:14px 14px 4px 14px;align-self:flex-end}
+.bubble.muted{color:#a5b3c9;font-style:italic}
+form{padding:14px;display:flex;flex-direction:column;gap:10px;border-top:1px solid #29394f}
+textarea{width:100%;min-height:83px;max-height:200px;resize:vertical;border-radius:10px;padding:11px 12px;background:#0e1727;color:white;border:1px solid #354862;font:inherit;font-size:14px}
+button,input{font:inherit}button{cursor:pointer}button:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid #9ebdf5;outline-offset:2px}
+button:disabled{cursor:not-allowed;opacity:.5}.actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.primary{background:#c9e0ff;color:#122033;font-weight:700;border:0;padding:10px 14px;border-radius:10px}
+.secondary{border:1px solid #39506d;background:#20314b;color:#e7f0ff;padding:9px 11px;border-radius:10px}
+.toggle{display:flex;align-items:center;gap:7px;font-size:12px;color:#bdcce0;margin-left:auto}
+#feedback{min-height:16px;font-size:12px;color:#94bdea}
+.jobs{margin-top:14px;border:1px solid #283b50;border-radius:16px;background:#141f31;padding:17px}
+.jobs h2{margin:0 0 12px;font-size:16px}.queue{display:grid;gap:8px}
+.job{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border-radius:9px;background:#1d2c42;padding:11px 12px;font-size:12px}
+.job .detail{flex:1;min-width:0}.job .instr{color:#c7d5e9;overflow-wrap:anywhere;margin-top:4px}
+.job .status{color:#a8d7e4;font-weight:700}.job .result{margin-top:7px;white-space:pre-wrap;color:#acbed8}
+.unlock{display:none;gap:8px;align-items:center;flex-wrap:wrap}.unlock input{border:1px solid #415773;background:#142236;color:white;padding:10px;border-radius:9px;font-size:14px}
+.note{font-size:12px;color:#99afce;line-height:1.5;margin-top:10px}.hidden{display:none!important}
+@media(max-width:880px){.grid{grid-template-columns:1fr}#viewport,.office-fallback,.world{height:380px;min-height:380px}.messages{height:220px;flex:none}.shell{padding:12px}}
+@media(max-width:390px){header strong{font-size:17px}.worldfoot span{font-size:10px}.job{flex-direction:column}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body><div class="shell">
+<header>
+<div><strong>◈ VIRTUAL OFFICE</strong><div class="sub">Jouw AI-bedrijf · versie 0.1</div></div>
+<div class="grow"></div><div class="badge"><span class="dot" id="indicator"></span><span id="server-status">Verbinden…</span></div>
+<div class="badge" id="brain-status">Codex controleren…</div>
+<div class="unlock" id="unlock"><input id="access-code" type="password" placeholder="Office-toegangscode" autocomplete="off"><button class="secondary" id="unlock-button">Ontgrendel</button></div>
+</header>
+<div class="grid">
+<section class="world" aria-label="Interactief 3D-kantoor">
+<div class="worldbar"><span>THE STUDIO / AI HQ</span><span>3 medewerkers</span></div>
+<div id="viewport"><div class="office-fallback" id="fallback"><span>3D wordt geladen…</span></div></div>
+<div class="worldfoot"><span>WASD = lopen · slepen = kijken · klik op medewerker = praten</span><span id="vr-state">VR optioneel</span></div>
+</section>
+<aside class="panel">
+<div class="panelhead"><div class="avatar" id="avatar">👩🏻‍💼</div><div><div class="personname" id="personname">Maya</div><div class="small" id="person-title">Projectmanager</div></div></div>
+<div class="bio" id="bio">Helpt je team aansturen, projecten plannen en de voortgang bespreken.</div>
+<div class="messages" id="messages" role="log" aria-live="polite"><div class="bubble muted">Selecteer iemand in het kantoor en geef een opdracht. Spreek of typ.</div></div>
+<form id="send-form"><textarea id="instruction" aria-label="Bericht of opdracht" maxlength="3500" placeholder="Hé Maya, wat staat er op de planning?" required></textarea>
+<div class="actions"><button class="primary" type="submit" id="send">Stuur bericht</button><button class="secondary" type="button" id="task-button" title="Voer een echte taak uit in een geïsoleerde werkmap">Geef werkopdracht</button><button class="secondary" type="button" id="mic">🎙 Spreek</button><label class="toggle"><input type="checkbox" id="speak-replies" checked> Antwoord hardop</label></div>
+<div id="feedback" role="status"></div></form>
+</aside></div>
+<section class="jobs"><h2>Live werkvloer <span class="small">· opdrachten blijven in SQLite staan wanneer je weg bent</span></h2><div class="queue" id="queue"><span class="small">Nog geen opdrachten.</span></div>
+<div class="note">De medewerkers gebruiken Codex CLI met je eigen ChatGPT-login, niet een API-key. Echte codewijzigingen zijn alleen mogelijk wanneer de server Codex heeft en OFFICE_ALLOW_WRITES=1 is ingesteld. Zonder ingelogde worker blijven opdrachten zichtbaar in de wachtrij; ze worden niet gefingeerd.</div></section>
+</div>
+<script type="module">
+const $ = id => document.getElementById(id);
+const employees = {
+  maya: {name:"Maya", title:"Projectmanager", color:"#f0a878", icon:"👩🏻‍💼", bio:"Warm en gestructureerd. Maakt plannen, bewaakt voortgang en prioriteiten."},
+  noah: {name:"Noah", title:"Software engineer", color:"#78b8d6", icon:"👨🏽‍💻", bio:"Technische collega die code kan lezen, schrijven en testen in zijn geïsoleerde werkmap."},
+  lina: {name:"Lina", title:"QA & design", color:"#b6a0e5", icon:"👩🏼‍🎨", bio:"Scherpe tester en UX-denker die risico's, kwaliteit en gebruikerservaring bewaakt."}
+};
+let current="maya", accessToken="", health={online:false,auth_required:false,codex_ready:false,tasks_enabled:false};
+let seen=new Set(), jobCache=[], speaking=false, firstLoad=true;
+function authHeaders(){return accessToken?{"X-Office-Token":accessToken}:{};}
+async function request(url, options={}){
+  const headers={...authHeaders(),...(options.body?{"Content-Type":"application/json"}:{})};
+  const response=await fetch(url,{...options,headers:{...headers,...(options.headers||{})},cache:"no-store"});
+  let result;try{result=await response.json();}catch{throw Error("Server gaf geen geldig JSON-antwoord");}
+  if(response.status===401){$("unlock").style.display="flex";throw Error("Vul je Office-toegangscode in.");}
+  if(!response.ok)throw Error(result.error||"HTTP "+response.status);
+  return result;
+}
+function msg(text,user=false,muted=false){
+  const div=document.createElement("div");div.className="bubble"+(user?" user":"")+(muted?" muted":"");div.textContent=text;
+  $("messages").append(div);$("messages").scrollTop=$("messages").scrollHeight;
+}
+async function selectPerson(id){
+  if(!employees[id])return;current=id;
+  const p=employees[id];$("personname").textContent=p.name;$("person-title").textContent=p.title;
+  $("avatar").textContent=p.icon;$("avatar").style.background=p.color+"38";$("bio").textContent=p.bio;
+  $("messages").replaceChildren();msg("Hoi, ik ben "+p.name+". Wat wil je dat ik doe?",false,true);
+  try {const data=await request("/api/messages?employee="+id);
+    $("messages").replaceChildren();
+    if(data.messages.length===0)msg("Hoi! Wat gaan we vandaag doen?",false,true);
+    data.messages.forEach(m=>msg(m.content,m.role==="user"));
+  }catch(e){$("feedback").textContent=e.message;}
+  window.dispatchEvent(new CustomEvent("office-select",{detail:{employee:id}}));
+}
+function talk(text){
+ if(!$("speak-replies").checked || !("speechSynthesis" in window))return;
+ speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text.slice(0,1100));u.lang="nl-NL";u.rate=1.02;
+ u.onstart=()=>{speaking=true;};u.onend=()=>{speaking=false;};u.onerror=()=>{speaking=false;};speechSynthesis.speak(u);
+}
+function statusLabel(status){return ({queued:"In de wachtrij",running:"Aan het werk",done:"Klaar",failed:"Fout",waiting_auth:"Wacht op ChatGPT-login",interrupted:"Onderbroken"})[status]||status;}
+function renderJobs(jobs){
+  const root=$("queue");root.replaceChildren();
+  if(!jobs.length){const empty=document.createElement("span");empty.className="small";empty.textContent="Nog geen opdrachten.";root.append(empty);return;}
+  jobs.forEach(j=>{
+    const row=document.createElement("div");row.className="job";
+    const body=document.createElement("div");body.className="detail";
+    const title=document.createElement("div");title.className="status";title.textContent=(employees[j.employee]?.name||j.employee)+" · "+(j.kind==="task"?"Werkopdracht":"Gesprek")+" · "+statusLabel(j.status);
+    const instr=document.createElement("div");instr.className="instr";instr.textContent=j.instruction;
+    body.append(title,instr);
+    if(j.output||j.error){const answer=document.createElement("div");answer.className="result";answer.textContent=(j.output||j.error).slice(0,1100);body.append(answer);}
+    row.append(body);
+    if(["failed","interrupted","waiting_auth"].includes(j.status)){
+      const retry=document.createElement("button");retry.className="secondary";retry.textContent="Opnieuw";
+      retry.addEventListener("click",async()=>{try{await request("/api/jobs/"+j.id+"/retry",{method:"POST",body:"{}"});refreshJobs();}catch(e){$("feedback").textContent=e.message;}});
+      row.append(retry);
+    }
+    root.append(row);
+  });
+}
+async function refreshJobs(){
+  try{
+    const data=await request("/api/jobs");jobCache=data.jobs;renderJobs(jobCache);
+    for(const j of jobCache){
+      if(j.status==="done"&&!seen.has(j.id)){
+        seen.add(j.id);
+        if(!firstLoad&&j.kind==="chat"&&j.employee===current){
+          msg(j.output);talk(j.output);
+        }
+      }
+    }
+    firstLoad=false;
+  }catch(e){$("feedback").textContent=e.message;}
+}
+async function refreshHealth(){
+  try{
+    health=await request("/api/health");$("server-status").textContent=health.online?"Kantoor online":"Kantoor offline";
+    $("indicator").style.background=health.online?"#79d6a1":"#eab878";
+    $("brain-status").textContent=health.codex_ready?"● AI verbonden":"○ Codex-login vereist";
+    if(health.auth_required&&!accessToken)$("unlock").style.display="flex";
+    $("task-button").disabled=!health.tasks_enabled;
+    $("task-button").title=health.tasks_enabled?"Opdracht in de sandbox":"Server heeft OFFICE_ALLOW_WRITES=0";
+  }catch(e){$("server-status").textContent="Offline";$("brain-status").textContent="AI offline";}
+}
+async function submit(kind){
+  const instruction=$("instruction").value.trim();if(!instruction){$("feedback").textContent="Vul eerst een opdracht in.";return;}
+  $("send").disabled=true;$("task-button").disabled=true;
+  try{
+    const job=await request("/api/jobs",{method:"POST",body:JSON.stringify({employee:current,kind,instruction})});
+    if(kind==="chat")msg(instruction,true);
+    $("instruction").value="";$("feedback").textContent="Opdracht #"+job.id.slice(0,6)+" opgeslagen. De worker pakt hem op.";
+    await refreshJobs();
+  }catch(e){$("feedback").textContent=e.message;}
+  finally{$("send").disabled=false;$("task-button").disabled=!health.tasks_enabled;}
+}
+$("send-form").addEventListener("submit",e=>{e.preventDefault();submit("chat");});
+$("task-button").addEventListener("click",()=>submit("task"));
+$("unlock-button").addEventListener("click",()=>{accessToken=$("access-code").value.trim();$("access-code").value="";
+  $("unlock").style.display="none";$("feedback").textContent="Toegangscode wordt gecontroleerd…";
+  refreshJobs().then(()=>selectPerson(current));});
+$("instruction").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();submit("chat");}});
+const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(Recognition){
+  const recog=new Recognition();recog.lang="nl-NL";recog.interimResults=false;recog.continuous=false;
+  $("mic").addEventListener("click",()=>{try{recog.start();$("feedback").textContent="Luisteren…";}catch(e){$("feedback").textContent="Microfoon is al actief.";}});
+  recog.onresult=e=>{$("instruction").value=(e.results[0][0].transcript||"");$("feedback").textContent="Spraak herkend. Controleer en verstuur."};
+  recog.onerror=e=>{$("feedback").textContent="Spraakherkenning niet beschikbaar: "+e.error;};
+  recog.onend=()=>{if($("feedback").textContent==="Luisteren…")$("feedback").textContent="Klaar met luisteren."};
+}else{
+  $("mic").disabled=true;$("mic").title="Gebruik Chrome/Edge op localhost of HTTPS voor spraakherkenning";
+  $("mic").textContent="🎙 Niet ondersteund";
+}
+await refreshHealth();await selectPerson(current);await refreshJobs();
+const refreshTimer=setInterval(()=>{refreshJobs();refreshHealth();},4500);
+window.addEventListener("pagehide",()=>clearInterval(refreshTimer));
+try{
+  const THREE=await import("https://cdn.jsdelivr.net/npm/three@0.170.0/+esm");
+  const {VRButton}=await import("https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/webxr/VRButton.js/+esm");
+  const mount=$("viewport");mount.replaceChildren();
+  const scene=new THREE.Scene();scene.background=new THREE.Color("#839bae");scene.fog=new THREE.Fog("#8daabd",20,44);
+  const camera=new THREE.PerspectiveCamera(68,1,.08,90);camera.position.set(0,1.7,9.3);
+  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;
+  renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.xr.enabled=true;mount.append(renderer.domElement);
+  const mat=(color,roughness=.75)=>new THREE.MeshStandardMaterial({color,roughness});
+  const floor=mat("#a4a7a0"), wall=mat("#e7e8e2"),wood=mat("#a47753"),metal=mat("#3b4651"),glass=new THREE.MeshPhysicalMaterial({color:"#a4d7ed",transparent:true,opacity:.31,metalness:.1,roughness:.17});
+  function box(w,h,d,x,y,z,m){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh;}
+  box(15,.16,15,0,-.1,0,floor);box(15,3.9,.25,0,1.85,-7.5,wall);box(.2,3.9,15,-7.5,1.85,0,wall);
+  box(.2,3.9,15,7.5,1.85,0,wall);
+  for(let z=-5.7;z<6.7;z+=3){box(.08,3.2,.08,7.4,2,z,metal);box(.12,.12,2.9,7.4,3.55,z+1.35,metal);}
+  box(.04,3.12,14.1,7.38,1.96,0,glass);
+  const carpet=mat("#627981");box(11,.025,7,0,.025,-2,carpet);
+  for(let x=-5;x<=5;x+=5){
+    box(2.55,.1,1.4,x,.8,-3,wood);
+    for(let dx of [-1.05,1.05])for(let dz of [-.52,.52])box(.08,.71,.08,x+dx,.41,-3+dz,metal);
+    box(.95,.58,.07,x,1.19,-3.35,metal);
+    const screen=box(.87,.48,.013,x,1.19,-3.306,mat("#2b5270",.35));screen.material.emissive=new THREE.Color("#153a59");screen.material.emissiveIntensity=.6;
+    box(.07,.16,.07,x,.88,-3.35,metal);
+    box(.56,.025,.19,x,.87,-2.7,mat("#d2d9dc"));
+    box(.62,.12,.56,x,.51,-1.78,metal);box(.1,.6,.12,x,.26,-1.8,metal);
+  }
+  function plant(x,z){
+    box(.52,.6,.52,x,.31,z,mat("#ca9d7f"));for(let i=0;i<6;i++){
+      const leaf=new THREE.Mesh(new THREE.SphereGeometry(.36,8,8),mat(i%2?"#2e7659":"#4e9774"));
+      leaf.scale.set(.6,1.6,.65);leaf.position.set(x+Math.cos(i)*.29,1.03+Math.sin(i)*.15,z+Math.sin(i)*.29);leaf.castShadow=true;scene.add(leaf);
+    }
+  }
+  plant(-6.5,-6.2);plant(6.3,-6.2);plant(-6.5,5.4);
+  const people=[];
+  function label(text){
+    const canvas=document.createElement("canvas");canvas.width=512;canvas.height=128;
+    const ctx=canvas.getContext("2d");ctx.fillStyle="rgba(17,30,47,.92)";ctx.fillRect(0,0,512,128);
+    ctx.fillStyle="#ffffff";ctx.textAlign="center";ctx.font="bold 58px sans-serif";ctx.fillText(text,256,82);
+    const texture=new THREE.CanvasTexture(canvas);const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true}));
+    sprite.scale.set(1.65,.41,1);return sprite;
+  }
+  function employee(id,x,color){
+    const g=new THREE.Group();g.position.set(x,0,-1.32);g.userData.employee=id;
+    const skin=mat("#d5a98d"),jacket=mat(color),dark=mat("#253348"),hair=mat("#342b2d");
+    function part(geometry,m,x,y,z){const p=new THREE.Mesh(geometry,m);p.position.set(x,y,z);p.castShadow=true;g.add(p);return p;}
+    part(new THREE.CapsuleGeometry(.27,.52,5,10),jacket,0,1.17,0);
+    part(new THREE.SphereGeometry(.235,16,12),skin,0,1.82,0);
+    const hairstyle=part(new THREE.SphereGeometry(.245,12,10),hair,0,1.95,-.037);hairstyle.scale.y=.53;
+    for(let dx of [-.11,.11]){part(new THREE.SphereGeometry(.025,8,8),dark,dx,1.85,.205);}
+    part(new THREE.CapsuleGeometry(.096,.42,4,8),jacket,-.38,1.17,0).rotation.z=.19;
+    part(new THREE.CapsuleGeometry(.096,.42,4,8),jacket,.38,1.17,0).rotation.z=-.19;
+    part(new THREE.CapsuleGeometry(.115,.34,4,8),dark,-.17,.48,0);
+    part(new THREE.CapsuleGeometry(.115,.34,4,8),dark,.17,.48,0);
+    const nameplate=label(employees[id].name+" · "+employees[id].title);nameplate.position.set(0,2.43,0);g.add(nameplate);
+    scene.add(g);people.push(g);return g;
+  }
+  const actors=[employee("maya",-5,"#a96c55"),employee("noah",0,"#497fa3"),employee("lina",5,"#8570b4")];
+  const ambient=new THREE.HemisphereLight("#f4f5e7","#69727b",2.0);scene.add(ambient);
+  const sun=new THREE.DirectionalLight("#fff2e5",2.4);sun.position.set(-3,10,6);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+  const selection=new THREE.Mesh(new THREE.RingGeometry(.49,.55,36),new THREE.MeshBasicMaterial({color:"#b9e4fc",side:THREE.DoubleSide}));
+  selection.rotation.x=-Math.PI/2;selection.position.y=.04;scene.add(selection);
+  window.addEventListener("office-select",e=>{const g=people.find(p=>p.userData.employee===e.detail.employee);if(g)selection.position.set(g.position.x,.04,g.position.z);});
+  selection.position.set(-5,.04,-1.32);
+  const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();let down=null,yaw=0,pitch=0;const keys=new Set();
+  renderer.domElement.addEventListener("pointerdown",e=>{down={x:e.clientX,y:e.clientY,moved:false};renderer.domElement.setPointerCapture(e.pointerId);});
+  renderer.domElement.addEventListener("pointermove",e=>{if(!down)return;const dx=e.clientX-down.x,dy=e.clientY-down.y;
+    if(Math.abs(dx)+Math.abs(dy)>5)down.moved=true;
+    yaw-=dx*.004;pitch=Math.max(-.55,Math.min(.55,pitch-dy*.003));
+    down.x=e.clientX;down.y=e.clientY;
+  });
+  renderer.domElement.addEventListener("pointerup",e=>{
+    if(!down||down.moved){down=null;return;}down=null;
+    const rect=renderer.domElement.getBoundingClientRect();
+    mouse.set(((e.clientX-rect.left)/rect.width)*2-1,-((e.clientY-rect.top)/rect.height)*2+1);
+    ray.setFromCamera(mouse,camera);
+    const hits=ray.intersectObjects(people,true);
+    if(hits.length){let object=hits[0].object;while(object&&!object.userData.employee)object=object.parent;
+      if(object)selectPerson(object.userData.employee);}
+  });
+  document.addEventListener("keydown",e=>{if(["TEXTAREA","INPUT"].includes(document.activeElement?.tagName))return;
+    if(["w","a","s","d","ArrowLeft","ArrowRight"].includes(e.key)){keys.add(e.key);e.preventDefault();}
+  });
+  document.addEventListener("keyup",e=>keys.delete(e.key));
+  window.addEventListener("blur",()=>keys.clear());
+  function resize(){const width=mount.clientWidth,height=mount.clientHeight||500;camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height,false);}
+  const observer=new ResizeObserver(resize);observer.observe(mount);resize();
+  if(navigator.xr){
+    try{const vr=VRButton.createButton(renderer);vr.style.right="16px";vr.style.bottom="52px";vr.style.left="auto";vr.style.position="absolute";
+      mount.append(vr);$("vr-state").textContent="Headset mogelijk";
+    }catch(e){$("vr-state").textContent="VR niet beschikbaar";}
+  }
+  const controller=renderer.xr.getController(0);
+  controller.addEventListener("select",()=>{
+    ray.setFromXRController(controller);const hits=ray.intersectObjects(people,true);
+    if(hits.length){let o=hits[0].object;while(o&&!o.userData.employee)o=o.parent;if(o)selectPerson(o.userData.employee);}
+  });scene.add(controller);
+  let prev=performance.now();
+  renderer.setAnimationLoop(t=>{
+    const dt=Math.min(.05,(t-prev)/1000);prev=t;
+    const pace=3.5*dt,forward=(keys.has("w")?1:0)-(keys.has("s")?1:0),strafe=(keys.has("d")?1:0)-(keys.has("a")?1:0);
+    camera.position.x+=Math.sin(yaw)*forward*pace+Math.cos(yaw)*strafe*pace;
+    camera.position.z+=-Math.cos(yaw)*forward*pace+Math.sin(yaw)*strafe*pace;
+    camera.position.x=Math.max(-6.65,Math.min(6.65,camera.position.x));
+    camera.position.z=Math.max(-6.65,Math.min(6.65,camera.position.z));
+    if(keys.has("ArrowLeft"))yaw+=dt;if(keys.has("ArrowRight"))yaw-=dt;
+    if(!renderer.xr.isPresenting)camera.lookAt(camera.position.x+Math.sin(yaw),camera.position.y+Math.sin(pitch),camera.position.z-Math.cos(yaw));
+    actors.forEach((a,i)=>{a.rotation.y=Math.sin(t*.001+i)*.13;a.position.y=Math.sin(t*.002+i)*.018;});
+    selection.material.color.set(speaking?"#c7f4ac":"#b9e4fc");
+    renderer.render(scene,camera);
+  });
+  window.addEventListener("pagehide",()=>{renderer.setAnimationLoop(null);observer.disconnect();renderer.dispose();});
+}catch(err){
+  $("fallback").replaceChildren();
+  const description=document.createElement("p");description.textContent="3D kan niet laden ("+err.message+"). Je kunt de medewerkers hieronder nog steeds aanspreken.";
+  $("fallback").append(description);
+  Object.entries(employees).forEach(([id,p])=>{const b=document.createElement("button");b.textContent=p.icon+" "+p.name;b.addEventListener("click",()=>selectPerson(id));$("fallback").append(b);});
+}
+</script></body></html>
