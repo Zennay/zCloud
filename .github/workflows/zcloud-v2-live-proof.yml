@@ -45,10 +45,22 @@ jobs:
               workers=[w for p in (data.get("chatgpt_runners") or {}).values()
                        for w in (p.get("workers") or []) if w.get("active")]
               from collections import Counter
-              reasons=Counter(str((w.get("last_heartbeat") or {}).get("reason") or "") for w in workers)
+              import sqlite3
+              db=sqlite3.connect("file:/home/ubuntu/zennay-cloud/history.db?mode=ro",uri=True,timeout=5)
+              with db:
+                  reasons=Counter()
+                  for w in workers:
+                      base=str(w.get("worker_id") or "").split("::w")[0]
+                      slot=int(w.get("worker_slot") or 1)
+                      row=db.execute(
+                        "SELECT reason FROM runner_events WHERE project_id=? AND worker_slot=? AND event='heartbeat' ORDER BY id DESC LIMIT 1",
+                        (base,slot)
+                      ).fetchone()
+                      reasons[str(row[0] if row else "missing")]+=1
+              db.close()
               print("ACTIVE_WORKER_COUNT="+str(len(workers)))
               print("WORKER_HEARTBEAT_REASONS="+json.dumps(dict(reasons)))
-              v2=sum(1 for w in workers if str((w.get("last_heartbeat") or {}).get("reason"))=="worker-v2-check-30s")
+              v2=reasons.get("worker-v2-check-30s",0)
               print("ACTIVE_WORKERS_WITH_V2_HEARTBEAT="+str(v2))
               print("ACTIVE_SCRIPT_V2_ALL_CONFIRMED="+str(bool(workers) and v2==len(workers)))
           except Exception as e:
