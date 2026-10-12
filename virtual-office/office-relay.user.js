@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.6
+// @version      0.3.7
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
@@ -119,9 +119,25 @@
  GM_registerMenuCommand('Verbind deze chat met Office',connect);
  GM_registerMenuCommand('Office Relay stoppen + onthouden koppeling wissen',()=>{
   if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');
-  clearPairing(currentChat());config=null;rememberAfterSuccess=false;status.textContent='Office Relay · uit';
+  clearPairing(config?.conversation||currentChat());config=null;rememberAfterSuccess=false;status.textContent='Office Relay · uit';
  });
  GM_registerMenuCommand('Office Relay opnieuw instellen',()=>{if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');config=null;connect()});
+ GM_registerMenuCommand('Koppel nieuwe chat aan opgeslagen medewerker',()=>{
+  if(active)return alert('Wacht tot het lopende antwoord is teruggestuurd.');
+  if(document.documentElement.hasAttribute('data-zcloud-worker-id'))return alert('Een zCloud-worker-tab mag niet aan een Office-medewerker worden gekoppeld.');
+  const conversation=currentChat();
+  if(!conversation)return alert('Open eerst een bestaande opgeslagen nieuwe ChatGPT-conversatie.');
+  const previous=Object.values(savedPairings()).filter(item=>validSavedPairing(conversation,item));
+  if(!previous.length)return alert('Geen onthouden medewerker. Verbind eerst één keer via Office Relay en kies expliciet Onthouden.');
+  const employee=prompt('Koppel deze nieuwe chat aan welke medewerker? maya, noah of lina',previous[0].employee);
+  const pair=previous.find(item=>item.employee===employee);
+  if(!pair)return alert('Geen opgeslagen code voor deze medewerker gevonden.');
+  if(!confirm('Koppel deze chat aan '+employee+'? Dit vervangt na geslaagde verificatie de oude onthouden chat voor deze medewerker.'))return;
+  config={origin:pair.origin,employee,token:pair.token,conversation};
+  rememberAfterSuccess=true;
+  status.textContent='Office Relay · '+employee+' nieuwe chat koppelen…';
+  tick();
+ });
  status.onclick=()=>{if(!config)return connect();if(active)return alert('Er wordt nog een antwoord verwerkt.');if(confirm('Relay voor '+config.employee+' op '+config.origin+' opnieuw verbinden? Je kunt de vorige opgeslagen koppeling hierbij vervangen.')){clearPairing(config.conversation);config=null;rememberAfterSuccess=false;connect()}};
  const editor=()=>document.querySelector('#prompt-textarea[contenteditable="true"],textarea#prompt-textarea');
  const generating=()=>!!document.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"]');
@@ -181,14 +197,24 @@
  // The server tolerates throttled heartbeats; on returning to the tab probe now.
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});
  window.addEventListener('pageshow',()=>{if(config)tick()});
- function resumeSavedPairing(){
-  if(config||active||document.documentElement.hasAttribute('data-zcloud-worker-id'))return;
+ let resuming=false;
+ async function resumeSavedPairing(){
+  if(resuming||config||active||document.documentElement.hasAttribute('data-zcloud-worker-id'))return;
   const conversation=currentChat();
   const pair=savedPairings()[conversation];
   if(!validSavedPairing(conversation,pair))return;
-  config={origin:pair.origin,employee:pair.employee,token:pair.token,conversation};
-  status.textContent='Office Relay · '+pair.employee+' automatisch herstellen…';
-  tick();
+  resuming=true;
+  status.textContent='Office Relay · '+pair.employee+' VPS-verbinding verifiëren…';
+  try{
+   await checkOffice(pair.origin); // never send a stored token to a wrong loopback service
+   if(config||document.documentElement.hasAttribute('data-zcloud-worker-id')||currentChat()!==conversation)return;
+   config={origin:pair.origin,employee:pair.employee,token:pair.token,conversation};
+   status.textContent='Office Relay · '+pair.employee+' automatisch herstellen…';
+   tick();
+  }catch(e){
+   status.textContent='Office Relay · herstellen wachten: '+e.message;
+   setTimeout(resumeSavedPairing,10000);
+  }finally{resuming=false}
  }
  // A restored ChatGPT tab is resumed without a new prompt or stored claim;
  // only a valid, exact-URL pairing can poll. Browser tab ownership remains
