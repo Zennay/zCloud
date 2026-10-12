@@ -65,6 +65,9 @@ jobs:
                       raise SystemExit(0)
                   tabs=[tab for tab in listing.get("tabs",[]) if isinstance(tab,dict)]
                   chat=[tab for tab in tabs if str(tab.get("url","")).startswith("https://chatgpt.com/")]
+                  print("RDP_ROOT_FIELD_NAMES="+json.dumps(sorted(listing.keys())))
+                  if chat:
+                      print("RDP_TAB_FIELD_NAMES="+json.dumps(sorted(chat[0].keys())))
                   print("RDP_TAB_COUNT="+str(len(tabs)))
                   print("RDP_CHATGPT_TABS="+str(len(chat)))
                   versions=[]
