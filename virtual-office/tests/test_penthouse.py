@@ -22,6 +22,19 @@ class PenthouseTests(unittest.TestCase):
     def relay(self, employee="maya", client="tab-one", ready=False):
         return features.relay_poll(server, {"employee":employee,"client_id":client,
             "conversation":"https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc","ready":ready})
+    def test_relay_installation_is_https_and_standalone(self):
+        root = Path(__file__).resolve().parents[1]
+        page = (root / "index.html").read_text(encoding="utf-8")
+        script = (root / "office-relay.user.js").read_text(encoding="utf-8")
+        install = "https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js"
+        self.assertIn('href="' + install + '"', page)
+        self.assertNotIn('href="/office-relay.user.js"', page)
+        self.assertTrue(script.startswith("// ==UserScript==\\n"))
+        self.assertIn("// ==/UserScript==", script)
+        self.assertIn("// @match        https://chatgpt.com/*", script)
+        self.assertIn("// @downloadURL  " + install, script)
+        self.assertIn("// @updateURL    " + install, script)
+
     def test_durable_deck_roundtrip(self):
         d=features.save_deck(server,{"title":"Project","slides":[{"title":"Resultaten","body":"Eén\nTwee"}]})
         server.init_db()
