@@ -198,6 +198,27 @@ jobs:
           print("Penthouse private API and static assets verified. No work queued by this probe.")
           PY
 
+      - name: Start independent VPS relay browser if desktop session is available
+        # The Office backend is already deployed and verified above. Failure to
+        # open the optional Firefox RDP desktop must not affect zCloud workers.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          display_socket=/tmp/.X11-unix/X10
+          runtime_dir="/run/user/$(id -u)"
+          if [ ! -S "$display_socket" ] || [ ! -S "$runtime_dir/bus" ]; then
+            echo "Dedicated Office Firefox is installed but not started: RDP Xorg :10 or user bus unavailable."
+            exit 0
+          fi
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+          systemctl --user daemon-reload
+          systemctl --user enable --now office-relay-vps.service
+          systemctl --user is-active --quiet office-relay-vps.service
+          echo "Dedicated Office Firefox service started (browser login, Tampermonkey and manual relay pairing still required)."
+
       - name: Isolated Firefox visual evidence
         continue-on-error: true
         shell: bash
