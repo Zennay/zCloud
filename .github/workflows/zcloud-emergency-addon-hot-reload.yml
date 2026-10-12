@@ -1,0 +1,43 @@
+name: zCloud emergency addon-only tab preservation activation
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-emergency-addon-hot-reload.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  activate:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Reload ONLY verified addon in place, keep Firefox PID and tabs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          source="firefox-extension/background.js"
+          live="$HOME/snap/firefox/common/chatgpt-project-extension/background.js"
+          node --check "$source"
+          cmp "$source" "$live"
+          ! grep -q 'browser.tabs.create(' "$live"
+          ! grep -q 'browser.tabs.remove(' "$live"
+          main_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
+          test -n "$main_pid"
+          kill -0 "$main_pid"
+          echo "FIREFOX_MAIN_PID_BEFORE=$main_pid"
+          # web-ext remote.reloadAddon acts on addon runtime only. It must not
+          # issue browser-window/tab close, Firefox restart, or URL navigation.
+          node scripts/zcloud_reload_extension.mjs
+          sleep 5
+          kill -0 "$main_pid"
+          new_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
+          test "$main_pid" = "$new_pid"
+          echo "FIREFOX_MAIN_PID_AFTER=$new_pid"
+          echo "PATCHED_ADDON_ACTIVE_WITH_NO_FIREFOX_RESTART=1"
