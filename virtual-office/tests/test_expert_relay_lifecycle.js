@@ -20,6 +20,7 @@ function mount(options = {}) {
   const status = {style:{},setAttribute(){},textContent:"",title:""};
   const doc = {
     body:{append(){}},
+    addEventListener(){},
     createElement(){return status},
     documentElement:{hasAttribute:(name)=>name==="data-zcloud-worker-id" && !!options.worker},
     querySelector(){return null}
