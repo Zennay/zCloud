@@ -96,10 +96,17 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         head = self.commit("delete dashboard")
         self.deny(self.base, head, "non_static_or_deleted_change")
 
-    def test_static_symlink_is_denied(self):
+    def test_existing_asset_changed_to_symlink_is_denied(self):
         (self.repo / "public" / "index.html").unlink()
         (self.repo / "public" / "index.html").symlink_to("../server.py")
         head = self.commit("symlink dashboard")
+        # git --name-status identifies a blob-to-symlink type change as T.
+        # This fails even earlier, before the Git-tree mode check.
+        self.deny(self.base, head, "non_static_or_deleted_change")
+
+    def test_newly_added_symlink_fails_git_tree_mode_validation(self):
+        (self.repo / "public" / "app.js").symlink_to("../server.py")
+        head = self.commit("add symlink dashboard app")
         self.deny(self.base, head, "non_regular_dashboard_asset")
 
     def test_non_utf8_and_nul_static_payloads_are_denied(self):
