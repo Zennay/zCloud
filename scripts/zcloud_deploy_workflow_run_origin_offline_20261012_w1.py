@@ -1,0 +1,66 @@
+"""Offline-only, non-authorizing classification of deploy-ops workflow_run provenance.
+
+A clean origin is *evidence*, not permission to cancel Actions runs, restart the
+VPS listener, push workers or touch the production database. The serialised
+release owner may adopt this policy, but this helper never executes operations.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+from typing import Any
+
+REPOSITORY = "Zennay/zCloud"
+UPSTREAM_WORKFLOW = "zCloud regression smoke"
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+
+
+@dataclass(frozen=True)
+class Decision:
+    trusted_origin_observed: bool
+    reason: str
+    actions_cancel_authorized: bool = False
+    runner_restart_authorized: bool = False
+    worker_push_authorized: bool = False
+    deploy_authorized: bool = False
+
+
+def classify(event: Any, *, canonical_main_sha: Any) -> Decision:
+    def deny(reason: str) -> Decision:
+        return Decision(False, reason)
+
+    if type(canonical_main_sha) is not str or SHA.fullmatch(canonical_main_sha) is None:
+        return deny("canonical_main_unknown")
+    if type(event) is not dict:
+        return deny("event_not_object")
+    if event.get("repository") != REPOSITORY:
+        return deny("trigger_repository_mismatch")
+    if event.get("event_name") != "workflow_run":
+        return deny("event_not_workflow_run")
+
+    source = event.get("workflow_run")
+    if type(source) is not dict:
+        return deny("source_not_object")
+    if source.get("name") != UPSTREAM_WORKFLOW:
+        return deny("wrong_workflow")
+    if source.get("event") != "push":
+        return deny("untrusted_source_event")
+    if source.get("head_branch") != "main":
+        return deny("untrusted_source_branch")
+    head_repo = source.get("head_repository")
+    if type(head_repo) is not dict or head_repo.get("full_name") != REPOSITORY:
+        return deny("untrusted_source_repository")
+    if source.get("status") != "completed" or source.get("conclusion") != "success":
+        return deny("source_not_successful_terminal")
+    if type(source.get("id")) is not int or source["id"] <= 0:
+        return deny("invalid_source_run_id")
+    if type(source.get("run_attempt")) is not int or not 1 <= source["run_attempt"] <= 100000:
+        return deny("invalid_source_attempt")
+
+    sha = source.get("head_sha")
+    if type(sha) is not str or SHA.fullmatch(sha) is None or sha != canonical_main_sha:
+        return deny("stale_or_invalid_source_sha")
+
+    # Classification of evidence is deliberately not a mutation grant:
+    # another independent, live, serialized owner/queue admission is required.
+    return Decision(True, "exact_main_origin_observed")
