@@ -69,27 +69,13 @@ function canOpenWorkerTab(workerId, reason, now = Date.now()) {
 }
 
 async function createWorkerTab(target, url, reason) {
+  // Critical safety policy: no worker may ever create a new tab in response
+  // to a lost mapping, stalled heartbeat, allocation change or prompt.
+  // Firefox native session restore owns real browser-crash recovery.
   const workerId = String(target?.project_id || "");
-  // P0 tab-identity incident: no automatic new tab/window, even if the
-  // extension loses its mapping during a ChatGPT route transition.
-  // Existing tabs are recovered through immutable session ownership only.
-  // Real browser crashes use Firefox's native session restore.
   if (workerId) postStatus({projectId:workerId,event:"worker-tab-create-suppressed",
     reason:String(reason || "preserve-existing-tabs").slice(0,100),at:new Date().toISOString()});
   return null;
-  // Kept below for future explicitly-authorized provisioning, but unreachable.
-  if (!workerId || !canOpenWorkerTab(workerId, reason)) return null;
-  tabOpensInFlight.add(workerId);
-  try {
-    // An inactive tab can run the existing Violentmonkey DOM script; never
-    // steal user focus from the Office Firefox or another worker.
-    const tab = await browser.tabs.create({url, active:false});
-    const now = Date.now();
-    const ledger = tabOpenLedger(now);
-    ledger[workerId] = [...(ledger[workerId] || []), now].slice(-TAB_OPEN_LIMIT);
-    try { localStorage.setItem(TAB_OPEN_LEDGER_KEY, JSON.stringify(ledger)); } catch (_) {}
-    return tab;
-  } finally { tabOpensInFlight.delete(workerId); }
 }
 
 
@@ -1899,6 +1885,18 @@ async function supersedeMissingTarget(projectId, commandId, action = "command") 
   });
 }
 async function newProjectChat(projectId, reason, commandId) {
+  // A backend/watchdog new_chat is not proof that the user is finished.
+  // Never navigate away from an existing ChatGPT conversation automatically,
+  // especially immediately after clicking Send. Only a future explicit
+  // operator-only in-place route is allowed by this safety gate.
+  if (reason !== "operator-requested-in-place-new-chat") {
+    postStatus({projectId,event:"worker-auto-new-chat-suppressed",
+      reason:String(reason || "keep-tab").slice(0,120),at:new Date().toISOString()});
+    if (commandId != null) await commandResult(commandId,"failed",
+      "Automatische chatrotatie geblokkeerd: bestaande Firefox-tab behouden");
+    return;
+  }
+
   const workerKeys = workerKeysFor(projectId);
   if (workerKeys.some(key => key !== projectId)) {
     if (runningActions.has(projectId)) return;
