@@ -188,3 +188,29 @@ jobs:
           assert health["version"] == "0.3-penthouse"
           print("Penthouse private API and static assets verified. No work queued by this probe.")
           PY
+
+      - name: Isolated Firefox visual evidence
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser="$(command -v firefox || true)"
+          if [ -z "$browser" ]; then
+            for candidate in /opt/firefox/firefox /usr/lib/firefox/firefox /snap/bin/firefox /home/ubuntu/firefox/firefox; do
+              if [ -x "$candidate" ]; then browser="$candidate"; break; fi
+            done
+          fi
+          test -n "$browser"
+          profile="$(mktemp -d "$RUNNER_TEMP/office-visual-XXXXXX")"
+          mkdir -p "$RUNNER_TEMP/office-visual"
+          printf 'user_pref("webgl.force-enabled",true);\nuser_pref("gfx.webrender.all",true);\n' > "$profile/user.js"
+          timeout 55s "$browser" --headless --no-remote --profile "$profile" --window-size 1600,1000 --screenshot "$RUNNER_TEMP/office-visual/lounge.png" http://127.0.0.1:3422/
+          test -s "$RUNNER_TEMP/office-visual/lounge.png"
+      - name: Preserve visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: office-visual-evidence
+          path: ${{ runner.temp }}/office-visual/
+          if-no-files-found: ignore
+          retention-days: 3
