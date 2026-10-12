@@ -48,12 +48,12 @@ jobs:
           root="http://127.0.0.1:18999"
           health=json.load(open("/tmp/office-health.json"))
           assert health["online"] is True
-          assert health["codex_ready"] is False
-          body=json.dumps({"employee":"maya","kind":"chat","instruction":"Maak een weekplanning"}).encode()
+          assert health["mode"] == "zcloud_chatgpt_chats"\n          assert health["zcloud_online"] is False
+          body=json.dumps({"employee":"maya","kind":"task","instruction":"Maak een weekplanning"}).encode()
           request=urllib.request.Request(root+"/api/jobs",data=body,headers={"Content-Type":"application/json"})
           response=json.load(urllib.request.urlopen(request))
           assert response["status"]=="queued"
           pending=json.load(urllib.request.urlopen(root+"/api/jobs"))
           assert pending["jobs"][0]["id"]==response["id"]
-          print("Live enqueue + durable pending queue OK")
+          print("Live browser UI + authenticated-independent SQLite outbox OK")
           PY
