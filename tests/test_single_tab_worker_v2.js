@@ -27,7 +27,7 @@ assert.ok(!/browser\.tabs\.update\s*\(/.test(source),
  "extension must never activate or navigate an existing tab");
 
 const events=[],tabs=[],tags=new Map(),calls=[];
-let nextId=20,snapshot={};
+let nextId=20,snapshot={},v2VersionConfirmed=true;
 const row=(id,slot)=>({project_id:id,active:true,assignment_ready:true,
  desired_state:"running",global_worker_count:4,global_worker_slot:slot,
  queue_item:{queue_id:"q"+slot},prompt:"Werk verder aan Supa. Kijk in Notion voor de taak."});
@@ -46,7 +46,8 @@ const browser={
    const item={id:nextId++,url:options.url,windowId:options.windowId,status:"complete"};
    tabs.push(item);return item;
   },
-  executeScript:async()=>[true],
+  executeScript:async(_tab,opts)=>opts?.code?.includes("data-zcloud-violentmonkey-ready")?
+    [v2VersionConfirmed?"2.0.0":"1.3.18"]:[true],
   remove:async id=>{calls.push({type:"remove",id});const index=tabs.findIndex(t=>t.id===id);if(index>=0)tabs.splice(index,1)},
   onRemoved:{addListener:noop},onUpdated:{addListener:noop}
  },
@@ -79,6 +80,14 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  assert.equal(tabs.find(t=>t.id===2).url,"https://chatgpt.com/c/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
  await pump();await pump();
  assert.equal(tabs.length,3,"30-second refresh preserves every existing tab");
+ // A live v1 userscript must not cause v2 to open more worker tabs in Medium.
+ v2VersionConfirmed=false;
+ snapshot={...snapshot,"supa::w3":row("supa::w3",3)};
+ await pump();
+ assert.equal(calls.filter(x=>x.type==="create").length,1,
+   "new worker is deferred when old MonkeyScript still owns existing tabs");
+ v2VersionConfirmed=true;
+ snapshot={"supa::w1":row("supa::w1",1),"supa::w2":row("supa::w2",2)};
  // A temporary data outage or missing worker allocation never permits remove.
  snapshot={"supa::w1":row("supa::w1",1)};
  await pump();await pump();
