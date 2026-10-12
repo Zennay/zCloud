@@ -82,8 +82,12 @@ jobs:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
-          if ! systemctl --user is-active --quiet chatgpt-firefox.service; then
-            echo "Worker Firefox service inactive (userscript-only mode or no desktop). No restart."
+          # The active user session normally runs as standalone Violentmonkey
+          # Firefox. systemd may be inactive even though a live Firefox with
+          # the remote debugger is open. Detect the actual browser process
+          # and hot-reload only the add-on, not the window or any tab.
+          if ! ps -eo args= | grep -E '[f]irefox.*-start-debugger-server[[:space:]]+[0-9]+' >/dev/null; then
+            echo "No running Firefox debugger: defer extension reload; never start a window."
             exit 0
           fi
           if ! python3 - <<'PY'
