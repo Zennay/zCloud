@@ -126,5 +126,19 @@ jobs:
           else
             echo "V2_ADDON_ACTIVATION_DEFERRED=busy-or-idle-unverified"
           fi
+          # Retire the two competing *legacy worker recovery timers*. Stop
+          # timers only; do not touch Firefox, Xorg, the backend, or GitHub
+          # runner. Keep zcloud-firefox-supervisor.timer for real crashes.
+          if systemctl --user disable --now chatgpt-runner-watchdog.timer; then
+            echo "LEGACY_WORKER_WATCHDOG_TIMER_STOPPED=1"
+          else
+            echo "LEGACY_WORKER_WATCHDOG_TIMER_STOP_FAILED=1"
+          fi
+          if sudo -n systemctl disable --now zcloud-self-heal.timer; then
+            echo "LEGACY_SELF_HEAL_TIMER_STOPPED=1"
+          else
+            echo "LEGACY_SELF_HEAL_TIMER_STOP_FAILED=1"
+          fi
+          echo "CRASH_SUPERVISOR_TIMER_STATUS=$(systemctl is-active zcloud-firefox-supervisor.timer || true)"
           echo "VM_INSTALLED_SCRIPT_ACTIVATION_REQUIRES_VERSION_CHECK=1"
           echo "EXISTING_CHAT_TABS_PRESERVED=1"
