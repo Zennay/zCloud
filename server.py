@@ -448,11 +448,19 @@ def restart_firefox_runtime():
         # A genuinely dead Firefox has no PIDs to signal. Never kill a
         # browser here; one window with restored tabs is handled by Firefox.
         log_path=Path('/tmp/zcloud-firefox-recovery.log')
+        # Always recover the EXACT original standalone Firefox profile.
+        # A plain '/usr/bin/firefox' used the default profile, opening an
+        # apparently new browser without the six worker tabs or extension.
+        profile=Path.home()/'snap/firefox/common/chatgpt-webext-profile'
+        if not profile.is_dir():
+            return {**current, 'recovery_error':'original-worker-profile-not-found',
+                    'allocation_preserved':True, 'released_slots':released}
         with log_path.open('ab',buffering=0) as log:
             subprocess.Popen(
-                # No worker URLs: Firefox restores its own profile/session.
-                # Multiple URL args on every recovery spawned duplicate tabs.
-                ['/usr/bin/firefox'],
+                # Firefox restores the saved window/tabs; the v2 controller
+                # rebinds their session tags and adds only truly missing slots.
+                ['/usr/bin/firefox','-no-remote','-profile',str(profile),
+                 '-start-debugger-server','45485'],
                 stdin=subprocess.DEVNULL,stdout=log,stderr=log,
                 env=env,start_new_session=True,close_fds=True,
             )
