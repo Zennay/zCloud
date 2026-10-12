@@ -1,0 +1,63 @@
+name: zCloud worker Firefox read-only current state
+on:
+  push:
+    branches: [diag/worker-firefox-post-canary-20261012]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read live browser owners and dynamic worker state without mutation
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo '=== SERVICE STATES ==='
+          for svc in chatgpt-firefox.service office-relay-vps.service; do
+            printf '%s=' "$svc"
+            systemctl --user is-active "$svc" || true
+          done
+          echo '=== FIREFOX PARENT PROCESS PROFILE SUMMARY ==='
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          for proc in Path('/proc').iterdir():
+              if not proc.name.isdigit(): continue
+              try:
+                  raw=(proc/'cmdline').read_bytes().split(b'\0')
+              except (OSError,PermissionError): continue
+              args=[a.decode('utf-8','replace') for a in raw if a]
+              if not args or not any('firefox' in a.lower() for a in args[:1]):continue
+              if '-contentproc' in args: continue
+              profile=''
+              for i,v in enumerate(args):
+                  if v in ('-profile','--profile') and i+1<len(args):
+                      profile=args[i+1]
+              print('Firefox parent pid='+proc.name+' profile='+profile[:110]+' argc='+str(len(args)))
+          PY
+          echo '=== WORKER READBACK ==='
+          python3 - <<'PY'
+          import json,urllib.request
+          try:
+              with urllib.request.urlopen('http://127.0.0.1:8765/api/runner-live',timeout=8) as response:
+                  data=json.load(response)
+              runners=data.get('chatgpt_runners') or {}
+              for pid,item in runners.items():
+                  for w in item.get('workers') or []:
+                      print(str(w.get('worker_id'))[:85],
+                            'state='+str(w.get('state')),
+                            'active='+str(w.get('active')),
+                            'generating='+str(w.get('generating')),
+                            'sending='+str(w.get('sending')),
+                            'age='+str(w.get('age_seconds')))
+          except Exception as exc:
+              print('worker-state-unavailable:'+type(exc).__name__)
+          PY
