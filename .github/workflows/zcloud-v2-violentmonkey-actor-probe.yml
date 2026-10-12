@@ -1,0 +1,65 @@
+name: zCloud v2 Violentmonkey debugger inspection
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-violentmonkey-actor-probe.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 4
+    steps:
+      - name: Read-only addon/console actor inventory, no browser mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          python3 - <<'PY'
+          import json, re, socket, subprocess
+          p=subprocess.run(["ps","-eo","args="],capture_output=True,text=True,timeout=5)
+          ports=[int(x) for x in re.findall(r"-start-debugger-server\s+(\d+)",p.stdout)]
+          print("FIREFOX_DEBUGGER_COUNT="+str(len(ports)))
+          if len(ports)!=1:raise SystemExit(0)
+          sock=socket.create_connection(("127.0.0.1",ports[0]),timeout=4)
+          with sock:
+              sock.settimeout(6)
+              def recv():
+                  n=b""
+                  while True:
+                      c=sock.recv(1)
+                      if c==b":":break
+                      if not c or not c.isdigit():raise ValueError("Invalid RDP frame")
+                      n+=c
+                      if len(n)>10:raise ValueError("oversize header")
+                  count=int(n)
+                  if count>2000000:raise ValueError("oversize body")
+                  body=b""
+                  while len(body)<count:body+=sock.recv(count-len(body))
+                  return json.loads(body)
+              def send(data):
+                  body=json.dumps(data).encode()
+                  sock.sendall(str(len(body)).encode()+b":"+body)
+              root=recv();print("RDP_GREETING_FIELDS="+json.dumps(sorted(root.keys())))
+              send({"to":root.get("from","root"),"type":"listAddons"})
+              reply=recv()
+              print("RDP_LIST_ADDONS_FIELDS="+json.dumps(sorted(reply.keys())))
+              print("RDP_LIST_ADDONS_ERROR="+str(reply.get("error") or "none")[:100])
+              for addon in reply.get("addons",[])[:100]:
+                  if not isinstance(addon,dict):continue
+                  if "aecec67f" not in str(addon.get("id","")) and "project-runner" not in str(addon.get("id","")):
+                      continue
+                  print("RDP_RELEVANT_ADDON_FIELD_NAMES="+json.dumps(sorted(addon.keys())))
+                  print("RDP_RELEVANT_ADDON_ID="+str(addon.get("id",""))[:100])
+                  if not addon.get("actor"):continue
+                  send({"to":addon["actor"],"type":"getTarget"})
+                  result=recv()
+                  print("RDP_GET_ADDON_TARGET_FIELDS="+json.dumps(sorted(result.keys())))
+                  for key in ["form","target","frame"]:
+                      if isinstance(result.get(key),dict):
+                          print("RDP_ADDON_"+key.upper()+"_FIELDS="+json.dumps(sorted(result[key].keys())))
+                  break
+          print("READ_ONLY_NO_TAB_CHANGES=1")
+          PY

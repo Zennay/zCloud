@@ -1,0 +1,45 @@
+name: zCloud v2 legacy worker service audit
+on:
+  pull_request:
+    paths: [.github/workflows/zcloud-v2-legacy-service-audit.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Read-only worker process and services inventory
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          echo "=== FIREFOX MAIN PROCESSES ==="
+          ps -eo pid=,ppid=,comm=,args= | grep -E '[f]irefox.*(-profile|-start-debugger-server)' | head -n 5 || true
+          echo "=== USER SERVICES ==="
+          systemctl --user list-units --all --no-pager --plain |
+            grep -Ei 'zcloud|chatgpt|firefox|worker|watchdog|self-heal' | head -n 65 || true
+          echo "=== SYSTEM SERVICES ==="
+          systemctl list-units --all --no-pager --plain |
+            grep -Ei 'zcloud|zennay-cloud|chatgpt|firefox|worker|watchdog|self-heal' | head -n 65 || true
+          echo "=== TIMERS ==="
+          systemctl --user list-timers --all --no-pager |
+            grep -Ei 'zcloud|chatgpt|firefox|worker|watchdog' | head -n 25 || true
+          echo "=== RUNNER VERSION EVIDENCE ==="
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js")
+          if p.exists():
+              for line in p.read_text(errors="replace").splitlines()[:8]:
+                  if line.startswith("// @version"):print("LIVE_VM_SCRIPT_SOURCE_VERSION="+line.strip())
+          e=Path("/home/ubuntu/snap/firefox/common/chatgpt-project-extension/manifest.json")
+          if e.exists():
+              import json
+              v=json.loads(e.read_text())
+              print("LIVE_EXTENSION_BACKGROUND_FILES="+repr(v.get("background",{}).get("scripts",[])))
+          PY
+          echo "NO_PROCESS_OR_TAB_MUTATION=1"
