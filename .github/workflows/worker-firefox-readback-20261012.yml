@@ -61,3 +61,34 @@ jobs:
           except Exception as exc:
               print('worker-state-unavailable:'+type(exc).__name__)
           PY
+
+          echo '=== TAB OPENING EVENTS (LAST 15 MINUTES) ==='
+          python3 - <<'PY'
+          import sqlite3
+          from pathlib import Path
+          db=Path('/home/ubuntu/zennay-cloud/history.db')
+          if not db.is_file():
+              print('worker-event-db-unavailable')
+          else:
+              try:
+                  with sqlite3.connect(f'file:{db}?mode=ro',uri=True,timeout=4) as con:
+                      rows=con.execute("""
+                          SELECT event,COUNT(*) FROM runner_events
+                          WHERE ts>=datetime('now','-15 minutes')
+                            AND event IN ('target-tab-opening','worker-handoff-opened',
+                              'worker-tab-open-rate-limited','worker-tab-closed-cooldown',
+                              'assignment-refresh-failed','target-tab-recovered')
+                          GROUP BY event ORDER BY event
+                      """).fetchall()
+                      print('last-15min-event-counts='+str(dict(rows)))
+                      recent=con.execute("""
+                          SELECT ts,event,project_id FROM runner_events
+                          WHERE event IN ('target-tab-opening','worker-handoff-opened',
+                            'worker-tab-open-rate-limited','worker-tab-closed-cooldown')
+                          ORDER BY id DESC LIMIT 20
+                      """).fetchall()
+                      for ts,event,project in recent:
+                          print(str(ts)[:24],str(event)[:48],str(project or '')[:65])
+              except sqlite3.Error as exc:
+                  print('read-only-sqlite-unavailable:'+type(exc).__name__)
+          PY
