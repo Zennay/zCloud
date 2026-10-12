@@ -52,6 +52,10 @@ jobs:
           # Ensure this release contains the soft-contact dribbling collision solver.
           grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
           grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
+          # Fail closed unless this validated contact/modes release is complete.
+          grep -q 'BALL_SPEED_MULTIPLIER=1.44' shared/physics.js
+          grep -q 'function reconcileVisual' shared/prediction.js
+          grep -q 'id="soloTeams"' public/index.html
           # New game UX and bot must ship together with the original stadium.
           grep -q 'let extrapMs=135,renderScale=1;' public/index.html
           grep -q 'id="optionsScreen"' public/index.html
@@ -84,11 +88,14 @@ jobs:
           grep -q 'id="roomSidebar"' /tmp/fuckball-deployed.html
           grep -q 'id="optionsScreen"' /tmp/fuckball-deployed.html
           grep -q 'id="chatDock"' /tmp/fuckball-deployed.html
+          grep -q 'id="soloTeams"' /tmp/fuckball-deployed.html
           grep -q 'let extrapMs=135,renderScale=1;' /tmp/fuckball-deployed.html
           grep -q "pulseball.extrapolation.v2" /tmp/fuckball-deployed.html
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" -o /tmp/fuckball-bot-deployed.js
           grep -q 'function reply(message,g,bot)' /tmp/fuckball-bot-deployed.js
-          echo "Fullscreen/high-refresh game UI verified on VPS"
+          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/physics.js" -o /tmp/fuckball-physics-deployed.js
+          grep -q 'BALL_SPEED_MULTIPLIER=1.44' /tmp/fuckball-physics-deployed.js
+          echo "Fullscreen/high-refresh 4v4 game and new ball pace verified on VPS"
           if command -v ufw >/dev/null 2>&1; then
             sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
           fi
