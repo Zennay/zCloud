@@ -49,7 +49,12 @@ class FirefoxWorkerCrashRestore(unittest.TestCase):
         self.assertNotIn("rm -rf \"$PROFILE/sessionstore-backups\"", source)
         self.assertNotIn("ExecStopPost=/home/ubuntu/.local/bin/chatgpt-firefox-stop.sh", unit)
         self.assertIn("KillMode=control-group", unit)
-        self.assertIn("Restart=always", unit)
+        self.assertIn("Restart=on-abnormal", unit)
+        self.assertNotIn("Restart=always", unit)
+        self.assertEqual(
+            unit, (ROOT / "systemd-user-units/chatgpt-firefox.service").read_text(),
+            "both unit copies must disable profile-lock restart loops",
+        )
         self.assertIn("ExecStartPre=/home/ubuntu/.local/bin/chatgpt-firefox-prestart.sh", unit)
 
 
