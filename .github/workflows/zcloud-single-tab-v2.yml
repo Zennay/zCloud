@@ -10,6 +10,7 @@ on:
       - firefox-extension/manifest.json
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
+      - tests/test_single_tab_v2_cycle.js
       - .github/workflows/zcloud-single-tab-v2.yml
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - firefox-extension/manifest.json
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
+      - tests/test_single_tab_v2_cycle.js
       - .github/workflows/zcloud-single-tab-v2.yml
 
 permissions:
@@ -45,6 +47,7 @@ jobs:
           node --check public/zcloud-worker.user.js
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_single_tab_v2_cycle.js
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tab_reuse.js
           node tests/test_firefox_recovery_contract.js
@@ -72,6 +75,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_single_tab_v2_cycle.js
           root="/home/ubuntu/zennay-cloud"
           addon="$HOME/snap/firefox/common/chatgpt-project-extension"
           backup="$HOME/.local/state/zcloud/worker-v2-backup-$GITHUB_RUN_ID"
