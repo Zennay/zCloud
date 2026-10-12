@@ -119,14 +119,27 @@ def zcloud(path: str, payload: dict | None = None, timeout: float = 3.5) -> dict
     return doc
 
 
+_HEALTH_LOCK = threading.Lock()
+_HEALTH_CACHE = {"expires": 0.0, "value": {}}
+
+
 def zcloud_health() -> dict:
-    try:
-        status = zcloud("/api/runner-live", timeout=2.5)
-        workers = status.get("chatgpt_runners") or {}
-        return {"zcloud_online": True, "chatgpt_worker_data": bool(workers),
-                "firefox": (status.get("chatgpt_firefox") or {}).get("active", False)}
-    except (RuntimeError, ConnectionError, ValueError):
-        return {"zcloud_online": False, "chatgpt_worker_data": False, "firefox": False}
+    # /api/runner-live can take >3 seconds on a busy VPS. Cache its
+    # authenticated loopback read so public health polling cannot hammer zCloud.
+    with _HEALTH_LOCK:
+        now = time.monotonic()
+        if now < _HEALTH_CACHE["expires"]:
+            return dict(_HEALTH_CACHE["value"])
+        try:
+            status = zcloud("/api/runner-live", timeout=8)
+            workers = status.get("chatgpt_runners") or {}
+            result = {"zcloud_online": True, "chatgpt_worker_data": bool(workers),
+                      "firefox": (status.get("chatgpt_firefox") or {}).get("active", False)}
+        except (RuntimeError, ConnectionError, ValueError):
+            result = {"zcloud_online": False, "chatgpt_worker_data": False, "firefox": False}
+        _HEALTH_CACHE["value"] = result
+        _HEALTH_CACHE["expires"] = time.monotonic() + 20
+        return dict(result)
 
 
 def enqueue(employee: str, kind: str, instruction: str) -> dict:
