@@ -180,7 +180,7 @@ def build_portfolio_payload(job: dict) -> dict:
     instruction = job["instruction"]
     # This is a real zCloud write/build queue, not a general chat interface.
     # Fail closed on obviously conversation-only messages.
-    first = instruction.lower().strip().split(" ", 1)[0]
+    first = instruction.lower().strip().split(" ", 1)[0].strip(".,!?;:")
     if first in ("hey", "hoi", "hallo", "hoe", "wat", "waar", "waarom", "wie", "wanneer"):
         raise ValueError("Dit klinkt als een gesprek. Open de bestaande ChatGPT-chat; de werkqueue is alleen voor uitvoerbare taken.")
     title = "Implement office-opdracht: " + instruction.replace("\n", " ")[:220]
