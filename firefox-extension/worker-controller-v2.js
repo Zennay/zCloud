@@ -100,10 +100,33 @@
       const tabs = await recoverOwnership();
       const desired = new Map(Object.values(payload.projects).filter(ready).map(t => [t.project_id,t]));
       const windowId = await chooseWindow(tabs);
+      // Never start additional workers while any existing tagged worker is
+      // still running the old Violentmonkey script. The previous v1 script
+      // could send prompts in Medium and restart chats on stale commands.
+      // A cold empty window may bootstrap ONE tab, then prove the installed
+      // v2 script before provisioning the next one.
+      let canProvision=true,bootstrapped=ownership.size===0;
+      for(const [key,tabId] of ownership){
+        try{
+          const result=await browser.tabs.executeScript(tabId,{
+            code:'document.documentElement?.getAttribute("data-zcloud-violentmonkey-ready") || ""'
+          });
+          if(!Array.isArray(result)||String(result[0]||"")!=="2.0.0"){
+            canProvision=false;
+            await note("v2-provision-deferred",key,"old-or-unverified-monkeyscript");
+          }
+        }catch(_){
+          canProvision=false;
+          await note("v2-provision-deferred",key,"script-version-not-readable");
+        }
+      }
       // Workers are never moved between tabs. Existing tabs are preferred.
       for (const [key, target] of desired) {
         candidateRemovals.delete(key);
-        if (!ownership.has(key)) await createWorkerTab(key,target,windowId);
+        if(!ownership.has(key) && canProvision){
+          await createWorkerTab(key,target,windowId);
+          if(bootstrapped)canProvision=false; // one cold-start tab per check
+        }
       }
       // Missing configuration alone is NOT deletion. Require three complete
       // snapshots plus the latest durable dashboard worker-count reduction,
