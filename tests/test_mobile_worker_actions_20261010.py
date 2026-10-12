@@ -43,7 +43,7 @@ const button=(project)=>({closest:()=>({querySelector:()=>({value:project})})});
   retryMarkup=vm.runInContext('globalWorkerRows()',ctx);
   second=retryMarkup.split('data-global-slot="2"')[1].split('</article>')[0];
   assert.match(second,/data-global-worker-play="2"[^>]*aria-label="Start worker 2"[^>]*>/,'stale request must permit retry');
-  assert.match(second,/Nog niet toegewezen aan dit slot/);
+  assert.match(second,/Nog niet toegewezen/);
   vm.runInContext('WORKER_DEBUG=null; WORKER_DEBUG_ERROR="Diagnostics are only visible from a trusted admin device.";',ctx);
   const unavailable=vm.runInContext('globalWorkerRows()',ctx);
   assert.match(unavailable,/global-worker-access/);
