@@ -139,6 +139,14 @@ jobs:
           else
             echo "LEGACY_SELF_HEAL_TIMER_STOP_FAILED=1"
           fi
+          # The legacy local zCloud watchdog is also an old automation
+          # consumer. Keep service crash recovery in systemd and the dedicated
+          # Firefox supervisor, not a third browser-control timer.
+          if systemctl --user disable --now zcloud-watchdog.timer; then
+            echo "LEGACY_LOCAL_WATCHDOG_TIMER_STOPPED=1"
+          else
+            echo "LEGACY_LOCAL_WATCHDOG_TIMER_STOP_FAILED=1"
+          fi
           echo "CRASH_SUPERVISOR_TIMER_STATUS=$(systemctl is-active zcloud-firefox-supervisor.timer || true)"
           echo "VM_INSTALLED_SCRIPT_ACTIVATION_REQUIRES_VERSION_CHECK=1"
           echo "EXISTING_CHAT_TABS_PRESERVED=1"
