@@ -285,14 +285,34 @@ def _violentmonkey_only_mode():
         return False
 
 def _standalone_firefox_pids():
+    """Detect *all* Firefox main processes, not just one Snap argv layout.
+
+    Missing a live Firefox instance caused the recovery watchdog to launch a
+    second window. Never count content processes or the pgrep command itself.
+    """
+    pids=[]
     try:
-        proc=subprocess.run(
-            ['pgrep','-u',str(os.getuid()),'-f',r'/snap/firefox/.*/usr/lib/firefox/firefox'],
-            text=True,capture_output=True,check=False,timeout=5,
-        )
-        return [int(value) for value in proc.stdout.split() if value.isdigit()]
-    except Exception:
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                if entry.stat().st_uid != os.getuid():
+                    continue
+                raw=(entry/'cmdline').read_bytes().split(b'\0')
+                argv=[item.decode('utf-8','replace') for item in raw if item]
+                if not argv:
+                    continue
+                executable=Path(argv[0]).name.lower()
+                if executable not in ('firefox','firefox-bin','firefox-esr'):
+                    continue
+                if '-contentproc' in argv:
+                    continue
+                pids.append(int(entry.name))
+            except (OSError, ValueError):
+                continue
+    except OSError:
         return []
+    return sorted(pids)
 
 def _firefox_session_env(primary_pid=None):
     allowed={
@@ -440,7 +460,9 @@ def restart_firefox_runtime():
         log_path=Path('/tmp/zcloud-firefox-recovery.log')
         with log_path.open('ab',buffering=0) as log:
             subprocess.Popen(
-                ['/usr/bin/firefox',*_firefox_bootstrap_urls()],
+                # No worker URLs: Firefox restores its own profile/session.
+                # Multiple URL args on every recovery spawned duplicate tabs.
+                ['/usr/bin/firefox'],
                 stdin=subprocess.DEVNULL,stdout=log,stderr=log,
                 env=env,start_new_session=True,close_fds=True,
             )

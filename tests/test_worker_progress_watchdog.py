@@ -181,7 +181,7 @@ class WorkerWatchdogApiDegradedMemoryRecoveryTests(unittest.TestCase):
         }
         self.assertFalse(watchdog.selected_worker_runtime_lost({"cloud::w1"}, runtime))
 
-    def test_status_timeout_with_warning_ram_and_exhausted_swap_restarts_firefox(self):
+    def test_status_timeout_with_warning_ram_preserves_browser_tabs(self):
         original_api_call = watchdog.api_call
         original_memory_guard = watchdog.host_memory_guard
         calls = []
@@ -227,17 +227,13 @@ class WorkerWatchdogApiDegradedMemoryRecoveryTests(unittest.TestCase):
             watchdog.host_memory_guard = original_memory_guard
 
         self.assertTrue(result["ok"], result)
-        self.assertEqual(
-            "status-unavailable-memory-pressure-worker-runtime-lost",
-            result["reason"],
-        )
-        self.assertEqual("restart_firefox", result["global_action"]["action"])
-        self.assertTrue(any(
-            method == "POST"
-            and path == "/api/runner-control"
+        self.assertEqual("status-unavailable-memory-pressure-browser-preserved", result["reason"])
+        self.assertEqual("restart_firefox_suppressed", result["global_action"]["action"])
+        self.assertFalse(any(
+            method == "POST" and path == "/api/runner-control"
             and payload == {"project_id": "", "action": "restart_firefox"}
             for method, path, payload in calls
-        ))
+        ), "a status timeout must not destroy a live Firefox session")
 
 
 class WorkerWatchdogCriticalMemoryRecoveryTests(unittest.TestCase):
@@ -300,7 +296,7 @@ class WorkerWatchdogCriticalMemoryRecoveryTests(unittest.TestCase):
 
 
 class WorkerWatchdogRuntimeRecoveryTests(unittest.TestCase):
-    def test_critical_memory_lost_runtime_restarts_firefox(self):
+    def test_critical_memory_with_live_firefox_preserves_tabs(self):
         original_api_call = watchdog.api_call
         calls = []
 
@@ -358,15 +354,12 @@ class WorkerWatchdogRuntimeRecoveryTests(unittest.TestCase):
             watchdog.api_call = original_api_call
 
         self.assertTrue(result["ok"], result)
-        self.assertEqual("critical-memory-worker-runtime-lost", result["reason"])
-        self.assertEqual("restart_firefox", result["global_action"]["action"])
-        self.assertTrue(result["global_action"]["ok"])
-        self.assertTrue(any(
-            method == "POST"
-            and path == "/api/runner-control"
+        self.assertNotEqual("critical-memory-worker-runtime-lost", result.get("reason"))
+        self.assertFalse(any(
+            method == "POST" and path == "/api/runner-control"
             and payload == {"project_id": "", "action": "restart_firefox"}
             for method, path, payload in calls
-        ))
+        ), "offline workers cannot authorize recycling an active Firefox desktop")
 
     def test_inactive_firefox_is_recovered_before_stall_timers(self):
         original_api_call = watchdog.api_call
