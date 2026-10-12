@@ -1,0 +1,47 @@
+name: zCloud UI publish priority queue release
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/zcloud-ui-priority-queue-20261013.yml]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  free-ui-deploy-slot:
+    if: github.repository == 'Zennay/zCloud' && github.actor == 'Zennay'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Prioritize verified worker cockpit publication without interrupting active jobs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          main_sha="$(gh api "repos/$repo/commits/main" --jq .sha)"
+          # UI files must be unchanged since exact-head hosted green.
+          for path in public/app.js public/enhancements.css public/index.html; do
+            expected="$(gh api "repos/$repo/contents/$path?ref=50cc2e0696254e47d03e14509f345cb2c122f699" --jq .sha)"
+            observed="$(gh api "repos/$repo/contents/$path?ref=main" --jq .sha)"
+            test "$observed" = "$expected"
+          done
+          echo "PRIORITY_UI_MAIN_STATIC_VERIFIED=$main_sha"
+          runs="$(gh api "repos/$repo/actions/runs?branch=fix/worker-allocation-cockpit-20261013&per_page=60")"
+          keeper="$(jq -r '[.workflow_runs[] | select(.name == "zCloud UI-only guarded publish 2026-10-13" and .head_sha == "74ee4d4c1f37de439ba873e88a3564345f21452c")][0].id // empty' <<<"$runs")"
+          test -n "$keeper"
+          echo "PRIORITY_UI_KEEP_RUN=$keeper"
+          cancelled=0
+          while IFS=$'\t' read -r id status sha; do
+            test -n "$id" || continue
+            test "$id" != "$keeper" || continue
+            case "$status" in queued|pending|waiting|requested) ;; *) continue ;; esac
+            # Only obsolete runs of this same UI publish workflow. Never cancel
+            # current worker jobs, diagnostics, production promotions or tests.
+            gh api -X POST "repos/$repo/actions/runs/$id/cancel" >/dev/null
+            echo "PRIORITY_UI_CANCEL_SUPERSEDED=$id sha=$sha"
+            cancelled=$((cancelled + 1))
+          done < <(jq -r '.workflow_runs[] | select(.name == "zCloud UI-only guarded publish 2026-10-13") | [.id,.status,.head_sha] | @tsv' <<<"$runs")
+          echo "PRIORITY_UI_QUEUE_FREED=$cancelled keeper=$keeper"

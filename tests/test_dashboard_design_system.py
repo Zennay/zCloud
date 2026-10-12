@@ -20,10 +20,10 @@ class DashboardDesignSystemTests(unittest.TestCase):
         cls.html = (PUBLIC / "index.html").read_text(encoding="utf-8")
 
     def test_shared_styles_load_after_existing_dashboard_styles(self):
-        self.assertIn('href="/enhancements.css?v=r4"', self.html)
+        self.assertIn('href="/enhancements.css?v=r5"', self.html)
         self.assertNotIn('href="/design-system.css', self.html)
         self.assertLess(self.html.index('href="/style.css"'),
-                        self.html.index('href="/enhancements.css?v=r4"'))
+                        self.html.index('href="/enhancements.css?v=r5"'))
         self.assertIn(
             "/* zCloud design-system.css bundled for the server's static-file allowlist */\n"
             + self.system.strip() + "\n",

@@ -13,7 +13,9 @@ class MobileRunnerControlsTests(unittest.TestCase):
         self.assertIn("function globalWorkerRows()", app)
         self.assertIn('data-global-worker-play', app)
         self.assertNotIn("${projectPrimaryActions(p,'detail')}", app)
-        self.assertIn('class=\"overview-advanced project-worker-advanced\"', app)
+        self.assertNotIn('class=\"overview-advanced project-worker-advanced\"', app)
+        self.assertIn('class="worker-console worker-cockpit"', app)
+        self.assertIn('data-global-worker-force', app)
         self.assertNotIn("${mobileRunnerControls(p)}${runnerControls(p)}", app)
 
 

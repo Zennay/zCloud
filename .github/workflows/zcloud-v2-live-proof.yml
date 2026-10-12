@@ -1,0 +1,69 @@
+name: zCloud v2 verified live worker proof
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-live-proof.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prove:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Verify active 30-second v2 workers, timers and Firefox without mutation
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          python3 - <<'PY'
+          import json,subprocess,urllib.request,re
+          from pathlib import Path
+          script=Path("/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js")
+          addon=Path("/home/ubuntu/snap/firefox/common/chatgpt-project-extension")
+          source=script.read_text(errors="replace") if script.is_file() else ""
+          print("V2_VM_SOURCE_PRESENT="+str("// @version      2.0.0" in source))
+          manifest=json.loads((addon/"manifest.json").read_text()) if (addon/"manifest.json").is_file() else {}
+          print("V2_MANIFEST_ON_DISK="+str("worker-controller-v2.js" in manifest.get("background",{}).get("scripts",[])))
+          cmd=subprocess.run(["ps","-eo","pid=,args="],capture_output=True,text=True,timeout=4).stdout
+          firefox=[m.group(1) for line in cmd.splitlines() if "/firefox" in line and "-start-debugger-server" in line if (m:=re.search(r"^\s*(\d+)",line))]
+          print("FIREFOX_MAIN_PROCESS_COUNT="+str(len(firefox)))
+          print("FIREFOX_MAIN_PID="+(firefox[0] if firefox else "none"))
+          for unit in ("chatgpt-runner-watchdog.timer","zcloud-watchdog.timer"):
+              p=subprocess.run(["systemctl","--user","is-active",unit],capture_output=True,text=True,timeout=4)
+              print("LEGACY_USER_TIMER_"+unit.replace(".","_").upper()+"="+p.stdout.strip())
+          for unit in ("zcloud-self-heal.timer","zcloud-firefox-supervisor.timer"):
+              p=subprocess.run(["systemctl","is-active",unit],capture_output=True,text=True,timeout=4)
+              print("SYSTEM_TIMER_"+unit.replace(".","_").upper()+"="+p.stdout.strip())
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=8) as r:
+                  data=json.load(r)
+              workers=[w for p in (data.get("chatgpt_runners") or {}).values()
+                       for w in (p.get("workers") or []) if w.get("active")]
+              from collections import Counter
+              import sqlite3
+              db=sqlite3.connect("file:/home/ubuntu/zennay-cloud/history.db?mode=ro",uri=True,timeout=5)
+              with db:
+                  reasons=Counter()
+                  for w in workers:
+                      base=str(w.get("worker_id") or "").split("::w")[0]
+                      slot=int(w.get("worker_slot") or 1)
+                      row=db.execute(
+                        "SELECT reason FROM runner_events WHERE project_id=? AND worker_slot=? AND event='heartbeat' ORDER BY id DESC LIMIT 1",
+                        (base,slot)
+                      ).fetchone()
+                      reasons[str(row[0] if row else "missing")]+=1
+              db.close()
+              print("ACTIVE_WORKER_COUNT="+str(len(workers)))
+              print("WORKER_HEARTBEAT_REASONS="+json.dumps(dict(reasons)))
+              v2=reasons.get("worker-v2-check-30s",0)
+              print("ACTIVE_WORKERS_WITH_V2_HEARTBEAT="+str(v2))
+              print("ACTIVE_SCRIPT_V2_ALL_CONFIRMED="+str(bool(workers) and v2==len(workers)))
+          except Exception as e:
+              print("LIVE_WORKER_READ_FAILED="+type(e).__name__)
+          PY
+          echo 'READ_ONLY_PROOF_NO_TAB_OR_PROCESS_MUTATION=1'

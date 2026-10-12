@@ -17,8 +17,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertLess(overview.index("globalWorkerConsole()"), overview.index('class="project-grid"'))
         self.assertLess(overview.index('class="project-grid"'), overview.index('class="stat-grid"'))
         self.assertNotIn('data-disclosure="automation-settings"', overview)
-        self.assertIn("System controls", overview)
-        self.assertIn('data-disclosure="system-controls"', overview)
+        self.assertNotIn("System controls", overview)
+        self.assertNotIn('data-disclosure="system-controls"', overview)
 
     def test_project_detail_keeps_primary_action_above_context_and_hides_worker_detail(self):
         app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
@@ -30,9 +30,9 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         card = app[app.index("function projectCard(p)"):app.index("\nfunction attentionPanel", app.index("function projectCard(p)"))]
         self.assertNotIn("projectPrimaryActions(p)", card)
         self.assertNotIn("mobileRunnerControls(p)", card)
-        self.assertIn("project-worker-advanced", detail)
-        self.assertIn("Worker details", detail)
-        self.assertIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
+        self.assertNotIn("project-worker-advanced", detail)
+        self.assertNotIn("Worker details", detail)
+        self.assertNotIn('data-disclosure="project-workers-${esc(p.id)}"', detail)
         self.assertIn("openDisclosures", app)
         self.assertIn("details[data-disclosure][open]", app)
 
@@ -44,8 +44,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertIn("--ux-radius:14px", css)
         self.assertIn(".project-primary-actions", css)
         self.assertIn(".overview-advanced", css)
-        self.assertIn("/app.js?v=r7", index)
-        self.assertIn("/enhancements.css?v=r4", index)
+        self.assertIn("/app.js?v=r8", index)
+        self.assertIn("/enhancements.css?v=r5", index)
         self.assertNotIn("/design-system.css?v=", index)
         self.assertIn("function globalWorkerRows()", (ROOT / "public" / "app.js").read_text(encoding="utf-8"))
 
