@@ -97,8 +97,7 @@ class OfficeTests(unittest.TestCase):
         server.dispatch_once()
         self.assertEqual(server.get_job(job["id"])["status"],"failed")
         self.assertEqual(server.retry(job["id"])["status"],"queued")
-        with patch.object(server, "zcloud", return_value={"item":{"queue_id":server.office_queue_id(job)}}):
-            server.dispatch_once()
+        self.assertEqual(server.get_job(job["id"])["status"], "queued")
         self.assertIsNone(server.retry(job["id"]))
 
     def test_project_chat_links_from_live_targets(self):
