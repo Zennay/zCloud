@@ -70,6 +70,14 @@ function canOpenWorkerTab(workerId, reason, now = Date.now()) {
 
 async function createWorkerTab(target, url, reason) {
   const workerId = String(target?.project_id || "");
+  // P0 tab-identity incident: no automatic new tab/window, even if the
+  // extension loses its mapping during a ChatGPT route transition.
+  // Existing tabs are recovered through immutable session ownership only.
+  // Real browser crashes use Firefox's native session restore.
+  if (workerId) postStatus({projectId:workerId,event:"worker-tab-create-suppressed",
+    reason:String(reason || "preserve-existing-tabs").slice(0,100),at:new Date().toISOString()});
+  return null;
+  // Kept below for future explicitly-authorized provisioning, but unreachable.
   if (!workerId || !canOpenWorkerTab(workerId, reason)) return null;
   tabOpensInFlight.add(workerId);
   try {
@@ -393,13 +401,10 @@ async function verifyReplacementHandoffStillCurrent(target, handoff) {
 }
 
 async function closeRunnerTab(tabId) {
-  if (tabId == null) return;
-  intentionalTabClosures.add(tabId);
-  try {
-    await browser.tabs.remove(tabId);
-  } catch (_) {
-    intentionalTabClosures.delete(tabId);
-  }
+  // Retired destructive API. A pause, failed send, rotation or stale
+  // assignment must NEVER close a user-visible ChatGPT/Claude tab.
+  if (tabId != null) postStatus({event:"worker-tab-close-suppressed",
+    reason:"preserve-browser-tab",tabId,at:new Date().toISOString()});
 }
 
 async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
@@ -2209,7 +2214,8 @@ async function recoverConversationLoadFailure(tabId, target) {
     at: new Date().toISOString(),
     tabId
   });
-  await newProjectChat(target.project_id, "chatgpt-conversation-load-failed", null);
+  // Preserve the failed conversation tab for diagnosis instead of opening
+  // or navigating away to another chat without the owner's consent.
   return true;
 }
 
@@ -2242,30 +2248,26 @@ function generationRotationDue(projectId, status) {
 }
 
 async function watchRunnerHealth() {
+  // Health status can lag the real ChatGPT generation by minutes. It must
+  // never cause an automatic new_chat, URL redirect or new browser tab.
+  // The primary Violentmonkey runner owns sending and reliable in-tab
+  // completion; the backend owns progress evaluation.
   try {
-    const response = await fetch(API + "/status", {cache: "no-store"});
+    const response = await fetch(API + "/status", {cache:"no-store"});
     if (!response.ok) return;
     const data = await response.json();
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
-      if (!status.active || status.auto_continue === false) continue;
-      if (generationRotationDue(projectId, status) &&
-          !status.generating && !status.sending &&
-          !runningActions.has(projectId) &&
-          Date.now() - Number(lastProactiveRotation.get(projectId) || 0) >= 120000) {
-        lastProactiveRotation.set(projectId, Date.now());
-        const state = conversationGenerationBudget.get(projectId);
-        if (state) state.count = 0;
-        await newProjectChat(projectId, "generation-budget-rotation", null);
-        continue;
-      }
+      if (!status?.active || status.auto_continue === false) continue;
       const stale = status.age_seconds != null && status.age_seconds > 300;
-      const stalled = status.stalled === true;
-      if ((!stale && !stalled) || Date.now() - (lastHealthRecovery[projectId] || 0) < 900000) continue;
+      if (!stale && status.stalled !== true) continue;
+      if (Date.now() - Number(lastHealthRecovery[projectId] || 0) < 900000) continue;
       lastHealthRecovery[projectId] = Date.now();
-      newProjectChat(projectId, stale ? "heartbeat-watchdog" : "stalled-watchdog", null);
+      postStatus({projectId,event:"worker-health-needs-attention",
+        reason:"automatic-chat-navigation-disabled",at:new Date().toISOString()});
     }
   } catch (_) {}
 }
+
 async function pollCommands() {
   try {
     const response = await fetch(API + "/runner-commands", {cache: "no-store"});
