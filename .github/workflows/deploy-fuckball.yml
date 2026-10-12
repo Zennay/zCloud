@@ -54,6 +54,9 @@ jobs:
           grep -q 'return collide(p,ball,g.rebound)' shared/physics.js
           grep -q "p.lastKick='full';" shared/physics.js
           grep -q 'const chaserId=humanPossession' shared/bot.js
+          # Require the post-merge contact-timing fixes, not just the older baseline.
+          grep -Fq 'const remaining=BALL_SPEED_MULTIPLIER*(1-t)' shared/physics.js
+          grep -Fq 'const enteringReach=contact>reach&&closing>0&&nextContact<=reach' shared/bot.js
           grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' shared/physics.js
           grep -q 'const wallRebound=g=>' shared/physics.js
           grep -q 'const cautious=frames>2' shared/prediction.js
