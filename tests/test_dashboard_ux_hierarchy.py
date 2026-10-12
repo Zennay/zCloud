@@ -17,8 +17,8 @@ class DashboardUserFirstHierarchyTests(unittest.TestCase):
         self.assertLess(overview.index("globalWorkerConsole()"), overview.index('class="project-grid"'))
         self.assertLess(overview.index('class="project-grid"'), overview.index('class="stat-grid"'))
         self.assertNotIn('data-disclosure="automation-settings"', overview)
-        self.assertIn("System controls", overview)
-        self.assertIn('data-disclosure="system-controls"', overview)
+        self.assertNotIn("System controls", overview)
+        self.assertNotIn('data-disclosure="system-controls"', overview)
 
     def test_project_detail_keeps_primary_action_above_context_and_hides_worker_detail(self):
         app = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
