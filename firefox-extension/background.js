@@ -1555,12 +1555,11 @@ async function refreshTargets() {
           projectName:target.name,target:target.url,event:"assignment-invalid",
           reason:"active-target-without-rendered-vps-assignment",at:new Date().toISOString()});
         if (assignedTabId != null) {
+          // A transient invalid assignment is not evidence that the browser
+          // itself is broken. Halt work but retain its tab/session identity.
+          // Once the backend assignment recovers, rebind the same tab.
           try { await browser.tabs.sendMessage(assignedTabId, {type:"runner-stop", projectId:target.project_id, reason:"assignment-invalid"}); } catch (_) {}
-          await clearRecoveryTag(assignedTabId);
-          await closeRunnerTab(assignedTabId);
-          delete tabTargets[assignedTabId];
-          delete projectTabs[target.project_id];
-          delete pendingAdoptions[assignedTabId];
+          bindingRetryAt.delete(target.project_id);
         }
         continue;
       }
