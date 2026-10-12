@@ -20,7 +20,7 @@ The current external URL uses HTTP. Do not enter the code over untrusted public 
 ## Connect actual ChatGPT replies
 The original zCloud worker queue has no arbitrary-chat-response API. This release adds an explicit UI bridge, not a substitute model.
 
-1. In the VPS browser, install office-relay.user.js into the existing userscript extension.
+1. In the VPS browser, install the userscript using the **HTTPS GitHub source**: [Install Office Relay userscript](https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js). This download remains available even if the Office port 3422 is temporarily down. Do **not** install through the HTTP Office URL, because Tampermonkey can report `Invalid Userscript` when that endpoint is unreachable or a redirect/error page is returned.
 2. Open a **dedicated, existing** ChatGPT conversation for one employee. Do not attach the relay to an already-assigned zCloud work tab.
 3. Choose “Verbind deze chat met Office” in the extension menu (or click its Office Relay badge).
 4. Select http://127.0.0.1:3422, the employee id (maya/noah/lina), and the existing Office access code. Credentials are held in closure memory only.
