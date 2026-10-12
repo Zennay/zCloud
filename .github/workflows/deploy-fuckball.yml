@@ -57,16 +57,18 @@ jobs:
           # Require the post-merge contact-timing fixes, not just the older baseline.
           grep -Fq 'const remaining=BALL_SPEED_MULTIPLIER*(1-t)' shared/physics.js
           grep -Fq 'const enteringReach=contact>reach&&closing>0&&nextContact<=reach' shared/bot.js
-          grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' shared/physics.js
+          grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' shared/physics.js
           grep -q 'const wallRebound=g=>' shared/physics.js
           grep -q 'const cautious=frames>2' shared/prediction.js
           grep -q 'const passOptions=' shared/bot.js
           grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
           # Fail closed unless this validated contact/modes release is complete.
+          grep -Fq 'const wallRebound=g=>g.rebound;' shared/physics.js
           grep -q 'BALL_SPEED_MULTIPLIER=1.2' shared/physics.js
           grep -q 'function reconcileVisual' shared/prediction.js
           grep -q 'id="soloTeams"' public/index.html
           # New game UX and bot must ship together with the original stadium.
+          grep -Fq 'Original BFF · 41% wall bounce' public/index.html
           grep -q 'let extrapMs=0,renderScale=1;' public/index.html
           grep -q 'id="optionsScreen"' public/index.html
           grep -q 'id="chatDock"' public/index.html
@@ -99,13 +101,15 @@ jobs:
           grep -q 'id="optionsScreen"' /tmp/fuckball-deployed.html
           grep -q 'id="chatDock"' /tmp/fuckball-deployed.html
           grep -q 'id="soloTeams"' /tmp/fuckball-deployed.html
+          grep -Fq 'Original BFF · 41% wall bounce' /tmp/fuckball-deployed.html
           grep -q 'let extrapMs=0,renderScale=1;' /tmp/fuckball-deployed.html
           grep -q "pulseball.extrapolation.v3" /tmp/fuckball-deployed.html
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" -o /tmp/fuckball-bot-deployed.js
           grep -q 'function reply(message,g,bot)' /tmp/fuckball-bot-deployed.js
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/physics.js" -o /tmp/fuckball-physics-deployed.js
+          grep -Fq 'const wallRebound=g=>g.rebound;' /tmp/fuckball-physics-deployed.js
           grep -q 'BALL_SPEED_MULTIPLIER=1.2' /tmp/fuckball-physics-deployed.js
-          grep -q 'WALL_REBOUND_AT_DEFAULT=0.76' /tmp/fuckball-physics-deployed.js
+          grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' /tmp/fuckball-physics-deployed.js
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/prediction.js" -o /tmp/fuckball-prediction-deployed.js
           grep -q 'const cautious=frames>2' /tmp/fuckball-prediction-deployed.js
           echo "Fullscreen/high-refresh 4v4 game and new ball pace verified on VPS"
