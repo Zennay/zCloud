@@ -61,9 +61,17 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class OfficeConnection(sqlite3.Connection):
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 def connect() -> sqlite3.Connection:
     DB.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(DB), timeout=8, isolation_level=None)
+    db = sqlite3.connect(str(DB), timeout=8, isolation_level=None, factory=OfficeConnection)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA busy_timeout=8000")
     db.execute("PRAGMA journal_mode=WAL")
@@ -354,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers();self.wfile.write(body);return
         if url.path=="/api/health":
             self.json_reply(200,{"online":True,"auth_required":bool(TOKEN),
-                 "mode":"zcloud_chatgpt_chats","version":"0.3-penthouse","tasks_enabled":True, **zcloud_health()})
+                 "mode":"zcloud_chatgpt_chats","version":"0.3-penthouse","release":(ROOT/"RELEASE").read_text().strip() if (ROOT/"RELEASE").is_file() else "development","tasks_enabled":True, **zcloud_health()})
             return
         if not self.require_auth():return
         if url.path=="/api/employees":
