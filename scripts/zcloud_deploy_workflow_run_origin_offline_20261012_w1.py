@@ -12,6 +12,8 @@ from typing import Any
 
 REPOSITORY = "Zennay/zCloud"
 UPSTREAM_WORKFLOW = "zCloud regression smoke"
+UPSTREAM_WORKFLOW_ID = 367943538
+UPSTREAM_PATH = ".github/workflows/zcloud-regression-smoke.yml"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -43,6 +45,10 @@ def classify(event: Any, *, canonical_main_sha: Any) -> Decision:
         return deny("source_not_object")
     if source.get("name") != UPSTREAM_WORKFLOW:
         return deny("wrong_workflow")
+    if type(source.get("workflow_id")) is not int or source["workflow_id"] != UPSTREAM_WORKFLOW_ID:
+        return deny("wrong_workflow_id")
+    if source.get("path") != UPSTREAM_PATH:
+        return deny("wrong_workflow_path")
     if source.get("event") != "push":
         return deny("untrusted_source_event")
     if source.get("head_branch") != "main":
