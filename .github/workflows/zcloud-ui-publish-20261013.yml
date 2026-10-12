@@ -6,11 +6,12 @@ on:
     paths: [.github/workflows/zcloud-ui-publish-20261013.yml]
 
 permissions:
+  actions: read
   contents: read
 
 # Share the normal production deploy lock: static writes must not race a full promotion.
 concurrency:
-  group: zcloud-production-deploy
+  group: zcloud-ui-only-publish-20261013
   cancel-in-progress: false
 
 jobs:
@@ -67,12 +68,22 @@ jobs:
 
       - name: Back up, atomically publish static UI, verify live and rollback on failure
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           live="/home/ubuntu/zennay-cloud/public"
           test -d "$live"
           test ! -L "$live"
           test -w "$live"
+          # Respect normal promotion's filesystem mutex; never overwrite while
+          # another promotion transaction is operating.
+          install -d -m 0700 "$HOME/.local/state/zcloud/recovery"
+          exec 9>"$HOME/.local/state/zcloud/recovery/promotion.lock"
+          flock -n 9 || { echo "UI_PUBLISH_BUSY_PROMOTION_LOCK"; exit 75; }
+          # Do not race an already-running full production deploy.
+          deploy_status="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/zcloud-vps-deploy.yml/runs?per_page=50" --jq '[.workflow_runs[] | select(.status == "in_progress")] | length')"
+          test "$deploy_status" = "0" || { echo "UI_PUBLISH_BUSY_FULL_DEPLOY=$deploy_status"; exit 75; }
           systemctl is-active --quiet zennay-cloud.service
           before_pid="$(systemctl show zennay-cloud.service -p MainPID --value)"
           test -n "$before_pid"
