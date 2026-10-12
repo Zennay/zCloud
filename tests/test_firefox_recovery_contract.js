@@ -34,7 +34,7 @@ for (const marker of [
   "async function recoverClosedWorker",
   "async function pruneInactiveRestoredTabs",
   'reason: "restored-worker-no-longer-allocated"',
-  'event: "orphan-worker-tab-pruned"',
+  'event:"orphan-worker-tab-detached"',
   "const recoveryTabs = await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming)",
   "worker-handoff-started",
   "worker-handoff-opened",
@@ -94,13 +94,14 @@ assert.equal(
   1,
   "all intentional worker-tab closes must flow through closeRunnerTab"
 );
-for (const marker of [
-  "await closeRunnerTab(tabId)",
-  "await closeRunnerTab(assignedTabId)",
-  "await closeRunnerTab(oldTab)",
-]) {
-  assert.ok(background.includes(marker), "intentional close is not handoff-suppressed: " + marker);
-}
+// zCloud must never destroy tabs as part of allocation reconciliation,
+// pause, or automatic chat rotation.
+assert.ok(!background.includes("await closeRunnerTab("),
+  "automatic tab destruction would reopen duplicate worker windows");
+assert.ok(background.includes('await browser.tabs.update(reusableTab.id, {url: "https://chatgpt.com/"})'),
+  "automatic chat rotation must reuse the same tab");
+assert.ok(background.includes("await setRecoveryTag(assignedTabId, target.project_id)"),
+  "paused worker must retain its recoverable tab identity");
 
 console.log("Firefox recovery manifest/background contract checks passed.");
 
@@ -109,28 +110,20 @@ const replacementStart = background.indexOf("async function newProjectChat");
 const replacementEnd = background.indexOf("async function startProject");
 assert.ok(replacementStart >= 0 && replacementEnd > replacementStart, "newProjectChat block missing");
 const replacementBlock = background.slice(replacementStart, replacementEnd);
-assert.ok(
-  replacementBlock.indexOf("await prepareReplacementHandoff(target, reason)") <
-    replacementBlock.indexOf('browser.tabs.sendMessage(oldTab'),
-  "claim/task handoff must be captured before stopping the old runner"
-);
-assert.ok(
-  replacementBlock.indexOf("await prepareReplacementHandoff(target, reason)") <
-    replacementBlock.indexOf("await closeRunnerTab(oldTab)"),
-  "claim/task handoff must be captured before closing the old tab"
-);
-const drainIndex = replacementBlock.indexOf("await drainRunnerBeforeReplacement(oldTab, target, reason)");
+const prepareIndex = replacementBlock.indexOf("await prepareReplacementHandoff(target, reason)");
+const drainIndex = replacementBlock.indexOf("await drainRunnerBeforeReplacement(reusableTab.id, target, reason)");
 const verifyIndex = replacementBlock.indexOf("await verifyReplacementHandoffStillCurrent(target, handoff)");
-const closeIndex = replacementBlock.indexOf("await closeRunnerTab(oldTab)");
+const navigateIndex = replacementBlock.indexOf('browser.tabs.update(reusableTab.id, {url: "https://chatgpt.com/"})');
 const openIndex = replacementBlock.indexOf('createWorkerTab(target, "https://chatgpt.com/", reason)');
-assert.ok(drainIndex >= 0 && verifyIndex > drainIndex, "replacement must drain before revalidating ownership");
-assert.ok(closeIndex > verifyIndex, "old tab may close only after drain + handoff revalidation");
 const pendingDispatchIndex = replacementBlock.indexOf("pendingInitialDispatches.add(projectId)");
-assert.ok(
-  pendingDispatchIndex > verifyIndex && pendingDispatchIndex < openIndex,
-  "replacement initial dispatch may arm only after safe handoff and before replacement open"
-);
-assert.ok(openIndex > closeIndex, "replacement chat may open only after old worker is safely released");
+assert.ok(prepareIndex >= 0 && drainIndex > prepareIndex && verifyIndex > drainIndex,
+  "handoff capture, drain and revalidation must precede navigation");
+assert.ok(navigateIndex > verifyIndex && openIndex > verifyIndex,
+  "both reuse and genuinely missing-tab fallback require safe handoff");
+assert.ok(pendingDispatchIndex > verifyIndex && pendingDispatchIndex < navigateIndex,
+  "initial dispatch must arm after verified drain and before in-place navigation");
+assert.ok(!replacementBlock.includes("await closeRunnerTab("),
+  "rotation must not close an existing worker tab");
 assert.ok(
   background.includes("queue_item: queueItem"),
   "replacement handoff preparation must persist the current queue item alongside claim metadata"
@@ -281,7 +274,7 @@ assert.ok(
 assert.ok(
   refreshBlock.indexOf("await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming)") <
     refreshBlock.indexOf("Recovery.selectRecoveryTab"),
-  "restored inactive/unassigned zCloud tabs must be pruned before recovery selection"
+  "restored inactive/unassigned zCloud tabs must be examined before recovery selection"
 );
 assert.ok(
   refreshBlock.includes("target, recoveryTabs, restoredAssignments, claimedTabIds"),
@@ -312,7 +305,9 @@ const clearBindingIndex = freshChatBlock.indexOf('target.conversation_id = ""');
 const openFreshChatIndex = freshChatBlock.indexOf('createWorkerTab(target, "https://chatgpt.com/", reason)');
 assert.ok(resetBindingIndex >= 0, "fresh chat must reset the durable conversation binding");
 assert.ok(clearBindingIndex > resetBindingIndex, "local stale conversation id must clear after backend reset request");
-assert.ok(openFreshChatIndex > clearBindingIndex, "fresh tab must open after stale binding is cleared");
+assert.ok(openFreshChatIndex > clearBindingIndex, "fallback tab creation must follow durable binding reset");
+assert.ok(freshChatBlock.indexOf("browser.tabs.update(reusableTab.id") > clearBindingIndex,
+  "in-place navigation must also follow durable binding reset");
 assert.ok(
   server.includes("if event == 'conversation-reset-requested'"),
   "backend must handle explicit conversation reset requests"
