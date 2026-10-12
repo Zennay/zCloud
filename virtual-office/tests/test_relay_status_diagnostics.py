@@ -48,6 +48,13 @@ class RelayStatusDiagnosticsTests(unittest.TestCase):
         self.assertEqual(throttled["conversation"], url)
         queued = server.features.chat_enqueue(server, {"employee": "maya", "instruction": "Hallo"})
         self.assertEqual(queued["status"], "queued")
+        # A ChatGPT page refresh loses the access code but can manually pair
+        # again with the same tab-scoped, non-secret client id.
+        rejoined = server.features.relay_poll(server, {
+            "employee": "maya", "client_id": "local-test-client",
+            "conversation": url, "ready": False,
+        })
+        self.assertTrue(rejoined["ok"])
         with self.assertRaisesRegex(ValueError, "actieve tab"):
             server.features.relay_poll(server, {
                 "employee": "maya", "client_id": "another-tab",
