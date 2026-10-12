@@ -56,14 +56,31 @@ jobs:
                   print("RDP_RELEVANT_ADDON_DEBUGGABLE="+str(addon.get("debuggable")))
                   print("RDP_RELEVANT_ADDON_IS_WEBEXTENSION="+str(addon.get("isWebExtension")))
                   if not addon.get("actor"):continue
-                  send({"to":addon["actor"],"type":"getTarget"})
+                  # Modern Firefox uses WebExtensionDescriptorActor.getWatcher
+                  # (not the retired getTarget RDP packet).
+                  send({"to":addon["actor"],"type":"getWatcher"})
                   result=recv()
-                  print("RDP_GET_ADDON_TARGET_FIELDS="+json.dumps(sorted(result.keys())))
-                  print("RDP_GET_ADDON_TARGET_ERROR="+str(result.get("error") or "none")[:80])
-                  print("RDP_GET_ADDON_TARGET_MESSAGE="+str(result.get("message") or "none")[:180])
-                  for key in ["form","target","frame"]:
-                      if isinstance(result.get(key),dict):
-                          print("RDP_ADDON_"+key.upper()+"_FIELDS="+json.dumps(sorted(result[key].keys())))
+                  print("RDP_GET_ADDON_WATCHER_FIELDS="+json.dumps(sorted(result.keys())))
+                  print("RDP_GET_ADDON_WATCHER_ERROR="+str(result.get("error") or "none")[:80])
+                  print("RDP_GET_ADDON_WATCHER_MESSAGE="+str(result.get("message") or "none")[:180])
+                  form=result.get("watcher") or result.get("value") or result.get("result") or {}
+                  if isinstance(form,dict):
+                      print("RDP_WATCHER_FIELDS="+json.dumps(sorted(form.keys())))
+                  watcher_actor=(form.get("actor") or form.get("actorID")) if isinstance(form,dict) else None
+                  if watcher_actor:
+                      send({"to":watcher_actor,"type":"watchTargets","targetType":"frame"})
+                      for _ in range(8):
+                          res=recv()
+                          typ=str(res.get("type") or "")
+                          print("RDP_WATCH_TARGET_PACKET_TYPE="+typ[:80])
+                          if typ=="target-available-form":
+                              fields=res.get("target") or res.get("form") or {}
+                              if isinstance(fields,dict):
+                                  print("RDP_TARGET_AVAILABLE_FIELDS="+json.dumps(sorted(fields.keys())))
+                              break
+                          if res.get("error"):
+                              print("RDP_WATCH_TARGET_ERROR="+str(res.get("error"))[:80])
+                              break
                   break
           print("READ_ONLY_NO_TAB_CHANGES=1")
           PY
