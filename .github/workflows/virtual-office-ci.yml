@@ -35,6 +35,8 @@ jobs:
           cp virtual-office/scene.js /tmp/virtual-office-scene.mjs
           node --check /tmp/virtual-office-scene.mjs
           node --check virtual-office/office-relay.user.js
+          bash -n virtual-office/office-relay-vps.sh
+          test -s virtual-office/office-relay-vps.service
           python3 -m unittest discover -s virtual-office/tests -p test_penthouse.py -v
       - name: Local API smoke (no account needed)
         run: |
@@ -117,6 +119,12 @@ jobs:
           sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
           sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
           sudo install -m 0644 virtual-office/office_features.py virtual-office/scene.js virtual-office/office-relay.user.js /opt/virtual-office/
+          # The new browser profile is isolated from the existing zCloud workers.
+          # Install only; do not open an unauthenticated browser or alter the live
+          # X11/Firefox worker session in an unattended CI deployment.
+          sudo install -m 0755 virtual-office/office-relay-vps.sh /opt/virtual-office/office-relay-vps.sh
+          install -d -m 0700 "$HOME/.config/systemd/user"
+          install -m 0644 virtual-office/office-relay-vps.service "$HOME/.config/systemd/user/office-relay-vps.service"
           printf '%s' "$GITHUB_SHA" | sudo tee /opt/virtual-office/RELEASE >/dev/null
           sudo chown "$user:$group" /opt/virtual-office/server.py /opt/virtual-office/index.html
           printf '[Unit]\nDescription=3D Virtual Office ChatGPT worker frontend\nAfter=network-online.target zennay-cloud.service\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=/opt/virtual-office\nEnvironment=OFFICE_BIND=0.0.0.0\nEnvironment=OFFICE_PORT=%s\nEnvironment=OFFICE_DB_PATH=/var/lib/virtual-office/office.db\nEnvironment=OFFICE_ZCLOUD_URL=http://127.0.0.1:8765\nEnvironmentFile=/etc/virtual-office/office.env\nExecStart=/usr/bin/python3 /opt/virtual-office/server.py all\nRestart=always\nRestartSec=5\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=/var/lib/virtual-office\n\n[Install]\nWantedBy=multi-user.target\n' "$user" "$group" "$OFFICE_PORT" | sudo tee /etc/systemd/system/virtual-office.service >/dev/null
@@ -189,6 +197,27 @@ jobs:
           assert health["version"] == "0.3-penthouse"
           print("Penthouse private API and static assets verified. No work queued by this probe.")
           PY
+
+      - name: Start independent VPS relay browser if desktop session is available
+        # The Office backend is already deployed and verified above. Failure to
+        # open the optional Firefox RDP desktop must not affect zCloud workers.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          display_socket=/tmp/.X11-unix/X10
+          runtime_dir="/run/user/$(id -u)"
+          if [ ! -S "$display_socket" ] || [ ! -S "$runtime_dir/bus" ]; then
+            echo "Dedicated Office Firefox is installed but not started: RDP Xorg :10 or user bus unavailable."
+            exit 0
+          fi
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+          systemctl --user daemon-reload
+          systemctl --user enable --now office-relay-vps.service
+          systemctl --user is-active --quiet office-relay-vps.service
+          echo "Dedicated Office Firefox service started (browser login, Tampermonkey and manual relay pairing still required)."
 
       - name: Isolated Firefox visual evidence
         continue-on-error: true

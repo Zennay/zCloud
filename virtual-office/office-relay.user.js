@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.4
+// @version      0.3.5
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
@@ -41,7 +41,7 @@
    if(info?.mode!=='zcloud_chatgpt_chats'||info.online!==true)return reject(Error('Poort 3422 toont niet de zCloud Office-server. Controleer je SSH-tunnel.'));
    resolve();
   },
-  onerror:()=>reject(Error('Geen Office op deze pc bereikbaar. Start eerst de SSH-tunnel naar je VPS.')),
+  onerror:()=>reject(Error('Office-server niet bereikbaar. Op VPS: controleer Office-service. Op Mac: start de SSH-tunnel.')),
   ontimeout:()=>reject(Error('Office time-out. Controleer de SSH-tunnel op je pc.'))
  }));
  const request=(path,body)=>new Promise((resolve,reject)=>GM_xmlhttpRequest({
@@ -53,11 +53,11 @@
   if(active)return alert('Rond het huidige bericht eerst af.');
   if(!/^\/c\/[0-9a-f-]{16,80}$/i.test(location.pathname))return alert('Open eerst een aparte bestaande ChatGPT-conversatie voor deze medewerker.');
   if(document.documentElement.hasAttribute('data-zcloud-worker-id'))return alert('Deze tab is al een zCloud-worker. Gebruik een aparte gesprekstab.');
-  const origin=prompt('Office bereikbaar vanaf DIT apparaat (start op je eigen pc de SSH-tunnel naar je VPS):','http://127.0.0.1:3422');if(!origin)return;
+  const origin=prompt('Office bereikbaar vanuit DEZE browser (op VPS: localhost; op Mac: SSH-tunnel):','http://127.0.0.1:3422');if(!origin)return;
   let u;try{u=new URL(origin)}catch{return alert('Ongeldig Office-adres.')}
   if(!['127.0.0.1','localhost','198.244.191.182'].includes(u.hostname)||u.pathname!=='/'||u.search||u.hash||u.username||u.password||!['http:','https:'].includes(u.protocol))return alert('Gebruik alleen het vaste Office-adres.');
   if(u.protocol==='http:'&&!['127.0.0.1','localhost'].includes(u.hostname))return alert('VPS via publiek HTTP is onveilig. Start op je eigen pc: ssh -N -L 127.0.0.1:3422:127.0.0.1:3422 <ssh-gebruiker>@198.244.191.182 en gebruik http://127.0.0.1:3422, of gebruik een vertrouwde HTTPS-proxy.');
-  status.textContent='Office Relay · PC→VPS controleren…';
+  status.textContent='Office Relay · Office-server controleren…';
   try{await checkOffice(u.origin)}catch(e){status.textContent='Office Relay · '+e.message;alert(e.message);return}
   const employee=prompt('Medewerker: maya, noah of lina','maya');if(!['maya','noah','lina'].includes(employee))return;
   const token=prompt('Office-toegangscode (alleen in geheugen van deze tab)');if(!token)return;
