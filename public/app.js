@@ -394,7 +394,7 @@ function globalWorkerRows(){
     const canForce=verified&&!waiting&&!busySlot&&(Boolean(workerId)||Boolean(choice));
     const chatId=workerId?((DATA?.chatgpt_runners||{})[assigned]?.workers||[]).find(x=>x.worker_id===workerId)?.conversation_id:'';
     const chatUrl=chatId?(provider==='Claude'?'https://claude.ai/chat/':'https://chatgpt.com/c/')+encodeURIComponent(chatId):'';
-    const disabled=(allowed,reason)=>allowed?'':' disabled title="'+esc(reason)+'"';
+    const disabled=(allowed,reason)=>allowed?'':' disabled';
     const help=switching?'Projectwissel aangevraagd via Play/Force; wordt actief zodra de scheduler dit slot toewijst.':'';
     return '<article class="global-worker-row" data-global-slot="'+slot+'">'
       +'<div class="global-worker-identity"><span class="global-worker-index">'+String(slot).padStart(2,'0')+'</span><div><strong>Worker '+slot+'</strong><small>'+esc(provider)+'</small></div></div>'
