@@ -289,7 +289,7 @@ for (const marker of [
   'could not load this chatgpt conversation',
   'async function watchConversationLoadFailures',
   'chatgpt-conversation-load-failed',
-  'generation-budget-rotation',
+  'worker-auto-new-chat-suppressed',
   'setInterval(watchConversationLoadFailures, CONVERSATION_LOAD_FAILURE_SCAN_MS)',
 ]) {
   assert.ok(background.includes(marker), "missing worker-chat recovery marker: " + marker);
