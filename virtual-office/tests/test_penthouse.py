@@ -29,7 +29,7 @@ class PenthouseTests(unittest.TestCase):
         install = "https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js"
         self.assertIn('href="' + install + '"', page)
         self.assertNotIn('href="/office-relay.user.js"', page)
-        self.assertTrue(script.startswith("// ==UserScript==\\n"))
+        self.assertEqual(script.splitlines()[0], "// ==UserScript==")
         self.assertIn("// ==/UserScript==", script)
         self.assertIn("// @match        https://chatgpt.com/*", script)
         self.assertIn("// @downloadURL  " + install, script)
