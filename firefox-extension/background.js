@@ -492,18 +492,18 @@ async function pruneInactiveRestoredTabs(tabs, restoredAssignments, incomingTarg
         reason: "restored-worker-no-longer-allocated"
       });
     } catch (_) {}
-    await clearRecoveryTag(tab.id);
-    await closeRunnerTab(tab.id);
-    delete tabTargets[tab.id];
-    delete pendingAdoptions[tab.id];
-    if (projectTabs[workerId] === tab.id) delete projectTabs[workerId];
-    postStatus({
-      projectId: workerId,
-      event: "orphan-worker-tab-pruned",
-      reason: target ? "restored-worker-inactive-or-unassigned" : "restored-worker-missing",
-      at: new Date().toISOString(),
-      tabId: tab.id
-    });
+    // Never close a visible worker or expert tab merely because allocation
+    // changed. Keep a paused worker tagged for reuse; detach truly removed ones.
+    if (!target) {
+      await clearRecoveryTag(tab.id);
+      delete tabTargets[tab.id];
+      delete pendingAdoptions[tab.id];
+      if (projectTabs[workerId] === tab.id) delete projectTabs[workerId];
+      postStatus({projectId:workerId, event:"orphan-worker-tab-detached",
+        reason:"restored-worker-missing-preserve-browser-tab",
+        at:new Date().toISOString(), tabId:tab.id});
+    }
+    retained.push(tab);
   }
   return retained;
 }
@@ -1529,8 +1529,8 @@ async function refreshTargets() {
       const tabId = projectTabs[id];
       if (tabId != null) {
         try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: id, reason: "worker-count-reduced"}); } catch (_) {}
+        // A changing allocation never authorizes browser-tab destruction.
         await clearRecoveryTag(tabId);
-        await closeRunnerTab(tabId);
         delete tabTargets[tabId];
         delete pendingAdoptions[tabId];
       }
@@ -1566,11 +1566,8 @@ async function refreshTargets() {
       if (!target.active) {
         if (assignedTabId != null) {
           try { await browser.tabs.sendMessage(assignedTabId, {type: "runner-stop", projectId: target.project_id, reason: "project-paused"}); } catch (_) {}
-          await clearRecoveryTag(assignedTabId);
-          await closeRunnerTab(assignedTabId);
-          delete tabTargets[assignedTabId];
-          delete projectTabs[target.project_id];
-          delete pendingAdoptions[assignedTabId];
+          // Paused workers retain the very same tab and session identity.
+          await setRecoveryTag(assignedTabId, target.project_id);
         }
         continue;
       }
@@ -1918,25 +1915,29 @@ async function newProjectChat(projectId, reason, commandId) {
       return;
     }
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
-    // Never drain/close the previous chat unless a new tab is admitted.
-    // An explicit dashboard recovery must not bypass the spam breaker.
-    if (!canOpenWorkerTab(projectId, reason)) {
+    // Reuse the existing worker tab for every new conversation, including
+    // automatic rotation and dashboard recovery. Open only if genuinely absent.
+    const oldTab = projectTabs[projectId];
+    let reusableTab = null;
+    if (oldTab != null) {
+      try { reusableTab = await browser.tabs.get(oldTab); }
+      catch (_) {
+        delete projectTabs[projectId];
+        delete tabTargets[oldTab];
+        delete pendingAdoptions[oldTab];
+      }
+    }
+    if (!reusableTab && !canOpenWorkerTab(projectId, reason)) {
       throw new Error("Nieuwe chat uitgesteld: maximaal 2 tabopeningen per worker per 10 minuten");
     }
     const handoff = await prepareReplacementHandoff(target, reason);
-    const oldTab = projectTabs[projectId];
-    if (oldTab != null) {
-      await drainRunnerBeforeReplacement(oldTab, target, reason);
+    if (reusableTab) {
+      await drainRunnerBeforeReplacement(reusableTab.id, target, reason);
       await verifyReplacementHandoffStillCurrent(target, handoff);
-      try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
-      await clearRecoveryTag(oldTab);
-      await closeRunnerTab(oldTab);
-      delete tabTargets[oldTab];
-      delete pendingAdoptions[oldTab];
+      try { await browser.tabs.sendMessage(reusableTab.id, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
     }
-    // Clear the durable conversation binding before the fresh tab is opened.
-    // Otherwise the Violentmonkey runner can fetch the old target during startup
-    // and bounce straight back to the broken /c/<id> URL.
+    // Reset the binding before navigating this tab, preventing bounce-back
+    // to the old conversation URL during Violentmonkey startup.
     await postStatus({
       projectId: target.project_id,
       baseProjectId: target.base_project_id,
@@ -1955,8 +1956,10 @@ async function newProjectChat(projectId, reason, commandId) {
     pendingInitialDispatches.add(projectId);
     target.active = true;
     target.replacement_handoff = handoff;
-    const tab = await createWorkerTab(target, "https://chatgpt.com/", reason);
-    if (!tab) throw new Error("Tab-open limiet bereikt. Oude chat is mogelijk al gesloten; zCloud probeert later veilig herstel.");
+    const tab = reusableTab
+      ? await browser.tabs.update(reusableTab.id, {url: "https://chatgpt.com/"})
+      : await createWorkerTab(target, "https://chatgpt.com/", reason);
+    if (!tab) throw new Error("Worker-tab niet beschikbaar; bestaande vensters blijven behouden.");
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
     await setRecoveryTag(tab.id, projectId);
@@ -2041,11 +2044,8 @@ async function pauseProject(projectId, commandId) {
   const tabId = projectTabs[projectId];
   if (tabId != null) {
     try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: projectId, reason: "dashboard-pause"}); } catch (_) {}
-    await clearRecoveryTag(tabId);
-    await closeRunnerTab(tabId);
-    delete tabTargets[tabId];
-    delete projectTabs[projectId];
-    delete pendingAdoptions[tabId];
+    // Pausing stops the runner, but preserves the tab for a later start.
+    await setRecoveryTag(tabId, projectId);
   }
   postStatus({projectId: projectId, projectName: target?.name, target: target?.url || "",
     event: "runner-paused", reason: "dashboard-pause", at: new Date().toISOString()});

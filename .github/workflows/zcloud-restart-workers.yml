@@ -81,7 +81,21 @@ jobs:
           except OSError:
               pass
 
-          if legacy_vm_only:
+          # A manual worker restart must not recycle a healthy Firefox
+          # process and discard its ChatGPT/expert tabs. The userscript and
+          # existing worker tabs receive fresh commands without browser churn.
+          running_browser = subprocess.run(
+              ["pgrep", "-u", str(os.getuid()), "-f",
+               r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+              text=True, capture_output=True, check=False,
+          ).stdout.strip()
+          if legacy_vm_only and running_browser:
+              print(json.dumps({
+                  "consumer_restart": "reused-existing-firefox",
+                  "browser_alive": True,
+                  "tabs_preserved": True,
+              }, sort_keys=True))
+          elif legacy_vm_only:
               bootstrap_urls = []
               with sqlite3.connect(DB, timeout=5) as bootstrap_db:
                   bootstrap_db.row_factory = sqlite3.Row

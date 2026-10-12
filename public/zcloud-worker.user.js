@@ -222,6 +222,18 @@
     try { sessionStorage.setItem("zcloud-pending-project", String(projectId || "")); } catch (_) {}
   }
 
+  // A worker's tab is owned by its slot, not by a generic ChatGPT page or
+  // assistant conversation. Remember identity even after URL query cleanup.
+  // Unmarked expert/personal tabs must never be auto-adopted.
+  function boundProjectId() {
+    try { return sessionStorage.getItem("zcloud-bound-project") || ""; }
+    catch (_) { return ""; }
+  }
+  function rememberBoundProject(projectId) {
+    if (!projectId) return;
+    try { sessionStorage.setItem("zcloud-bound-project", String(projectId)); } catch (_) {}
+  }
+
   function clearNavigationMarkers() {
     try { sessionStorage.removeItem("zcloud-pending-project"); } catch (_) {}
     try {
@@ -440,15 +452,22 @@
     const active = Object.values(projects).filter(item => item?.active === true);
     const ready = active.filter(assignmentReady);
     const pending = pendingProjectId();
+    // Do not claim an arbitrary ChatGPT tab to fill an empty worker slot.
+    // A stable worker marker or a previously bound tab is mandatory.
+    const ownedProjectId = pending || target?.project_id || boundProjectId();
     let next = null;
 
     if (pending && projects[pending] && claimCandidate(projects[pending])) next = projects[pending];
 
     const currentProvider = provider();
-    if (!next && isWorkerProvider(currentProvider)) {
+    if (!next && ownedProjectId && isWorkerProvider(currentProvider)) {
       const cid = conversationId();
       if (cid) {
-        const matched = active.find(item => candidateProvider(item) === currentProvider && item?.conversation_id === cid) || null;
+        const matched = active.find(item =>
+          item?.project_id === ownedProjectId &&
+          candidateProvider(item) === currentProvider &&
+          item?.conversation_id === cid
+        ) || null;
         if (matched && claimCandidate(matched)) next = matched;
       }
     }
@@ -457,14 +476,16 @@
       next = projects[target.project_id];
     }
 
-    if (!next) {
+    if (!next && ownedProjectId) {
+      // Only reclaim the tab's original worker. Never rotate an expert or an
+      // unrelated worker tab into whichever slot happens to be available.
       const ordered = [
         ...ready.filter(item => candidateProvider(item) === currentProvider),
         ...ready.filter(item => candidateProvider(item) !== currentProvider),
         ...active.filter(item => candidateProvider(item) === currentProvider),
         ...active.filter(item => candidateProvider(item) !== currentProvider)
       ];
-      next = ordered.find(claimCandidate) || null;
+      next = ordered.find(item => item?.project_id === ownedProjectId && claimCandidate(item)) || null;
     }
 
     if (!next) {
@@ -474,6 +495,7 @@
       return;
     }
 
+    rememberBoundProject(next.project_id);
     const expectedProvider = candidateProvider(next);
     const currentConversation = conversationId();
     if (!next.conversation_id && currentProvider === expectedProvider && currentConversation && adoptNextPending(next.project_id)) {

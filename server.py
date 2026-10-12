@@ -400,7 +400,13 @@ def restart_firefox_runtime():
     """Recover either the managed systemd Firefox or the standalone VM runtime."""
     existing=_standalone_firefox_pids()
     current=firefox_runner_status()
-    browser_was_dead=not bool(current.get('active'))
+    # A healthy/visible Firefox is authoritative. Do not terminate it, discard
+    # its tabs or spawn a new ChatGPT window for a restart/health command.
+    # True crash recovery is still allowed when no browser runtime is active.
+    if current.get('active'):
+        return {**current, 'reused_existing_browser':True,
+                'allocation_preserved':True, 'released_slots':[]}
+    browser_was_dead=True
     recovery_guard=None
     released=[]
     if browser_was_dead:
