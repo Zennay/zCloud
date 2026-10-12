@@ -43,8 +43,8 @@ jobs:
           wanted_sha="$(git rev-parse FETCH_HEAD)"
           echo "Deploying source commit: $wanted_sha"
           git reset --hard "$wanted_sha"
-          npm test
           npm run build:solo
+          npm test
           node --check server.js
           node_binary="$(command -v node)"
           run_user="$(id -un)"
