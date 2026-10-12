@@ -24,7 +24,8 @@ jobs:
           assert d.get("online") is True
           assert d.get("auth_required") is True
           PY
-          curl -fsS --connect-timeout 6 --max-time 15 http://198.244.191.182:3422/ | grep -q 'VIRTUAL OFFICE'
+          curl -fsS --connect-timeout 6 --max-time 15 http://198.244.191.182:3422/ > /tmp/office-index.html
+          grep -q 'VIRTUAL OFFICE' /tmp/office-index.html
           code="$(curl -sS --connect-timeout 6 --max-time 10 -o /tmp/office-blocked.json -w '%{http_code}' -X POST 'http://198.244.191.182:3422/api/jobs' -H 'Content-Type: application/json' -d '{"employee":"noah","kind":"task","instruction":"Bouw een test"}')"
           test "$code" = "401"
           echo "Browser demo externally accessible, unauthenticated project writes forbidden."
