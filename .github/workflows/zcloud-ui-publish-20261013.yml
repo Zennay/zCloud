@@ -39,9 +39,14 @@ jobs:
           test "$(id -un)" = "ubuntu"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags --depth=40 origin main
-          # The UI branch is a descendant of canonical main, with no backend changes.
-          git merge-base --is-ancestor origin/main HEAD
-          changed="$(git diff --name-only origin/main HEAD)"
+          # Main may have advanced with unrelated worker engine commits. Never
+          # overwrite a newer dashboard: both current main and candidate must
+          # contain the exact green static UI files.
+          git merge-base --is-ancestor 50cc2e0696254e47d03e14509f345cb2c122f699 origin/main
+          for path in public/app.js public/enhancements.css public/index.html; do
+            git diff --quiet 50cc2e0696254e47d03e14509f345cb2c122f699 origin/main -- "$path"
+          done
+          changed="$(git diff --name-only 3b16750c5ad427df159d0a195f959c6297941b84 HEAD)"
           while IFS= read -r path; do
             case "$path" in
               public/app.js|public/enhancements.css|public/index.html|tests/*|.github/workflows/zcloud-worker-cockpit-ui-hosted.yml|.github/workflows/zcloud-ui-publish-20261013.yml) ;;
