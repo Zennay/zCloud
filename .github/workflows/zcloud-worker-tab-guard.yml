@@ -62,4 +62,68 @@ jobs:
           cmp firefox-extension/background.js "$source/background.js"
           cmp firefox-extension/background.js "$live/background.js"
           echo "WORKER_TAB_GUARD_INSTALLED=1"
-          echo "Active extension retains its old in-memory code until its next safe restart. Existing Firefox worker and Office expert tabs NOT touched."
+          echo "Worker extension source installed; no active tabs touched during install."
+
+      - name: Activate patch only when worker browser has a safe idle window
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          if ! systemctl --user is-active --quiet chatgpt-firefox.service; then
+            echo "Worker Firefox service inactive (userscript-only mode or no desktop). No restart."
+            exit 0
+          fi
+          if ! python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          def read():
+              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=8) as response:
+                  data=json.load(response)
+              runners=data.get("chatgpt_runners")
+              if not isinstance(runners,dict) or not runners:
+                  raise ValueError("No reliable worker observations")
+              workers=[w for p in runners.values() if isinstance(p,dict)
+                       for w in (p.get("workers") or []) if isinstance(w,dict)]
+              if not workers:
+                  raise ValueError("No observed worker entries")
+              identities=set()
+              for worker in workers:
+                  if not worker.get("active"):
+                      continue
+                  wid=str(worker.get("worker_id") or "")
+                  if not wid or wid in identities:
+                      raise ValueError("Worker identity incomplete/colliding")
+                  identities.add(wid)
+                  if worker.get("generating") or worker.get("sending") or worker.get("desired_state")=="draining":
+                      raise ValueError("Worker is actively generating, sending or draining")
+                  if ((worker.get("command") or {}).get("status")=="pending"):
+                      raise ValueError("Command pending")
+                  age=worker.get("age_seconds")
+                  last=(worker.get("last_event") or {}).get("event")
+                  if last in {"prompt-sent","generation-started"} and (age is None or age < 180):
+                      raise ValueError("Recent generation not proven finished")
+              return identities
+
+          try:
+              first=read()
+              time.sleep(12)
+              second=read()
+              if first!=second:
+                  raise ValueError("Worker allocation changed during idle window")
+              print("SAFE_IDLE_WORKERS="+str(len(second)))
+          except Exception as e:
+              print("SKIP_WORKER_FIREFOX_RESTART="+str(e)[:200])
+              raise SystemExit(1)
+          PY
+          then
+            echo "Existing worker is busy/unknown: no forced browser restart. Patch will activate on next natural safe restart."
+            exit 0
+          fi
+          echo "Restarting ONLY worker Firefox in its systemd cgroup. Office staff Firefox is a separate service."
+          timeout 45 systemctl --user restart chatgpt-firefox.service
+          systemctl --user is-active --quiet chatgpt-firefox.service
+          echo "WORKER_TAB_GUARD_ACTIVATED=1"
