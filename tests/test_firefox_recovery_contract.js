@@ -89,11 +89,10 @@ for (const forbidden of [
 }
 
 const directRemoveCalls = background.match(/browser\.tabs\.remove\(/g) || [];
-assert.equal(
-  directRemoveCalls.length,
-  1,
-  "all intentional worker-tab closes must flow through closeRunnerTab"
-);
+assert.equal(directRemoveCalls.length,0,
+  "all browser tab removals are forbidden in zCloud worker automation");
+assert.equal((background.match(/browser\.tabs\.create\(/g)||[]).length,0,
+  "a missing/stalled worker must not open new ChatGPT tabs");
 // zCloud must never destroy tabs as part of allocation reconciliation,
 // pause, or automatic chat rotation.
 assert.ok(!background.includes("await closeRunnerTab("),
@@ -290,7 +289,7 @@ for (const marker of [
   'could not load this chatgpt conversation',
   'async function watchConversationLoadFailures',
   'chatgpt-conversation-load-failed',
-  'generation-budget-rotation',
+  'worker-auto-new-chat-suppressed',
   'setInterval(watchConversationLoadFailures, CONVERSATION_LOAD_FAILURE_SCAN_MS)',
 ]) {
   assert.ok(background.includes(marker), "missing worker-chat recovery marker: " + marker);

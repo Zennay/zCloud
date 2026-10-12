@@ -46,7 +46,13 @@ const ctx = vm.createContext({
 });
 vm.runInContext(source.slice(start,end),ctx);
 (async()=>{
-  await vm.runInContext('newProjectChat("supa::w1","generation-budget-rotation","c1")',ctx);
+  await vm.runInContext('newProjectChat("supa::w1","generation-budget-rotation",null)',ctx);
+  assert.equal(projectTabs[key],42,"automatic rotation keeps same worker tab");
+  assert.equal(trace.filter(x=>x==="navigate").length,0,
+    "automatic rotation cannot navigate during/after an active send");
+  assert.ok(trace.includes("worker-auto-new-chat-suppressed"));
+  trace.length=0;
+  await vm.runInContext('newProjectChat("supa::w1","operator-requested-in-place-new-chat","c1")',ctx);
   assert.equal(projectTabs[key],42,"same worker keeps same tab id");
   assert.equal(target.conversation_id,"","old binding is reset only for the new chat");
   assert.equal(ctx.pendingAdoptions[42],key);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.17
+// @version      1.3.18
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -20,7 +20,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.17";
+  const SCRIPT_VERSION = "1.3.18";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -72,6 +72,8 @@
   let tickTimer = null;
   let heartbeatTimer = null;
   let freshConversationPending = false;
+  let lastRoutePreservationReportAt = 0;
+  let lastDeferredNewChatReportAt = 0;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -302,30 +304,21 @@
   }
 
   async function requestFreshConversation(reason, commandId = 0) {
-    if (freshConversationPending || !target?.project_id || generationActive() || sending || awaitingGeneration) return false;
-    freshConversationPending = true;
-    const queueId = String(target?.queue_item?.queue_id || "").trim();
-    if (queueId) rememberQueueId(target.project_id, queueId);
-    setPendingProject(target.project_id);
-    await status("conversation-reset-requested", {
-      reason: String(reason || "fresh-chat-policy").slice(0, 120),
-      previousConversation: conversationId(),
-      queueItem: queueId
-    });
-    if (commandId) {
-      const acknowledged = await commandResult(
-        commandId,
-        "completed",
-        "Fresh chat requested by Violentmonkey worker"
-      );
-      if (!acknowledged) {
-        freshConversationPending = false;
-        return false;
-      }
-      lastHandledCommandId = Math.max(lastHandledCommandId, Number(commandId || 0));
+    // The userscript must never navigate or abandon a ChatGPT tab after
+    // sending. Even a database new_chat can be issued by the automatic
+    // watchdog, so it is NOT authorization to replace the conversation.
+    // Keep commands pending for explicit operator intervention; do not
+    // falsely acknowledge a reset that was not performed.
+    if (!target?.project_id) return false;
+    const now = Date.now();
+    if (now - lastDeferredNewChatReportAt > 60000) {
+      lastDeferredNewChatReportAt = now;
+      await status("auto-chat-navigation-suppressed", {
+        reason:String(reason || "preserve-existing-tab").slice(0,120),
+        commandId: Number(commandId || 0)
+      });
     }
-    location.assign(freshConversationNavigationUrl(target));
-    return true;
+    return false;
   }
 
   function claimKey(projectId) {
@@ -513,10 +506,19 @@
       : currentProvider === expectedProvider && isNewChatPage(expectedProvider);
 
     if (!onRightPage) {
-      if (!generationActive() && !sending) {
-        setPendingProject(next.project_id);
-        renewClaim(next);
-        location.assign(navigationUrlForCandidate(next, tabToken));
+      // ChatGPT changes / -> /c/<id> asynchronously after sending. The
+      // previous 5-second redirect raced the send, abandoning the live
+      // generation and giving the impression that the tab disappeared.
+      // Never route a bound worker as a side effect of polling: preserve
+      // the actual tab and report a mismatch instead.
+      const now = Date.now();
+      if (now - lastRoutePreservationReportAt > 60000) {
+        lastRoutePreservationReportAt = now;
+        await status("worker-tab-route-preserved", {
+          reason: "poll-navigation-disabled",
+          expectedConversation: String(next.conversation_id || ""),
+          currentConversation
+        });
       }
       return;
     }
@@ -533,7 +535,8 @@
 
     const queueId = String(target?.queue_item?.queue_id || "").trim();
     const rememberedQueue = rememberedQueueId(target.project_id);
-    if (currentProvider === "chatgpt" && currentConversation && queueId && rememberedQueue && rememberedQueue !== queueId && !generationActive() && !sending) {
+    if (currentProvider === "chatgpt" && currentConversation && queueId && rememberedQueue && rememberedQueue !== queueId &&
+        !generationActive() && !sending && !awaitingGeneration && !sawGeneration) {
       rememberQueueId(target.project_id, queueId);
       await requestFreshConversation("queue-assignment-changed");
       return;
@@ -1329,6 +1332,7 @@
 
     const loadFailure = conversationLoadFailureReason();
     if (loadFailure) {
+      // Report the failure but never silently leave the user's current tab.
       await requestFreshConversation(loadFailure);
       return;
     }

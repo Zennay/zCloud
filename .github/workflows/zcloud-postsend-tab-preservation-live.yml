@@ -1,0 +1,98 @@
+name: zCloud P0 preserve ChatGPT tabs after send
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - public/zcloud-worker.user.js
+      - firefox-extension/background.js
+      - deploy/chatgpt-firefox.service
+      - .github/workflows/zcloud-postsend-tab-preservation-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-postsend-preserve-tabs-vps
+  cancel-in-progress: false
+
+jobs:
+  offline:
+    name: Assert sending cannot create close or navigate worker tabs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute targeted tab preservation regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check firefox-extension/background.js
+          node --check public/zcloud-worker.user.js
+          node tests/test_violentmonkey_send_tab_preservation.js
+          node tests/test_worker_tab_spam_guard.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_worker_tabs_restore.js
+          python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py
+          echo "POSTSEND_TAB_IDENTITY_TESTS_GREEN=1"
+
+  install:
+    name: Install safety patch on VPS without touching browser
+    needs: offline
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record running Firefox, install files, preserve session
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          root="/home/ubuntu/zennay-cloud"
+          extension="$HOME/snap/firefox/common/chatgpt-project-extension"
+          unit="$HOME/.config/systemd/user/chatgpt-firefox.service"
+          echo "=== EXISTING FIREFOX PROCESSES (before; no signals will be sent) ==="
+          ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
+          echo "=== SYSTEMD UNIT (before) ==="
+          systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
+          echo "=== INSTALL WITHOUT STOPPING BROWSER ==="
+          node --check public/zcloud-worker.user.js
+          node --check firefox-extension/background.js
+          install -d -m 0755 "$root/public"
+          cp -p "$root/public/zcloud-worker.user.js" "$HOME/.local/state/zcloud-userscript.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
+          install -m 0644 public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
+          cmp public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
+          echo "LIVE_USER_SCRIPT_SOURCE_UPDATED=1"
+          if [ -f "$extension/manifest.json" ]; then
+            cp -p "$extension/background.js" "$HOME/.local/state/zcloud-background.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
+            install -m 0644 firefox-extension/background.js "$extension/background.js"
+            cmp firefox-extension/background.js "$extension/background.js"
+            echo "LIVE_EXTENSION_SOURCE_UPDATED=1"
+          else
+            echo "LIVE_EXTENSION_NOT_PRESENT=1"
+          fi
+          if [ -f "$unit" ]; then
+            cp -p "$unit" "$unit.pre-postsend-$GITHUB_RUN_ID"
+          fi
+          install -D -m 0644 deploy/chatgpt-firefox.service "$unit"
+          systemctl --user daemon-reload
+          echo "SYSTEMD_RESTART_POLICY_INSTALLED=1"
+          # The new Restart=on-abnormal policy stops profile-lock retry loops
+          # on their own. NEVER issue systemctl stop/restart on the worker
+          # service here: that could terminate the live Firefox cgroup.
+          echo "BROWSER_SERVICE_SIGNAL_SKIPPED=1"
+          echo "=== POST DEPLOY (existing Firefox untouched) ==="
+          systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
+          ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
+          echo "NO_FIREFOX_OR_TAB_TERMINATION_ISSUED=1"
+          echo "NOTE=Violentmonkey installed userscript is activated by its regular update cycle; no unsafe live-tab reload was attempted."

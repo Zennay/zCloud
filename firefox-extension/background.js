@@ -1,6 +1,6 @@
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.17";
+const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.18";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -69,19 +69,13 @@ function canOpenWorkerTab(workerId, reason, now = Date.now()) {
 }
 
 async function createWorkerTab(target, url, reason) {
+  // Critical safety policy: no worker may ever create a new tab in response
+  // to a lost mapping, stalled heartbeat, allocation change or prompt.
+  // Firefox native session restore owns real browser-crash recovery.
   const workerId = String(target?.project_id || "");
-  if (!workerId || !canOpenWorkerTab(workerId, reason)) return null;
-  tabOpensInFlight.add(workerId);
-  try {
-    // An inactive tab can run the existing Violentmonkey DOM script; never
-    // steal user focus from the Office Firefox or another worker.
-    const tab = await browser.tabs.create({url, active:false});
-    const now = Date.now();
-    const ledger = tabOpenLedger(now);
-    ledger[workerId] = [...(ledger[workerId] || []), now].slice(-TAB_OPEN_LIMIT);
-    try { localStorage.setItem(TAB_OPEN_LEDGER_KEY, JSON.stringify(ledger)); } catch (_) {}
-    return tab;
-  } finally { tabOpensInFlight.delete(workerId); }
+  if (workerId) postStatus({projectId:workerId,event:"worker-tab-create-suppressed",
+    reason:String(reason || "preserve-existing-tabs").slice(0,100),at:new Date().toISOString()});
+  return null;
 }
 
 
@@ -393,13 +387,10 @@ async function verifyReplacementHandoffStillCurrent(target, handoff) {
 }
 
 async function closeRunnerTab(tabId) {
-  if (tabId == null) return;
-  intentionalTabClosures.add(tabId);
-  try {
-    await browser.tabs.remove(tabId);
-  } catch (_) {
-    intentionalTabClosures.delete(tabId);
-  }
+  // Retired destructive API. A pause, failed send, rotation or stale
+  // assignment must NEVER close a user-visible ChatGPT/Claude tab.
+  if (tabId != null) postStatus({event:"worker-tab-close-suppressed",
+    reason:"preserve-browser-tab",tabId,at:new Date().toISOString()});
 }
 
 async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
@@ -1894,6 +1885,18 @@ async function supersedeMissingTarget(projectId, commandId, action = "command") 
   });
 }
 async function newProjectChat(projectId, reason, commandId) {
+  // A backend/watchdog new_chat is not proof that the user is finished.
+  // Never navigate away from an existing ChatGPT conversation automatically,
+  // especially immediately after clicking Send. Only a future explicit
+  // operator-only in-place route is allowed by this safety gate.
+  if (reason !== "operator-requested-in-place-new-chat") {
+    postStatus({projectId,event:"worker-auto-new-chat-suppressed",
+      reason:String(reason || "keep-tab").slice(0,120),at:new Date().toISOString()});
+    if (commandId != null) await commandResult(commandId,"failed",
+      "Automatische chatrotatie geblokkeerd: bestaande Firefox-tab behouden");
+    return;
+  }
+
   const workerKeys = workerKeysFor(projectId);
   if (workerKeys.some(key => key !== projectId)) {
     if (runningActions.has(projectId)) return;
@@ -2209,7 +2212,8 @@ async function recoverConversationLoadFailure(tabId, target) {
     at: new Date().toISOString(),
     tabId
   });
-  await newProjectChat(target.project_id, "chatgpt-conversation-load-failed", null);
+  // Preserve the failed conversation tab for diagnosis instead of opening
+  // or navigating away to another chat without the owner's consent.
   return true;
 }
 
@@ -2242,30 +2246,26 @@ function generationRotationDue(projectId, status) {
 }
 
 async function watchRunnerHealth() {
+  // Health status can lag the real ChatGPT generation by minutes. It must
+  // never cause an automatic new_chat, URL redirect or new browser tab.
+  // The primary Violentmonkey runner owns sending and reliable in-tab
+  // completion; the backend owns progress evaluation.
   try {
-    const response = await fetch(API + "/status", {cache: "no-store"});
+    const response = await fetch(API + "/status", {cache:"no-store"});
     if (!response.ok) return;
     const data = await response.json();
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
-      if (!status.active || status.auto_continue === false) continue;
-      if (generationRotationDue(projectId, status) &&
-          !status.generating && !status.sending &&
-          !runningActions.has(projectId) &&
-          Date.now() - Number(lastProactiveRotation.get(projectId) || 0) >= 120000) {
-        lastProactiveRotation.set(projectId, Date.now());
-        const state = conversationGenerationBudget.get(projectId);
-        if (state) state.count = 0;
-        await newProjectChat(projectId, "generation-budget-rotation", null);
-        continue;
-      }
+      if (!status?.active || status.auto_continue === false) continue;
       const stale = status.age_seconds != null && status.age_seconds > 300;
-      const stalled = status.stalled === true;
-      if ((!stale && !stalled) || Date.now() - (lastHealthRecovery[projectId] || 0) < 900000) continue;
+      if (!stale && status.stalled !== true) continue;
+      if (Date.now() - Number(lastHealthRecovery[projectId] || 0) < 900000) continue;
       lastHealthRecovery[projectId] = Date.now();
-      newProjectChat(projectId, stale ? "heartbeat-watchdog" : "stalled-watchdog", null);
+      postStatus({projectId,event:"worker-health-needs-attention",
+        reason:"automatic-chat-navigation-disabled",at:new Date().toISOString()});
     }
   } catch (_) {}
 }
+
 async function pollCommands() {
   try {
     const response = await fetch(API + "/runner-commands", {cache: "no-store"});
