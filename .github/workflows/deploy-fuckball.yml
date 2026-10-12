@@ -49,6 +49,9 @@ jobs:
           git reset --hard "$wanted_sha"
           npm run build:solo
           npm test
+          # Ensure this release contains the soft-contact dribbling collision solver.
+          grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
+          grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
           node --check server.js
           node_binary="$(command -v node)"
           run_user="$(id -un)"
