@@ -423,8 +423,11 @@ def restart_firefox_runtime():
     # A healthy/visible Firefox is authoritative. Do not terminate it, discard
     # its tabs or spawn a new ChatGPT window for a restart/health command.
     # True crash recovery is still allowed when no browser runtime is active.
-    if current.get('active'):
-        return {**current, 'reused_existing_browser':True,
+    if current.get('active') or existing:
+        # If the desktop probe is temporarily wrong while /proc still shows
+        # Firefox, absolutely do not terminate or replace the user's window.
+        return {**current, 'active':bool(current.get('active') or existing),
+                'reused_existing_browser':True,
                 'allocation_preserved':True, 'released_slots':[]}
     browser_was_dead=True
     recovery_guard=None
@@ -440,23 +443,10 @@ def restart_firefox_runtime():
         _persist_global_worker_allocation(portfolio_queue_allocation())
 
     if _violentmonkey_only_mode():
-        old_pids=existing
-        env=_firefox_session_env(old_pids[0] if old_pids else None)
-        for pid in old_pids:
-            try: os.kill(pid,signal.SIGTERM)
-            except ProcessLookupError: pass
-        deadline=time.time()+10
-        alive=list(old_pids)
-        while alive and time.time()<deadline:
-            time.sleep(0.5)
-            next_alive=[]
-            for pid in alive:
-                try: os.kill(pid,0);next_alive.append(pid)
-                except ProcessLookupError: pass
-            alive=next_alive
-        for pid in alive:
-            try: os.kill(pid,signal.SIGKILL)
-            except ProcessLookupError: pass
+        old_pids=[]
+        env=_firefox_session_env(None)
+        # A genuinely dead Firefox has no PIDs to signal. Never kill a
+        # browser here; one window with restored tabs is handled by Firefox.
         log_path=Path('/tmp/zcloud-firefox-recovery.log')
         with log_path.open('ab',buffering=0) as log:
             subprocess.Popen(
