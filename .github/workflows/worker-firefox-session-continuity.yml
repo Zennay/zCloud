@@ -73,6 +73,16 @@ jobs:
           fi
           install -m 0644 deploy/chatgpt-firefox.service "$HOME/.config/systemd/user/chatgpt-firefox.service"
           systemctl --user daemon-reload
+          # If a standalone Firefox already holds the profile, stop only
+          # the broken systemd START-PRE retry loop (never the live browser).
+          # MainPID=0 means systemd owns no running web-ext/browser consumer.
+          main_pid="$(systemctl --user show chatgpt-firefox.service -p MainPID --value || echo unknown)"
+          restarts="$(systemctl --user show chatgpt-firefox.service -p NRestarts --value || echo 0)"
+          if [[ "$main_pid" == "0" ]] && [[ "$restarts" =~ ^[0-9]+$ ]] && (( restarts >= 5 )) \
+            && pgrep -u "$(id -u)" -f '(/snap/firefox/.*/usr/lib/firefox/firefox|/usr/lib/firefox/firefox|firefox-bin)' >/dev/null 2>&1; then
+            systemctl --user stop chatgpt-firefox.service
+            echo "STOPPED_BROKEN_PROFILE_LOCK_RETRY_LOOP=1"
+          fi
           cmp deploy/chatgpt-firefox-prestart.sh "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
           cmp deploy/chatgpt-firefox.service "$HOME/.config/systemd/user/chatgpt-firefox.service"
           echo 'Installed for next worker Firefox restart; existing browser and Office staff sessions untouched.'
