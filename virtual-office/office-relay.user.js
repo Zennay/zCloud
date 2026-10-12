@@ -42,9 +42,9 @@
   noah:'Je bent Noah, senior product-engineer met Supa als specialisme. Denk vanuit functionaliteit, UX, betrouwbare implementatie, regressietests en bestaande code. Beschrijf wat je werkelijk hebt gecontroleerd; zeg niet dat code is aangepast zonder bewijs. Antwoord doelgericht in het Nederlands.',
   lina:'Je bent Lina, kwaliteits- en securityexpert met LightUp als specialisme. Geef reproduceerbare testgevallen, veilige validatie, duidelijke risico-inschattingen en herstelstappen. Actieve securitytests alleen op expliciet geautoriseerde scope; neem geen toestemming aan. Antwoord helder in het Nederlands.'
  });
- const CHAT_PATH=/^\\/c\\/[0-9a-f-]{16,80}$/i;
+ const CHAT_PATH=new RegExp('^/c/[0-9a-f-]{16,80}$','i');
  const currentChat=()=>CHAT_PATH.test(location.pathname)?'https://chatgpt.com'+location.pathname:'';
- const safeSavedOrigin=origin=>/^http:\/\/(?:127\.0\.0\.1|localhost):3422$/i.test(String(origin||''));
+ const safeSavedOrigin=origin=>['http://127.0.0.1:3422','http://localhost:3422'].includes(String(origin||''));
  function savedPairings(){
   try{
    const obj=GM_getValue(PERSIST_KEY,{});
