@@ -89,9 +89,21 @@ def workstation(core, command):
             "source": "vps", "checked_at": core.timestamp()}
 
 def relay_status(core):
+    """Expose only authenticated, actionable relay health; never expose claim tokens."""
     with core.connect() as db:
-        rows = {r["employee"]: dict(r) for r in db.execute("SELECT employee,heartbeat FROM office_relay")}
-    return {"employees": {id: {"online": bool(id in rows and time.time() - rows[id]["heartbeat"] < 35)} for id in PROFILE_IDS}}
+        rows = {r["employee"]: dict(r) for r in db.execute("SELECT employee,conversation,heartbeat FROM office_relay")}
+    now = time.time()
+    employees = {}
+    for employee in PROFILE_IDS:
+        row = rows.get(employee)
+        age = max(0, int(now - row["heartbeat"])) if row else None
+        online = row is not None and age < 35
+        employees[employee] = {
+            "online": online,
+            "last_seen_seconds": age,
+            "conversation": row["conversation"] if online else None,
+        }
+    return {"employees": employees}
 
 def chat_enqueue(core, body):
     employee = body.get("employee")
