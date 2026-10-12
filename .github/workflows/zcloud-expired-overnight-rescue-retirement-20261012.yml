@@ -1,0 +1,45 @@
+name: zCloud expired overnight rescue retirement proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"
+      - "tests/test_retired_overnight_idle_rescue_20261012.py"
+      - ".github/workflows/zcloud-expired-overnight-rescue-retirement-20261012.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"
+      - "tests/test_retired_overnight_idle_rescue_20261012.py"
+      - ".github/workflows/zcloud-expired-overnight-rescue-retirement-20261012.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-expired-overnight-rescue-retirement-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-retirement-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact revision with no persisted write credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          clean: true
+          persist-credentials: false
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prove privileged dated rescue absent
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_retired_overnight_idle_rescue_20261012.py' -v
+          echo "ZCLOUD_EXPIRED_RESCUE_RETIRED=1"
