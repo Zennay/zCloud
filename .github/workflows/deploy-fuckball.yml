@@ -65,6 +65,12 @@ jobs:
           grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' shared/physics.js
           grep -q 'const wallRebound=g=>' shared/physics.js
           grep -q 'const cautious=frames>2' shared/prediction.js
+          # Physics/input fixes: reject stale images that fake movement between snapshots.
+          grep -Fq 'inputX:p.input?.x??0,inputY:p.input?.y??0' shared/physics.js
+          grep -Fq 'else P.setInput(next,{x:p.inputX??0,y:p.inputY??0,kick:false});' shared/prediction.js
+          grep -Fq 'function flushInput(force=false)' public/index.html
+          grep -Fq "const {advanceFixed}=require('./shared/prediction');" server.js
+          grep -Fq 'const frame=advanceFixed(physicsAccumulator,now-lastPhysicsTime' server.js
           grep -q 'const passOptions=' shared/bot.js
           grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
           # Fail closed unless this validated contact/modes release is complete.
@@ -120,7 +126,10 @@ jobs:
           grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' /tmp/fuckball-physics-deployed.js
           curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/prediction.js" -o /tmp/fuckball-prediction-deployed.js
           grep -q 'const cautious=frames>2' /tmp/fuckball-prediction-deployed.js
-          echo "Fullscreen/high-refresh 4v4 game and new ball pace verified on VPS"
+          grep -Fq 'else P.setInput(next,{x:p.inputX??0,y:p.inputY??0,kick:false});' /tmp/fuckball-prediction-deployed.js
+          grep -Fq 'inputX:p.input?.x??0,inputY:p.input?.y??0' /tmp/fuckball-physics-deployed.js
+          grep -Fq 'function flushInput(force=false)' /tmp/fuckball-deployed.html
+          echo "Fullscreen/high-refresh 4v4 and responsive 60 Hz multiplayer verified on VPS"
           if command -v ufw >/dev/null 2>&1; then
             sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
           fi
