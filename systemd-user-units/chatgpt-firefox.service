@@ -11,7 +11,10 @@ ExecStartPre=/home/ubuntu/.local/bin/chatgpt-firefox-prestart.sh
 ExecStartPre=/bin/sleep 2
 ExecStart=/home/ubuntu/.local/bin/web-ext run --source-dir %h/snap/firefox/common/chatgpt-project-extension --firefox /usr/bin/firefox --firefox-profile %h/snap/firefox/common/chatgpt-webext-profile --keep-profile-changes --no-reload --no-input
 ExecStartPost=/home/ubuntu/.local/bin/chatgpt-window-layout.sh
-ExecStopPost=/home/ubuntu/.local/bin/chatgpt-firefox-stop.sh
+# systemd's own cgroup cleanup stops this worker browser only; do not run a
+# global Firefox stop script which could kill separate Office Relay sessions.
+KillMode=control-group
+TimeoutStopSec=30
 Nice=10
 CPUWeight=100
 
