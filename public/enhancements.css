@@ -708,3 +708,163 @@
 
 /* Explain permission failures where the worker controls are visible. */
 .global-worker-access{margin:0;padding:10px 12px;border:1px solid #856d48;border-radius:9px;color:#f1d7a9;background:#2a241d;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+
+
+/* Worker allocation cockpit — one primary control surface, responsive and accessible. */
+.worker-cockpit{
+  position:relative;
+  isolation:isolate;
+  margin:20px 0 34px;
+  overflow:hidden;
+  border:1px solid #334a55;
+  border-radius:22px;
+  background:linear-gradient(155deg,#17252b 0%,#141b25 29%,#10161f 75%,#10151b 100%);
+  box-shadow:0 22px 64px rgba(1,5,12,.28),inset 0 1px rgba(255,255,255,.04);
+}
+.worker-cockpit::before{
+  content:"";position:absolute;inset:0 0 auto;height:3px;
+  background:linear-gradient(90deg,#b9f46a,#5ed5bf 56%,transparent);
+}
+.worker-cockpit .worker-console-heading{
+  padding:26px 28px 21px;align-items:center;gap:24px;
+  border-bottom:1px solid rgba(156,194,197,.09);
+}
+.worker-cockpit .worker-console-heading h2{
+  font-size:clamp(24px,2.5vw,32px);font-weight:780;letter-spacing:-.045em;
+}
+.worker-cockpit .worker-console-heading .eyebrow{
+  font-size:10px;letter-spacing:.18em;color:#70dfbf;
+}
+.worker-cockpit .worker-console-heading p{
+  font-size:13px;color:#9eafbb;max-width:60ch;margin-top:7px;
+}
+.worker-console-live{
+  flex-shrink:0;display:flex;align-items:center;gap:9px;white-space:nowrap;
+  border:1px solid #35594c;border-radius:100px;background:#1a302a;
+  color:#a3f0cf;padding:9px 14px;font-size:10px;font-weight:750;letter-spacing:.1em;
+}
+.worker-console-live i{
+  width:7px;height:7px;background:#82eab3;border-radius:100%;
+  box-shadow:0 0 0 4px rgba(130,234,179,.12);
+}
+.worker-cockpit .global-worker-pool-heading,
+.worker-cockpit .global-worker-subhead{
+  padding:19px 26px 10px;border:0;
+}
+.worker-cockpit .global-worker-subhead{padding-top:24px;border-top:1px solid rgba(156,194,197,.10)}
+.worker-cockpit .global-worker-pool-heading strong,
+.worker-cockpit .global-worker-subhead strong{font-size:15px;letter-spacing:-.02em;color:#f4f7fb}
+.worker-cockpit .global-worker-pool-heading small,
+.worker-cockpit .global-worker-subhead small{font-size:11px;color:#8494a5}
+.worker-cockpit .dynamic-worker-control{
+  margin:0 26px 22px;padding:15px 17px;
+  border:1px solid #33404d;border-radius:14px;background:#111a23;
+  grid-template-columns:minmax(145px,1fr) minmax(205px,290px) auto;
+}
+.worker-cockpit .dynamic-worker-copy strong{font-size:15px}
+.worker-cockpit .dynamic-worker-counts input{background:#0d141d;border-color:#3e505e;font-variant-numeric:tabular-nums}
+.worker-cockpit .dynamic-worker-control .dynamic-worker-save{
+  min-width:110px;border-color:#bbf46b;background:#baf775;color:#101e12;
+  box-shadow:0 6px 22px rgba(186,247,117,.12);font-size:12px;font-weight:800;
+}
+.worker-cockpit .dynamic-worker-control .dynamic-worker-save:hover{background:#d2ff9c;transform:translateY(-1px)}
+.worker-cockpit .global-worker-list{gap:10px;padding:3px 26px 26px}
+.worker-cockpit .global-worker-row{
+  display:grid;
+  grid-template-columns:minmax(135px,1fr) minmax(130px,.78fr) minmax(170px,1.1fr) auto;
+  grid-template-areas:"identity status project actions" "chat chat hint feedback";
+  align-items:center;gap:10px 17px;
+  padding:15px 17px;border:1px solid #2e3b47;border-radius:15px;
+  background:linear-gradient(100deg,rgba(255,255,255,.025),rgba(255,255,255,.008));
+  transition:border-color .16s,background .16s;
+}
+.worker-cockpit .global-worker-row:hover{border-color:#466070;background:rgba(255,255,255,.035)}
+.worker-cockpit .global-worker-identity{grid-area:identity}
+.worker-cockpit .global-worker-index{
+  flex-basis:38px;height:38px;border-radius:11px;border-color:#425862;
+  color:#d7e8e9;background:#1b2d34;font-size:13px;
+}
+.worker-cockpit .global-worker-identity strong{font-size:13px}
+.worker-cockpit .global-worker-state{grid-area:status}
+.worker-cockpit .global-worker-project{grid-area:project;gap:6px}
+.worker-cockpit .global-worker-project span{color:#afbfca;font-size:10px;font-weight:650}
+.worker-cockpit .global-worker-project select{
+  width:100%;min-width:0;min-height:44px;
+  border:1px solid #435465;border-radius:10px;
+  padding:9px 32px 9px 11px;background:#131e28;color:#e6f0f4;font-size:14px;
+}
+.worker-cockpit .global-worker-project select:disabled{opacity:.45}
+.worker-cockpit .global-worker-actions{
+  grid-area:actions;display:flex;align-items:center;justify-content:flex-end;gap:7px;
+}
+.worker-cockpit .global-worker-actions .worker-icon-action{
+  display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;min-width:44px;
+  min-height:44px;padding:0;border-radius:11px;
+  background:#1c2833;border:1px solid #425061;color:#c8d5e1;
+  transition:background .15s,border-color .15s,transform .15s,box-shadow .15s;
+}
+.worker-cockpit .global-worker-actions .worker-icon-action svg{display:block;flex:none}
+.worker-cockpit .global-worker-actions .worker-play:not(:disabled){
+  background:#baf775;border-color:#baf775;color:#122013;
+  box-shadow:0 2px 16px rgba(186,247,117,.14);
+}
+.worker-cockpit .global-worker-actions .worker-pause:not(:disabled):hover,
+.worker-cockpit .global-worker-actions .worker-force:not(:disabled):hover{background:#2b3f4a;border-color:#86acae}
+.worker-cockpit .global-worker-actions .worker-force:not(:disabled){color:#f6c97c;border-color:#665139}
+.worker-cockpit .global-worker-actions .worker-icon-action:not(:disabled):active{transform:scale(.94)}
+.worker-cockpit .global-worker-actions .worker-icon-action:disabled{opacity:.31;cursor:not-allowed}
+.worker-cockpit .global-worker-actions .worker-icon-action[aria-busy="true"]{opacity:.68;cursor:wait}
+.worker-cockpit .global-worker-actions .worker-icon-action:focus-visible,
+.worker-cockpit .global-worker-project select:focus-visible,
+.worker-cockpit .dynamic-worker-control input:focus-visible,
+.worker-cockpit .dynamic-worker-save:focus-visible{outline:2px solid #baf775;outline-offset:3px}
+.worker-cockpit .global-worker-chat{grid-area:chat;font-size:11px;padding:4px 0;min-height:auto;border:0;background:none;color:#78c8bd}
+.worker-cockpit .global-worker-telemetry{display:none}
+.worker-cockpit .global-worker-hint{grid-area:hint}
+.worker-cockpit .global-worker-feedback{grid-area:feedback}
+.worker-cockpit .worker-console-diagnostics{padding:0 26px;border-color:#2e3b47}
+.worker-cockpit .worker-console-diagnostics>summary{min-height:52px;color:#8fa2b3}
+.worker-cockpit .global-worker-empty{margin:0 26px 26px}
+@media(max-width:1050px){
+  .worker-cockpit .global-worker-row{
+    grid-template-columns:minmax(0,1fr) minmax(115px,.7fr);
+    grid-template-areas:"identity status" "project actions" "hint hint" "feedback feedback" "chat chat";
+  }
+}
+@media(max-width:760px){
+  .worker-cockpit{margin:12px 0 24px;border-radius:17px}
+  .worker-cockpit .worker-console-heading{padding:20px 17px 17px;gap:14px;align-items:flex-start}
+  .worker-cockpit .worker-console-heading h2{font-size:25px}
+  .worker-console-live{padding:7px 10px;font-size:9px}
+  .worker-cockpit .global-worker-pool-heading,
+  .worker-cockpit .global-worker-subhead{padding:16px 16px 8px;gap:4px}
+  .worker-cockpit .dynamic-worker-control{
+    margin:0 16px 17px;padding:13px;gap:13px;
+    grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"copy copy" "counts save" "advanced advanced";
+  }
+  .worker-cockpit .dynamic-worker-counts{grid-template-columns:repeat(2,minmax(75px,1fr));gap:9px}
+  .worker-cockpit .dynamic-worker-counts input{min-width:0}
+  .worker-cockpit .global-worker-list{padding:2px 16px 18px}
+  .worker-cockpit .global-worker-row{grid-template-columns:minmax(0,1fr) auto;gap:11px}
+  .worker-cockpit .global-worker-project select{font-size:16px}
+  .worker-cockpit .worker-console-diagnostics{padding:0 16px}
+}
+@media(max-width:450px){
+  .worker-cockpit .worker-console-heading{flex-direction:column;gap:8px}
+  .worker-cockpit .global-worker-row{
+    grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"identity status" "project project" "actions actions" "hint hint" "feedback feedback" "chat chat";
+  }
+  .worker-cockpit .global-worker-actions{justify-content:flex-start;gap:10px}
+  .worker-cockpit .global-worker-actions .worker-icon-action{flex-basis:48px;width:48px;height:48px}
+  .worker-cockpit .dynamic-worker-control{
+    grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"copy copy" "counts save" "advanced advanced";
+  }
+  .worker-cockpit .dynamic-worker-control .dynamic-worker-save{min-width:85px}
+  .worker-cockpit .global-worker-subhead small{display:block}
+}
+@media(prefers-reduced-motion:reduce){
+  .worker-cockpit .global-worker-row,.worker-cockpit .worker-icon-action,.worker-cockpit .dynamic-worker-save{transition:none}
+}
