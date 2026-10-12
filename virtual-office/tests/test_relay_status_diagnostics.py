@@ -38,12 +38,44 @@ class RelayStatusDiagnosticsTests(unittest.TestCase):
         self.assertEqual(live["maya"]["conversation"], url)
         self.assertLess(live["maya"]["last_seen_seconds"], 35)
         self.assertFalse(live["noah"]["online"])
+        # Chrome can run setInterval only once per minute in hidden tabs.
+        # 90 seconds without a beat must not falsely mark the relay offline.
         with server.connect() as db:
             db.execute("UPDATE office_relay SET heartbeat=? WHERE employee='maya'", (time.time() - 90,))
+        throttled = server.features.relay_status(server)["employees"]["maya"]
+        self.assertTrue(throttled["online"])
+        self.assertGreaterEqual(throttled["last_seen_seconds"], 90)
+        self.assertEqual(throttled["conversation"], url)
+        queued = server.features.chat_enqueue(server, {"employee": "maya", "instruction": "Hallo"})
+        self.assertEqual(queued["status"], "queued")
+        # A ChatGPT page refresh loses the access code but can manually pair
+        # again with the same tab-scoped, non-secret client id.
+        rejoined = server.features.relay_poll(server, {
+            "employee": "maya", "client_id": "local-test-client",
+            "conversation": url, "ready": False,
+        })
+        self.assertTrue(rejoined["ok"])
+        with self.assertRaisesRegex(ValueError, "actieve tab"):
+            server.features.relay_poll(server, {
+                "employee": "maya", "client_id": "another-tab",
+                "conversation": url, "ready": False,
+            })
+        with server.connect() as db:
+            db.execute("UPDATE office_relay SET heartbeat=? WHERE employee='maya'",
+                       (time.time() - server.features.RELAY_HEARTBEAT_TIMEOUT - 10,))
         stale = server.features.relay_status(server)["employees"]["maya"]
         self.assertFalse(stale["online"])
-        self.assertGreaterEqual(stale["last_seen_seconds"], 35)
+        self.assertGreaterEqual(stale["last_seen_seconds"], server.features.RELAY_HEARTBEAT_TIMEOUT)
         self.assertIsNone(stale["conversation"])
+        with self.assertRaisesRegex(ValueError, "Geen ChatGPT Relay"):
+            server.features.chat_enqueue(server, {"employee": "maya", "instruction": "Hallo?"})
+        # Once truly stale, a new client can take over the same employee.
+        renewed = server.features.relay_poll(server, {
+            "employee": "maya", "client_id": "another-tab",
+            "conversation": url, "ready": False,
+        })
+        self.assertTrue(renewed["ok"])
+        self.assertTrue(server.features.relay_status(server)["employees"]["maya"]["online"])
 
     def test_health_does_not_disclose_claim_or_access_token(self):
         url = "https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef"

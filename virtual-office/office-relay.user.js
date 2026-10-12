@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.3
+// @version      0.3.4
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
@@ -17,7 +17,17 @@
  'use strict';
  // Opt-in per tab, credentials stay in closure memory. No cookie/token extraction,
  // no account-limit bypass, no background-tab ownership theft and no auto resend.
- let config=null,active=null,busy=false,polling=false,client=crypto.randomUUID();
+ let config=null,active=null,busy=false,polling=false;
+ // Only a NON-SECRET tab identifier survives a ChatGPT reload. The Office
+ // access code and pairing remain opt-in, held in memory, never persisted.
+ // This lets the same tab reclaim its prior lease after manually reconnecting.
+ let client=crypto.randomUUID();
+ try{
+  const prior=sessionStorage.getItem('zcloud-office-relay-client');
+  if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(prior||''))client=prior;
+  else sessionStorage.setItem('zcloud-office-relay-client',client);
+ }catch{}
+
  const status=document.createElement('div');
  Object.assign(status.style,{position:'fixed',bottom:'12px',left:'12px',zIndex:'99999',background:'#182329',color:'#d9c19b',font:'11px system-ui',border:'1px solid #8d7652',padding:'8px 12px',borderRadius:'8px'});
  status.textContent='Office Relay · uit';status.title='Klik om Office Relay te verbinden of opnieuw in te stellen';status.setAttribute('role','status');document.body.append(status);
@@ -91,7 +101,7 @@
   }catch(e){
    await request('/api/relay/reply',{id:job.id,client_id:client,claim_token:job.claim_token,status:'attention',reply:e.message});
    active=null;
-  }finally{busy=false;status.textContent=active?'Office Relay · antwoord niet afgeleverd; controleer verbinding':'Office Relay · verbonden'}
+  }finally{busy=false;status.textContent=active?'Office Relay · antwoord niet afgeleverd; controleer verbinding':'Office Relay · '+config.employee+' verbonden'}
  }
  async function tick(){
   if(!config||polling)return;polling=true;
@@ -103,5 +113,9 @@
    else if(!busy&&!active)status.textContent='Office Relay · '+config.employee+' verbonden';
   }catch(e){status.textContent='Office Relay · '+e.message}finally{polling=false}
  }
+ // A browser may throttle a background tab's interval to once per minute.
+ // The server tolerates throttled heartbeats; on returning to the tab probe now.
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});
+ window.addEventListener('pageshow',()=>{if(config)tick()});
  setInterval(tick,4000);
 })();
