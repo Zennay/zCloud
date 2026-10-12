@@ -12,16 +12,15 @@ permissions:
 jobs:
   office-tests:
     name: Python API + UI syntax + smoke
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/feature/virtual-ai-office-mvp-20261012' && github.actor == 'Zennay' }}
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Compile + unit tests
         run: |
-          python3 -m py_compile virtual-office/server.py
+          test "$(hostname)" = "vps-bb300bba"
+          python3 -m py_compile virtual-office/server.py virtual-office/office_features.py
           python3 -m unittest discover -s virtual-office/tests -v
       - name: Parse module and check JS syntax
         run: |
@@ -33,9 +32,12 @@ jobs:
           Path("/tmp/virtual-office-ui.mjs").write_text(part)
           PY
           node --check /tmp/virtual-office-ui.mjs
+          cp virtual-office/scene.js /tmp/virtual-office-scene.mjs
+          node --check /tmp/virtual-office-scene.mjs
+          node --check virtual-office/office-relay.user.js
       - name: Local API smoke (no account needed)
         run: |
-          OFFICE_PORT=18999 python3 virtual-office/server.py all &
+          OFFICE_ZCLOUD_URL=http://127.0.0.1:18998 OFFICE_DB_PATH="$RUNNER_TEMP/office-smoke-$GITHUB_RUN_ID.db" OFFICE_PORT=18999 python3 virtual-office/server.py all &
           PID=$!
           trap 'kill "$PID" || true' EXIT
           for i in $(seq 1 15); do
@@ -101,6 +103,8 @@ jobs:
           sudo chmod 0600 /etc/virtual-office/office.env
           sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
           sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
+          sudo install -m 0644 virtual-office/office_features.py virtual-office/scene.js virtual-office/office-relay.user.js /opt/virtual-office/
+          printf '%s' "$GITHUB_SHA" | sudo tee /opt/virtual-office/RELEASE >/dev/null
           sudo chown "$user:$group" /opt/virtual-office/server.py /opt/virtual-office/index.html
           printf '[Unit]\nDescription=3D Virtual Office ChatGPT worker frontend\nAfter=network-online.target zennay-cloud.service\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=/opt/virtual-office\nEnvironment=OFFICE_BIND=0.0.0.0\nEnvironment=OFFICE_PORT=%s\nEnvironment=OFFICE_DB_PATH=/var/lib/virtual-office/office.db\nEnvironment=OFFICE_ZCLOUD_URL=http://127.0.0.1:8765\nEnvironmentFile=/etc/virtual-office/office.env\nExecStart=/usr/bin/python3 /opt/virtual-office/server.py all\nRestart=always\nRestartSec=5\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=/var/lib/virtual-office\n\n[Install]\nWantedBy=multi-user.target\n' "$user" "$group" "$OFFICE_PORT" | sudo tee /etc/systemd/system/virtual-office.service >/dev/null
           sudo systemctl daemon-reload
@@ -137,10 +141,38 @@ jobs:
           if [ -n "$public_ip" ]; then
             echo "Candidate browser demo URL: http://$public_ip:$OFFICE_PORT/"
             {
-              echo "## Virtual Office 0.2"
+              echo "## Virtual Office 0.3 Penthouse"
               echo "Built and deployed SHA: $GITHUB_SHA"
               echo "Candidate browser demo: http://$public_ip:$OFFICE_PORT/"
               echo "Interactive office + ChatGPT link. Server-only authenticated task submission."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           sudo systemctl is-active --quiet virtual-office.service
+
+      - name: Private workstation readback and anonymous denial on deployed server
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          from pathlib import Path
+          token = next(line.split("=",1)[1].strip() for line in Path("/etc/virtual-office/office.env").read_text().splitlines() if line.startswith("OFFICE_ACCESS_TOKEN="))
+          root = "http://127.0.0.1:3422"
+          for command in ("uptime", "memory", "disk", "services"):
+              req = urllib.request.Request(root+"/api/workstation", data=json.dumps({"command":command}).encode(), headers={"Content-Type":"application/json","X-Office-Token":token})
+              result = json.load(urllib.request.urlopen(req,timeout=8))
+              assert result["source"] == "vps" and result["output"]
+              print("Private VPS command verified:", command)
+          for path in ("/api/decks", "/api/relay/status", "/api/jobs"):
+              try:
+                  urllib.request.urlopen(root+path,timeout=5)
+                  raise AssertionError("Private route exposed")
+              except urllib.error.HTTPError as exc:
+                  assert exc.code == 401
+          for path in ("/scene.js", "/office-relay.user.js"):
+              response = urllib.request.urlopen(root+path,timeout=5)
+              assert response.status == 200
+          health = json.load(urllib.request.urlopen(root+"/api/health",timeout=12))
+          assert health["version"] == "0.3-penthouse"
+          print("Penthouse private API and static assets verified. No work queued by this probe.")
+          PY

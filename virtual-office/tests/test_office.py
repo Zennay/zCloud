@@ -83,7 +83,7 @@ class OfficeTests(unittest.TestCase):
         self.assertNotIn("code",server.get_job(job["id"])["output"])
         with server.connect() as db:
             counts = db.execute("SELECT COUNT(*) FROM messages WHERE role='system'").fetchone()[0]
-        self.assertEqual(counts, 1)
+        self.assertEqual(counts, 2)  # durable acknowledgement + terminal queue result
 
     def test_chitchat_cannot_be_dispatched_into_write_queue(self):
         job = server.enqueue("maya","task","Wat ga je vandaag doen?")

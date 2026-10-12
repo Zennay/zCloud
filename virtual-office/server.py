@@ -17,6 +17,10 @@ import sqlite3
 import threading
 import time
 import uuid
+import sys
+import office_features as features
+
+WAKE = threading.Event()
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -94,6 +98,7 @@ def init_db() -> None:
         db.execute("UPDATE jobs SET status='interrupted',error='Oud Codex-jobtype vereist handmatige verificatie.' WHERE status='running' AND remote_queue_id=''")
         db.execute("UPDATE jobs SET status='queued' WHERE status='waiting_zcloud' AND remote_queue_id=''")
         # Dispatched jobs are idempotent by remote_queue_id; reconciliation is read-only.
+        features.init(db)
 
 
 def zcloud(path: str, payload: dict | None = None, timeout: float = 3.5) -> dict:
@@ -153,6 +158,7 @@ def enqueue(employee: str, kind: str, instruction: str) -> dict:
     if kind != "task":
         raise ValueError("Vrije gesprekken worden niet door zCloud gerelayd. Gebruik 'Open ChatGPT-chat' voor gesprekken of 'Geef werkopdracht' voor werk.")
     with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
         active = db.execute("SELECT COUNT(*) FROM jobs WHERE status NOT IN ('done','failed','dropped','interrupted')").fetchone()[0]
         if active >= MAX_ACTIVE:
             raise ValueError("Er staan al 12 opdrachten open. Rond er eerst een aantal af.")
@@ -161,7 +167,11 @@ def enqueue(employee: str, kind: str, instruction: str) -> dict:
                    (ident, employee, kind, instruction, "queued", now, now))
         db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
                    (employee, "user", instruction, now))
-    return get_job(ident)
+        acknowledgement = "Opdracht ontvangen en opgeslagen. De zCloud-worker pakt deze op zodra er capaciteit is; je hoeft dit venster niet open te houden."
+        db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)", (employee, "system", acknowledgement, now))
+        db.execute("COMMIT")
+    WAKE.set()
+    return {**get_job(ident), "acknowledgement": acknowledgement}
 
 
 def get_job(ident: str) -> dict | None:
@@ -201,7 +211,7 @@ def build_portfolio_payload(job: dict) -> dict:
         "Office opdracht van de eigenaar voor " + persona["name"] + " (" + persona["title"] + "). "
         "Bestaande open issues/PR's gaan voor nieuw werk; probeer een veilige concrete stap. "
         "Controleer eigen projectcontext in Notion en GitHub en voer materieel uitvoerbaar werk uit. "
-        "Vereist: werkelijke code- of testwijziging met controleerbaar bewijs; geen verzonnen afronding. "
+         "Vereist: een werkelijk resultaat passend bij de opdracht: code, tests, slides of ander gevraagd bestand, met controleerbaar bewijs. Geen verzonnen afronding. "
         "Geen productie-, secret- of security-scope wijzigingen zonder afzonderlijke toestemming. "
         "Gebruikersinstructie:\n" + instruction
     )
@@ -274,7 +284,8 @@ def work_forever(stop: threading.Event | None = None) -> None:
         if stop:
             stop.wait(8)
         else:
-            time.sleep(8)
+            WAKE.wait(2)
+            WAKE.clear()
 
 
 def employee_chat_links() -> dict:
@@ -295,7 +306,7 @@ def employee_chat_links() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "VirtualOffice/0.2"
+    server_version = "VirtualOffice/0.3"
 
     def json_reply(self,code:int,obj:object)->None:
         payload=json.dumps(obj,ensure_ascii=False).encode("utf-8")
@@ -319,6 +330,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self)->None:
         url=urlsplit(self.path)
+        static = {"/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
+                  "/office-relay.user.js": ("office-relay.user.js", "text/javascript; charset=utf-8")}
+        if url.path in static:
+            filename, mime = static[url.path]
+            body = (ROOT / filename).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if url.path in ("/","/index.html"):
             body=(ROOT/"index.html").read_bytes()
             self.send_response(200)
@@ -330,13 +354,20 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers();self.wfile.write(body);return
         if url.path=="/api/health":
             self.json_reply(200,{"online":True,"auth_required":bool(TOKEN),
-                 "mode":"zcloud_chatgpt_chats","tasks_enabled":True, **zcloud_health()})
+                 "mode":"zcloud_chatgpt_chats","version":"0.3-penthouse","tasks_enabled":True, **zcloud_health()})
             return
         if not self.require_auth():return
         if url.path=="/api/employees":
             try:links=employee_chat_links()
             except (ConnectionError,RuntimeError,ValueError):links={k:"https://chatgpt.com/" for k in PERSONAS}
             self.json_reply(200,{"employees":list(PERSONAS.values()),"chat_links":links})
+        elif url.path=="/api/decks":
+            self.json_reply(200, features.deck_list(sys.modules[__name__]))
+        elif url.path.startswith("/api/decks/"):
+            deck = features.get_deck(sys.modules[__name__], url.path.rsplit("/", 1)[-1])
+            self.json_reply(200 if deck else 404, deck or {"error":"Niet gevonden"})
+        elif url.path=="/api/relay/status":
+            self.json_reply(200, features.relay_status(sys.modules[__name__]))
         elif url.path=="/api/jobs":
             self.json_reply(200,{"jobs":list_jobs()})
         elif url.path.startswith("/api/jobs/"):
@@ -346,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
             employee=parse_qs(url.query).get("employee",[""])[0]
             if employee not in PERSONAS:return self.json_reply(400,{"error":"Onbekende medewerker"})
             with connect() as db:
-                rows=[dict(r) for r in db.execute("SELECT role,content,created_at FROM messages WHERE employee=? ORDER BY id DESC LIMIT 30",(employee,))]
+                rows=[dict(r) for r in db.execute("SELECT id,role,content,created_at FROM messages WHERE employee=? ORDER BY id DESC LIMIT 30",(employee,))]
             self.json_reply(200,{"messages":list(reversed(rows))})
         else:self.json_reply(404,{"error":"Niet gevonden"})
 
@@ -356,13 +387,23 @@ class Handler(BaseHTTPRequestHandler):
         length=self.headers.get("Content-Length","")
         if self.headers.get("Content-Type","").split(";")[0].strip()!="application/json":
             return self.json_reply(415,{"error":"Alleen JSON"})
-        if not length.isdigit() or int(length)>10000:
+        if not length.isdigit() or int(length)>100000:
             return self.json_reply(413,{"error":"Ongeldige aanvraaglengte"})
         try:
             body=json.loads(self.rfile.read(int(length)))
             if not isinstance(body,dict):raise ValueError("JSON object vereist")
             if url.path=="/api/jobs":
                 self.json_reply(201,enqueue(body.get("employee",""),body.get("kind","task"),body.get("instruction","")))
+            elif url.path=="/api/decks":
+                self.json_reply(201, features.save_deck(sys.modules[__name__], body))
+            elif url.path=="/api/workstation":
+                self.json_reply(200, features.workstation(sys.modules[__name__], body.get("command")))
+            elif url.path=="/api/chat":
+                self.json_reply(201, features.chat_enqueue(sys.modules[__name__], body))
+            elif url.path=="/api/relay/poll":
+                self.json_reply(200, features.relay_poll(sys.modules[__name__], body))
+            elif url.path=="/api/relay/reply":
+                self.json_reply(200, features.relay_reply(sys.modules[__name__], body))
             elif url.path.startswith("/api/jobs/") and url.path.endswith("/retry"):
                 ident=url.path.split("/")[-2]
                 job=retry(ident)
