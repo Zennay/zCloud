@@ -1,0 +1,59 @@
+name: Virtual Office isolated CI
+on:
+  push:
+    branches:
+      - feature/virtual-ai-office-mvp-20261012
+    paths:
+      - "virtual-office/**"
+      - ".github/workflows/virtual-office-ci.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  office-tests:
+    name: Python API + UI syntax + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile + unit tests
+        run: |
+          python3 -m py_compile virtual-office/server.py
+          python3 -m unittest discover -s virtual-office/tests -v
+      - name: Parse module and check JS syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          html=Path("virtual-office/index.html").read_text()
+          assert html.count('<script type="module">') == 1
+          part=html.split('<script type="module">',1)[1].split('</script>',1)[0]
+          Path("/tmp/virtual-office-ui.mjs").write_text(part)
+          PY
+          node --check /tmp/virtual-office-ui.mjs
+      - name: Local API smoke (no account needed)
+        run: |
+          OFFICE_PORT=18999 python3 virtual-office/server.py all &
+          PID=$!
+          trap 'kill "$PID" || true' EXIT
+          for i in $(seq 1 15); do
+            if curl --fail --silent http://127.0.0.1:18999/api/health > /tmp/office-health.json; then break; fi
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          root="http://127.0.0.1:18999"
+          health=json.load(open("/tmp/office-health.json"))
+          assert health["online"] is True
+          assert health["codex_ready"] is False
+          body=json.dumps({"employee":"maya","kind":"chat","instruction":"Maak een weekplanning"}).encode()
+          request=urllib.request.Request(root+"/api/jobs",data=body,headers={"Content-Type":"application/json"})
+          response=json.load(urllib.request.urlopen(request))
+          assert response["status"]=="queued"
+          pending=json.load(urllib.request.urlopen(root+"/api/jobs"))
+          assert pending["jobs"][0]["id"]==response["id"]
+          print("Live enqueue + durable pending queue OK")
+          PY
