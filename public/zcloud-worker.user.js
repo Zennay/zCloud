@@ -23,7 +23,7 @@
   window.__ZCLOUD_SINGLE_TAB_V2 = true;
   if (location.hostname !== "chatgpt.com") return;
   const fromUrl = new URL(location.href).searchParams.get("zcloud_worker") || "";
-  const stored = sessionStorage.getItem("zcloud-v2-worker") || "";
+  const stored = sessionStorage.getItem("zcloud-v2-worker") || sessionStorage.getItem("zcloud-bound-project") || "";
   if (fromUrl && stored && fromUrl !== stored) return;
   const id = fromUrl || stored;
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
@@ -205,7 +205,6 @@
   }
   poll();setInterval(poll,POLL_MS);
 })();
-
 
 (() => {
   if (window.__ZCLOUD_SINGLE_TAB_V2) return; // legacy timers retired in v2
