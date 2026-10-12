@@ -11,7 +11,7 @@ export async function startOffice(ui){
  const material=(color,roughness=.65,metalness=0)=>{const m=new THREE.MeshStandardMaterial({color,roughness,metalness});materials.push(m);return m};
  const ink=material('#202d33',.37,.55),brass=material('#b49662',.26,.8),walnut=material('#584031',.53),lightWood=material('#ad8a61',.54),ivory=material('#ded4c3',.76),leather=material('#786049',.84),darkLeather=material('#243438',.85),stone=material('#bcbab0',.26,.16),green=material('#3f5742',.9),black=material('#121b23',.4),white=material('#e8e2d3',.7);
  const glow=material('#ffe2b3',.3);glow.emissive=new THREE.Color('#ffcb84');glow.emissiveIntensity=2.2;
- const glass=new THREE.MeshPhysicalMaterial({color:'#b8d3d6',transparent:true,opacity:.09,roughness:.12,metalness:.15,depthWrite:false});materials.push(glass);
+ const glass=new THREE.MeshPhysicalMaterial({color:'#b8d3d6',transparent:true,opacity:.24,roughness:.085,metalness:.15,depthWrite:false});materials.push(glass);
  const boxGeo=new THREE.BoxGeometry(1,1,1),sphereGeo=new THREE.SphereGeometry(1,18,14),cylGeo=new THREE.CylinderGeometry(1,1,1,20);
  geometries.push(boxGeo,sphereGeo,cylGeo);
  function mesh(geo,m,x,y,z,sx=1,sy=1,sz=1,parent=scene){const o=new THREE.Mesh(geo,m);o.position.set(x,y,z);o.scale.set(sx,sy,sz);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o}
@@ -39,7 +39,13 @@ export async function startOffice(ui){
  for(let x=-3.1;x<=2.15;x+=.16)box(x,2.3,1.4,.035,4.6,.035,brass);
  function wallLabel(text,x,y,z,width){const tex=canvasTex(1024,180,(c)=>{c.fillStyle='#d4bd96';c.font='52px Georgia';c.textAlign='center';c.fillText(text,512,112)});const m=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false});materials.push(m);const p=new THREE.Mesh(new THREE.PlaneGeometry(width,width*180/1024),m);geometries.push(p.geometry);p.position.set(x,y,z);scene.add(p);return p}
  wallLabel('z C L O U D',-.5,3.2,1.58,4.2);wallLabel('THE PENTHOUSE',-.5,2.65,1.59,2.7);
- for(const x of [-5,5]){for(const segment of [{z:6,w:6},{z:13,w:4}]){box(x,2.1,segment.z,.018,4.2,segment.w,glass);box(x,4.2,segment.z,.07,.07,segment.w,ink);collision(x,segment.z,.06,segment.w)}for(const z of [3,9,11,15])box(x,2.1,z,.05,4.2,.06,ink)}
+ for(const x of [-5,5]){for(const segment of [{z:6,w:6},{z:13,w:4}]){box(x,2.1,segment.z,.018,4.2,segment.w,glass);box(x,4.2,segment.z,.07,.07,segment.w,ink);/* glass divider is visually present but no invisible collision trap */}for(const z of [3,9,11,15])box(x,2.1,z,.05,4.2,.06,ink)}
+ // Layered aerial haze adds distance and prevents toy-like hard skyline silhouettes.
+ scene.fog=new THREE.FogExp2('#8cabb7',0.00155);
+ const horizonMat=new THREE.MeshBasicMaterial({color:'#8ba7b2',transparent:true,opacity:.28,depthWrite:false,side:THREE.DoubleSide});
+ materials.push(horizonMat);
+ const hazeGeo=new THREE.CylinderGeometry(625,625,155,96,1,true);geometries.push(hazeGeo);
+ const haze=new THREE.Mesh(hazeGeo,horizonMat);haze.position.set(0,-56,0);scene.add(haze);
  // Sky gradient and atmospheric city, authored procedural geometry, no proprietary assets.
  const sky=canvasTex(16,512,(c,w,h)=>{const g=c.createLinearGradient(0,0,0,h);g.addColorStop(0,'#486d87');g.addColorStop(.42,'#99adb5');g.addColorStop(.68,'#e2be99');g.addColorStop(1,'#e7bf9d');c.fillStyle=g;c.fillRect(0,0,w,h)});
  scene.background=sky;scene.fog=new THREE.FogExp2('#c6b4a2',.0016);
@@ -57,6 +63,13 @@ export async function startOffice(ui){
  // An inexpensive prefiltered environment creates proper material highlights.
  const environmentScene=new THREE.Scene();environmentScene.background=new THREE.Color('#aab7c0');const envLight=new THREE.Mesh(new THREE.BoxGeometry(40,15,1),new THREE.MeshBasicMaterial({color:'#fff0d8'}));envLight.position.set(-12,12,-10);environmentScene.add(envLight);
  const pmrem=new THREE.PMREMGenerator(renderer),env=pmrem.fromScene(environmentScene,.08);scene.environment=env.texture;pmrem.dispose();envLight.geometry.dispose();envLight.material.dispose();
+ // Soft, individually sculpted desk accessories and greenery.
+ function plush(x,z,color='#f0cbb3',scale=.26){
+   const fur=material(color,.96),eyes=material('#24242a',.7),blush=material('#d58f8b',.96);
+   ball(x,.98,z,.23*scale/.26,.24*scale/.26,.18*scale/.26,fur);
+   for(const side of [-1,1]){ball(x+side*.14,.1+1.11,z,.095,.13,.075,fur);ball(x+side*.085,1.02,z+.17,.021,.025,.018,eyes);}
+   ball(x, .93,z+.183,.04,.03,.025,blush);
+ }
  function plant(x,z,size=1){cyl(x,.3*size,z,.32*size,.6*size,stone);cyl(x,.85*size,z,.025*size,1.2*size,walnut);for(let i=0;i<13;i++){const angle=i*2.4;const leaf=ball(x+Math.cos(angle)*.32*size,(1.05+rand()*.55)*size,z+Math.sin(angle)*.32*size,.18*size,.38*size,.08*size,green);leaf.rotation.set(rand()*.5,angle,.6)}collision(x,z,.7*size,.7*size)}
  for(const [x,z,s] of [[-17,-13,1.4],[17,-13,1.4],[-17,13,1.5],[17,13,1.5],[-4,1,1.1],[4,1,1.1],[-5,-4,1],[5,-4,1]])plant(x,z,s);
  function chair(x,z,angle=0,m=darkLeather){const group=new THREE.Group();group.position.set(x,0,z);group.rotation.y=angle;scene.add(group);box(0,.49,0,.62,.13,.61,m,group);box(0,.94,-.27,.61,.85,.1,m,group);for(const dx of [-.35,.35]){box(dx,.73,0,.06,.07,.55,ink,group);box(dx,.6,.17,.04,.26,.04,ink,group)}cyl(0,.25,0,.045,.42,ink,group);for(let i=0;i<5;i++){const leg=box(0,.08,.15,.045,.04,.36,ink,group);leg.rotation.y=i*Math.PI*2/5;leg.position.x=Math.sin(i*Math.PI*2/5)*.15;leg.position.z=Math.cos(i*Math.PI*2/5)*.15}return group}
@@ -85,7 +98,11 @@ export async function startOffice(ui){
   const sm=new THREE.SpriteMaterial({map:label,transparent:true,depthTest:true});materials.push(sm);const badge=new THREE.Sprite(sm);badge.position.set(0,2,0);badge.scale.set(1.7,.33,1);g.add(badge);
   actors.push({id,g,head:h,baseY:g.position.y,working:false});collision(x,z,.7,.75);return g;
  }
- // Executive office: front-facing workstation and low credenza.
+ // Cozy customizable corner, intentionally separate from owner workstations.
+ desk(12,11,'CREATIVE CORNER',null);chair(12,9.7);
+ plush(11.2,10.9,'#f1d3c0');plush(12.2,10.9,'#c5b3df');
+ plant(13.15,10.7,.45);
+  // Executive office: front-facing workstation and low credenza.
  desk(-11,6,'ZCLOUD / YOUR WORKSPACE','computer');chair(-11,4.8);box(-11,.7,12.9,8,1.4,.65,walnut);collision(-11,12.9,8,.65);
  for(let x=-14;x<-7;x+=1.2){box(x,1.46,12.9,.7,.06,.38,ivory)}
  wallLabel('EXECUTIVE OFFICE',-11,3.55,14.8,5).rotation.y=Math.PI;
