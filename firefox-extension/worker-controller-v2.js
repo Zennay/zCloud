@@ -105,13 +105,52 @@
         candidateRemovals.delete(key);
         if (!ownership.has(key)) await createWorkerTab(key,target,windowId);
       }
-      // Do not close a worker tab on a temporary loss of its target, status
-      // mismatch, pause or endpoint timeout. Removal requires an EXPLICIT
-      // durable worker deletion signal, not inferred from allocation churn.
+      // Missing configuration alone is NOT deletion. Require three complete
+      // snapshots plus the latest durable dashboard worker-count reduction,
+      // with a confirmed idle generation and an exact per-tab session tag.
       for (const [key] of ownership) {
         if (!desired.has(key)) {
           candidateRemovals.set(key,(candidateRemovals.get(key)||0)+1);
           await note("worker-preserved-unassigned",key,"await-explicit-removal");
+        }
+      }
+      const waiting=[...candidateRemovals].filter(([id,count])=>count>=3&&!desired.has(id));
+      if(waiting.length){
+        let audit=null;
+        try{
+          const reply=await fetch(API+"/config-audit?key=runner.worker_count&limit=200",{cache:"no-store"});
+          if(reply.ok)audit=await reply.json();
+        }catch(_){}
+        const latest=new Map();
+        for(const entry of audit?.items||[]){
+          if(entry.config_key!=="runner.worker_count"||latest.has(entry.target))continue;
+          latest.set(entry.target,entry);
+        }
+        for(const [key] of waiting){
+          const match=/^(.+)::w([1-9][0-9]*)$/.exec(key);
+          if(!match)continue;
+          const row=latest.get(match[1]);
+          const oldCount=Number(row?.old_value),newCount=Number(row?.new_value);
+          const recent=Number.isFinite(Date.parse(row?.ts))&&Date.now()-Date.parse(row.ts)<10*60*1000;
+          const explicitlyReduced=row?.result==="succeeded"&&
+            oldCount>newCount&&Number(match[2])>newCount&&recent;
+          if(!explicitlyReduced||payload.projects?.[key])continue;
+          const tabId=ownership.get(key);
+          if(tabId==null)continue;
+          const tab=await browser.tabs.get(tabId).catch(()=>null);
+          if(!tab||await tagOf(tab)!==key)continue;
+          let idle=false;
+          try{
+            const [running]=await browser.tabs.executeScript(tabId,{
+              code:'!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"]\')'
+            });
+            idle=running===true;
+          }catch(_){}
+          if(!idle){await note("remove-deferred",key,"generation-or-idle-unverified");continue}
+          await browser.tabs.remove(tabId);
+          ownership.delete(key);
+          candidateRemovals.delete(key);
+          await note("worker-tab-removed",key,"verified-dashboard-worker-count-decrease");
         }
       }
       lastSnapshot = {at:Date.now(),workers:[...desired.keys()],tabs:[...ownership]};
