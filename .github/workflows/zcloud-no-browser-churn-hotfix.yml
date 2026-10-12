@@ -52,17 +52,21 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           root="/home/ubuntu/zennay-cloud"
           live="/usr/local/sbin/zcloud-worker-watchdog"
-          test -f "$root/scripts/zcloud_worker_watchdog.py"
-          test -f "$live"
           python3 -m py_compile scripts/zcloud_worker_watchdog.py
+          echo "WATCHDOG_RUNTIME_ROOT_PRESENT=$(test -d "$root/scripts" && echo yes || echo no)"
+          echo "WATCHDOG_LIVE_PRESENT=$(test -f "$live" && echo yes || echo no)"
           # Do not touch the browser/session. The next normal watchdog tick
           # automatically uses this updated standalone executable.
           backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
-          cp -p "$live" "$backup"
-          install -m 0755 scripts/zcloud_worker_watchdog.py "$root/scripts/zcloud_worker_watchdog.py"
-          sudo -n install -m 0755 scripts/zcloud_worker_watchdog.py "$live"
-          cmp scripts/zcloud_worker_watchdog.py "$live"
+          if test -f "$live"; then cp -p "$live" "$backup"; fi
+          if test -d "$root/scripts" && test -w "$root/scripts"; then
+            install -m 0755 scripts/zcloud_worker_watchdog.py "$root/scripts/zcloud_worker_watchdog.py"
+          else
+            echo "Runtime repo missing/read-only; standalone watchdog install still proceeds."
+          fi
+          sudo -n install -D -m 0755 scripts/zcloud_worker_watchdog.py "$live"
+          sudo -n cmp scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
           echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
           echo "Watchdog backup: $backup"
