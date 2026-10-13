@@ -134,7 +134,12 @@ def probe_once(opener=None):
     if opener is None:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request(
-        STATUS_URL, method="GET", headers={"Accept": "application/json"}
+        STATUS_URL, method="GET", headers={
+            "Accept": "application/json",
+            # Don't ask HTTP caches to replay an old successful status.
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        }
     )
     try:
         with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
