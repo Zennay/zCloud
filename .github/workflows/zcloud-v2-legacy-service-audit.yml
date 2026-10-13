@@ -57,6 +57,9 @@ jobs:
           test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
           test "$GITHUB_REF" = 'refs/heads/main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # Reject stale manual dispatch if main advanced before runner execution.
+          current_main="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$GITHUB_SHA"
           test "$(hostname)" = 'vps-bb300bba'
           test "$(id -un)" = 'ubuntu'
           python3 scripts/zcloud_vps_runner_guard.py --json
