@@ -168,11 +168,12 @@ class PaginationTests(unittest.TestCase):
 
     def test_inventory_exceeding_total_branch_cap_is_denied(self):
         many = [branch("main", S)] + [
-            branch(f"lane-{i:04d}", A) for i in range(mod.MAX_ENTRIES)
+            branch(f"lane-{i:04d}", A) for i in range(300)
         ]
         pages = [many[i:i + 100] for i in range(0, len(many), 100)]
-        with self.assertRaisesRegex(mod.InventoryDenied, "entry_cap"):
-            mod.collect(Fixture(branches=pages, pulls=[[]]), S)
+        with patch.object(mod, "MAX_ENTRIES", 300):
+            with self.assertRaisesRegex(mod.InventoryDenied, "entry_cap"):
+                mod.collect(Fixture(branches=pages, pulls=[[]]), S)
 
     def test_full_page_without_next_cursor_never_claims_completeness(self):
         full = [branch("main", S)] + [branch(f"branch-{i}", A) for i in range(99)]
