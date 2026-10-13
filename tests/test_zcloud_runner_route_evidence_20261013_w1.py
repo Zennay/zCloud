@@ -272,7 +272,13 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         def receipt(job_id, *, run_id=34, sha="a" * 40, name="zCloud VPS deploy"):
             job = make_job(job_id=job_id, status="completed", runner_id=21,
                            runner_name="zcloud-vps-1", conclusion="success")
-            job.update({"run_id": run_id, "head_sha": sha, "workflow_name": name})
+            job.update({
+                "run_id": run_id, "head_sha": sha, "workflow_name": name,
+                "run_attempt": 1,
+                "run_url": f"https://api.github.com/repos/{route.REPO}/actions/runs/{run_id}",
+                "url": f"https://api.github.com/repos/{route.REPO}/actions/jobs/{job_id}",
+                "html_url": f"https://github.com/{route.REPO}/actions/runs/{run_id}/job/{job_id}",
+            })
             return job
 
         good = [{"total_count": 2, "jobs": [receipt(101)]},
@@ -294,6 +300,17 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
              "untrusted_job_provenance"),
             ([{"total_count": 1, "jobs": [dict(receipt(101), workflow_name="")]}],
              "untrusted_job_provenance"),
+            ([{"total_count": 1, "jobs": [dict(receipt(101), run_attempt=True)]}],
+             "untrusted_job_provenance"),
+            ([{"total_count": 1, "jobs": [dict(receipt(101), run_url=
+                "https://api.github.com/repos/attacker/clone/actions/runs/34")]}],
+             "untrusted_job_provenance"),
+            ([{"total_count": 1, "jobs": [dict(receipt(101), html_url=
+                "https://github.com/attacker/clone/actions/runs/34/job/101")]}],
+             "untrusted_job_provenance"),
+            ([{"total_count": 2, "jobs": [receipt(101)]},
+              {"total_count": 2, "jobs": [dict(receipt(102), run_attempt=2)]}],
+             "mixed_run_attempts"),
             ([{"total_count": 2, "jobs": [receipt(101)]},
               {"total_count": 2, "jobs": [receipt(102, sha="b" * 40)]}],
              "mixed_run_head_sha"),
@@ -311,9 +328,13 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
     def test_job_receipt_matches_observed_github_metadata_contract(self):
         actual = {"run_id": 38471675524, "head_sha":
                   "e5a63e3efb508d8b0a42c148262f9515b5753bed",
-                  "workflow_name": "zCloud VPS deploy"}
+                  "id": 115554118242, "run_attempt": 1,
+                  "workflow_name": "zCloud VPS deploy",
+                  "run_url": "https://api.github.com/repos/Zennay/zCloud/actions/runs/38471675524",
+                  "url": "https://api.github.com/repos/Zennay/zCloud/actions/jobs/115554118242",
+                  "html_url": "https://github.com/Zennay/zCloud/actions/runs/38471675524/job/115554118242"}
         self.assertEqual(route._verified_job_provenance(actual, 38471675524),
-                         actual["head_sha"])
+                         (actual["head_sha"], 1))
 
     def test_latest_deploy_missing_token_denies_without_api(self):
         with self.assertRaises(route.InvalidEvidence):
