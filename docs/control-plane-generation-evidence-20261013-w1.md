@@ -14,15 +14,28 @@ The tool `scripts/zcloud_worker_generation_evidence_20261013_w1.py` reads the cu
 
 No evidence is inferred from `available`, `prompt-sent`, `force` queued, `started`, or a successful automation/CI run. Single-time browser telemetry does **not** prove a real visible tab, fresh generated assistant text, valid task completion, uninterrupted generation, or future worker progress.
 
+## Generation versus actual reported text progress
+
+The ordinary verifier distinguishes a recent browser **state heartbeat** (`generating=true`) from the browser's `generation-progress` event, which its DOM driver emits after detecting changed assistant text. Only the latter supplies `progress_evidence=true`; it must be no older than 45 seconds, still in a valid current claim epoch. This is stronger telemetry but remains *browser-reported*, not cryptographically authenticated or a server-side independent DOM check.
+
+- `all_allocated_chatgpt_generating`: all allocated ChatGPT workers claim a fresh generating state, even if their most recent event is a heartbeat.
+- `all_allocated_chatgpt_progressing`: all allocated ChatGPT workers' **last** reported events are fresh `generation-progress`. One idle, stalled or heartbeat-only worker makes this false.
+- `--require-progress`: exit 0 iff `all_allocated_chatgpt_progressing` is true. Without the flag, the existing generation-state exit policy remains unchanged for other callers.
+- The trusted zSSH `zcloud-generation-check` recipe uses `--require-progress` so its success cannot be mistaken for a simple heartbeat.
+
+**Conservative limitation:** `/api/worker-debug` exposes the *last* event per worker, not the latest progress event independently. A later heartbeat may supersede a real text-progress event, causing a **false negative** from strict mode. This is deliberate until the backend owner implements stronger monotonic text-progress or receipt evidence in the serialized runtime. A single `generation-progress` event still cannot prove sustained work, task completion, visible tab ownership, or non-spoofed event provenance.
+
 ## Safe execution after approval and trusted merge
 
 From the checked-in project root on an authorized local instance:
 
 ```sh
 python3 scripts/zcloud_worker_generation_evidence_20261013_w1.py
+# Opt into stricter new-text progress gate:
+python3 scripts/zcloud_worker_generation_evidence_20261013_w1.py --require-progress
 ```
 
-Exit status: `0` = all allocated ChatGPT workers reported fresh, sufficiently consistent generation; `1` = valid observations but one or more ChatGPT workers not generating; `2` = missing, stale, ambiguous or contradictory evidence. The output is a bounded status/count JSON, not a browser session dump. Retain source SHA, timestamp, sanitized exit class and CI URL when escalating.
+Exit status: `0` = all allocated ChatGPT workers satisfy the selected policy (default: self-reported generation; with `--require-progress`: fresh self-reported text progress); `1` = valid observations but not all workers satisfy the selected policy; `2` = missing, stale, ambiguous or contradictory evidence. The output is a bounded status/count JSON, not a browser session dump. Retain source SHA, timestamp, sanitized exit class and CI URL when escalating.
 
 For a **synthetic offline** fixture, both inputs are mandatory:
 ```sh
