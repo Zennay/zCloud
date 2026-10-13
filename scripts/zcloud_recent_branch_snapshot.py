@@ -118,6 +118,14 @@ query($owner:String!, $name:String!, $endCursor:String) {
     if cursor:
         args.extend(["-f", f"endCursor={cursor}"])
     payload = runner(args)
+    # GitHub GraphQL permits both partial data and nonempty errors in one
+    # response. Never accept its pageInfo as proof of a complete inventory.
+    if not isinstance(payload, dict):
+        raise CollectorError("branch_page_invalid")
+    if "errors" in payload:
+        errors = payload["errors"]
+        if not isinstance(errors, list) or errors:
+            raise CollectorError("branch_graphql_errors")
     try:
         refs = payload["data"]["repository"]["refs"]
         if not isinstance(refs["nodes"], list) or not isinstance(refs["pageInfo"], dict):
