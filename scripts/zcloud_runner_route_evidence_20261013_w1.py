@@ -20,6 +20,7 @@ REPO = "Zennay/zCloud"
 CANONICAL_REPOSITORY_ID = 1389227570
 CANONICAL_DEPLOY_WORKFLOW_ID = 369569470
 CANONICAL_DEPLOY_WORKFLOW_PATH = ".github/workflows/zcloud-vps-deploy.yml"
+CANONICAL_VPS_RUNNER_NAME = "zcloud-vps-1"
 API = f"https://api.github.com/repos/{REPO}/actions/runs"
 MAX_PAGES = 10
 MAX_BYTES = 1024 * 1024
@@ -175,9 +176,12 @@ def classify_job(job: dict, now: datetime) -> dict:
         route = "unassigned"
     else:
         route = "missing_runner_identity"
+    canonical_vps_runner = (lane == "zcloud_vps" and route == "runner_assigned"
+                            and runner_name == CANONICAL_VPS_RUNNER_NAME)
     return {"job_id": job["id"], "lane": lane, "status": status, "route": route,
             "queue_age_seconds": age if route == "unassigned" else None,
             "runner_id": runner_id if route == "runner_assigned" else None,
+            "canonical_vps_runner": bool(canonical_vps_runner),
             "conclusion": conclusion, "failure_phase": _failure_phase(job)}
 
 
@@ -198,6 +202,10 @@ def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
         results[name] = {
             "job_count": len(relevant),
             "assigned_count": sum(j["route"] == "runner_assigned" for j in relevant),
+            "canonical_vps_assigned_count": sum(j["canonical_vps_runner"] for j in relevant),
+            "unexpected_vps_assigned_count": sum(
+                j["route"] == "runner_assigned" and not j["canonical_vps_runner"]
+                for j in relevant) if name == "zcloud_vps" else 0,
             "unassigned_count": sum(j["route"] == "unassigned" for j in relevant),
             "max_unassigned_seconds": max(
                 (j["queue_age_seconds"] for j in relevant if j["queue_age_seconds"] is not None),
