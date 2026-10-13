@@ -74,7 +74,7 @@ jobs:
           }
           # Exactly one status claim; contradictory or repeated health lines
           # must fail even when the probe process returned exit code zero.
-          [[ $(grep -c '^\\*\\*Status:\\*\\*' "$summary_file") -eq 1 ]] || {
+          [[ $(grep -Ec '^[*][*]Status:[*][*]' "$summary_file") -eq 1 ]] || {
             echo "DASHBOARD_TRIAGE_AMBIGUOUS_STATUS"
             exit 3
           }
