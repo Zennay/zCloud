@@ -23,11 +23,13 @@ assert.ok(!/location\.(assign|replace)\s*\(|window\.open\s*\(/.test(engine),
  "DOM worker must not navigate to or create a new window");
 assert.ok(!/browser\.windows\.(create|update|remove)\s*\(/.test(source),
  "extension must not create, activate or remove a Firefox window");
-assert.ok(!/browser\.tabs\.update\s*\(/.test(source),
- "extension must never activate or navigate an existing tab");
+assert.ok(source.includes("await browser.tabs.update(reservedId, {url:String(url), active:false})"),
+ "only idle, marked saved-pool capacity may be navigated into its worker assignment");
+assert.ok(!/browser\.tabs\.update\([^\n]*active:\s*true/.test(source),
+ "extension must never activate any existing tab");
 
 const events=[],tabs=[],tags=new Map(),calls=[];
-let nextId=20,snapshot={},v2VersionConfirmed=true;
+let nextId=20,snapshot={},v2VersionConfirmed=true,poolSize=4,auditMode="project",pendingCommands=[];
 const row=(id,slot)=>({project_id:id,active:true,assignment_ready:true,
  desired_state:"running",global_worker_count:4,global_worker_slot:slot,
  queue_item:{queue_id:"q"+slot},prompt:"Werk verder aan Supa. Kijk in Notion voor de taak."});
@@ -36,7 +38,8 @@ const browser={
  storage:{local:{get:async()=>({}),set:async()=>{}}},
  sessions:{
   getTabValue:async(id,key)=>tags.get(id+"|"+key)||null,
-  setTabValue:async(id,key,value)=>{tags.set(id+"|"+key,value)}
+  setTabValue:async(id,key,value)=>{tags.set(id+"|"+key,value)},
+  removeTabValue:async(id,key)=>{tags.delete(id+"|"+key)}
  },
  tabs:{
   query:async()=>tabs.slice(),get:async(id)=>tabs.find(t=>t.id===id)||Promise.reject(Error("no tab")),
@@ -47,8 +50,23 @@ const browser={
    const item={id:nextId++,url:options.url,windowId:options.windowId,status:"complete"};
    tabs.push(item);return item;
   },
-  executeScript:async(_tab,opts)=>opts?.code?.includes("data-zcloud-violentmonkey-ready")?
-    [v2VersionConfirmed?"2.0.0":"1.3.18"]:[true],
+  executeScript:async(tabId,opts)=>{
+    if(opts?.code?.includes('dispatchEvent(new Event("zcloud-v2-wake"))')){
+      calls.push({type:"wake",id:tabId});return [true];
+    }
+    if(opts?.code?.includes("data-zcloud-violentmonkey-ready"))return [{
+      version:v2VersionConfirmed?"2.0.1":"1.3.18",
+      owner:tags.get(tabId+"|zcloud-v2-worker-key")||tags.get(tabId+"|zcloud-worker-id")||"",
+      lastPoll:Date.now(),poll:Date.now(),generating:false,draft:false
+    }];
+    return [true];
+  },
+  update:async(id,opts)=>{
+    assert.equal(opts.active,false,"rebound worker must stay in background");
+    const tab=tabs.find(t=>t.id===id);
+    assert.ok(tab,"rebind only an existing tab");
+    tab.url=opts.url;calls.push({type:"update",id,url:opts.url});return tab;
+  },
   remove:async id=>{calls.push({type:"remove",id});const index=tabs.findIndex(t=>t.id===id);if(index>=0)tabs.splice(index,1)},
   onRemoved:{addListener:noop},onUpdated:{addListener:noop}
  },
@@ -61,16 +79,26 @@ tabs.push({id:2,windowId:1,url:"https://chatgpt.com/c/bbbbbbbb-bbbb-bbbb-bbbb-bb
 tags.set("1|zcloud-worker-id","supa::w1"); // migrate historical session ownership
 const ctx=vm.createContext({
  console:{log:(...xs)=>events.push(xs)},browser,Map,Set,Date,URL,Number,String,Object,
- setInterval:cb=>{ctx.timer=cb},fetch:async url=>{
-   if(url.includes("config-audit"))return {ok:true,json:async()=>({items:[{
-    config_key:"runner.worker_count",target:"supa",old_value:2,new_value:1,
-    result:"succeeded",ts:new Date().toISOString()
-   }]})};
-   return {ok:true,json:async()=>({projects:snapshot})};
+ setInterval:(cb,ms)=>{if(ms===30000)ctx.timer=cb;else if(ms===5000)ctx.saveProbe=cb;else if(ms===2500)ctx.commandProbe=cb},fetch:async url=>{
+   if(url.includes("config-audit")){
+     if(url.includes("runner.dynamic_worker_settings"))return {ok:true,json:async()=>({items:
+       auditMode==="global"||auditMode==="expand"?
+       [{config_key:"runner.dynamic_worker_settings",target:"portfolio",
+         old_value:{chatgpt_count:auditMode==="expand"?2:3},
+         new_value:{chatgpt_count:auditMode==="expand"?3:2},
+         result:"succeeded",ts:new Date().toISOString()}]:[]})};
+     return {ok:true,json:async()=>({items:auditMode==="project"?[{
+       config_key:"runner.worker_count",target:"supa",old_value:2,new_value:1,
+       result:"succeeded",ts:new Date().toISOString()
+     }]:[]})};
+   }
+   if(url.includes("/runner-commands"))return {ok:true,json:async()=>({commands:pendingCommands})};
+   return {ok:true,json:async()=>({projects:snapshot,dynamic_workers:{chatgpt_count:poolSize}})};
  }
 });
 snapshot={"supa::w1":row("supa::w1",1),"supa::w2":row("supa::w2",2)};
 vm.runInContext(source,ctx,{timeout:1000});
+const ownershipSnapshot=()=>ctx.ZCLOUD_V2_CONTROLLER.snapshot();
 const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
 (async()=>{
  await new Promise(r=>setTimeout(r,10)); // initial reconcile
@@ -104,5 +132,55 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  snapshot={};await pump();
  assert.equal(tabs.length,original,"arbitrary target loss never closes a tab");
  assert.equal(calls.filter(x=>x.type==="create").length,1,"only one new worker tab ever created");
- console.log("single-tab-worker-v2: preserve, create one, explicit remove one, expert isolation PASS");
+ // Opslaan of the global ChatGPT worker pool is NOT a per-project worker-count
+ // audit. A 3 -> 2 reduction must close only its now-unallocated, idle w3 tab.
+ snapshot={"supa::w1":row("supa::w1",1),"supa::w3":row("supa::w3",3)};
+ poolSize=3;
+ await pump();await pump();
+ assert.equal(calls.filter(x=>x.type==="create").length,2,"pool expansion opens the new allocated slot");
+ auditMode="global";poolSize=2;snapshot={"supa::w1":row("supa::w1",1)};
+ await pump();await pump();
+ assert.equal(calls.filter(x=>x.type==="remove").length,1,"do not close pool slot before 3 stable observations");
+ await pump();
+ assert.equal(calls.filter(x=>x.type==="remove").length,2,"global pool Save 3 to 2 removes exactly the vacated slot");
+ assert.ok(tabs.some(t=>t.id===1),"existing w1 tab preserved across pool reduction");
+ assert.ok(tabs.some(t=>t.id===2),"manual expert tab preserved across pool reduction");
+ // The Save button expands capacity from 2 to 3, even when the queue allocator
+ // has not assigned the third slot to any project. Exactly one empty, tagged
+ // capacity tab must open; personal tabs are never reused.
+ auditMode="project";poolSize=2;
+ snapshot={"supa::w1":row("supa::w1",1),"ftmo::w1":row("ftmo::w1",2)};
+ await pump();await pump();
+ assert.equal(ownershipSnapshot().tabs.length,2,"two named workers own the initial pool");
+ auditMode="expand";poolSize=3;
+ await ctx.saveProbe();await pump();
+ const capacity=tabs.filter(t=>t.url.includes("zcloud_pool=3"));
+ assert.equal(capacity.length,1,"Save 2 to 3 opens exactly one background capacity tab");
+ assert.equal(tags.get(capacity[0].id+"|zcloud-v2-pool-reserve"),"3");
+ assert.ok(tabs.some(t=>t.id===2),"Save never adopts personal expert tab");
+ // Forceer a different project: the backend replaces the allocation for
+ // provider slot 2. Rebind its existing, idle worker tab; do not open a
+ // duplicate or steal focus. Then wake ONLY the exact new worker.
+ const previous=ownershipSnapshot().tabs.find(([k])=>k==="ftmo::w1")[1];
+ snapshot={
+   "supa::w1":row("supa::w1",1),
+   "ftmo::w1":{...row("ftmo::w1",2),active:false,assignment_ready:false,
+     global_worker_slot:null,queue_item:null,provider:"chatgpt"},
+   "lightup::w1":{...row("lightup::w1",2),provider:"chatgpt"}
+ };
+ await pump();await pump();
+ if(ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")?.[1]!==previous)
+   console.log("rebind-diagnostic",JSON.stringify({events:events.slice(-12),calls:calls.slice(-8),tabs:ownershipSnapshot().tabs}));
+ assert.equal(ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")[1],previous,
+   "Force project switch reuses the released worker slot");
+ assert.ok(!ownershipSnapshot().tabs.some(([k])=>k==="ftmo::w1"),"retired project identity released");
+ assert.equal(calls.filter(c=>c.type==="update").length,1,"only one exact safe idle rebind");
+ pendingCommands=[{id:101,project_id:"lightup",action:"start"}];
+ await ctx.commandProbe();
+ assert.deepEqual(calls.filter(c=>c.type==="wake").map(c=>c.id),[previous],
+   "Force wakes only the freshly assigned project worker");
+ pendingCommands=[];await ctx.commandProbe();
+ assert.equal(calls.filter(c=>c.type==="wake").length,1,"completed command never retriggers");
+ assert.ok(tabs.some(t=>t.id===2),"expert tab survives project switching");
+ console.log("single-tab-worker-v2: Save 2->3, Force project rebind + prompt wake, expert isolation PASS");
 })().catch(e=>{console.error(e);process.exitCode=1});

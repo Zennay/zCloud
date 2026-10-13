@@ -62,7 +62,7 @@ function startup(){
   };
   const ctx=vm.createContext({
     browser,console:{log:()=>{}},URL,Date,Promise,Map,Set,String,Object,Number,
-    setInterval:fn=>{ctx.tick=fn;return 1},
+    setInterval:(fn,ms)=>{if(ms===30000)ctx.tick=fn;else if(ms===5000)ctx.saveProbe=fn;else if(ms===2500)ctx.commandProbe=fn;return 1},
     fetch:async url=>{
       if(!networkOk)throw Error("API down");
       if(url.includes("config-audit"))return {ok:true,json:async()=>({items:[]})};

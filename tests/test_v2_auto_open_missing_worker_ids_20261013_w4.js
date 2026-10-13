@@ -52,7 +52,7 @@ const browser={
 const ctx=vm.createContext({
  browser,Map,Set,URL,Number,Object,String,Date,Promise,
  console:{log:()=>{}},
- setInterval:cb=>{ctx.tick=cb},
+ setInterval:(cb,ms)=>{if(ms===30000)ctx.tick=cb;else if(ms===5000)ctx.saveProbe=cb;else if(ms===2500)ctx.commandProbe=cb},
  setTimeout:(cb,ms)=>{
    assert.equal(ms,2000,"missing tabs must not wait for 30s polling");
    quickTimers.push(cb);return quickTimers.length;

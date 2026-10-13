@@ -196,16 +196,16 @@ async function setRunnerActive(projectId,action,button){
 async function forceStartProject(projectId,button){
   const previous=button.textContent;button.disabled=true;button.textContent='Force starting…';
   try{
-    const runner=(DATA?.chatgpt_runners||{})[projectId]||{};
-    const workers=[...new Set((runner.workers||[]).map(w=>String(w.worker_id||'').trim()).filter(Boolean))];
-    const ids=workers.length?workers:[projectId];
-    await Promise.all(ids.map(async workerId=>{
-      const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:workerId,action:'start',force:true}),signal:AbortSignal.timeout(10000)});
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.error||'Force start failed')+' · '+workerId);
-      return data;
-    }));
-    button.textContent='Force started';
+    // Start exactly the requested PROJECT, not a stale list of per-worker IDs
+    // from the previous dashboard snapshot. The v2 page runner resolves the
+    // newest queue-backed w1 identity and its actual prompt at send time.
+    // A single parent command also prevents duplicate Force sends.
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,action:'start',force:true}),signal:AbortSignal.timeout(10000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Force start failed');
+    // Accepted != sent. The addon wakes the newly assigned worker to consume
+    // this command; do not display "started" before prompt-sent evidence.
+    button.textContent='Force requested';
     setTimeout(()=>refresh(true),650);
   }catch(error){button.textContent='Failed';window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;button.textContent=previous},2200)}

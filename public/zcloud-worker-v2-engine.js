@@ -267,5 +267,11 @@
     }catch(e){await blocked("poll-error:"+String(e.message||e).slice(0,80))}
     finally{inflight=false}
   }
+  // Firefox addon wakes this exact slot after Forceer/Start, without
+  // waiting for the 30-second background heartbeat cycle. The page still
+  // verifies a fresh queue lease and Thinking High before any send.
+  document.documentElement?.addEventListener?.("zcloud-v2-wake", () => {
+    if (!inflight) poll();
+  });
   poll();setInterval(poll,POLL_MS);
 })();
