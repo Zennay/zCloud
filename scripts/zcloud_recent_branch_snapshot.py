@@ -275,8 +275,11 @@ def collect_snapshot(
             (
                 "{ahead_by:.ahead_by,behind_by:.behind_by,"
                 "merge_base_commit:{sha:.merge_base_commit.sha},"
-                "files:[.files[]?|{filename:.filename,"
-                "previous_filename:.previous_filename}]}"
+                # Preserve missing/wrong-typed API file evidence as null
+                # instead of masking it as an empty array with []?.
+                "files:(if (.files|type)==\"array\" then "
+                "[.files[]|{filename:.filename,"
+                "previous_filename:.previous_filename}] else null end)}"
             ),
         ])
         try:
