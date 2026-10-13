@@ -1,0 +1,53 @@
+name: zCloud runner route evidence hosted (2026-10-13 W1)
+
+on:
+  push:
+    branches:
+      - feat/deployops-runner-route-evidence-20261013-w1
+    paths:
+      - scripts/zcloud_runner_route_evidence_20261013_w1.py
+      - tests/test_zcloud_runner_route_evidence_20261013_w1.py
+      - .github/workflows/zcloud-runner-route-evidence-hosted-20261013-w1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evidence:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact read-only branch candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Strict unit validation and Python compile
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_runner_route_evidence_20261013_w1.py
+          python3 -m unittest discover -s tests -p 'test_zcloud_runner_route_evidence_20261013_w1.py' -v
+      - name: Read historical real runner-route receipts without changing jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_runner_route_evidence_20261013_w1.py \
+            --run-id 38417582567 --run-id 38417793892 --run-id 38417002886 > route-receipt.json
+          python3 - <<'PY'
+          import json
+          data = json.load(open("route-receipt.json", encoding="utf-8"))
+          assert data["authorizes_mutation"] is False
+          assert len(data["runs"]) == 3
+          by_id = {item["run_id"]: item for item in data["runs"]}
+          # Past assigned jobs prove the canonical runner route worked at the
+          # recorded timestamps, not that production deployment succeeded.
+          assert by_id[38417582567]["lanes"]["zcloud_vps"]["assigned_count"] >= 1
+          assert by_id[38417582567]["production_deploy_verified"] is False
+          assert by_id[38417793892]["lanes"]["zcloud_vps"]["assigned_count"] >= 1
+          assert by_id[38417002886]["lanes"]["ftmo_research"]["job_count"] >= 1
+          print("Historical runner route evidence: PASS; no release authority")
+          PY
