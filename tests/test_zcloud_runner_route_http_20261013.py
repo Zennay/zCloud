@@ -50,6 +50,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             runners = owner.runners()
             page = int(parse_qs(p.query).get('page', ['1'])[0])
+            if owner.mode == 'runner_transient_incomplete' and owner.runner_reads == 1:
+                self.reply_json({'total_count':len(runners), 'runners':[]})
+                return
+            if owner.mode == 'runner_permanent_incomplete':
+                self.reply_json({'total_count':len(runners), 'runners':[]})
+                return
             if owner.mode == 'runner_changed' and owner.runner_reads > 1:
                 runners[0]['busy'] = True
             self.reply_json({'total_count':len(runners),
@@ -151,6 +157,20 @@ class RealHttpTests(unittest.TestCase):
         result=self.live()
         self.assertEqual(len(result['runners']),101)
         self.assertEqual(self.runner_reads,4) # page 1, page 2, then both again
+
+    def test_real_http_transient_runner_count_recovers_after_one_get(self):
+        self.mode='runner_transient_incomplete'
+        snapshot=self.live()
+        self.assertEqual(len(snapshot['runners']),1)
+        self.assertEqual(self.runner_reads,3)
+        result=route.classify(snapshot,datetime.now(timezone.utc))
+        self.assertFalse(result['recovery_authorized'])
+
+    def test_real_http_permanent_runner_count_mismatch_denied(self):
+        self.mode='runner_permanent_incomplete'
+        with self.assertRaisesRegex(route.EvidenceError,'incomplete_inventory'):
+            self.live()
+        self.assertEqual(self.runner_reads,2)
 
     def test_real_http_runner_busy_race_denied(self):
         self.mode='runner_changed'
