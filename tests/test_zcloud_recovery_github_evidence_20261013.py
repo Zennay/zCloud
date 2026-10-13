@@ -78,9 +78,19 @@ class GithubEvidenceTests(unittest.TestCase):
                          ("NOOP", "production_status_present"))
         self.assertIs(result["authorized"], False)
         self.assertIs(result["mutations_performed"], False)
+        self.assertEqual(result["production_state"], "failure")
         self.assertEqual(fake.read_main_count, 2)
         self.assertEqual(len(fake.calls), 3, "failed production must not fetch workflows")
         self.assertNotIn("html_url", json.dumps(result))
+
+    def test_conflicting_github_production_states_are_denied(self):
+        fake = FixtureGitHub()
+        fake.statuses.append({"id": 45, "context": "zcloud/vps-production", "state": "success"})
+        result = evidence.observe(fake)
+        self.assertEqual(result["decision"], "DENY")
+        self.assertEqual(result["reason"], "conflicting_production_status")
+        self.assertIsNone(result["production_state"])
+        self.assertIs(result["authorized"], False)
 
     def test_empty_status_and_prior_terminal_deploy_denies(self):
         fake = FixtureGitHub()
