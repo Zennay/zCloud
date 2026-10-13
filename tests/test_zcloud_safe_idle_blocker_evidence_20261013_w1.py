@@ -75,7 +75,7 @@ class SafeIdleEvidenceTests(unittest.TestCase):
 
     def test_future_or_malformed_log_header_does_not_match(self):
         with self.assertRaises(evidence.UntrustedLog):
-            evidence.classify(PREFIX + json.dumps([row()]) + "\n")
+            evidence.classify(evidence.MARKER + json.dumps([row()]) + "\n")
         with self.assertRaises(evidence.UntrustedLog):
             evidence.classify("not a safe idle trace")
 
