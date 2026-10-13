@@ -36,6 +36,25 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(2, counts["by_status"]["dynamic_runner_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_yaml_block_scalar_runner_expressions_are_not_ignored(self):
+        source = """jobs:
+  folded:
+    runs-on: >-
+      ${{ matrix.runner }}
+    timeout-minutes: 10
+  literal:
+    runs-on: |
+      self-hosted
+      zcloud
+    timeout-minutes: 15
+  hosted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+"""
+        rows = audit.inspect_workflow(".github/workflows/scalars.yml", source, max_minutes=30)
+        self.assertEqual(["folded", "literal"], [row.job for row in rows])
+        self.assertEqual(["dynamic_runner_unknown", "bounded"], [row.status for row in rows])
+
     def test_bounded_self_hosted_label_is_still_checked(self):
         source = """jobs:
   real:
