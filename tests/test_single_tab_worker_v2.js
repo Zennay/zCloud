@@ -27,7 +27,7 @@ assert.ok(!/browser\.tabs\.update\s*\(/.test(source),
  "extension must never activate or navigate an existing tab");
 
 const events=[],tabs=[],tags=new Map(),calls=[];
-let nextId=20,snapshot={},v2VersionConfirmed=true;
+let nextId=20,snapshot={},v2VersionConfirmed=true,poolSize=4,auditMode="project";
 const row=(id,slot)=>({project_id:id,active:true,assignment_ready:true,
  desired_state:"running",global_worker_count:4,global_worker_slot:slot,
  queue_item:{queue_id:"q"+slot},prompt:"Werk verder aan Supa. Kijk in Notion voor de taak."});
@@ -47,8 +47,10 @@ const browser={
    const item={id:nextId++,url:options.url,windowId:options.windowId,status:"complete"};
    tabs.push(item);return item;
   },
-  executeScript:async(_tab,opts)=>opts?.code?.includes("data-zcloud-violentmonkey-ready")?
-    [v2VersionConfirmed?"2.0.0":"1.3.18"]:[true],
+  executeScript:async(tabId,opts)=>opts?.code?.includes("data-zcloud-violentmonkey-ready")?
+    [{version:v2VersionConfirmed?"2.0.1":"1.3.18",
+      owner:tags.get(tabId+"|zcloud-v2-worker-key")||tags.get(tabId+"|zcloud-worker-id")||"",
+      lastPoll:Date.now(),generating:false,draft:false}]:[true],
   remove:async id=>{calls.push({type:"remove",id});const index=tabs.findIndex(t=>t.id===id);if(index>=0)tabs.splice(index,1)},
   onRemoved:{addListener:noop},onUpdated:{addListener:noop}
  },
@@ -62,11 +64,17 @@ tags.set("1|zcloud-worker-id","supa::w1"); // migrate historical session ownersh
 const ctx=vm.createContext({
  console:{log:(...xs)=>events.push(xs)},browser,Map,Set,Date,URL,Number,String,Object,
  setInterval:cb=>{ctx.timer=cb},fetch:async url=>{
-   if(url.includes("config-audit"))return {ok:true,json:async()=>({items:[{
-    config_key:"runner.worker_count",target:"supa",old_value:2,new_value:1,
-    result:"succeeded",ts:new Date().toISOString()
-   }]})};
-   return {ok:true,json:async()=>({projects:snapshot})};
+   if(url.includes("config-audit")){
+     if(url.includes("runner.dynamic_worker_settings"))return {ok:true,json:async()=>({items:
+       auditMode==="global"?[{config_key:"runner.dynamic_worker_settings",target:"portfolio",
+         old_value:{chatgpt_count:3},new_value:{chatgpt_count:2},
+         result:"succeeded",ts:new Date().toISOString()}]:[]})};
+     return {ok:true,json:async()=>({items:auditMode==="project"?[{
+       config_key:"runner.worker_count",target:"supa",old_value:2,new_value:1,
+       result:"succeeded",ts:new Date().toISOString()
+     }]:[]})};
+   }
+   return {ok:true,json:async()=>({projects:snapshot,dynamic_workers:{chatgpt_count:poolSize}})};
  }
 });
 snapshot={"supa::w1":row("supa::w1",1),"supa::w2":row("supa::w2",2)};
@@ -104,5 +112,18 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  snapshot={};await pump();
  assert.equal(tabs.length,original,"arbitrary target loss never closes a tab");
  assert.equal(calls.filter(x=>x.type==="create").length,1,"only one new worker tab ever created");
- console.log("single-tab-worker-v2: preserve, create one, explicit remove one, expert isolation PASS");
+ // Opslaan of the global ChatGPT worker pool is NOT a per-project worker-count
+ // audit. A 3 -> 2 reduction must close only its now-unallocated, idle w3 tab.
+ snapshot={"supa::w1":row("supa::w1",1),"supa::w3":row("supa::w3",3)};
+ poolSize=3;
+ await pump();await pump();
+ assert.equal(calls.filter(x=>x.type==="create").length,2,"pool expansion opens the new allocated slot");
+ auditMode="global";poolSize=2;snapshot={"supa::w1":row("supa::w1",1)};
+ await pump();await pump();
+ assert.equal(calls.filter(x=>x.type==="remove").length,1,"do not close pool slot before 3 stable observations");
+ await pump();
+ assert.equal(calls.filter(x=>x.type==="remove").length,2,"global pool Save 3 to 2 removes exactly the vacated slot");
+ assert.ok(tabs.some(t=>t.id===1),"existing w1 tab preserved across pool reduction");
+ assert.ok(tabs.some(t=>t.id===2),"manual expert tab preserved across pool reduction");
+ console.log("single-tab-worker-v2: project/global Save reductions, strict idle identity, expert isolation PASS");
 })().catch(e=>{console.error(e);process.exitCode=1});
