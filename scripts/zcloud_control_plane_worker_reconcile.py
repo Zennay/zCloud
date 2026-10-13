@@ -143,9 +143,12 @@ def read_roster(db: Path) -> dict:
         key = (_project(row["project_id"]), _positive_int(row["worker_slot"], "worker slot"))
         if key in target_map:
             raise InvalidEvidence("duplicate worker target")
-        if not isinstance(row["desired_state"], str):
+        state = row["desired_state"]
+        if not isinstance(state, str) or state.strip().lower() not in (
+            "running", "paused", "draining", "stopped", "disabled"
+        ):
             raise InvalidEvidence("invalid desired worker state")
-        target_map[key] = row["desired_state"]
+        target_map[key] = state
     for item in pending:
         key = item["project_id"]
         if not isinstance(key, str) or len(key) > 180 or "::w" not in key:
@@ -173,15 +176,24 @@ def _live_workers(payload):
             name = item.get("worker_id")
             if not isinstance(name, str) or len(name) > 180:
                 raise InvalidEvidence("invalid live worker identity")
-            slot = item.get("worker_slot")
-            if slot is not None:
-                index = _positive_int(slot, "live worker slot")
-            elif name == project_id or name == project_id + "::w1":
-                index = 1
-            elif name.startswith(project_id + "::w") and name[len(project_id) + 3:].isdigit():
-                index = _positive_int(int(name[len(project_id) + 3:]), "live worker slot")
+            # Never allow a claimed worker_slot to relabel a *different* worker.
+            # Identity mismatch previously made cloud::w2 masquerade as cloud::w1.
+            if name == project_id:
+                canonical_slot = 1
+            elif name.startswith(project_id + "::w"):
+                digits = name[len(project_id) + 3:]
+                if not digits.isascii() or not digits.isdecimal():
+                    raise InvalidEvidence("invalid worker identity suffix")
+                canonical_slot = _positive_int(int(digits), "live identity slot")
+                if digits != str(canonical_slot):
+                    raise InvalidEvidence("noncanonical live worker identity")
             else:
                 raise InvalidEvidence("unmatchable worker identity")
+            slot = item.get("worker_slot")
+            index = (_positive_int(slot, "live worker slot")
+                     if slot is not None else canonical_slot)
+            if index != canonical_slot:
+                raise InvalidEvidence("worker identity and slot disagree")
             key = (project_id, index)
             if key in workers:
                 raise InvalidEvidence("duplicate live worker key")
@@ -239,17 +251,18 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
             problems.append({"worker": label, "code": "active_worker_not_observed",
                              "level": "degraded"})
             continue
+        # The live API's active field is configured allocation, NOT a verified
+        # Firefox tab. Reconcile actual state BEFORE treating generating as busy.
         if worker.get("active") is not True or worker.get("generating") is None or worker.get("sending") is None:
             problems.append({"worker": label, "code": "worker_activity_unknown",
                              "level": "degraded"})
             continue
-        if worker["generating"] or worker["sending"]:
-            observed["busy"] += 1
-            continue
-        # "active" is configured allocation, NOT evidence of a connected tab.
-        # The server can report active=True together with state="offline".
         live_state = worker.get("state")
-        if live_state in ("offline", "stale", "stalled", "disconnected"):
+        if live_state == "stalled":
+            problems.append({"worker": label, "code": "generation_stalled",
+                             "level": "degraded"})
+            continue
+        if live_state in ("offline", "stale", "disconnected"):
             problems.append({"worker": label, "code": "worker_not_live",
                              "level": "degraded"})
             continue
@@ -257,13 +270,17 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
             problems.append({"worker": label, "code": "worker_not_ready",
                              "level": "attention"})
             continue
+        if live_state != "live":
+            problems.append({"worker": label, "code": "worker_state_unknown",
+                             "level": "degraded"})
+            continue
         age = worker.get("age_seconds")
-        if type(age) not in (int, float) or not (0 <= age <= 86400):
+        if type(age) not in (int, float) or not (0 <= age <= 90):
             problems.append({"worker": label, "code": "worker_activity_unknown",
                              "level": "degraded"})
-        elif age > 300:
-            problems.append({"worker": label, "code": "idle_over_five_minutes",
-                             "level": "attention"})
+            continue
+        if worker["generating"] or worker["sending"]:
+            observed["busy"] += 1
         else:
             observed["idle"] += 1
     problems.sort(key=lambda x: (x["worker"], x["code"]))
