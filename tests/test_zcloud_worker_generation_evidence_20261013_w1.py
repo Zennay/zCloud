@@ -29,7 +29,7 @@ def row(name="cloud::w1", verdict="generating", **changes):
     return {
         "worker": name, "project": project, "slot": int(slot),
         "global_slot": int(slot), "queue_id": "qid-" + name, "provider": "chatgpt",
-        "verdict": verdict, "last_event_age_s": 8,
+        "verdict": verdict, "last_event": "heartbeat", "last_event_age_s": 8,
         "last_prompt_age_s": 10,
         **changes,
     }
@@ -102,6 +102,24 @@ class GenerationEvidenceTests(unittest.TestCase):
         self.assertFalse(report["all_allocated_chatgpt_generating"])
         self.assertEqual(2, report["allocated_count"])
         self.assertEqual({"generating_observed": 1, "prompt_sent_without_generation": 1}, report["counts"])
+
+    def test_generating_requires_non_terminal_browser_event(self):
+        for event in (None, "generation-finished", "send-blocked",
+                      "tab-ready", "", True):
+            with self.subTest(event=event):
+                finding = self.classify(d=debug(row(last_event=event)))
+                self.assertFalse(finding["all_allocated_chatgpt_generating"])
+                self.assertEqual("untrusted_generation_event", finding["workers"][0]["state"])
+
+    def test_generation_started_event_valid_with_fresh_flag(self):
+        report = self.classify(d=debug(row(last_event="generation-started")))
+        self.assertTrue(report["all_allocated_chatgpt_generating"])
+
+    def test_extreme_json_nesting_denied_without_traceback(self):
+        depth = 1200
+        raw = b'{"x":' + b'[' * depth + b'0' + b']' * depth + b'}'
+        with self.assertRaisesRegex(subject.EvidenceDenied, "malformed_json"):
+            subject._load(raw)
 
     def test_stale_event_even_with_generating_verdict_fails(self):
         report = self.classify(d=debug(row(last_event_age_s=121)))
