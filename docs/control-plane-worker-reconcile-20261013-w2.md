@@ -26,11 +26,13 @@ deployment or force-start approval.
 ## Sources and classification
 
 - Each bounded `BEGIN` read transaction gets `ai_global_slots`,
-  `runner_workers`, `runner_targets` (configured worker_count) and pending
-  worker commands using SQLite read-only mode.
+  `runner_workers`, `runner_targets` (configured worker_count), pending
+  worker commands, and active `portfolio_queue` claim ownership using SQLite
+  read-only mode.
   It does not initialize, delete, vacuum, migrate, checkpoint, commit or claim.
   The API GET is **bracketed by two coherent SQLite read snapshots**; if the
-  roster or command set changes mid-request, the report becomes `unknown`
+  roster, command set, or queue claim ownership changes mid-request, the report
+  becomes `unknown`
   instead of falsely reporting a missing tab during normal reassignment.
 - A localhost-only HTTP GET (or supplied fixture) loads at most 256 KiB of
   `/api/runner-live` JSON. Parsing explicitly bounds nesting to 64 levels
@@ -44,6 +46,18 @@ deployment or force-start approval.
   trigger a retry.
 - `allocation_without_target` / `allocated_but_not_runnable`: control-plane
   consistency issues that require ownership-aware operator review.
+- `queue_claim_allocation_mismatch`: a current live queue claim points at
+  a *different project* than the project assigned to the same global slot.
+  This is stronger evidence than an absent browser heartbeat: queue and
+  scheduler disagree even without any Firefox tab observation.
+- `multiple_live_queue_claims`: more than one current claimed/running/
+  verifying queue item occupies a global worker slot. No task IDs or titles
+  are included in output.
+- `allocation_without_live_queue_claim`: queue claim absent or expired for
+  a persisted global slot. This is **attention**, not definitive failure;
+  bootstrap/manual worker slots can temporarily have no queue claim.
+- `queue_claim_deadline_unverifiable`: malformed/naive claim expiry is
+  degraded, not silently treated as an active claim.
 - `allocation_without_project_target` / `allocation_outside_worker_count`:
   a global scheduler slot is selected for a missing project or an impossible
   per-project worker index (e.g. `cloud::w2` while target worker_count=1).
