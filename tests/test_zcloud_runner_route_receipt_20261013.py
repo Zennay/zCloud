@@ -18,6 +18,7 @@ def item(kind='unknown_incomplete_evidence', stale=7, unknown=5):
         'classification': kind,
         'stale_unassigned_jobs': stale,
         'unknown_stale_queued_runs': unknown,
+        'stale_label_profiles': {'ftmo_research': stale, 'zcloud_vps': 0, 'other': 0},
         'runner_inventory_verified': False,
         'evidence_mode': 'github_api_jobs_only',
         'recovery_authorized': False,
@@ -66,6 +67,29 @@ class TestReceipt(unittest.TestCase):
             x[k] = True
             with self.subTest(k=k), self.assertRaises(r.EvidenceError):
                 self.parse(x, 2)
+
+    def test_sanitized_profile_counts_are_pinned(self):
+        got = self.parse(item(), 2)
+        self.assertEqual(got['stale_label_profiles']['ftmo_research'], 7)
+        self.assertEqual(got['stale_label_profiles']['zcloud_vps'], 0)
+
+    def test_rejects_histogram_overcount(self):
+        x = item()
+        x['stale_label_profiles']['ftmo_research'] = 8
+        with self.assertRaisesRegex(r.EvidenceError,'contradictory_label_profile_count'):
+            self.parse(x, 2)
+
+    def test_rejects_unexpected_label_in_receipt(self):
+        x = item()
+        x['stale_label_profiles']['private-runner-token'] = 1
+        with self.assertRaisesRegex(r.EvidenceError,'invalid_label_profile_shape'):
+            self.parse(x, 2)
+
+    def test_rejects_bool_in_profile(self):
+        x = item()
+        x['stale_label_profiles']['ftmo_research'] = True
+        with self.assertRaisesRegex(r.EvidenceError,'invalid_count'):
+            self.parse(x, 2)
 
     def test_denies_generation_claim(self):
         x = item(); x['generation_verified'] = True
