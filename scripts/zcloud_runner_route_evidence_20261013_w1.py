@@ -85,7 +85,8 @@ def _failure_phase(job: dict) -> str | None:
     if job.get("conclusion") != "failure":
         return None
     steps = job.get("steps")
-    if steps is None:
+    if steps is None or steps == []:
+        # GitHub may omit steps entirely even for terminal failed jobs.
         return "step_evidence_missing"
     if type(steps) is not list or len(steps) > 150:
         raise InvalidEvidence("invalid_step_evidence")
@@ -103,7 +104,8 @@ def _failure_phase(job: dict) -> str | None:
         if c == "failure":
             failures.append(FAILED_STEP_CATEGORIES.get(step["name"], "other_step"))
     if len(failures) == 0:
-        return "no_failed_step_observed"
+        # A terminal failure with no failed step is contradictory/incomplete.
+        return "step_evidence_inconsistent"
     if len(set(failures)) > 1:
         return "multiple_failure_phases"
     return failures[0]
