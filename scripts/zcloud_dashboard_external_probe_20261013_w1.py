@@ -30,7 +30,7 @@ TIMEOUT_SECONDS = 12
 CATEGORIES = frozenset({
     "healthy", "dns", "connection", "timeout", "tls", "http_status",
     "content_type", "body_too_large", "invalid_json", "invalid_schema",
-    "transport_failure", "stale_timestamp", "future_timestamp",
+    "transport_failure", "stale_timestamp", "future_timestamp", "invalid_headers",
 })
 
 
@@ -140,12 +140,37 @@ def probe_once(opener=None):
         with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
             if response.status != 200:
                 return "http_status"
-            media_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            headers = response.headers
+            # HTTPMessage.get_all exposes duplicate / conflicting header lines.
+            # A dictionary test fixture cannot contain duplicate physical lines.
+            if hasattr(headers, "get_all"):
+                for header in ("Content-Type", "Content-Length", "Content-Encoding"):
+                    if len(headers.get_all(header, [])) > 1:
+                        return "invalid_headers"
+            media_type = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
             if media_type != "application/json":
                 return "content_type"
+            # urllib does not transparently decompress bodies. Never accept a
+            # potentially misleading compressed/encoded status representation.
+            if headers.get("Content-Encoding", "").strip().lower() not in ("", "identity"):
+                return "invalid_headers"
+            length_text = headers.get("Content-Length")
+            declared_length = None
+            if length_text is not None:
+                # Reject comma-folded headers, signs, Unicode digits, and
+                # absurdly long strings before attempting int conversion.
+                if (not isinstance(length_text, str) or
+                        not length_text.isascii() or not length_text.isdigit() or
+                        len(length_text) > 12):
+                    return "invalid_headers"
+                declared_length = int(length_text)
+                if declared_length > MAX_BYTES:
+                    return "body_too_large"
             raw = response.read(MAX_BYTES + 1)
             if len(raw) > MAX_BYTES:
                 return "body_too_large"
+            if declared_length is not None and declared_length != len(raw):
+                return "invalid_headers"
             return _validate_payload(raw)
     except Exception as exc:  # Never surface network exception text or response body.
         return _exception_category(exc)
@@ -191,6 +216,7 @@ def operator_markdown(summary: ProbeSummary) -> str:
         "timeout": "Time-out",
         "tls": "TLS-verbinding",
         "http_status": "HTTP-status niet 200",
+        "invalid_headers": "Tegenstrijdige HTTP-headers",
         "content_type": "Onverwacht antwoordtype",
         "body_too_large": "Antwoord te groot",
         "invalid_json": "Ongeldige JSON",
