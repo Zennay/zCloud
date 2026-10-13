@@ -689,6 +689,26 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         self.assertEqual(body["reason"], "no_commit_delta")
         self.assertFalse(body["promotion_authorized"])
 
+    def test_hosted_cache_audit_keeps_immutable_history_and_no_write_authority(self):
+        source = (
+            Path(__file__).resolve().parents[1] / ".github" / "workflows" /
+            "zcloud-dashboard-static-candidate-offline-20261012-w1.yml"
+        ).read_text(encoding="utf-8")
+        # One immutable historical baseline should remain resolvable even after
+        # hundreds of newer commits: shallow depth=96 is not a stable proof.
+        self.assertIn("fetch-depth: 0", source)
+        self.assertNotIn("fetch-depth: 96", source)
+        self.assertIn("persist-credentials: false", source)
+        self.assertIn("runs-on: ubuntu-latest", source)
+        self.assertIn("contents: read", source)
+        self.assertNotIn("self-hosted", source.split("\n    steps:", 1)[0])
+        self.assertNotIn("actions: write", source)
+        self.assertNotIn("issues: write", source)
+        self.assertNotIn("workflow_dispatch:", source)
+        self.assertIn("KNOWN_BASELINE_SHA: 3f71c1be1fbe9a2fe8780ce33c377c42136371b5", source)
+        self.assertIn("--audit-cache-pins", source)
+
+
 
 if __name__ == "__main__":
     unittest.main()
