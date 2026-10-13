@@ -41,6 +41,52 @@ class TestRunnerRoute(unittest.TestCase):
     def test_invalid_group_id(self):
         x=fixture(); x['jobs_by_run']['123'][0]['runner_group_id']=True
         with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_duplicate_run_across_status_queries_fails_closed(self):
+        shared={'id': 123, 'status':'queued', 'created_at': (NOW-dt.timedelta(minutes=10)).isoformat()}
+        def fake(path, field, token, limit=500):
+            if field == 'runners': return fixture()['runners']
+            if field == 'workflow_runs':
+                if 'status=queued' in path or 'status=in_progress' in path: return [shared]
+                return []
+            return []
+        with patch.object(t,'pages',side_effect=fake):
+            with self.assertRaises(t.EvidenceError): t.live('token')
+    def test_returned_run_status_must_match_filter(self):
+        def fake(path,field,token,limit=500):
+            if field == 'runners': return fixture()['runners']
+            if field == 'workflow_runs' and 'status=queued' in path:
+                return [{'id':123,'status':'completed','created_at':NOW.isoformat()}]
+            return []
+        with patch.object(t,'pages',side_effect=fake):
+            with self.assertRaises(t.EvidenceError): t.live('token')
+    def test_nonfinite_exponent_denied(self):
+        with self.assertRaises(t.EvidenceError): t.strict_json('{"x":1e999}')
+    def test_api_correct_mime_parameters_accepted(self):
+        class Resp:
+            status=200; headers={'content-type':'application/json; charset=utf-8'}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n): return b'{}'
+        class Opener:
+            def open(self, req, timeout): return Resp()
+        with patch.object(t,'build_opener',return_value=Opener()):
+            self.assertEqual(t.api('/repos/Zennay/zCloud/actions/runners','secret'), {})
+    def test_api_explicit_empty_proxy_handler(self):
+        proxy_handlers=[]
+        class Resp:
+            status=200; headers={'content-type':'application/json'}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n): return b'{}'
+        class Opener:
+            def open(self, req, timeout): return Resp()
+        def opener(*handlers):
+            proxy_handlers.extend(h for h in handlers if isinstance(h,t.ProxyHandler))
+            return Opener()
+        with patch.object(t,'build_opener',side_effect=opener):
+            t.api('/repos/Zennay/zCloud/actions/runners','secret')
+        self.assertEqual(len(proxy_handlers),1)
+        self.assertEqual(proxy_handlers[0].proxies,{})
     def test_in_progress_workflow_with_queued_deploy_job(self):
         x=fixture()
         x['queued_runs'][0]['status']='in_progress'
