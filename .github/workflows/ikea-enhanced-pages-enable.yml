@@ -27,4 +27,9 @@ jobs:
             gh api -X POST repos/Zennay/ikea-enhanced-app/pages -f build_type=workflow --silent
             echo "PAGES_OWNER_CONFIGURED=1" >> "$GITHUB_STEP_SUMMARY"
           fi
-          gh api repos/Zennay/ikea-enhanced-app/pages --jq '{status,html_url,build_type}' >> "$GITHUB_STEP_SUMMARY"
+          url="$(gh api repos/Zennay/ikea-enhanced-app/pages --jq '.html_url')"
+          test -n "$url"
+          echo "PAGES_URL=$url"
+          echo "PAGES_URL=$url" >> "$GITHUB_STEP_SUMMARY"
+          # Public HTTPS should show the app name if the PWA is actually reachable.
+          curl --location --fail --silent --show-error --retry 4 --retry-delay 2 --max-time 20 "$url" | grep -q 'IKEA Enhanced App'
