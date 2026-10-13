@@ -3,6 +3,8 @@
 
 Correlates queue allocation with /api/worker-debug telemetry; never sends
 commands, repairs tabs or treats an "active" worker as generation proof.
+HTTP GET endpoints may reconcile backend state; this caller is command-free,
+not a guarantee that upstream GET handlers never write SQLite.
 No credential, prompt, URL, command, reason or raw payload is emitted.
 """
 from __future__ import annotations
@@ -82,7 +84,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _fetch(path):
-    opener = urllib.request.build_opener(_NoRedirect)
+    # Never allow environment HTTP(S) proxies to receive local worker metadata.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
     request = urllib.request.Request(
         ENDPOINT + path,
         method="GET",
@@ -97,6 +100,36 @@ def _fetch(path):
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise EvidenceDenied("observation_unavailable") from exc
     return _load(raw)
+
+
+def _target_binding(targets, key, item):
+    """Check the actual runtime target agrees with its selected queue claim."""
+    project, local_slot = key.rsplit("::w", 1)
+    projects = targets.get("projects")
+    if not isinstance(projects, dict):
+        raise EvidenceDenied("missing_target_configuration")
+    cfg = projects.get(key)
+    if not isinstance(cfg, dict):
+        raise EvidenceDenied("missing_target_configuration")
+    if (cfg.get("project_id") != key or cfg.get("base_project_id") != project
+            or type(cfg.get("worker_slot")) is not int
+            or cfg["worker_slot"] != int(local_slot)
+            or type(cfg.get("global_worker_slot")) is not int
+            or cfg["global_worker_slot"] != item["global_worker_slot"]
+            or cfg.get("provider") != item.get("provider", "chatgpt")):
+        raise EvidenceDenied("target_assignment_identity_mismatch")
+    active = cfg.get("active")
+    ready = cfg.get("assignment_ready")
+    desired = cfg.get("desired_state")
+    if type(active) is not bool or type(ready) is not bool or not isinstance(desired, str):
+        raise EvidenceDenied("invalid_target_state")
+    queue = cfg.get("queue_item")
+    queue_id = queue.get("queue_id") if isinstance(queue, dict) else None
+    if ready and queue_id != item["queue_id"]:
+        raise EvidenceDenied("target_queue_claim_mismatch")
+    if queue_id is not None and queue_id != item["queue_id"]:
+        raise EvidenceDenied("target_queue_claim_mismatch")
+    return (active, ready, desired, queue_id)
 
 
 def _allocation_fingerprint(targets):
@@ -126,7 +159,8 @@ def _allocation_fingerprint(targets):
             raise EvidenceDenied("ambiguous_allocation_snapshot")
         seen_keys.add(key)
         seen_slots.add(global_slot)
-        identity.append((key, global_slot, queue_id, provider))
+        runtime_state = _target_binding(targets, key, item)
+        identity.append((key, global_slot, queue_id, provider, runtime_state))
     return tuple(sorted(identity))
 
 
@@ -221,8 +255,15 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         provider = item.get("provider", "chatgpt")
         if provider not in ("chatgpt", "claude"):
             raise EvidenceDenied("unknown_provider")
+        target_active, assignment_ready, desired_state, _ = _target_binding(targets, key, item)
         if provider == "claude":
             findings.append({"worker": key, "state": "other_provider", "generation_evidence": False})
+            continue
+        if not target_active or desired_state != "running":
+            findings.append({"worker": key, "state": "inactive_target", "generation_evidence": False})
+            continue
+        if not assignment_ready:
+            findings.append({"worker": key, "state": "assignment_unready", "generation_evidence": False})
             continue
         row = by_key.get(key)
         if row is None:
@@ -233,7 +274,8 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         # Prevent a successful generation heartbeat for a previous queue owner
         # being promoted as evidence for a freshly reassigned slot.
         if (type(row.get("global_slot")) is not int or row["global_slot"] != global_slot
-                or row.get("queue_id") != queue_id or row.get("provider") != provider):
+                or row.get("queue_id") != queue_id or row.get("provider") != provider
+                or row.get("desired_state") != "running"):
             raise EvidenceDenied("allocation_debug_binding_mismatch")
         verdict = row.get("verdict")
         if not isinstance(verdict, str) or verdict not in VERDICTS:
@@ -269,7 +311,7 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         counts[row["state"]] = counts.get(row["state"], 0) + 1
     return {
         "schema": "zcloud-worker-generation-evidence-v1",
-        "observation": "read_only",
+        "observation": "http_get_only",
         "control_authorized": False,
         "tab_presence_verified": False,
         "generation_directly_verified": False,
