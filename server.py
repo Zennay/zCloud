@@ -2918,6 +2918,7 @@ def portfolio_queue_allocate():
     # browser work. Read this outside the allocator transaction to avoid opening
     # a nested SQLite connection while the write lock is held.
     busy_worker_keys=_busy_ai_worker_keys()
+    prior_worker_by_slot={slot:key for key,slot in _current_global_slot_map().items()}
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2955,7 +2956,9 @@ def portfolio_queue_allocate():
                 row_project=str(occupied['project_id'] or '')
                 local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
                 local_slot=local_ordinals[row_project]
-                worker_key=f'{row_project}::w{local_slot}'
+                previous_key=prior_worker_by_slot.get(int(occupied['worker_slot'] or 0),'')
+                worker_key=(previous_key if previous_key.startswith(row_project+'::w')
+                            else f'{row_project}::w{local_slot}')
                 status=str(occupied['status'] or '')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
                 if status=='verifying' or project_priority=='system':
@@ -3051,7 +3054,9 @@ def portfolio_queue_allocate():
                 row_project=str(occupied['project_id'] or '')
                 local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
                 local_slot=local_ordinals[row_project]
-                worker_key=f'{row_project}::w{local_slot}'
+                previous_key=prior_worker_by_slot.get(int(occupied['worker_slot'] or 0),'')
+                worker_key=(previous_key if previous_key.startswith(row_project+'::w')
+                            else f'{row_project}::w{local_slot}')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
                 if row_project==force_project or project_priority=='system':
                     continue
@@ -3407,12 +3412,28 @@ def portfolio_queue_allocation():
         item=portfolio_queue_current_for_slot(slot)
         if item:
             active.append(item)
+    # Keep an existing project's worker ordinal bound to its previous
+    # physical slot. If an idle lower-numbered slot is later Force-assigned
+    # to the same project, renumbering its generating worker would silently
+    # orphan the active browser session.
+    with connect() as c:
+        previous={
+            (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
+            for r in c.execute(
+                'SELECT slot,project_id,worker_slot FROM ai_global_slots'
+            ).fetchall()
+        }
     used={}
     workers=[]
     for item in sorted(active,key=lambda x:int(x.get('worker_slot') or 99)):
         project_id=item['project_id']
-        local_slot=used.get(project_id,0)+1
-        used[project_id]=local_slot
+        global_slot=int(item['worker_slot'])
+        reserved=used.setdefault(project_id,set())
+        old=previous.get((project_id,global_slot))
+        local_slot=old if old and old > 0 and old not in reserved else 1
+        while local_slot in reserved:
+            local_slot+=1
+        reserved.add(local_slot)
         workers.append({
             'worker_key':f'{project_id}::w{local_slot}',
             'project_id':project_id,
