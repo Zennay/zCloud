@@ -7,6 +7,7 @@ on a worker. One log receipt is insufficient to authorize deployment.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import re
 import sys
@@ -45,7 +46,13 @@ def classify(text: str) -> dict:
     matches = LOG_LINE.findall(text)
     if len(matches) != 1:
         raise UntrustedLog("ambiguous_or_missing_safe_idle_marker")
-    payload = matches[0]
+    stamp, payload = matches[0]
+    try:
+        event_time = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise UntrustedLog("invalid_log_timestamp") from exc
+    if (event_time - datetime.now(timezone.utc)).total_seconds() > 5:
+        raise UntrustedLog("future_log_timestamp")
     if len(payload.encode("utf-8")) > MAX_MARKER_BYTES:
         raise UntrustedLog("oversized_marker")
     try:
@@ -126,7 +133,7 @@ def main() -> int:
             "invalid_or_duplicate_worker_identity", "ambiguous_generation_flags",
             "idle_worker_claimed_as_blocker", "invalid_desired_state",
             "invalid_drain_status", "invalid_event_age", "unknown_event_type",
-            "invalid_command_id"
+            "invalid_command_id", "invalid_log_timestamp", "future_log_timestamp"
         } else "invalid_log"
         print(json.dumps({"schema": "zcloud-safe-idle-blocker-evidence-v1",
                           "error": public, "authorizes_mutation": False,
