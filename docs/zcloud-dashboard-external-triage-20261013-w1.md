@@ -6,7 +6,7 @@ Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/135
 
 1. Open GitHub Actions, workflow “zCloud external dashboard triage (manual, hosted, read-only)”.
 2. Start handmatig op main, door repo-eigenaar Zennay. Er is geen push-, PR-, cron- of healthcheck-trigger.
-3. Lees de Nederlandse samenvatting in het Actions-joboverzicht. Maximaal zes GET-pogingen van 12 seconden, met vijf seconden ertussen. Vast IP en statuspad, zonder omgevingsproxy of redirect, nooit POST, SSH, sudo, SQLite, Firefox of servicebesturing.
+3. Lees de Nederlandse samenvatting in het Actions-joboverzicht. Maximaal zes GET-pogingen met maximaal 12 seconden per socket-wachttijd, vijf seconden tussen pogingen en **een harde totale procestijd van 115 seconden**. Een traag druppelende HTTP-verbinding mag zo niet eindeloos doorlopen. Vast IP en statuspad, zonder omgevingsproxy of redirect, nooit POST, SSH, sudo, SQLite, Firefox of servicebesturing.
 4. Bij fouten: geef bewijs aan de verantwoordelijke #1135 / #580-PWQ-41 / #1089-eigenaar. Geen herstart, repair, SQLite-permissiewijziging, queue-retry of deploy vanuit deze diagnose.
 
 ## Uitslagen en betekenis
@@ -22,8 +22,9 @@ Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/135
 | Ongeldige JSON of schema | Body onbruikbaar, of vereiste velden ontbreken. |
 | Verouderd of toekomstige tijd | >180 seconden oud of >30 seconden in de toekomst: mogelijk cache, replay of klokafwijking. |
 | MAIN_CHANGED / MAIN_UNVERIFIABLE | Exacte actuele main-head vóór/na observatie niet bewezen; geen groene samenvatting publiceren. |
+| Totale tijdslimiet overschreden | De 115-secondenlimiet stopte een trage externe probe. Eventuele gedeeltelijke response wordt weggegooid; de job blijft fout. |
 
-De manual job verifieert current-main tweemaal via een afzonderlijk, tot 12 seconden begrensd git ls-remote. Pas als beide resultaten exact gelijk zijn aan de GitHub event-SHA, wordt de menselijke samenvatting gepubliceerd. Dit voorkomt een deel van de branch-races maar is geen atomaire branch- of live-worker-proof.
+De manual job verifieert current-main tweemaal via een afzonderlijk, tot 12 seconden begrensd git ls-remote. Pas als beide resultaten exact gelijk zijn aan de GitHub event-SHA **én de samenvatting niet leeg of groter dan 2 KiB is en de exitcode overeenkomt met de status**, wordt de menselijke samenvatting gepubliceerd. Een exitcode 124 na de hard timeout krijgt uitsluitend een vaste foutmelding; nooit ruwe gedeeltelijke output. Dit voorkomt een deel van de branch-races maar is geen atomaire branch- of live-worker-proof.
 
 ## Verificatie zonder production mutation
 
