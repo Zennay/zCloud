@@ -47,6 +47,10 @@ jobs:
           # recorded timestamps, not that production deployment succeeded.
           assert by_id[38417582567]["lanes"]["zcloud_vps"]["assigned_count"] >= 1
           assert by_id[38417582567]["production_deploy_verified"] is False
+          # The VPS was reachable, but runtime promotion AND self-heal failed.
+          assert by_id[38417582567]["lanes"]["zcloud_vps"]["failure_phases"] == {
+              "multiple_failure_phases": 1
+          }
           assert by_id[38417793892]["lanes"]["zcloud_vps"]["assigned_count"] >= 1
           assert by_id[38417002886]["lanes"]["ftmo_research"]["job_count"] >= 1
           print("Historical runner route evidence: PASS; no release authority")
@@ -66,7 +70,9 @@ jobs:
           print("Current main deploy runner route: sampled (not production approval)")
           for item in data["runs"]:
               lane = item["lanes"]["zcloud_vps"]
-              print("run=%d assigned=%d unassigned=%d failed=%d" %
+              print("run=%d assigned=%d unassigned=%d failed=%d phases=%s" %
                     (item["run_id"], lane["assigned_count"],
-                     lane["unassigned_count"], lane["failed_jobs"]))
+                     lane["unassigned_count"], lane["failed_jobs"],
+                     json.dumps(lane["failure_phases"], sort_keys=True)))
+          assert all("production_deploy_verified" in item for item in data["runs"])
           PY
