@@ -103,5 +103,51 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
         self.assertIn("endCursor=one", calls[1])
 
 
+    def _compare_fixture_runner(self, file_field):
+        def runner(args):
+            joined = " ".join(args)
+            if "/git/ref/heads/main" in joined:
+                return {"object": {"sha": SHA}}
+            if args[:3] == ["gh", "pr", "list"]:
+                return []
+            if args[:3] == ["gh", "api", "graphql"]:
+                return page(
+                    [node("main"), node("recent-unpr")],
+                    next_page=False,
+                )
+            if "/compare/" in joined:
+                result = {
+                    "ahead_by": 1,
+                    "behind_by": 0,
+                    "merge_base_commit": {"sha": SHA},
+                }
+                if file_field is not None:
+                    result["files"] = file_field
+                return result
+            raise AssertionError(args)
+
+        return runner
+
+    def test_missing_compare_file_evidence_is_not_an_empty_diff(self):
+        when = collector.parse_utc("2026-10-13T07:05:00Z")
+        with self.assertRaisesRegex(collector.CollectorError, "compare_payload_invalid"):
+            collector.collect_snapshot(
+                "Zennay/zCloud",
+                when,
+                72,
+                self._compare_fixture_runner(None),
+            )
+
+    def test_explicit_empty_compare_file_list_is_supported(self):
+        when = collector.parse_utc("2026-10-13T07:05:00Z")
+        snapshot = collector.collect_snapshot(
+            "Zennay/zCloud", when, 72, self._compare_fixture_runner([])
+        )
+        target = next(b for b in snapshot["branches"] if b["name"] == "recent-unpr")
+        self.assertEqual(target["compare"]["files"], [])
+        self.assertTrue(target["compare"]["file_list_complete"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
