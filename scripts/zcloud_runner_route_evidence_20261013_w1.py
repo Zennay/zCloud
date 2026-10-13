@@ -10,11 +10,15 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
 
 REPO = "Zennay/zCloud"
+CANONICAL_REPOSITORY_ID = 1389227570
+CANONICAL_DEPLOY_WORKFLOW_ID = 369569470
+CANONICAL_DEPLOY_WORKFLOW_PATH = ".github/workflows/zcloud-vps-deploy.yml"
 API = f"https://api.github.com/repos/{REPO}/actions/runs"
 MAX_PAGES = 10
 MAX_BYTES = 1024 * 1024
@@ -227,6 +231,33 @@ def fetch_jobs(run_id: int, token: str) -> list:
     raise InvalidEvidence("page_limit_exceeded")
 
 
+def _verified_main_deploy_run(item: dict, now: datetime) -> tuple[str, int]:
+    """Canonical GitHub metadata, never a permission to promote to production."""
+    if type(item) is not dict:
+        raise InvalidEvidence("untrusted_deploy_run")
+    if (item.get("name") != "zCloud VPS deploy"
+            or item.get("head_branch") != "main"
+            or item.get("event") != "workflow_run"
+            or item.get("path") != CANONICAL_DEPLOY_WORKFLOW_PATH
+            or type(item.get("workflow_id")) is not int
+            or item["workflow_id"] != CANONICAL_DEPLOY_WORKFLOW_ID):
+        raise InvalidEvidence("untrusted_deploy_run")
+    for source in ("repository", "head_repository"):
+        repo = item.get(source)
+        if type(repo) is not dict or type(repo.get("id")) is not int:
+            raise InvalidEvidence("untrusted_deploy_run")
+        if repo["id"] != CANONICAL_REPOSITORY_ID or repo.get("full_name") != REPO:
+            raise InvalidEvidence("untrusted_deploy_run")
+    run_id, attempt, sha = item.get("id"), item.get("run_attempt"), item.get("head_sha")
+    if (type(run_id) is not int or run_id < 1
+            or type(attempt) is not int or attempt < 1
+            or type(sha) is not str or re.fullmatch(r"[0-9a-f]{40}", sha) is None):
+        raise InvalidEvidence("untrusted_deploy_run")
+    stamp = item.get("created_at")
+    _age(stamp, now)
+    return (stamp, run_id)
+
+
 def latest_main_deploy_ids(token: str, count: int = 2) -> list[int]:
     """Snapshot the newest main deploy attempts; no workflow dispatch or writes."""
     if not token:
@@ -248,17 +279,13 @@ def latest_main_deploy_ids(token: str, count: int = 2) -> list[int]:
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
         raise InvalidEvidence("github_api_unavailable") from exc
     runs = payload.get("workflow_runs")
-    if type(runs) is not list or type(payload.get("total_count")) is not int:
+    total = payload.get("total_count")
+    if (type(runs) is not list or type(total) is not int or total < 0
+            or len(runs) > 10 or len(runs) > total):
         raise InvalidEvidence("malformed_pagination")
-    ids = []
-    for item in runs:
-        if type(item) is not dict or item.get("head_branch") != "main":
-            continue
-        if item.get("name") != "zCloud VPS deploy":
-            continue
-        if type(item.get("id")) is not int or item["id"] <= 0:
-            raise InvalidEvidence("invalid_run_id")
-        ids.append(item["id"])
+    now = datetime.now(timezone.utc)
+    keyed = [(_verified_main_deploy_run(item, now), item["id"]) for item in runs]
+    ids = [run_id for _, run_id in sorted(keyed, reverse=True)]
     if len(ids) < count or len(set(ids)) != len(ids):
         raise InvalidEvidence("incomplete_recent_deploys")
     return ids[:count]
@@ -299,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
             "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
             "malformed_pagination","unstable_pagination","incomplete_pagination",
             "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection",
-            "invalid_step_evidence"} else "unavailable"
+            "invalid_step_evidence","untrusted_deploy_run"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
