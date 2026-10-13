@@ -36,7 +36,7 @@ jobs:
             }
             # Read-only GitHub REST via the workflow's contents:read token.
             # Unlike anonymous ls-remote this also works in private repos.
-            observed="$(timeout -k 2s 12s gh api --method GET repos/Zennay/zCloud/git/ref/heads/main --jq '.object.sha' 2>/dev/null)" || {
+            observed="$(GH_HOST=github.com GH_PROMPT_DISABLED=1 timeout -k 2s 12s gh api --method GET repos/Zennay/zCloud/git/ref/heads/main --jq '.object.sha' 2>/dev/null)" || {
               echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
               return 2
             }
