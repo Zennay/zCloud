@@ -78,6 +78,32 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertFalse(result.authorized)
         self.assertFalse(result.mutations_performed)
 
+    def test_unexpected_exception_counts_as_transport_failure_then_recovers(self):
+        calls = []
+        def raising_then_healthy():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("SECRET_PRIVATE_URL_DO_NOT_LOG")
+            return "healthy"
+        summary = probe.run_probe(raising_then_healthy, lambda _: None, attempts=2)
+        self.assertEqual(summary.status, "healthy")
+        self.assertEqual(summary.attempts, 2)
+        self.assertEqual(summary.failure_counts, {"transport_failure": 1})
+        self.assertTrue(summary.recovered_after_retry)
+        self.assertFalse(summary.authorized)
+        self.assertNotIn("SECRET", json.dumps(probe.asdict(summary)))
+
+    def test_persistent_unexpected_exceptions_remain_unhealthy(self):
+        def raising():
+            raise ValueError("internal endpoint or bearer credential")
+        summary = probe.run_probe(raising, lambda _: None, attempts=3)
+        self.assertEqual(summary.status, "unhealthy")
+        self.assertEqual(summary.last_failure_category, "transport_failure")
+        self.assertEqual(summary.failure_counts, {"transport_failure": 3})
+        self.assertFalse(summary.authorized)
+        self.assertFalse(summary.mutations_performed)
+        self.assertNotIn("bearer", probe.operator_markdown(summary))
+
     def test_persistent_failure_classified_without_body(self):
         result = probe.run_probe(lambda: "invalid_json", lambda _: None, attempts=3)
         self.assertEqual(result.last_failure_category, "invalid_json")
