@@ -15,13 +15,15 @@ permissions:
 
 jobs:
   classify-offline:
-    if: github.repository == 'Zennay/zCloud'
+    if: github.repository == 'Zennay/zCloud' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'Zennay/zCloud')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - name: Checkout immutable tested commit without credentials
         uses: actions/checkout@v4
         with:
+          # Verify the immutable PR head, not the synthetic pull/merge ref.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Compile safe probe and fixture tests
         run: |
