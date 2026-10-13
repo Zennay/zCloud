@@ -100,6 +100,10 @@ def classify(payload, now, stale_seconds=180):
         if str(rid) not in jobs_by_run: raise EvidenceError('incomplete_run_jobs')
         jobs = array(jobs_by_run[str(rid)], 'run_jobs')
         if len(jobs) > 500: raise EvidenceError('incomplete_run_jobs')
+        # Real GitHub queued runs can return zero jobs (e.g. old workflow_run
+        # events). Silence is not proof that the runner queue is drained.
+        if not jobs and (now - when(run.get('created_at'))).total_seconds() >= stale_seconds:
+            raise EvidenceError('stale_queued_run_without_job_evidence')
         seen_jobs = set()
         for job in jobs:
             if not isinstance(job, dict) or type(job.get('id')) is not int or job['id'] <= 0 or job['id'] in seen_jobs:
