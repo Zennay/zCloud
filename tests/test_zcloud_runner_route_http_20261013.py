@@ -81,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
             page = int(parse_qs(p.query).get('page',['1'])[0])
             jobs = [{'id':456,'status':'queued', 'created_at': owner.job_time,
                      'labels':['self-hosted','zcloud','vps'], 'runner_id':0,
+                     'runner_group_id':0, 'runner_group_name':'',
                      'name':'SECRET_TEST_JOB_NAME'}]
             self.reply_json({'total_count':len(jobs),'jobs':jobs[(page-1)*100:page*100]})
             return
@@ -136,6 +137,14 @@ class RealHttpTests(unittest.TestCase):
         self.assertEqual(len([c for c in self.calls if '/runs/123/jobs' in c[1]]),1)
         self.assertTrue(all(c[0]=='GET' for c in self.calls))
         self.assertTrue(all(c[3]=='Bearer PRIVATE_SENTINEL_TOKEN' for c in self.calls))
+
+    def test_real_http_jobs_only_reads_unassigned_group_zero_as_valid(self):
+        snapshot=route.live('PRIVATE_SENTINEL_TOKEN',jobs_only=True)
+        output=route.classify(snapshot,datetime.now(timezone.utc))
+        self.assertEqual(output['stale_unassigned_jobs'],1)
+        self.assertEqual(output['stale_label_profiles']['zcloud_vps'],1)
+        self.assertEqual(output['by_cause']['label_or_access_gap'],1)
+        self.assertFalse(output['runner_inventory_verified'])
 
     def test_real_http_two_page_runner_inventory(self):
         self.runner_count=101
