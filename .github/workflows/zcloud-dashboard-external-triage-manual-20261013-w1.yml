@@ -45,5 +45,11 @@ jobs:
             }
           }
           verify_main_head
-          python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py --attempts 6 --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          summary_file="$(mktemp)"
+          trap 'rm -f "$summary_file"' EXIT
+          probe_rc=0
+          python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py --attempts 6 --format markdown > "$summary_file" || probe_rc=$?
+          # Publish NO claimed green result if main changed during observation.
           verify_main_head
+          cat "$summary_file" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$probe_rc"
