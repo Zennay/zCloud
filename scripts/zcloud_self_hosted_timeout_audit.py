@@ -181,6 +181,8 @@ def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFindi
 def new_debt(
     base_rows: list[TimeoutFinding],
     head_rows: list[TimeoutFinding],
+    *,
+    deny_worsening: bool = False,
 ) -> list[TimeoutFinding]:
     """Return debt introduced for job identities that were not already debt."""
     base_debt = {
@@ -195,7 +197,7 @@ def new_debt(
         previous = base_debt.get((row.path, row.job))
         if previous is None:
             introduced.append(row)
-        elif previous.status == "over_limit":
+        elif deny_worsening and previous.status == "over_limit":
             # Legacy debt is grandfathered, but its timeout cannot grow or disappear.
             if (row.status != "over_limit"
                     or row.timeout_minutes is None
@@ -259,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeError, RuntimeError, subprocess.SubprocessError):
             print(json.dumps({"ok": False, "error": "base_ref_unreadable"}, sort_keys=True))
             return 2
-        introduced = new_debt(base_rows, rows)
+        introduced = new_debt(base_rows, rows, deny_worsening=args.require_no_new_debt)
         payload["base_ref"] = args.base_ref
         payload["base_self_hosted_job_count"] = len(base_rows)
         payload["base_finding_count"] = sum(
