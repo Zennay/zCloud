@@ -327,7 +327,7 @@ class DashboardProbeTests(unittest.TestCase):
 
 @contextmanager
 def temporary_dashboard_http(*, code=200, payload=None, media_type="application/json",
-                             redirect=False):
+                             redirect=False, extra_headers=(), declared_length=None):
     """Actual ephemeral loopback HTTP transport; never the production VPS."""
     calls = []
     if payload is None:
@@ -346,7 +346,10 @@ def temporary_dashboard_http(*, code=200, payload=None, media_type="application/
                 return
             self.send_response(code)
             self.send_header("Content-Type", media_type)
-            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Content-Length", str(len(payload)) if declared_length is None
+                             else str(declared_length))
+            for key, value in extra_headers:
+                self.send_header(key, value)
             self.end_headers()
             try:
                 self.wfile.write(payload)
@@ -409,6 +412,25 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
 
     def test_actual_http_bad_schema(self):
         self._run("invalid_schema", payload=b'{"time":"2026-10-13T22:50:00Z"}')
+
+    def test_actual_http_duplicate_content_type_is_not_healthy(self):
+        self._run("invalid_headers",
+                  extra_headers=(("Content-Type", "application/json"),))
+
+    def test_actual_http_duplicate_content_length_is_not_healthy(self):
+        self._run("invalid_headers",
+                  extra_headers=(("Content-Length", str(len(VALID))),))
+
+    def test_actual_http_claims_impossible_large_length(self):
+        self._run("body_too_large", declared_length=probe.MAX_BYTES + 1)
+
+    def test_actual_http_length_shorter_than_document(self):
+        # An HTTP framing lie may truncate JSON before we can parse it.
+        # Either an invalid framing, or unusable JSON, must be denied.
+        with temporary_dashboard_http(declared_length=1) as (url, calls):
+            with mock.patch.object(probe, "STATUS_URL", url):
+                self.assertIn(probe.probe_once(), {"invalid_headers", "invalid_json"})
+            self.assertEqual(calls, [("GET", "/api/status")])
 
     def test_actual_http_expired_snapshot_denied(self):
         stamp = (datetime.now(timezone.utc) - timedelta(seconds=240)).isoformat()
