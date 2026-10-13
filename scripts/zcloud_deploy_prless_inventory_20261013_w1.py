@@ -141,6 +141,101 @@ def collect(fetch, expected_main_sha):
     }
 
 
+def _path(value):
+    """Exact repository-relative source path, or a directory prefix ending /."""
+    if (not isinstance(value, str) or not 1 <= len(value) <= 300
+            or value.startswith("/") or "\\" in value
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+        raise InventoryDenied("invalid_changed_path")
+    segments = value.rstrip("/").split("/")
+    if not segments or any(segment in ("", ".", "..") for segment in segments):
+        raise InventoryDenied("invalid_changed_path")
+    return value
+
+
+def _path_conflict(changed, owned):
+    return (changed == owned or changed.startswith(owned.rstrip("/") + "/")
+            or owned.startswith(changed.rstrip("/") + "/"))
+
+
+def compare_owned_paths(fetch, snapshot, owned_paths):
+    """Examine exact immutable compare objects; report collisions, never admit.
+
+    GitHub's compare API caps changed-file reporting at 300 files. Refuse
+    potentially truncated file lists and >250 commits. This is still not
+    production ownership admission: caller supplied paths are not authority.
+    """
+    if (not isinstance(snapshot, dict)
+            or snapshot.get("schema") != "zcloud-prless-branch-snapshot-v1"
+            or snapshot.get("inventory_complete") is not True
+            or snapshot.get("admission_authorized") is not False
+            or snapshot.get("deployment_authorized") is not False):
+        raise InventoryDenied("untrusted_inventory")
+    main_sha = _sha(snapshot.get("main_sha"))
+    if not isinstance(owned_paths, (list, tuple)) or not owned_paths:
+        raise InventoryDenied("missing_owned_paths")
+    if len(owned_paths) > 200:
+        raise InventoryDenied("owned_path_cap")
+    owned = sorted(set(_path(p) for p in owned_paths))
+    candidates = snapshot.get("pr_less")
+    if not isinstance(candidates, list) or len(candidates) > 150:
+        raise InventoryDenied("branch_compare_cap")
+    collisions = set()
+    checked = 0
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise InventoryDenied("malformed_candidate")
+        _name(candidate.get("branch"))
+        target_sha = _sha(candidate.get("commit_sha"))
+        payload, next_page = fetch(f"compare:{main_sha}...{target_sha}", 0)
+        if next_page is not None or not isinstance(payload, dict):
+            raise InventoryDenied("incomplete_compare")
+        base = payload.get("base_commit")
+        if not isinstance(base, dict) or _sha(base.get("sha")) != main_sha:
+            raise InventoryDenied("compare_base_mismatch")
+        commits = payload.get("total_commits")
+        ahead = payload.get("ahead_by")
+        if (type(commits) is not int or not 0 <= commits <= 250
+                or type(ahead) is not int or not 0 <= ahead <= 250):
+            raise InventoryDenied("compare_commit_cap_or_invalid")
+        if payload.get("status") not in ("ahead", "behind", "diverged", "identical"):
+            raise InventoryDenied("invalid_compare_status")
+        files = payload.get("files")
+        if not isinstance(files, list) or len(files) >= 300:
+            raise InventoryDenied("compare_files_incomplete")
+        for changed in files:
+            if not isinstance(changed, dict):
+                raise InventoryDenied("malformed_compare_file")
+            paths = [_path(changed.get("filename"))]
+            if changed.get("status") == "renamed":
+                paths.append(_path(changed.get("previous_filename")))
+            for item in paths:
+                for claim in owned:
+                    if _path_conflict(item, claim):
+                        collisions.add((candidate["branch"], item, claim))
+        checked += 1
+    # Expensive comparisons cannot span a silently moving branch inventory.
+    fresh = collect(fetch, main_sha)
+    if (fresh["pr_less"] != candidates or
+            fresh["branch_count"] != snapshot.get("branch_count") or
+            fresh["open_pr_head_count"] != snapshot.get("open_pr_head_count")):
+        raise InventoryDenied("post_compare_inventory_drift")
+    return {
+        "schema": "zcloud-prless-overlap-evidence-v1",
+        "main_sha": main_sha,
+        "inventory_complete": True,
+        "paths_compared": True,
+        "compared_branches": checked,
+        "overlap_found": bool(collisions),
+        "overlaps": [
+            {"branch": branch, "changed_path": changed, "owned_path": owner}
+            for branch, changed, owner in sorted(collisions)
+        ],
+        "admission_authorized": False,
+        "deployment_authorized": False,
+    }
+
+
 class _DenyRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Never forward an authenticated GitHub read to another origin.
@@ -153,6 +248,11 @@ def github_fetcher(token):
         root = f"/repos/{OWNER}/{REPO}"
         if kind == "main" and page == 0:
             path = root + "/git/ref/heads/main"
+        elif kind.startswith("compare:") and page == 0:
+            match = re.fullmatch(r"compare:([a-f0-9]{40})\.\.\.([a-f0-9]{40})", kind)
+            if match is None:
+                raise InventoryDenied("invalid_compare_identity")
+            path = root + "/compare/" + match.group(1) + "..." + match.group(2)
         elif kind in ("branches", "pulls") and 1 <= page <= MAX_PAGES:
             suffix = ("branches" if kind == "branches" else "pulls")
             extra = "&state=open" if kind == "pulls" else ""
@@ -179,6 +279,8 @@ def github_fetcher(token):
             payload = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             raise InventoryDenied("invalid_github_json") from None
+        if kind.startswith("compare:"):
+            return payload, None
         if kind == "main":
             if not isinstance(payload, dict) or not isinstance(payload.get("object"), dict):
                 raise InventoryDenied("invalid_main_ref")
