@@ -38,10 +38,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -uo pipefail
+          # GitHub invokes bash with -e: temporarily disable it to inspect
+          # the expected 1/2 exit codes from denied/non-complete queue evidence.
+          set +e
           python3 scripts/zcloud_runner_route_triage_20261013.py --jobs-only > "$RUNNER_TEMP/zcloud-route-observation.json"
           probe_rc=$?
-          set -e
+          set -euo pipefail
           if [ "$probe_rc" -gt 2 ]; then
             echo 'unexpected read-only queue probe failure'
             exit 1
