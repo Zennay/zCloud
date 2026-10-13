@@ -60,7 +60,7 @@ def labels(value):
     names = set()
     for item in array(value, 'labels'):
         name = item.get('name') if isinstance(item, dict) else item
-        if not isinstance(name, str) or not re.fullmatch(r'[\\w.-]{1,80}', name, flags=re.ASCII):
+        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', name):
             raise EvidenceError('invalid_label')
         names.add(name.lower())
     return names
