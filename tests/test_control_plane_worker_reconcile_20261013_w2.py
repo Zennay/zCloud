@@ -359,6 +359,24 @@ class ReconcileTests(unittest.TestCase):
         with self.assertRaises(module.InvalidEvidence):
             module._strict_json(b'{"chatgpt_runners":NaN}')
 
+    def test_json_nesting_exact_boundary_is_accepted(self):
+        level = module.MAX_JSON_DEPTH - 1  # top-level object counts as one
+        raw = b'{"chatgpt_runners":' + b'[' * level + b'0' + b']' * level + b'}'
+        value = module._strict_json(raw)
+        self.assertIn("chatgpt_runners", value)
+
+    def test_json_nesting_over_limit_denied(self):
+        level = module.MAX_JSON_DEPTH
+        raw = b'{"chatgpt_runners":' + b'[' * level + b'0' + b']' * level + b'}'
+        with self.assertRaisesRegex(module.InvalidEvidence, "nesting exceeds limit"):
+            module._strict_json(raw)
+
+    def test_quoted_brackets_and_escaped_quotes_do_not_increment_nesting(self):
+        value = {"chatgpt_runners": {}, "untrusted_ignored_metadata":
+                 "[(]} brackets \\" quote { } and backslash \\\\ inside strings"}
+        raw = json.dumps(value).encode("utf-8")
+        self.assertEqual(module._strict_json(raw), value)
+
     def test_oversize_json_rejected(self):
         with self.assertRaises(module.InvalidEvidence):
             module._strict_json(b'{' + b' ' * module.MAX_RESPONSE_BYTES + b'}')
