@@ -14,6 +14,8 @@ on:
       - 'tests/test_zcloud_recovery_git_ref_ledger_20261013.py'
       - 'scripts/zcloud_recovery_tag_ruleset_preflight_20261013.py'
       - 'tests/test_zcloud_recovery_tag_ruleset_preflight_20261013.py'
+      - 'scripts/zcloud_recovery_manual_retry_proof_20261013.py'
+      - 'tests/test_zcloud_recovery_manual_retry_proof_20261013.py'
       - 'docs/deploy-ops-recovery-readonly-source-20261013.md'
 
 permissions:
@@ -33,7 +35,8 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_github_evidence_20261013.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_git_ref_ledger_20261013.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_tag_ruleset_preflight_20261013.py' -v
-      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py scripts/zcloud_recovery_github_evidence_20261013.py scripts/zcloud_recovery_git_ref_ledger_20261013.py scripts/zcloud_recovery_tag_ruleset_preflight_20261013.py
+      - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_manual_retry_proof_20261013.py' -v
+      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py scripts/zcloud_recovery_github_evidence_20261013.py scripts/zcloud_recovery_git_ref_ledger_20261013.py scripts/zcloud_recovery_tag_ruleset_preflight_20261013.py scripts/zcloud_recovery_manual_retry_proof_20261013.py
 
   github-observe-readonly:
     runs-on: ubuntu-latest
