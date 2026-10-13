@@ -1,0 +1,52 @@
+name: zCloud deploy PR-less inventory strict hosted proof
+
+on:
+  push:
+    branches: [fix/deploy-ops-complete-branch-inventory-20261013-w1]
+    paths:
+      - scripts/zcloud_deploy_prless_inventory_20261013_w1.py
+      - tests/test_zcloud_deploy_prless_inventory_20261013_w1.py
+      - .github/workflows/zcloud-deploy-prless-inventory-hosted-20261013-w1.yml
+  pull_request:
+    paths:
+      - scripts/zcloud_deploy_prless_inventory_20261013_w1.py
+      - tests/test_zcloud_deploy_prless_inventory_20261013_w1.py
+      - .github/workflows/zcloud-deploy-prless-inventory-hosted-20261013-w1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact triggering SHA without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prove source is exact triggering revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Run strict offline GitHub pagination regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_deploy_prless_inventory_20261013_w1
+      - name: Guard read-only CI authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/zcloud-deploy-prless-inventory-hosted-20261013-w1.yml').read_text()
+          assert 'runs-on: ubuntu-latest' in text
+          assert 'persist-credentials: false' in text
+          assert 'contents: read' in text
+          assert 'self-hosted' not in text
+          assert 'workflow_dispatch:' not in text
+          PY
