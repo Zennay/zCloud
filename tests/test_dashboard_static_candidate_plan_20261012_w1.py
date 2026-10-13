@@ -611,6 +611,61 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         self.assertEqual(obj["reason"], "incompatible_modes")
         self.assertFalse(obj["release_authorized"])
 
+    def test_cache_audit_error_preserves_schema_and_every_release_denial(self):
+        base = self.build_cache_baseline()
+        self.write("public/app.js", b"const changed=2")
+        head = self.commit("changed asset")
+        for baseline, candidate, reason in (
+            ("BAD_SHA", head, "invalid_commit_sha"),
+            (head, head, "no_commit_delta"),
+            (self.base, head, "baseline_index_asset_reference_untrusted"),
+        ):
+            with self.subTest(reason=reason):
+                run = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--root", str(self.repo),
+                     "--baseline-sha", baseline, "--candidate-sha", candidate,
+                     "--audit-cache-pins"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+                body = json.loads(run.stdout)
+                self.assertEqual(body["schema"], "zcloud-dashboard-cache-pin-audit-v1")
+                self.assertEqual(body["reason"], reason)
+                self.assertFalse(body["cache_pins_coherent"])
+                self.assertTrue(body["structural_static_diff_not_evaluated"])
+                self.assertFalse(body["static_diff_eligible"])
+                for field in (
+                    "runtime_bytes_observed", "baseline_proven_deployed",
+                    "production_status_proven", "sqlite_ownership_proven",
+                    "live_runtime_compatibility_proven",
+                    "release_authorized", "promotion_authorized",
+                ):
+                    self.assertFalse(body[field], field)
+
+    def test_rejected_snapshot_and_static_modes_preserve_boundaries(self):
+        head = self.build_cache_baseline()
+        for flags, schema, reason in (
+            (["--snapshot-sha", "invalid"],
+             "zcloud-dashboard-git-snapshot-v1", "invalid_commit_sha"),
+            (["--baseline-sha", head, "--candidate-sha", head],
+             "zcloud-dashboard-static-candidate-plan-v1", "no_commit_delta"),
+            (["--snapshot-sha", head, "--check-cache-bust"],
+             "zcloud-dashboard-git-snapshot-v1", "incompatible_modes"),
+        ):
+            with self.subTest(mode=flags):
+                run = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--root", str(self.repo), *flags],
+                    capture_output=True, text=True, timeout=15,
+                )
+                self.assertEqual(run.returncode, 2)
+                body = json.loads(run.stdout)
+                self.assertEqual(body["schema"], schema)
+                self.assertEqual(body["reason"], reason)
+                self.assertFalse(body["static_diff_eligible"])
+                self.assertFalse(body["release_authorized"])
+                self.assertFalse(body["promotion_authorized"])
+                self.assertFalse(body["production_status_proven"])
+
     def test_cli_json_never_grants_promotion_even_on_success(self):
         self.write("public/index.html", b"compatible-looking")
         head = self.commit("UI")
