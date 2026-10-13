@@ -212,7 +212,7 @@
         // allocation entirely. Remember its last *provider* slot, never its
         // project-local ordinal, to recognize only the actually removed slot.
         const providerSlot = Number(target.provider_worker_slot ?? target.global_worker_slot);
-        if (target.provider === "chatgpt" && Number.isInteger(providerSlot) &&
+        if ((!target.provider || target.provider === "chatgpt") && Number.isInteger(providerSlot) &&
             providerSlot >= 1 && providerSlot <= 128)
           lastChatGPTProviderSlot.set(key, providerSlot);
         candidateRemovals.delete(key);
