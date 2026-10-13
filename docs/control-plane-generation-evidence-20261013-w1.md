@@ -7,8 +7,8 @@ Owner: control-plane lane of [PR #1340](https://github.com/Zennay/zCloud/pull/13
 The tool `scripts/zcloud_worker_generation_evidence_20261013_w1.py` reads the current queue allocation and worker-browser diagnostic via two `/api/runner-targets` GETs bracketing one `/api/worker-debug` GET. It accepts self-reported generation **only** when all of these are true:
 
 1. The worker key, local/global slot, provider and queue identifier match the selected allocation and the current runtime target.
-2. The target has `active=true`, `desired_state=running`, `assignment_ready=true` and a matching `queue_item.queue_id`.
-3. The decoded claim time `queue_item.claimed_at` is valid UTC-offset-aware, and the event's optimistic reconstructed time is **not earlier** than this claim. The backend rounds age to whole seconds: this check rejects definitely earlier events, but cannot prove a close causal edge.
+2. The target has `active=true`, `desired_state=running`, `assignment_ready=true` and a matching `queue_item.queue_id`. The associated queue row must itself be eligible, assigned to the same project/global slot, and have a valid `claimed`, `running` or `verifying` status.
+3. The decoded claim time `queue_item.claimed_at` is valid UTC-offset-aware, its `claim_expires` lease is not expired (null means no expiry), and the event's optimistic reconstructed time is **not earlier** than this claim. The backend rounds age to whole seconds: this check rejects definitely earlier events, but cannot prove a close causal edge.
 4. The debug row reports the same worker/queue/provider, `desired_state=running`, `verdict=generating` and a recent nonterminal `heartbeat`, `generation-started` or `generation-progress`.
 5. No selected assignment, paused/running target status, provider or queue-claim epoch changes between the two local snapshots.
 
@@ -41,6 +41,10 @@ A pre-approved zSSH recipe `ops/zssh-runner-recipes/zcloud-generation-check.py` 
 - Allocation+debug cannot be transactionally read across HTTP endpoints. Bracketed reads catch ordinary assignment churn but not an ABA change; backend browser events currently do not carry a durable queue-claim ID. The timestamp check is only a lower-assurance guard against events definitely older than a new claim.
 - A browser-reported generating heartbeat does not establish that the foreground assistant is writing new material content. Only a separate authorized DOM/receipt integration and temporal validation can establish that.
 - The output deliberately omits prompts, conversation URLs, freeform error reasons, raw backend payloads and credentials. Evidence classification never grants production authority.
+
+For an operator-visible `expired_queue_claim` result, do not force a restart or push. Ask the scheduler owner to inspect lease renewal and queued/claimed states under its exclusive lane; this verifier only reports the inconsistency.
+
+Backend reconciliation of nominal GET endpoints is tracked separately as [issue #1341](https://github.com/Zennay/zCloud/issues/1341). It is not a confirmed cause of the historical SQLite safe-idle deployment failure.
 
 ## Parallel handoff
 
