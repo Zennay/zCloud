@@ -359,7 +359,7 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
 
 
 class DashboardManualMainLeaseTests(unittest.TestCase):
-    """Execute the real workflow shell in a fake-Git transport, never touching VPS."""
+    """Execute real manual shell with a fake GitHub CLI, never touching VPS."""
 
     def _workflow_shell(self):
         path = MODULE.parents[1] / ".github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml"
@@ -386,18 +386,18 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         current = "a" * 40
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            shim = root / "git"
+            shim = root / "gh"
             shim.write_text(
                 "#!/usr/bin/env python3\n"
                 "import os, pathlib, sys\n"
-                "expected=['ls-remote','--exit-code','https://github.com/Zennay/zCloud.git','refs/heads/main']\n"
+                "expected=['api','--method','GET','repos/Zennay/zCloud/git/ref/heads/main','--jq','.object.sha']\n"
                 "if sys.argv[1:] != expected: sys.exit(87)\n"
-                "count=pathlib.Path(os.environ['FAKE_GIT_COUNT'])\n"
+                "count=pathlib.Path(os.environ['FAKE_MAIN_COUNT'])\n"
                 "n=int(count.read_text()) if count.exists() else 0\n"
                 "count.write_text(str(n+1))\n"
-                "refs=os.environ['FAKE_GIT_REFS'].split(',')\n"
+                "refs=os.environ['FAKE_MAIN_REFS'].split(',')\n"
                 "if n>=len(refs) or refs[n]=='ERROR': sys.exit(88)\n"
-                "print(refs[n]+'\trefs/heads/main')\n",
+                "print(refs[n])\n",
                 encoding="utf-8",
             )
             shim.chmod(0o755)
@@ -407,9 +407,9 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
                 "PATH": str(root) + os.pathsep + env.get("PATH", ""),
                 "GITHUB_SHA": current,
                 "GITHUB_STEP_SUMMARY": str(summary),
-                "FAKE_GIT_REFS": ",".join(refs),
-                "FAKE_GIT_COUNT": str(root / "calls"),
-                "GIT_TERMINAL_PROMPT": "0",
+                "FAKE_MAIN_REFS": ",".join(refs),
+                "FAKE_MAIN_COUNT": str(root / "calls"),
+                "GH_TOKEN": "opaque-test-token-not-real",
                 "FAKE_PROBE_OUTPUT": output,
                 "FAKE_PROBE_RC": str(probe_rc),
             })
@@ -432,7 +432,11 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.sha || github.sha", hosted)
         self.assertIn("persist-credentials: false", hosted)
         manual = self._workflow_shell()
-        self.assertIn("timeout -k 2s 12s git ls-remote --exit-code", manual)
+        self.assertIn("timeout -k 2s 12s gh api --method GET repos/Zennay/zCloud/git/ref/heads/main --jq '.object.sha'", manual)
+        workflow = (MODULE.parents[1] / ".github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml").read_text()
+        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
+        self.assertNotIn("git ls-remote", manual)
+        self.assertNotIn("gh api --method POST", manual)
         self.assertIn("timeout -k 2s 115s python3 scripts/", manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
         self.assertEqual(manual.count("verify_main_head\n"), 2)
