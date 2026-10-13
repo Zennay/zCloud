@@ -66,7 +66,7 @@ function startup(){
     fetch:async url=>{
       if(!networkOk)throw Error("API down");
       if(url.includes("config-audit"))return {ok:true,json:async()=>({items:[]})};
-      return {ok:true,json:async()=>({projects})};
+      return {ok:true,json:async()=>({projects,dynamic_workers:{chatgpt_count:3}})};
     }
   });
   vm.runInContext(source,ctx,{timeout:1000});
@@ -111,5 +111,33 @@ async function settle(){await new Promise(r=>setTimeout(r,25))}
   await ctx.tick();
   assert.equal(tabs.length,before,"steady state maintains one tab per worker");
   assert.equal(ctx.ZCLOUD_V2_CONTROLLER.snapshot().tabs.length,2);
+  // The scheduler can release all queue claims during Firefox recovery.
+  // A previously known running worker still gets a tab; an unrecognized
+  // project, or a paused worker, must NEVER be constructed.
+  projects={
+    "ftmo::w1":{...allocated("ftmo::w1",1),active:false,
+      assignment_ready:false,worker_slot:1,worker_count:1,
+      global_worker_slot:null,queue_item:null,provider:"chatgpt"},
+    "haxlab::w1":{...allocated("haxlab::w1",2,true),
+      assignment_ready:false,worker_slot:1,worker_count:1,
+      global_worker_slot:null,queue_item:null,provider:"chatgpt"},
+    "unseen::w1":{...allocated("unseen::w1",3),active:false,
+      assignment_ready:false,worker_slot:1,worker_count:1,
+      global_worker_slot:null,queue_item:null,provider:"chatgpt"}
+  };
+  tabs.splice(0,tabs.length,{id:5,windowId:7,url:"https://chatgpt.com/c/expert-personal"});
+  tags.clear();
+  ctx=startup();
+  await settle();
+  assert.equal(tabs.length,1,"unclaimed workers wait for session restore");
+  await ctx.tick();
+  assert.equal(tabs.length,2,"known running worker without queue lease regains its tab");
+  assert.equal(tabs.filter(t=>t.url.includes("ftmo%3A%3Aw1")).length,1);
+  assert.equal(tabs.filter(t=>t.url.includes("haxlab%3A%3Aw1")).length,0,
+    "paused worker never regains a missing tab");
+  assert.equal(tabs.filter(t=>t.url.includes("unseen%3A%3Aw1")).length,0,
+    "unrecognized worker IDs never gain an invented tab");
+  await ctx.tick();
+  assert.equal(tabs.length,2,"same worker never opens twice after recovery");
   console.log("Firefox crash recovery: active slots reconstructed, paused slots ignored, expert isolation PASS");
 })().catch(err=>{console.error(err);process.exitCode=1});
