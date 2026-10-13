@@ -49,6 +49,10 @@ deployment or force-start approval.
   trigger a retry.
 - `allocation_without_target` / `allocated_but_not_runnable`: control-plane
   consistency issues that require ownership-aware operator review.
+- `active_observation_without_persisted_slot`: the HTTP read-model reports
+  `active=true` for a worker omitted from the persisted global slot map.
+  This is **attention**: manual/bootstrap allocation can be temporarily valid;
+  it does not prove a tab is present or justify closing a browser session.
 - `queue_claim_allocation_mismatch`: a current live queue claim points at
   a *different project* than the project assigned to the same global slot.
   This is stronger evidence than an absent browser heartbeat: queue and
