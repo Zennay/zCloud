@@ -154,6 +154,19 @@ class RealHttpTests(unittest.TestCase):
         with self.assertRaisesRegex(route.EvidenceError,'stale_queued_run_without_job_evidence'):
             route.classify(snap,datetime.now(timezone.utc))
 
+    def test_real_http_stale_run_empty_jobs_cli_is_unknown_and_silent(self):
+        self.mode='jobs_empty'
+        out=io.StringIO()
+        with patch.dict(os.environ,{'GITHUB_TOKEN':'PRIVATE_SENTINEL_TOKEN'}):
+            with contextlib.redirect_stdout(out):
+                rc=route.main(['--live'])
+        result=json.loads(out.getvalue())
+        self.assertEqual(rc,2)
+        self.assertEqual(result['classification'],'unknown_incomplete_evidence')
+        self.assertFalse(result['recovery_authorized'])
+        self.assertFalse(result['queue_cancel_authorized'])
+        self.assertNotIn('PRIVATE_SENTINEL_TOKEN',out.getvalue())
+
     def test_real_http_job_permission_denial_is_unknown(self):
         self.mode='jobs_forbidden'
         with self.assertRaisesRegex(route.EvidenceError,'api_unavailable'):
