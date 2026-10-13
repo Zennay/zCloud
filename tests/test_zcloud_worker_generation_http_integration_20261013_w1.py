@@ -7,7 +7,7 @@ import json
 import threading
 import unittest
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import server
@@ -101,6 +101,32 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         self.assertFalse(proof["all_allocated_chatgpt_generating"])
         states = {row["worker"]: row["state"] for row in proof["workers"]}
         self.assertEqual("inactive_target", states[chatgpt[0]])
+
+    def test_real_http_rejects_prior_browser_event_after_queue_reclaim(self):
+        chatgpt, _ = self.allocated_keys()
+        for key in chatgpt:
+            self.emit(key, generating=True, reason="violentmonkey-primary-runner")
+        self.assertTrue(self.report()["all_allocated_chatgpt_generating"])
+        key = chatgpt[0]
+        project, local_slot = key.rsplit("::w", 1)
+        with patch.object(subject, "ENDPOINT", self.base):
+            allocations = subject._fetch("/api/runner-targets")["global_allocation"]["workers"]
+        claim_id = next(row["queue_id"] for row in allocations if row["worker_key"] == key)
+        older_event = (datetime.now(timezone.utc) - timedelta(seconds=8)).isoformat()
+        newer_claim = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE runner_events SET ts=? WHERE project_id=? AND worker_slot=?",
+                (older_event, project, int(local_slot)),
+            )
+            conn.execute(
+                "UPDATE portfolio_queue SET claimed_at=? WHERE queue_id=?",
+                (newer_claim, claim_id),
+            )
+        proof = self.report()
+        self.assertFalse(proof["all_allocated_chatgpt_generating"])
+        states = {row["worker"]: row["state"] for row in proof["workers"]}
+        self.assertEqual("generation_predates_claim", states[key])
 
     def test_prompt_sent_after_generating_does_not_stay_green(self):
         chatgpt, _ = self.allocated_keys()
