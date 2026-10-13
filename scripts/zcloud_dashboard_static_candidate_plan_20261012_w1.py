@@ -296,22 +296,76 @@ def snapshot(root: Path, revision: str) -> dict:
     }
 
 
+
+def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
+    """Optional strict Git-only cache revision check for proposed UI updates.
+
+    A structural static diff does NOT imply browser refresh correctness. A changed
+    app.js or enhancements.css must have an *independently different* referenced
+    version in index.html. Historical Git is NOT attested deployed/live.
+    """
+    proposal = plan(root, baseline, candidate)
+    after = snapshot(root, candidate)
+    before_index = blob_at(root, baseline, "public/index.html")
+    if before_index is None:
+        raise PlanError("baseline_index_asset_reference_untrusted")
+    try:
+        raw = git(root, "cat-file", "blob", before_index)
+        if len(raw) > MAX_ASSET_BYTES or b"\\0" in raw:
+            raise PlanError("baseline_index_asset_reference_untrusted")
+        before_versions = index_bundle_versions(raw)
+    except PlanError:
+        raise PlanError("baseline_index_asset_reference_untrusted") from None
+
+    before_assets = {}
+    for name in ("app.js", "enhancements.css"):
+        path = "public/" + name
+        identity = blob_at(root, baseline, path)
+        if identity is None:
+            raise PlanError("baseline_dashboard_asset_missing")
+        before_assets[name] = identity
+
+    changed = {item["path"] for item in proposal["assets"]}
+    for name in ("app.js", "enhancements.css"):
+        if ("public/" + name) in changed:
+            if before_versions[name] == after["index_asset_versions"][name]:
+                raise PlanError("cache_revision_not_bumped")
+
+    return {
+        **proposal,
+        "cache_bust_checked": True,
+        "cache_bust_verified": True,
+        "baseline_index_asset_versions": before_versions,
+        "candidate_index_asset_versions": after["index_asset_versions"],
+        "runtime_bytes_observed": False,
+        "release_authorized": False,
+        "promotion_authorized": False,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--baseline-sha")
     parser.add_argument("--candidate-sha")
     parser.add_argument("--snapshot-sha")
+    parser.add_argument("--check-cache-bust", action="store_true",
+                        help="Require changed JS/CSS to bump index.html cache versions; no deploy")
     args = parser.parse_args(argv)
     try:
         if args.snapshot_sha is not None:
+            if args.check_cache_bust:
+                raise PlanError("incompatible_modes")
             if args.baseline_sha is not None or args.candidate_sha is not None:
                 raise PlanError("incompatible_modes")
             evidence = snapshot(args.root, args.snapshot_sha)
         else:
             if args.baseline_sha is None or args.candidate_sha is None:
                 raise PlanError("baseline_and_candidate_required")
-            evidence = plan(args.root, args.baseline_sha, args.candidate_sha)
+            if args.check_cache_bust:
+                evidence = verify_cache_bust(args.root, args.baseline_sha, args.candidate_sha)
+            else:
+                evidence = plan(args.root, args.baseline_sha, args.candidate_sha)
     except PlanError as exc:
         print(json.dumps({
             "schema": "zcloud-dashboard-git-snapshot-v1" if args.snapshot_sha is not None else "zcloud-dashboard-static-candidate-plan-v1",
