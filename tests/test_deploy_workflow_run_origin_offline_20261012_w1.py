@@ -36,7 +36,7 @@ def actual_github_payload():
     fixture = accepted_fixture()
     run = deepcopy(fixture["workflow_run"])
     run["repository"] = {"full_name": REPOSITORY, "id": REPOSITORY_ID}
-    run["head_repository"]["id"] = 42
+    run["head_repository"]["id"] = REPOSITORY_ID
     return {
         "action": "completed",
         "repository": {"full_name": REPOSITORY, "id": REPOSITORY_ID, "private": True},
