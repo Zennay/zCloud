@@ -455,12 +455,23 @@ def restart_firefox_runtime():
         if not profile.is_dir():
             return {**current, 'recovery_error':'original-worker-profile-not-found',
                     'allocation_preserved':True, 'released_slots':released}
+        # Firefox is normally launched by web-ext, which installs the
+        # temporary project-runner add-on. Starting only /usr/bin/firefox
+        # restores a browser window but silently omits the tab controller,
+        # so NONE of the missing worker tabs can be recovered.
+        web_ext=Path.home()/'.local/bin/web-ext'
+        addon=Path.home()/'snap/firefox/common/chatgpt-project-extension'
+        if not web_ext.is_file() or not (addon/'manifest.json').is_file():
+            return {**current, 'recovery_error':'worker-extension-launcher-not-found',
+                    'allocation_preserved':True,'released_slots':released}
         with log_path.open('ab',buffering=0) as log:
             subprocess.Popen(
-                # Firefox restores the saved window/tabs; the v2 controller
-                # rebinds their session tags and adds only truly missing slots.
-                ['/usr/bin/firefox','-no-remote','-profile',str(profile),
-                 '-start-debugger-server','45485'],
+                # The SAME profile + temporary extension as the original
+                # working Firefox session. web-ext opens the one browser;
+                # the v2 extension then restores/reconciles worker tabs.
+                [str(web_ext),'run','--source-dir',str(addon),
+                 '--firefox','/usr/bin/firefox','--firefox-profile',str(profile),
+                 '--keep-profile-changes','--no-reload','--no-input'],
                 stdin=subprocess.DEVNULL,stdout=log,stderr=log,
                 env=env,start_new_session=True,close_fds=True,
             )
