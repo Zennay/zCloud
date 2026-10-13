@@ -211,8 +211,23 @@ class TestRunnerRoute(unittest.TestCase):
     def test_stale_queued_run_without_jobs_is_not_green(self):
         x=fixture()
         x['jobs_by_run']['123']=[]
-        with self.assertRaisesRegex(t.EvidenceError,'stale_queued_run_without_job_evidence'):
-            self.classify(x)
+        result=self.classify(x)
+        self.assertEqual(result['classification'], 'unknown_incomplete_evidence')
+        self.assertEqual(result['unknown_stale_queued_runs'], 1)
+        self.assertEqual(result['stale_unassigned_jobs'], 0)
+        self.assertFalse(result['recovery_authorized'])
+
+    def test_mixed_queued_jobs_and_old_zero_job_runs_preserve_partial_counts(self):
+        x=fixture()
+        x['queued_runs'].append({'id':999,'status':'queued',
+                                  'created_at':(NOW-dt.timedelta(days=5)).isoformat()})
+        x['jobs_by_run']['999']=[]
+        result=self.classify(x)
+        self.assertEqual(result['classification'], 'unknown_incomplete_evidence')
+        self.assertEqual(result['unknown_stale_queued_runs'], 1)
+        self.assertEqual(result['stale_unassigned_jobs'], 1)
+        self.assertEqual(result['by_cause']['available_but_queued'], 1)
+        self.assertFalse(result['queue_cancel_authorized'])
 
     def test_fresh_empty_run_does_not_claim_runner_failure(self):
         x=fixture()
