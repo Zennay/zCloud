@@ -19,6 +19,7 @@ import time
 import uuid
 import sys
 import office_features as features
+import office_game as game
 
 WAKE = threading.Event()
 from datetime import datetime, timezone
@@ -107,6 +108,7 @@ def init_db() -> None:
         db.execute("UPDATE jobs SET status='queued' WHERE status='waiting_zcloud' AND remote_queue_id=''")
         # Dispatched jobs are idempotent by remote_queue_id; reconciliation is read-only.
         features.init(db)
+        game.init(db)
 
 
 def zcloud(path: str, payload: dict | None = None, timeout: float = 3.5) -> dict:
@@ -249,6 +251,7 @@ def dispatch_once() -> bool:
         with connect() as db:
             db.execute("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='dispatching'",
                        (str(exc)[:450],timestamp(),job["id"]))
+            game.on_local_failure(db, job, exc)
     except (RuntimeError,ConnectionError) as exc:
         with connect() as db:
             db.execute("UPDATE jobs SET status='queued',error=?,updated_at=? WHERE id=? AND status='dispatching'",
@@ -275,6 +278,7 @@ def sync_remote() -> None:
                    "zCloud heeft deze opdracht laten vervallen." if mapped == "dropped" else "")
             db.execute("UPDATE jobs SET status=?,remote_status=?,output=?,updated_at=? WHERE id=?",
                        (mapped,remote_status,msg,timestamp(),job["id"]))
+            game.on_remote_item(db, job, item, mapped)
             if mapped in ("done","dropped") and job["status"] not in ("done","dropped"):
                 db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
                            (job["employee"],"system",msg,timestamp()))
@@ -286,6 +290,7 @@ def work_forever(stop: threading.Event | None = None) -> None:
             sync_remote()
             # Avoid starvation of retries when zCloud is down.
             dispatch_once()
+            game.queue_summaries(sys.modules[__name__])
         except Exception:
             # Keep service available and retry after backoff; never fabricate DONE.
             pass
@@ -373,7 +378,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self)->None:
         url=urlsplit(self.path)
         static = {"/skyline.jpg": ("skyline.jpg", "image/jpeg"), "/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
-                  "/office-relay.user.js": ("office-relay.user.js", "text/javascript; charset=utf-8")}
+                  "/office-relay.user.js": ("office-relay.user.js", "text/javascript; charset=utf-8"),
+                  "/slides.js": ("slides.js", "text/javascript; charset=utf-8"), "/game.js": ("game.js", "text/javascript; charset=utf-8")}
         if url.path in static:
             filename, mime = static[url.path]
             body = (ROOT / filename).read_bytes()
@@ -405,6 +411,13 @@ class Handler(BaseHTTPRequestHandler):
             self.json_reply(200,{"employees":list(PERSONAS.values()),"chat_links":links})
         elif url.path=="/api/projects":
             self.json_reply(200, office_projects())
+        elif url.path=="/api/events":
+            query=parse_qs(url.query)
+            try:self.json_reply(200, game.list_events(sys.modules[__name__], query.get("since",["0"])[0], query.get("employee",[""])[0]))
+            except ValueError as exc:self.json_reply(400,{"error":str(exc)})
+        elif url.path.startswith("/api/jobs/") and url.path.endswith("/summary"):
+            result=game.summary_for(sys.modules[__name__], url.path.split("/")[-2])
+            self.json_reply(200 if result else 404, result or {"error":"Niet gevonden"})
         elif url.path=="/api/decks":
             self.json_reply(200, features.deck_list(sys.modules[__name__]))
         elif url.path.startswith("/api/decks/"):
@@ -438,6 +451,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body,dict):raise ValueError("JSON object vereist")
             if url.path=="/api/jobs":
                 self.json_reply(201,enqueue(body.get("employee",""),body.get("kind","task"),body.get("instruction","")))
+            elif url.path=="/api/decks/request":
+                self.json_reply(201, game.request_deck(sys.modules[__name__], body))
             elif url.path=="/api/decks":
                 self.json_reply(201, features.save_deck(sys.modules[__name__], body))
             elif url.path=="/api/workstation":

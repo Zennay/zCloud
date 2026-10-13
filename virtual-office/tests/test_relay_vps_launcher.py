@@ -18,6 +18,12 @@ class RelayVPSLauncherTests(unittest.TestCase):
         self.assertNotIn("OFFICE_ACCESS_TOKEN", launcher)
         self.assertNotIn("198.244.191.182:3422", launcher)
 
+    def test_only_saved_chatgpt_conversations_are_opened(self):
+        launcher = (ROOT / "office-relay-vps.sh").read_text()
+        self.assertIn("relay-tabs.txt", launcher)
+        self.assertIn("https://chatgpt\\.com/c/", launcher)
+        self.assertIn("< 3", launcher)
+
     def test_service_is_user_scoped(self):
         service = (ROOT / "office-relay-vps.service").read_text()
         self.assertIn("ExecStart=/bin/bash /opt/virtual-office/office-relay-vps.sh", service)

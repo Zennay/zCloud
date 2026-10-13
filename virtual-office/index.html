@@ -11,7 +11,7 @@ header{top:18px;left:20px;right:20px;justify-content:flex-end}.connection{font-s
 .dock{bottom:18px;background:#15272dc9}.dock button{padding:10px 14px}#chat-panel{width:340px;background:#182a30ed}
 .project-card{border:1px solid #ffffff20;border-radius:12px;padding:18px;margin-bottom:12px}.project-card h3{margin:0 0 8px;font-size:18px}.project-card p{font-size:12px;color:#bbcac6;line-height:1.6}
 @media(max-width:700px){.dock button{padding:9px 8px;font-size:9px}.topright .connection{display:flex}header{right:12px}#chat-panel{width:calc(100vw - 24px)}}
-</style></head><body>
+#game-chip{position:fixed;bottom:98px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;padding:8px 10px 8px 16px;border:1px solid #d4b78977;border-radius:26px;background:#152026ee;backdrop-filter:blur(18px);font-size:12px;z-index:12;max-width:calc(100vw - 24px)}#game-chip[hidden]{display:none}#game-chip button{padding:8px 13px}#ptt.rec{background:#c9605f;color:#fff;border-color:#c9605f}#game-chip-text{max-width:420px}</style></head><body>
 <!-- VIRTUAL OFFICE: desktop-first, persistent ChatGPT workspaces. -->
 <main id="viewport" aria-label="3D penthousekantoor"></main><div class="vignette"></div>
 <header><div class="brand"><div class="mark">z</div><div><strong>The Penthouse</strong><small>YOUR PRIVATE STUDIO</small></div></div><div class="topright"><div class="connection"><span id="indicator" class="dot"></span><span id="connection">Kantoor verbinden…</span></div><button id="settings-open">Verbinding ↗</button><button id="fullscreen" title="Volledig scherm">⛶</button></div></header>
@@ -29,6 +29,7 @@ header{top:18px;left:20px;right:20px;justify-content:flex-end}.connection{font-s
 Verbind je kantoor en typ help voor de beschikbare VPS-opdrachten.
 </div><form id="terminal-form" class="terminalform"><span>❯</span><input id="terminal-input" autocomplete="off" spellcheck="false" aria-label="VPS-opdracht" placeholder="help"><button class="quiet" id="terminal-run">↵</button></form></div></div></div></div></div>
 <div id="board" class="dialog" hidden role="dialog" aria-modal="true" aria-label="Presentatie studio"><div class="window"><div class="panelhead"><div><div class="eyebrow">THE BOARDROOM</div><h2>Presentatie studio</h2></div><button class="quiet" data-close="board" aria-label="Sluit presentaties">×</button></div><div class="windowbody"><div class="slide-layout"><div class="slide-editor"><div><label for="slide-title">Titel van deze slide</label><input id="slide-title" maxlength="120"><label for="deck-title">Naam presentatie</label><input id="deck-title" maxlength="120"></div><div><label for="slide-body">Inhoud · één punt per regel</label><textarea id="slide-body" maxlength="2000"></textarea></div><div class="row"><button id="add-slide">+ Slide</button><button id="save-deck" class="primary">Opslaan op VPS</button></div><div class="row"><select id="saved-decks" aria-label="Opgeslagen presentaties"><option value="">Opgeslagen presentaties…</option></select></div><div class="row"><button id="ask-slides">Laat Maya slides uitwerken ↗</button></div><div id="deck-feedback" class="small" role="status"></div></div><div><article id="slide-preview" class="slide"><div class="eyebrow">ZCLOUD / THE PENTHOUSE</div><h3 id="preview-title"></h3><p id="preview-body"></p><footer><span>YOUR COMPANY. ABOVE THE CITY.</span><span id="preview-number"></span></footer></article><div class="slide-nav"><button id="prev-slide" aria-label="Vorige slide">←</button><span id="slide-count"></span><button id="next-slide" aria-label="Volgende slide">→</button></div><div class="row"><button id="present" class="primary">Presenteren</button><button id="export-deck">Download slides</button><button id="import-deck" class="edit-only">Importeren</button><input id="deck-file" type="file" accept="application/json,.json" hidden></div></div></div></div></div></div>
+<div id="game-chip" hidden role="status" aria-live="polite"><span id="game-chip-text"></span><button id="game-speak" class="primary" hidden>Laat haar vertellen</button><button id="game-later" hidden>Later</button><button id="ptt" title="Houd V ingedrukt om te praten" hidden>◉ Praat (V)</button></div>
 <div id="loading"><div class="eyebrow">ZCLOUD / VIRTUAL OFFICE</div><h2>The Penthouse</h2><div class="loaderline"></div><p id="loading-text">De lift gaat naar de 62e verdieping…</p></div>
 <script type="module">
 const $=id=>document.getElementById(id);
@@ -103,5 +104,27 @@ $('import-deck').onclick=()=>$('deck-file').click();$('deck-file').onchange=asyn
 renderSlide();
 try{const {startOffice}=await import('/scene.js');world=await startOffice({mount:$('viewport'),interact:kind=>{if(people[kind])selectPerson(kind);else if(kind==='computer')computer();else if(kind==='board')board();else if(kind==='monitor'){show('jobs-panel');refresh()}else if(kind==='customize')show('nav-panel')},room:(label,title,description)=>{$('location').textContent=label;$('room-title').textContent=title;$('room-desc').textContent=description},hint:t=>{$('hint').textContent=t;$('hint').style.display=t?'block':'none'},locked:b=>$('crosshair').style.display=b?'block':'none',isUIOpen:()=>!!document.querySelector('.dialog:not([hidden]),.panel:not([hidden])')});$('loading').hidden=true;try{const style=localStorage.getItem('office-desk-style');if(['plush','garden','minimal'].includes(style)){$('desk-style').value=style;world.customize(style)}}catch{}renderSlide()}catch(err){$('loading-text').textContent='3D laden is niet gelukt. De werkruimte blijft beschikbaar.';const b=document.createElement('button');b.textContent='Open de werkruimte';b.onclick=()=>$('loading').hidden=true;$('loading').append(b);console.error(err)}
 document.querySelectorAll('[data-key]').forEach(b=>{b.onpointerdown=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);world?.key(b.dataset.key,true)};b.onpointerup=b.onpointercancel=()=>world?.key(b.dataset.key,false)});
-refresh();const refreshTimer=setInterval(()=>{if(!document.hidden)refresh()},6000);window.addEventListener('pagehide',()=>{clearInterval(refreshTimer);world?.dispose()});
+
+// ---- Game layer: workers walk over when finished, speak only on request, make and give presentations.
+let game=null,voice=null,recording=false,gameStarting=false,chipTimer;
+function chipText(text){const c=$('game-chip');clearTimeout(chipTimer);$('game-chip-text').textContent=text||'';if(text&&!game?.waiting.length){chipTimer=setTimeout(()=>{if(!game?.waiting.length)chipRender()},14000)}chipRender()}
+function chipRender(){const waiting=game?.waiting||[],text=$('game-chip-text').textContent,canTalk=!!voice?.available;$('game-speak').hidden=!waiting.length;$('game-later').hidden=!waiting.length;$('ptt').hidden=!canTalk;$('game-chip').hidden=!(waiting.length||text||canTalk&&game)}
+$('game-speak').onclick=()=>game?.handleUtterance('zeg maar').catch(e=>toast(e.message));
+$('game-later').onclick=()=>game?.handleUtterance('nu niet').catch(e=>toast(e.message));
+async function gameTick(){
+ if(!world||gameStarting||(health.auth_required&&!token))return;
+ try{
+  if(!game){gameStarting=true;const m=await import('/game.js'),g=new m.Game({api,world,speech:m.createSpeech(),ui:{status:chipText,waiting:()=>chipRender()},storage:localStorage});await g.init();voice=m.createVoice();game=g;chipRender()}
+  else{await game.poll();if(!game.waiting.length&&!$('game-chip-text').textContent)chipRender()}
+ }catch{/* office offline: try again on the next tick */}finally{gameStarting=false}
+}
+async function pttStart(){if(!game||!voice?.available||recording)return;recording=true;$('ptt').classList.add('rec');chipText('Ik luister… laat los om te versturen');try{await voice.start()}catch(e){recording=false;$('ptt').classList.remove('rec');toast('Microfoon niet beschikbaar: '+(e.message||e))}}
+async function pttStop(){if(!recording)return;recording=false;$('ptt').classList.remove('rec');try{const text=await voice.stop();if(!text){chipText('');return}chipText('Je zei: '+text);game.selected=current;await game.handleUtterance(text)}catch(e){toast(e.message||String(e))}}
+document.addEventListener('keydown',e=>{if(e.key.toLowerCase()!=='v'||e.repeat||e.ctrlKey||e.metaKey||e.altKey||/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName))return;pttStart()});
+document.addEventListener('keyup',e=>{if(e.key.toLowerCase()==='v')pttStop()});
+$('ptt').onpointerdown=e=>{e.preventDefault();pttStart()};$('ptt').onpointerup=$('ptt').onpointercancel=()=>pttStop();
+if(window.officeDesktop?.onVoiceStatus)window.officeDesktop.onVoiceStatus(t=>chipText(t));
+const gameTimer=setInterval(()=>{if(!document.hidden)gameTick()},4000);
+if(window.officeDesktop?.getToken){try{const t=await window.officeDesktop.getToken();if(t){token=t;$('auth-feedback').textContent='Verbonden via de desktop-app.'}}catch{}}
+refresh();const refreshTimer=setInterval(()=>{if(!document.hidden)refresh()},6000);window.addEventListener('pagehide',()=>{clearInterval(refreshTimer);clearInterval(gameTimer);world?.dispose()});
 </script></body></html>

@@ -20,7 +20,7 @@ jobs:
       - name: Compile + unit tests
         run: |
           test "$(hostname)" = "vps-bb300bba"
-          python3 -m py_compile virtual-office/server.py virtual-office/office_features.py
+          python3 -m py_compile virtual-office/server.py virtual-office/office_features.py virtual-office/office_game.py
           python3 -m unittest discover -s virtual-office/tests -v
       - name: Parse module and check JS syntax
         run: |
@@ -35,6 +35,11 @@ jobs:
           cp virtual-office/scene.js /tmp/virtual-office-scene.mjs
           node --check /tmp/virtual-office-scene.mjs
           node --check virtual-office/office-relay.user.js
+          cp virtual-office/slides.js /tmp/virtual-office-slides.mjs
+          node --check /tmp/virtual-office-slides.mjs
+          cp virtual-office/game.js /tmp/virtual-office-game.mjs
+          node --check /tmp/virtual-office-game.mjs
+          node --test virtual-office/tests/*.mjs
           bash -n virtual-office/office-relay-vps.sh
           test -s virtual-office/office-relay-vps.service
           python3 -m unittest discover -s virtual-office/tests -p test_penthouse.py -v
@@ -103,7 +108,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -f virtual-office/server.py
           test -f virtual-office/index.html
-          python3 -m py_compile virtual-office/server.py
+          test -f virtual-office/office_game.py
+          python3 -m py_compile virtual-office/server.py virtual-office/office_game.py
           user="$(id -un)"
           group="$(id -gn)"
           sudo install -d -m 0755 -o "$user" -g "$group" /opt/virtual-office
@@ -118,7 +124,7 @@ jobs:
           sudo install -m 0644 "$RUNNER_TEMP/office-skyline.jpg" /opt/virtual-office/skyline.jpg
           sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
           sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
-          sudo install -m 0644 virtual-office/office_features.py virtual-office/scene.js virtual-office/office-relay.user.js /opt/virtual-office/
+          sudo install -m 0644 virtual-office/office_features.py virtual-office/office_game.py virtual-office/scene.js virtual-office/slides.js virtual-office/game.js virtual-office/office-relay.user.js /opt/virtual-office/
           # The new browser profile is isolated from the existing zCloud workers.
           # Install only; do not open an unauthenticated browser or alter the live
           # X11/Firefox worker session in an unattended CI deployment.
@@ -184,13 +190,13 @@ jobs:
               result = json.load(urllib.request.urlopen(req,timeout=8))
               assert result["source"] == "vps" and result["output"]
               print("Private VPS command verified:", command)
-          for path in ("/api/decks", "/api/relay/status", "/api/jobs"):
+          for path in ("/api/decks", "/api/relay/status", "/api/jobs", "/api/events"):
               try:
                   urllib.request.urlopen(root+path,timeout=5)
                   raise AssertionError("Private route exposed")
               except urllib.error.HTTPError as exc:
                   assert exc.code == 401
-          for path in ("/scene.js", "/office-relay.user.js"):
+          for path in ("/scene.js", "/slides.js", "/game.js", "/office-relay.user.js"):
               response = urllib.request.urlopen(root+path,timeout=5)
               assert response.status == 200
           health = json.load(urllib.request.urlopen(root+"/api/health",timeout=12))

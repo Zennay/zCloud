@@ -12,6 +12,14 @@ A desktop-first, 38 × 30 metre penthouse above a procedural Manhattan-inspired 
 - Presentation studio: up to 20 slides, SQLite persistence, edit/reopen/import, standalone HTML export (print to PDF), presentation mode, live texture on the 3D boardroom screen. Requesting Maya's slide content creates a normal project task; import her delivered JSON. Automatic artifact ingestion and PPTX export are not implemented.
 - Separate opt-in ChatGPT conversation relay. The server persists messages and accepts an answer only for the claiming relay. No API keys, Codex CLI or model billing service.
 
+## Desktop game (branch `feat/office-desktop-game-20261013`)
+A downloadable Windows client lives in [`desktop/`](./desktop/README.md) (Electron, SSH tunnel to the VPS, push-to-talk with local Whisper). The VPS keeps running employees, queue and relays. New in the backend and scene:
+- `office_game.py`: durable event feed (`GET /api/events`), evidence-grounded job summaries (`GET /api/jobs/<id>/summary`; the relay only rephrases the queue's `evidence`, with a deterministic fallback) and employee-made decks (`POST /api/decks/request`; strict JSON reply validated and cleaned by `office_features.clean_slide`).
+- `slides.js`: richer slide layouts (title, bullets, stat, quote, split, bars, steps, accents) drawn onto the boardroom screen.
+- `game.js` + scene additions: staff stand up and walk to you when a job is finished and wait; they speak only after you say e.g. "ok, zeg maar"; they walk to the boardroom screen and present their own deck.
+- The deploy workflow now also installs `office_game.py`, `slides.js` and `game.js`.
+Tests: `python3 -m unittest discover -s virtual-office/tests` and `node --test virtual-office/tests/*.mjs virtual-office/desktop/tests/*.mjs`. Visual 3D behaviour, the Electron shell, a live SSH tunnel and a real relay round trip are not verified.
+
 ## Private workspace
 The scene is public; jobs, messages, decks, relay and workstation endpoints require the existing X-Office-Token. The browser stores the entered code only in the open page's memory. The service's token is held in /etc/virtual-office/office.env and is never published in CI output.
 

@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/+esm';
+import {drawSlide} from './slides.js';
 export async function startOffice(ui){
  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(65,1,.06,1400);
  const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
@@ -101,7 +102,7 @@ export async function startOffice(ui){
   for(const side of [-1,1]){limb([side*.26,1.2,0],[side*.3,.87,.12],.069,suit);limb([side*.3,.87,.12],[side*.21,.84,.47],.058,suit);ball(side*.21,.84,.5,.06,.035,.09,skin,g);limb([side*.13,.59,.02],[side*.15,.52,.42],.098,suit);limb([side*.15,.52,.42],[side*.15,.12,.47],.07,suit);ball(side*.15,.08,.54,.083,.065,.15,black,g)}
   const label=canvasTex(512,100,c=>{c.fillStyle='#18272ee8';c.fillRect(0,0,512,100);c.fillStyle='#ead6b4';c.font='32px sans-serif';c.textAlign='center';c.fillText(id==='maya'?'Maya · zCloud':id==='noah'?'Noah · Supa':'Lina · LightUp',256,62)});
   const sm=new THREE.SpriteMaterial({map:label,transparent:true,depthTest:true});materials.push(sm);const badge=new THREE.Sprite(sm);badge.position.set(0,2,0);badge.scale.set(1.7,.33,1);g.add(badge);
-  actors.push({id,g,head:h,baseY:g.position.y,working:false});collision(x,z,.7,.75);return g;
+  actors.push({id,g,head:h,baseY:g.position.y,working:false,home:{x,z},badgeMat:sm,mode:'seated',path:[],resolve:null,attention:false,speaking:false,pos:{x,z},heading:0,phase:0});collision(x,z,.7,.75);return g;
  }
  // Cozy customizable corner, intentionally separate from owner workstations.
  desk(12,11,'CREATIVE CORNER',null);chair(12,9.7);
@@ -125,7 +126,7 @@ export async function startOffice(ui){
  const boardMat=new THREE.MeshBasicMaterial({map:boardTexture});materials.push(boardMat);
  box(11,2.6,1.9,6.9,4.04,.19,ink);const boardMesh=new THREE.Mesh(new THREE.PlaneGeometry(6.6,3.71),boardMat);geometries.push(boardMesh.geometry);boardMesh.position.set(11,2.6,2.01);scene.add(boardMesh);target(boardMesh,'board');collision(11,1.9,6.9,.2);
  function wrap(c,text,max){const lines=[];for(const paragraph of text.split('\n')){let line='';for(const word of paragraph.split(' ')){const candidate=line?line+' '+word:word;if(c.measureText(candidate).width>max&&line){lines.push(line);line=word}else line=candidate}lines.push(line)}return lines}
- function setSlide(s,index,total){const c=boardCanvas.getContext('2d');c.fillStyle=index%2?'#20353e':'#e7e0d3';c.fillRect(0,0,1536,864);c.fillStyle=index%2?'#cbb088':'#756044';c.font='23px sans-serif';c.fillText('Z C L O U D   /   T H E   B O A R D R O O M',110,120);c.fillStyle=index%2?'#eee5d5':'#23343b';c.font='72px Georgia';const titleLines=wrap(c,s.title,1270).slice(0,2);titleLines.forEach((l,i)=>c.fillText(l,110,270+i*80));c.font='33px sans-serif';wrap(c,s.body,1240).slice(0,7).forEach((l,i)=>c.fillText(l,110,370+(titleLines.length-1)*65+i*45));c.fillStyle='#a48b67';c.font='23px sans-serif';c.fillText(String(index+1).padStart(2,'0')+' / '+total,1300,780);boardTexture.needsUpdate=true}
+ function setSlide(s,index,total){drawSlide(boardCanvas.getContext('2d'),s,index,total);boardTexture.needsUpdate=true}
  setSlide({title:'A higher perspective.',body:'Your company. Above the city.'},0,1);
  // Lobby conversation lounge and reception island.
  function sofa(x,z,angle){const g=new THREE.Group();g.position.set(x,0,z);g.rotation.y=angle;scene.add(g);box(0,.37,0,3,.35,.95,leather,g);box(0,.74,-.42,3,.68,.19,leather,g);for(const dx of [-1.42,1.42])box(dx,.61,0,.18,.49,.95,leather,g);for(const dx of [-.9,0,.9]){box(dx,.6,.02,.84,.16,.73,leather,g);const pillow=box(dx,.84,-.25,.7,.48,.16,ivory,g);pillow.rotation.x=-.1}collision(x,z,angle?1.2:3.1,angle?3.1:1.2)}
@@ -152,7 +153,7 @@ export async function startOffice(ui){
  }
  setMonitor([],false);
  const ray=new THREE.Raycaster(),mouse=new THREE.Vector2(),v=new THREE.Vector3();
- function hitAt(x=0,y=0){mouse.set(x,y);ray.setFromCamera(mouse,camera);const hits=ray.intersectObjects(targets,true);for(const h of hits){if(h.distance>18)continue;let o=h.object;while(o&&!o.userData.action)o=o.parent;if(o)return o.userData.action}return ''}
+ function hitAt(x=0,y=0){mouse.set(x,y);ray.setFromCamera(mouse,camera);const hits=ray.intersectObjects(targets,true);for(const h of hits){if(h.distance>18)continue;let o=h.object;while(o&&!o.userData.action)o=o.parent;if(o&&o.visible!==false)return o.userData.action}return ''}
  on(canvas,'pointerdown',e=>{if(e.button!==0)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false};canvas.setPointerCapture(e.pointerId)});
  on(canvas,'pointermove',e=>{if(document.pointerLockElement===canvas||drag){const dx=document.pointerLockElement===canvas?e.movementX:e.clientX-drag.x,dy=document.pointerLockElement===canvas?e.movementY:e.clientY-drag.y;yaw-=dx*.003;pitch=THREE.MathUtils.clamp(pitch-dy*.0025,-1.05,1.1);if(drag){drag.moved ||= Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>5;drag.x=e.clientX;drag.y=e.clientY}}});
  on(canvas,'pointerup',e=>{if(drag&&!drag.moved){const r=canvas.getBoundingClientRect(),id=hitAt((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);if(id)ui.interact(id)}drag=null});
@@ -165,13 +166,72 @@ export async function startOffice(ui){
  function resize(){camera.aspect=ui.mount.clientWidth/ui.mount.clientHeight;camera.updateProjectionMatrix();renderer.setSize(ui.mount.clientWidth,ui.mount.clientHeight,false)}
  const observer=new ResizeObserver(resize);observer.observe(ui.mount);resize();
  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+ // ---- Walking staff: stand up, walk to the player or to the boardroom screen, wait, walk back and sit down.
+ const AISLE=1.9,AISLE_Z=-6.2,BOARD_SPOT={x:7.4,z:3.9};
+ const flagTex=canvasTex(128,128,c=>{c.fillStyle='#d9b26a';c.beginPath();c.arc(64,64,52,0,Math.PI*2);c.fill();c.fillStyle='#1b2b31';c.font='bold 84px sans-serif';c.textAlign='center';c.fillText('!',64,92)});
+ const flagMat=new THREE.SpriteMaterial({map:flagTex,transparent:true,depthTest:false});materials.push(flagMat);
+ function ensureStanding(a){
+  if(a.st)return a.st;const id=a.id,g=new THREE.Group();g.visible=false;g.userData.action=id;scene.add(g);targets.push(g);
+  const skin=material(id==='noah'?'#ae805f':id==='maya'?'#c99679':'#d6b497',.9),suit=material(id==='maya'?'#414e50':id==='noah'?'#344452':'#796c61',.93),hair=material(id==='lina'?'#aa8650':'#302b28',.94);
+  box(0,1.18,0,.44,.62,.24,suit,g);box(0,1.2,.125,.12,.5,.01,white,g);cyl(0,1.56,0,.065,.13,skin,g);
+  const head=ball(0,1.72,0,.145,.19,.135,skin,g),hairTop=ball(0,1.82,-.024,.15,.105,.13,hair,g);hairTop.rotation.x=-.15;if(id!=='noah')ball(0,1.69,-.095,.16,.19,.07,hair,g);
+  for(const dx of [-.052,.052]){ball(dx,1.75,.118,.022,.01,.012,white,g);ball(dx,1.75,.129,.008,.009,.004,black,g)}
+  const pivot=(x,y)=>{const q=new THREE.Group();q.position.set(x,y,0);g.add(q);return q};
+  const legs=[-1,1].map(sd=>{const q=pivot(sd*.12,.9);mesh(cylGeo,suit,0,-.4,0,.085,.8,.085,q);ball(0,-.84,.06,.075,.05,.13,black,q);return q});
+  const arms=[-1,1].map(sd=>{const q=pivot(sd*.29,1.42);mesh(cylGeo,suit,0,-.3,0,.06,.6,.06,q);ball(0,-.62,0,.055,.055,.055,skin,q);return q});
+  const badge=new THREE.Sprite(a.badgeMat);badge.position.set(0,2.05,0);badge.scale.set(1.7,.33,1);g.add(badge);
+  const flag=new THREE.Sprite(flagMat);flag.position.set(0,2.5,0);flag.scale.set(.42,.42,1);flag.visible=false;g.add(flag);
+  return a.st={g,head,legs,arms,flag};
+ }
+ const playerFront=()=>{const fx=-Math.sin(yaw),fz=-Math.cos(yaw);for(const d of [1.9,1.5,2.4,1.1]){const x=camera.position.x+fx*d,z=camera.position.z+fz*d;if(canMove(x,z))return{x,z}}return{x:camera.position.x,z:camera.position.z+1.2}};
+ const turnTo=(from,to,k)=>{let d=((to-from+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;return from+d*Math.min(1,k)};
+ function settle(a,ok){const done=a.resolve;a.resolve=null;if(done)done(ok)}
+ function walkActor(id,dest){
+  const a=actors.find(x=>x.id===id);if(!a)return Promise.resolve(false);
+  if(a.mode==='seated'&&dest==='home')return Promise.resolve(true);
+  settle(a,false);const st=ensureStanding(a),side=a.home.x+AISLE;let path=[];
+  if(a.mode==='seated'){a.g.visible=false;st.g.visible=true;a.pos={x:a.home.x,z:a.home.z};a.heading=0;path.push({x:side,z:a.home.z},{x:side,z:AISLE_Z})}
+  if(dest==='home')path.push({x:side,z:AISLE_Z},{x:side,z:a.home.z},{x:a.home.x,z:a.home.z});
+  else if(dest==='player')path.push({follow:true});
+  else if(dest==='board')path.push({x:BOARD_SPOT.x,z:BOARD_SPOT.z});
+  else return Promise.resolve(false);
+  a.path=path;a.dest=dest;a.mode='walking';a.speaking=false;if(dest==='home')a.attention=false;
+  return new Promise(r=>{a.resolve=r});
+ }
+ function arrive(a){
+  if(a.dest==='home'){a.st.g.visible=false;a.g.visible=true;a.mode='seated';a.attention=false;a.speaking=false}
+  else a.mode=a.dest==='board'?'presenting':'waiting';
+  settle(a,true);
+ }
+ function updateActors(dt,t){
+  for(const a of actors){
+   if(a.mode==='seated'||!a.st)continue;
+   const st=a.st;let moving=false;const wp=a.path[0];
+   if(wp){
+    const tx=wp.follow?playerFront().x:wp.x,tz=wp.follow?playerFront().z:wp.z,dx=tx-a.pos.x,dz=tz-a.pos.z,dist=Math.hypot(dx,dz);
+    if(dist<(wp.follow?.3:.12)){a.path.shift();if(!a.path.length)arrive(a)}
+    else{const step=Math.min(dist,1.75*dt);a.pos.x+=dx/dist*step;a.pos.z+=dz/dist*step;a.heading=turnTo(a.heading,Math.atan2(dx,dz),dt*8);moving=true}
+   }
+   if(!moving&&a.mode!=='seated'){a.heading=turnTo(a.heading,Math.atan2(camera.position.x-a.pos.x,camera.position.z-a.pos.z),dt*5)}
+   a.phase+=moving?dt*7.5:0;const sw=moving?Math.sin(a.phase)*.55:0;
+   st.legs[0].rotation.x=sw;st.legs[1].rotation.x=-sw;
+   st.arms[0].rotation.x=-sw*.8;st.arms[1].rotation.x=sw*.8;
+   st.arms[0].rotation.z=moving?0:.05;st.arms[1].rotation.z=moving?0:-.05;
+   if(!moving&&a.mode==='presenting'){st.arms[1].rotation.z=1.25+Math.sin(t*.002)*.08}
+   if(!moving&&a.speaking){st.arms[0].rotation.z=.5+Math.sin(t*.006)*.22;st.head.rotation.x=Math.sin(t*.011)*.06}else st.head.rotation.x=0;
+   st.g.position.set(a.pos.x,moving?Math.abs(Math.sin(a.phase))*.035:0,a.pos.z);st.g.rotation.y=a.heading;
+   st.flag.visible=a.attention&&a.mode==='waiting';if(st.flag.visible){const k=.42+Math.sin(t*.006)*.05;st.flag.scale.set(k,k,1)}
+  }
+ }
  renderer.setAnimationLoop(t=>{const dt=Math.min(.035,Math.max(0,(t-last)/1000));last=t;
   if(document.hidden)return;
   if(!ui.isUIOpen()){const f=(keys.has('w')||keys.has('arrowup')?1:0)-(keys.has('s')||keys.has('arrowdown')?1:0),s=(keys.has('d')?1:0)-(keys.has('a')?1:0),norm=Math.hypot(f,s)||1,pace=(keys.has('shift')?5.8:3)*dt;const dx=(-Math.sin(yaw)*f+Math.cos(yaw)*s)/norm*pace,dz=(-Math.cos(yaw)*f-Math.sin(yaw)*s)/norm*pace;if(canMove(camera.position.x+dx,camera.position.z))camera.position.x+=dx;if(canMove(camera.position.x,camera.position.z+dz))camera.position.z+=dz;if(keys.has('arrowleft'))yaw+=dt;if(keys.has('arrowright'))yaw-=dt}
   camera.rotation.set(pitch,yaw,0,'YXZ');
-  if(!reduced)for(const a of actors){a.head.rotation.z=Math.sin(t*.0007+a.g.position.x)*.015}
+  if(!reduced)for(const a of actors){if(a.mode!=='seated')continue;a.head.rotation.z=Math.sin(t*.0007+a.g.position.x)*.015}
+  updateActors(dt,t);
   const id=ui.isUIOpen()?'':hitAt();const hint=id?(id==='computer'?'E · Gebruik je VPS-computer':id==='board'?'E · Open presentaties':'E · Praat met '+id[0].toUpperCase()+id.slice(1)):'';if(hint!==lastHint){ui.hint(hint);lastHint=hint}
   renderer.render(scene,camera)
  });
- return {go,setSlide,customize,setMonitor,clearKeys:()=>keys.clear(),key:(k,pressed)=>pressed?keys.add(k):keys.delete(k),select:selectActor,setJobs:jobs=>{for(const a of actors)a.working=jobs.some(j=>j.employee===a.id&&['claimed','running','verifying'].includes(j.status))},present:value=>{presenting=value},toggleDay:()=>{day=!day;sun.color.set(day?'#fff2df':'#ffcf99');sun.intensity=day?3:3.8;hemi.intensity=day?2.5:2;renderer.toneMappingExposure=day?1.2:1.15;return day},quality:q=>{renderer.setPixelRatio(Math.min(devicePixelRatio,q==='high'?1.7:1));renderer.shadowMap.enabled=q==='high';resize()},lock:()=>{try{const p=canvas.requestPointerLock();p?.catch(()=>{})}catch{}},dispose:()=>{renderer.setAnimationLoop(null);observer.disconnect();listeners.forEach(f=>f());scene.traverse(o=>{if(o.isMesh&&o.geometry&&!geometries.includes(o.geometry))o.geometry.dispose()});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());env.dispose();renderer.dispose()}};
+ return {go,setSlide,callToPlayer:id=>walkActor(id,'player'),sendHome:id=>walkActor(id,'home'),walkToBoard:id=>walkActor(id,'board'),speak:(id,on)=>{const a=actors.find(x=>x.id===id);if(a)a.speaking=!!on},setAttention:(id,on)=>{const a=actors.find(x=>x.id===id);if(a)a.attention=!!on},actorMode:id=>actors.find(x=>x.id===id)?.mode||'',actorIds:()=>actors.map(a=>a.id),customize,setMonitor,clearKeys:()=>keys.clear(),key:(k,pressed)=>pressed?keys.add(k):keys.delete(k),select:selectActor,setJobs:jobs=>{for(const a of actors)a.working=jobs.some(j=>j.employee===a.id&&['claimed','running','verifying'].includes(j.status))},present:value=>{presenting=value},toggleDay:()=>{day=!day;sun.color.set(day?'#fff2df':'#ffcf99');sun.intensity=day?3:3.8;hemi.intensity=day?2.5:2;renderer.toneMappingExposure=day?1.2:1.15;return day},quality:q=>{renderer.setPixelRatio(Math.min(devicePixelRatio,q==='high'?1.7:1));renderer.shadowMap.enabled=q==='high';resize()},lock:()=>{try{const p=canvas.requestPointerLock();p?.catch(()=>{})}catch{}},dispose:()=>{renderer.setAnimationLoop(null);observer.disconnect();listeners.forEach(f=>f());scene.traverse(o=>{if(o.isMesh&&o.geometry&&!geometries.includes(o.geometry))o.geometry.dispose()});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());env.dispose();renderer.dispose()}};
 }
