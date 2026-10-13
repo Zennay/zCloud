@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -237,6 +238,35 @@ class ReconcileTests(unittest.TestCase):
             conn.execute("UPDATE runner_workers SET desired_state='forever-running'")
         with self.assertRaisesRegex(module.InvalidEvidence, "invalid desired worker state"):
             module.read_roster(self.db)
+
+    def test_live_observation_bracketed_by_consistent_sqlite_rosters(self):
+        with mock.patch.object(module, "read_live", return_value=live([worker()])):
+            with mock.patch.object(module, "read_roster", wraps=module.read_roster) as read:
+                result = module.observe(self.db)
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(read.call_count, 2)
+
+    def test_roster_reallocation_during_api_read_denies_false_missing_worker(self):
+        def change_allocation(_fixture):
+            # Simulate real scheduler churn BETWEEN SQLite reads.
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("UPDATE ai_global_slots SET project_id='supa' WHERE slot=1")
+            return live([worker()])
+        with mock.patch.object(module, "read_live", side_effect=change_allocation):
+            with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
+                module.observe(self.db)
+
+    def test_pending_dispatch_arriving_during_api_read_denies_false_healthy(self):
+        def insert_pending(_fixture):
+            with sqlite3.connect(self.db) as conn:
+                conn.execute(
+                    "INSERT INTO runner_commands VALUES(1,'cloud::w1','push','pending',?,?,?)",
+                    ("2026-10-13T17:00:00+00:00", "2026-10-13T17:00:00+00:00", "secret"),
+                )
+            return live([worker()])
+        with mock.patch.object(module, "read_live", side_effect=insert_pending):
+            with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
+                module.observe(self.db)
 
     def test_duplicate_live_worker_rejected(self):
         with self.assertRaises(module.InvalidEvidence):
