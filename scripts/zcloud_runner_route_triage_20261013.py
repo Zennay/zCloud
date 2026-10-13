@@ -79,6 +79,9 @@ def classify(payload, now, stale_seconds=180):
     if abs((now - when(payload.get('captured_at'))).total_seconds()) > 120:
         raise EvidenceError('stale_or_future_snapshot')
     runners = array(payload.get('runners'), 'runners')
+    unverified_roster = payload.get('runner_inventory_unverified', False)
+    if type(unverified_roster) is not bool or (unverified_roster and runners):
+        raise EvidenceError('contradictory_runner_inventory_mode')
     runs = array(payload.get('queued_runs'), 'queued_runs')
     jobs_by_run = payload.get('jobs_by_run')
     if not isinstance(jobs_by_run, dict): raise EvidenceError('missing_jobs')
@@ -148,7 +151,9 @@ def classify(payload, now, stale_seconds=180):
                'runner_offline' if counters['offline'] and not (counters['label_or_access_gap'] or counters['group_access_unverified']) else
                'labels_or_access_unproven')
     return {'classification': verdict, 'stale_unassigned_jobs': count,
-            'observed_runners': len(runners), 'by_cause': counters,
+            'observed_runners': len(runners),
+            'runner_inventory_verified': not unverified_roster,
+            'by_cause': counters,
             'recovery_authorized': False, 'queue_cancel_authorized': False,
             'deploy_authorized': False, 'generation_verified': False}
 
@@ -216,11 +221,14 @@ def runner_signature(runners):
                          tuple(sorted(labels(runner.get('labels'))))))
     return tuple(sorted(snapshot))
 
-def live(token):
+def live(token, jobs_only=False):
     if not token: raise EvidenceError('missing_github_token')
+    if type(jobs_only) is not bool: raise EvidenceError('invalid_live_mode')
     started = time.monotonic()
-    runners = pages(f'/repos/{REPO}/actions/runners', 'runners', token)
-    initial_runners = runner_signature(runners)
+    # Read-only least-privilege mode for tokens without runner-registration
+    # visibility. No status/label presence is inferred from an empty roster.
+    runners = [] if jobs_only else pages(f'/repos/{REPO}/actions/runners', 'runners', token)
+    initial_runners = None if jobs_only else runner_signature(runners)
     # Do not only query queued workflow runs: a hosted preflight can make the
     # run in_progress while the remaining self-hosted deploy is unassigned.
     runs = []
@@ -245,20 +253,24 @@ def live(token):
         if not isinstance(run, dict) or type(run.get('id')) is not int:
             raise EvidenceError('invalid_run')
         jobs[str(run['id'])] = pages(f'/repos/{REPO}/actions/runs/{run["id"]}/jobs?filter=latest', 'jobs', token)
-    current_runners = pages(f'/repos/{REPO}/actions/runners', 'runners', token)
-    if runner_signature(current_runners) != initial_runners:
+    current_runners = ([] if jobs_only else
+                       pages(f'/repos/{REPO}/actions/runners', 'runners', token))
+    if not jobs_only and runner_signature(current_runners) != initial_runners:
         raise EvidenceError('runner_roster_changed_during_observation')
     # A stale, non-atomic sequence of API reads cannot verify an idle route.
     if not 0 <= time.monotonic() - started <= 45:
         raise EvidenceError('observation_too_slow')
     return {'repository': REPO, 'captured_at': datetime.now(timezone.utc).isoformat(),
-            'runners': current_runners, 'queued_runs': runs, 'jobs_by_run': jobs}
+            'runners': current_runners, 'runner_inventory_unverified': jobs_only,
+            'queued_runs': runs, 'jobs_by_run': jobs}
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--fixture', help='local JSON (no network)')
     source.add_argument('--live', action='store_true', help='GET only; needs GITHUB_TOKEN with runner read permission')
+    source.add_argument('--jobs-only', action='store_true',
+                        help='least privilege GitHub Actions GET; never verifies registered runners')
     parser.add_argument('--stale-seconds', type=int, default=180)
     args = parser.parse_args(argv)
     if not 60 <= args.stale_seconds <= 3600: parser.error('stale-seconds 60..3600')
@@ -268,9 +280,11 @@ def main(argv=None):
             if len(raw) > MAX_BODY: raise EvidenceError('oversized_fixture')
             snapshot = strict_json(raw)
         else:
-            snapshot = live(os.getenv('GITHUB_TOKEN', ''))
+            snapshot = live(os.getenv('GITHUB_TOKEN', ''), jobs_only=args.jobs_only)
         result = classify(snapshot, datetime.now(timezone.utc), args.stale_seconds)
-        result['evidence_mode'] = 'offline_fixture' if args.fixture else 'github_api_get_only'
+        result['evidence_mode'] = ('offline_fixture' if args.fixture else
+                                   'github_api_jobs_only' if args.jobs_only else
+                                   'github_api_get_only')
         print(json.dumps(result, sort_keys=True))
         return 0 if result['classification'] == 'no_stale_unassigned_jobs' else 1
     except (EvidenceError, OSError) as exc:
