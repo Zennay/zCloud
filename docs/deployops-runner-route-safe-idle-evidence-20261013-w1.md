@@ -32,6 +32,14 @@ python3 scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py < local-job-log
 
 The log may itself contain secrets, so do **not** attach or publish raw logs publicly. The tool does not download or retain them, and should not be integrated into privileged workflows as a decision-maker.
 
+## New evidence integrity gates (2026-10-13 follow-up)
+
+The job inspector now binds every paginated GitHub Actions job to the **requested exact run ID**, its canonical `api.github.com` and `github.com` URLs, one immutable `head_sha`, one `run_attempt`, and one workflow name. Cross-run page swaps, inconsistent retry attempts, unexpected URL origins and SHA drift are **hard errors**. When selecting the latest main deployments it also binds the selected run's SHA and attempt to the subsequent job receipts, denying any metadata change in between.
+
+A successful assignment to **any** runner that happens to carry the labels `self-hosted,zcloud,vps` is **not proof** that the actual permanent `zcloud-vps-1` listener received the job. Reports now separate three counters: `assigned_count` (all matching-label assignments), `canonical_vps_assigned_count` (exact name `zcloud-vps-1`) and `unexpected_vps_assigned_count` (assigned under the labels elsewhere). A named, assigned runner still does not prove it is *currently* online.
+
+The safe-idle parser reports the timestamped log marker age (`marker_age_seconds`) and `fresh_for_triage`, which is true only for receipts no more than 15 minutes old. **Even recent browser-reported status is not independently verified live worker state**: `independent_live_worker_state_verified=false`, `production_deploy_verified=false` and `authorizes_mutation=false` in every successful result. The historical October 13 blockers must not be used to interrupt currently running chats.
+
 ## Critical interpretation limits
 
 - A browser-supplied `generating=true` heartbeat is **not independently observed generated text** and not proof that the tab is actually present. Separate [issue #1342](https://github.com/Zennay/zCloud/issues/1342) owns source/claim-bound progress evidence.
