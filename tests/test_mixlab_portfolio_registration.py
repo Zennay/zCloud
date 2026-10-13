@@ -47,6 +47,7 @@ class MixLabPortfolioRegistrationTests(unittest.TestCase):
         self.assertEqual(512, compute["memory_soft_mb"])
         self.assertEqual("background", compute["priority"])
         self.assertEqual("background", self.resources["mixlab"]["priority"])
+        self.assertIn(\'"mixlab": []\', (ROOT / "enhancements.py").read_text(encoding="utf-8"))
 
     def test_mixlab_is_visible_but_does_not_take_over_other_project_order(self):
         self.assertEqual(1, self.layout["order"].count("mixlab"))
