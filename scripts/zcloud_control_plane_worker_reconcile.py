@@ -316,6 +316,19 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
             stale_pending += 1
             problems.append({"worker": label, "code": "pending_dispatch_over_two_minutes",
                              "level": "attention"})
+    # A live queue claim without any assigned global slot can explain why a
+    # task stays claimed while no tab receives a new prompt. This can also be
+    # a transient scheduler reallocation; classify as attention, never restart.
+    assigned_slots = {row["slot"] for row in roster["slots"]}
+    for global_slot, projects in sorted(queue_by_slot.items()):
+        if global_slot not in assigned_slots:
+            problems.append({"worker": f"global::slot{global_slot}",
+                             "code": "live_queue_claim_without_global_slot",
+                             "level": "attention"})
+            if len(projects) > 1:
+                problems.append({"worker": f"global::slot{global_slot}",
+                                 "code": "multiple_live_queue_claims",
+                                 "level": "degraded"})
     for row in roster["slots"]:
         key = (row["project_id"], row["worker_slot"])
         label = f"{key[0]}::w{key[1]}"
