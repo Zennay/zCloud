@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Read-only, fail-closed GitHub Actions job-to-runner route evidence for zCloud.
+
+This diagnostic cannot restart runners, dispatch jobs, mutate queues or authorize
+a deployment. It deliberately keeps zcloud/vps distinct from ftmo-research.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+REPO = "Zennay/zCloud"
+API = f"https://api.github.com/repos/{REPO}/actions/runs"
+MAX_PAGES = 10
+MAX_BYTES = 1024 * 1024
+ALLOWED_STATUS = {"queued", "in_progress", "completed", "waiting", "pending", "requested"}
+LANES = {"zcloud_vps": {"self-hosted", "zcloud", "vps"},
+         "ftmo_research": {"self-hosted", "ftmo-research"}}
+
+
+class InvalidEvidence(ValueError):
+    """A proof is unavailable or contradictory; never treat it as success."""
+
+
+def strict_json(data: bytes) -> dict:
+    if len(data) > MAX_BYTES:
+        raise InvalidEvidence("oversized_payload")
+    def pairs(items):
+        out = {}
+        for key, value in items:
+            if key in out:
+                raise InvalidEvidence("duplicate_json_key")
+            out[key] = value
+        return out
+    def bad_constant(_):
+        raise InvalidEvidence("nonfinite_json")
+    try:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs,
+                           parse_constant=bad_constant)
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise InvalidEvidence("invalid_json") from exc
+    if type(value) is not dict:
+        raise InvalidEvidence("nonobject_json")
+    return value
+
+
+def _age(timestamp: object, now: datetime) -> int:
+    if not isinstance(timestamp, str) or len(timestamp) > 40:
+        raise InvalidEvidence("invalid_job_timestamp")
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise InvalidEvidence("invalid_job_timestamp") from exc
+    if parsed.tzinfo is None or now.tzinfo is None:
+        raise InvalidEvidence("timezone_missing")
+    seconds = (now - parsed).total_seconds()
+    if seconds < -5:
+        raise InvalidEvidence("future_job_timestamp")
+    return max(0, int(seconds))
+
+
+def classify_job(job: dict, now: datetime) -> dict:
+    if type(job) is not dict or type(job.get("id")) is not int or job["id"] <= 0:
+        raise InvalidEvidence("invalid_job_identity")
+    status = job.get("status")
+    if status not in ALLOWED_STATUS:
+        raise InvalidEvidence("invalid_job_status")
+    labels = job.get("labels")
+    if not isinstance(labels, list) or not all(type(x) is str and 0 < len(x) < 80 for x in labels):
+        raise InvalidEvidence("invalid_job_labels")
+    label_set = {x.lower() for x in labels}
+    matches = [name for name, required in LANES.items() if required <= label_set]
+    if len(matches) > 1:
+        raise InvalidEvidence("mixed_runner_lane")
+    lane = matches[0] if matches else "other"
+    runner_id = job.get("runner_id")
+    runner_name = job.get("runner_name")
+    if runner_id is None:
+        runner_id = 0
+    if type(runner_id) is not int or runner_id < 0:
+        raise InvalidEvidence("invalid_runner_identity")
+    if runner_id > 0 and (not isinstance(runner_name, str) or not runner_name.strip()):
+        raise InvalidEvidence("partial_runner_identity")
+    if runner_id == 0 and isinstance(runner_name, str) and runner_name.strip():
+        raise InvalidEvidence("partial_runner_identity")
+    age = _age(job.get("created_at"), now)
+    conclusion = job.get("conclusion")
+    if conclusion is not None and (not isinstance(conclusion, str) or len(conclusion) > 32):
+        raise InvalidEvidence("invalid_conclusion")
+    if status == "completed" and conclusion is None:
+        raise InvalidEvidence("completed_without_conclusion")
+    if status != "completed" and conclusion is not None:
+        raise InvalidEvidence("nonterminal_with_conclusion")
+    if runner_id and status in {"in_progress", "completed"}:
+        route = "runner_assigned"
+    elif runner_id:
+        route = "inconsistent_runner_state"
+    elif status in {"queued", "waiting", "pending", "requested"}:
+        route = "unassigned"
+    else:
+        route = "missing_runner_identity"
+    return {"job_id": job["id"], "lane": lane, "status": status, "route": route,
+            "queue_age_seconds": age if route == "unassigned" else None,
+            "runner_id": runner_id if route == "runner_assigned" else None,
+            "conclusion": conclusion}
+
+
+def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
+    if type(run_id) is not int or run_id < 1:
+        raise InvalidEvidence("invalid_run_id")
+    if not isinstance(jobs, list) or not jobs:
+        raise InvalidEvidence("missing_jobs")
+    now = now or datetime.now(timezone.utc)
+    observed = [classify_job(job, now) for job in jobs]
+    ids = [job["job_id"] for job in observed]
+    if len(set(ids)) != len(ids):
+        raise InvalidEvidence("duplicate_job_id")
+    lanes = {key: [job for job in observed if job["lane"] == key] for key in LANES}
+    results = {}
+    for name, relevant in lanes.items():
+        # A completed failed job proves scheduling worked, not deployment success.
+        results[name] = {
+            "job_count": len(relevant),
+            "assigned_count": sum(j["route"] == "runner_assigned" for j in relevant),
+            "unassigned_count": sum(j["route"] == "unassigned" for j in relevant),
+            "max_unassigned_seconds": max(
+                (j["queue_age_seconds"] for j in relevant if j["queue_age_seconds"] is not None),
+                default=None),
+            "failed_jobs": sum(j["conclusion"] == "failure" for j in relevant),
+        }
+    return {"schema": "zcloud-runner-route-evidence-v1",
+            "run_id": run_id, "authorizes_mutation": False,
+            "production_deploy_verified": False,
+            "lanes": results, "jobs": observed}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        raise InvalidEvidence("unexpected_redirect")
+
+
+def fetch_jobs(run_id: int, token: str) -> list:
+    if not token:
+        raise InvalidEvidence("missing_actions_token")
+    opener = urllib.request.build_opener(NoRedirect())
+    jobs = []
+    count = None
+    for page in range(1, MAX_PAGES + 1):
+        req = urllib.request.Request(
+            f"{API}/{run_id}/jobs?filter=latest&per_page=100&page={page}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json",
+                     "X-GitHub-Api-Version": "2022-11-28",
+                     "User-Agent": "zcloud-deployops-runner-route-evidence"})
+        try:
+            with opener.open(req, timeout=15) as response:
+                if response.headers.get_content_type() != "application/json":
+                    raise InvalidEvidence("nonjson_api_reply")
+                raw = response.read(MAX_BYTES + 1)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            raise InvalidEvidence("github_api_unavailable") from exc
+        payload = strict_json(raw)
+        page_jobs = payload.get("jobs")
+        total = payload.get("total_count")
+        if type(total) is not int or total < 0 or type(page_jobs) is not list:
+            raise InvalidEvidence("malformed_pagination")
+        if count is None:
+            count = total
+        if total != count or len(page_jobs) > 100:
+            raise InvalidEvidence("unstable_pagination")
+        jobs.extend(page_jobs)
+        if len(jobs) == count:
+            return jobs
+        if len(jobs) > count or not page_jobs:
+            raise InvalidEvidence("incomplete_pagination")
+    raise InvalidEvidence("page_limit_exceeded")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run-id", type=int, required=True, action="append")
+    args = parser.parse_args(argv)
+    if len(args.run_id) > 10 or len(set(args.run_id)) != len(args.run_id):
+        print('{"error":"invalid_run_selection","authorizes_mutation":false}')
+        return 2
+    token = os.environ.get("GH_TOKEN", "")
+    try:
+        data = [classify_run(run_id, fetch_jobs(run_id, token))
+                for run_id in args.run_id]
+    except (InvalidEvidence, OSError) as exc:
+        # Emit only a finite allowlisted diagnostic; never dump URL, token or logs.
+        reason = str(exc)
+        safe = reason if reason in {
+            "oversized_payload","duplicate_json_key","nonfinite_json","invalid_json",
+            "nonobject_json","invalid_job_timestamp","timezone_missing",
+            "future_job_timestamp","invalid_job_identity","invalid_job_status",
+            "invalid_job_labels","mixed_runner_lane","invalid_runner_identity",
+            "partial_runner_identity","invalid_conclusion","completed_without_conclusion",
+            "nonterminal_with_conclusion","inconsistent_runner_state","missing_jobs",
+            "duplicate_job_id","invalid_run_id","missing_actions_token",
+            "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
+            "malformed_pagination","unstable_pagination","incomplete_pagination",
+            "page_limit_exceeded"} else "unavailable"
+        print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
+                          "error": safe, "authorizes_mutation": False}))
+        return 2
+    print(json.dumps({"schema":"zcloud-runner-route-evidence-v1",
+                      "authorizes_mutation":False, "runs":data}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
