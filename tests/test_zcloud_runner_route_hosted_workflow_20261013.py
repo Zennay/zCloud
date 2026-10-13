@@ -21,7 +21,7 @@ def screen(text):
         raise ValueError('write_permissions')
     if '\npermissions:\n  contents: read\n  actions: read\n' not in header:
         raise ValueError('nonminimal_permissions')
-    permission_section = header.split('\npermissions:\n', 1)[1].split('\n\n', 1)[0]
+    permission_section = header.split('\npermissions:\n', 1)[1].split('\n\n', 1)[0].rstrip('\n')
     if permission_section != '  contents: read\n  actions: read':
         raise ValueError('nonminimal_permissions')
     rows = [line.strip() for line in jobs.splitlines()]
