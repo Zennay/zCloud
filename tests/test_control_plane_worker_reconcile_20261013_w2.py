@@ -579,6 +579,81 @@ class ReconcileTests(unittest.TestCase):
         with self.assertRaises(module.InvalidEvidence):
             module._strict_json(b'{' + b' ' * module.MAX_RESPONSE_BYTES + b'}')
 
+    def _serve_live_response(self, *, status=200, content_type="application/json",
+                             body=None, location=None):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        content = (json.dumps(live([worker()])).encode() if body is None else body)
+        recorded = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                recorded.append((self.command, self.path))
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                if location is not None:
+                    self.send_header("Location", location)
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                try:
+                    self.wfile.write(content)
+                except BrokenPipeError:
+                    pass
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 3)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}/api/runner-live", recorded
+
+    def test_real_localhost_get_ignores_hostile_http_proxy(self):
+        url, recorded = self._serve_live_response()
+        with mock.patch.object(module, "API", url):
+            with mock.patch.dict("os.environ", {
+                "HTTP_PROXY": "http://nonexistent-proxy.invalid:1337",
+                "HTTPS_PROXY": "http://nonexistent-proxy.invalid:1337",
+                "ALL_PROXY": "http://nonexistent-proxy.invalid:1337",
+                "NO_PROXY": "",
+            }):
+                result = module.read_live()
+        self.assertIn("chatgpt_runners", result)
+        self.assertEqual(recorded, [("GET", "/api/runner-live")])
+
+    def test_real_localhost_http_redirect_is_denied(self):
+        url, recorded = self._serve_live_response(status=302,
+                                                  location="http://untrusted.invalid/")
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "redirected"):
+                module.read_live()
+        self.assertEqual(recorded, [("GET", "/api/runner-live")])
+
+    def test_real_localhost_non_json_content_type_fails_closed(self):
+        url, recorded = self._serve_live_response(content_type="text/html")
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "application/json"):
+                module.read_live()
+        self.assertEqual(recorded, [("GET", "/api/runner-live")])
+
+    def test_real_localhost_oversized_json_is_denied(self):
+        url, recorded = self._serve_live_response(body=b'{' + b' ' * (module.MAX_RESPONSE_BYTES + 10))
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "oversized"):
+                module.read_live()
+        self.assertEqual(recorded, [("GET", "/api/runner-live")])
+
+    def test_main_runner_live_get_keeps_worker_target_reconciliation_off(self):
+        # Static contract, not proof of live database permissions. #1341 owns
+        # broader GET writer remediation in the serialized server.py lane.
+        source = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertIn("if u.path=='/api/runner-live':", source)
+        self.assertIn("target_cfg=runner_targets()", source)
+        self.assertIn("runner_statuses(target_cfg=target_cfg)", source)
+        self.assertIn("runner_worker_targets(base=target_cfg,reconcile=False)", source)
+
     def test_fixture_cli_is_readonly_and_machine_readable(self):
         fixture = Path(self.tmp.name) / "live.json"
         fixture.write_text(json.dumps(live([worker()])), encoding="utf-8")
