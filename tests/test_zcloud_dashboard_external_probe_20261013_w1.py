@@ -350,14 +350,23 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         body = path.read_text(encoding="utf-8").split("        run: |\n", 1)[1]
         return textwrap.dedent(body)
 
-    def _simulate(self, refs, expected_rc):
+    def _simulate(self, refs, expected_rc, *, output=None, probe_rc=0, published=None):
         shell = self._workflow_shell()
-        # Replace the only external dashboard probe command. Real main/SHA
-        # bash logic is executed, but no live external request is possible.
-        expected = ('python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py '
+        # Fake only the external probe; execute real bounded Git and real
+        # publication shell logic in a disposable environment with no VPS.
+        expected = ('timeout -k 2s 115s python3 '
+                    'scripts/zcloud_dashboard_external_probe_20261013_w1.py '
                     '--attempts 6 --format markdown > "$summary_file" || probe_rc=$?')
         self.assertIn(expected, shell)
-        shell = shell.replace(expected, 'echo OFFLINE_HEALTH > "$summary_file"')
+        shell = shell.replace(
+            expected, 'printf "%s" "$FAKE_PROBE_OUTPUT" > "$summary_file"; '
+                      'probe_rc="$FAKE_PROBE_RC"')
+        if output is None:
+            output = ("## zCloud · externe dashboardcontrole\\n"
+                      "**Status:** API bereikbaar\\n"
+                      "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\\n")
+        if published is None:
+            published = expected_rc == 0
         current = "a" * 40
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -385,6 +394,8 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
                 "FAKE_GIT_REFS": ",".join(refs),
                 "FAKE_GIT_COUNT": str(root / "calls"),
                 "GIT_TERMINAL_PROMPT": "0",
+                "FAKE_PROBE_OUTPUT": output,
+                "FAKE_PROBE_RC": str(probe_rc),
             })
             proc = subprocess.run(["bash", "-c", shell], env=env, cwd=root,
                                   text=True, capture_output=True, timeout=10,
@@ -393,7 +404,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             observed = summary.read_text() if summary.exists() else ""
             # No raw response, secrets, URL or implied recovery authority.
             self.assertNotIn("https://github.com/", observed)
-            self.assertEqual(observed != "", expected_rc == 0)
+            self.assertEqual(observed != "", published)
             self.assertEqual((root / "calls").read_text(),
                              "2" if refs[0] == current else "1")
             return observed
@@ -406,6 +417,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", hosted)
         manual = self._workflow_shell()
         self.assertIn("timeout -k 2s 12s git ls-remote --exit-code", manual)
+        self.assertIn("timeout -k 2s 115s python3 scripts/", manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
         self.assertEqual(manual.count("verify_main_head\n"), 2)
         self.assertLess(manual.index("verify_main_head\n"),
@@ -420,7 +432,30 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
 
     def test_current_main_same_before_after_can_publish(self):
         observed = self._simulate(["a" * 40, "a" * 40], 0)
-        self.assertIn("OFFLINE_HEALTH", observed)
+        self.assertIn("**Status:** API bereikbaar", observed)
+
+    def test_empty_success_output_never_green(self):
+        self._simulate(["a" * 40, "a" * 40], 3, output="", published=False)
+
+    def test_invalid_success_summary_never_green(self):
+        self._simulate(["a" * 40, "a" * 40], 3,
+                       output="unexpected public URL: SECRET_TOKEN\\n", published=False)
+
+    def test_failure_exit_cannot_publish_healthy_summary(self):
+        self._simulate(["a" * 40, "a" * 40], 3, probe_rc=1, published=False)
+
+    def test_failure_summary_can_publish_but_job_remains_failed(self):
+        body = ("## zCloud · externe dashboardcontrole\\n"
+                "**Status:** API niet aantoonbaar bereikbaar\\n"
+                "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\\n")
+        observed = self._simulate(["a" * 40, "a" * 40], 1,
+                                  output=body, probe_rc=1, published=True)
+        self.assertIn("niet aantoonbaar", observed)
+
+    def test_oversized_summary_is_rejected(self):
+        body = ("## zCloud · externe dashboardcontrole\\n"
+                "**Status:** API bereikbaar\\n" + "x" * 2200)
+        self._simulate(["a" * 40, "a" * 40], 3, output=body, published=False)
 
     def test_main_moved_during_probe_denies_summary(self):
         self._simulate(["a" * 40, "b" * 40], 2)
