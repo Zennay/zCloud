@@ -83,7 +83,7 @@ def classify(payload, now, stale_seconds=180):
         if runner.get('status') not in ('online', 'offline') or type(runner.get('busy')) is not bool:
             raise EvidenceError('unknown_runner_state')
         labels(runner.get('labels'))
-    counters = {'offline': 0, 'busy': 0, 'label_or_access_gap': 0, 'available_but_queued': 0}
+    counters = {'offline': 0, 'busy': 0, 'label_or_access_gap': 0, 'group_access_unverified': 0, 'available_but_queued': 0}
     seen_runs = set()
     for run in runs:
         if not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] <= 0 or run['id'] in seen_runs or run.get('status') != 'queued':
@@ -103,7 +103,17 @@ def classify(payload, now, stale_seconds=180):
             assigned = job.get('runner_id')
             if assigned is not None and (type(assigned) is not int or assigned < 0):
                 raise EvidenceError('invalid_runner_assignment')
-            if assigned or (now - when(run.get('created_at'))).total_seconds() < stale_seconds:
+            created = when(run.get('created_at'))
+            if (created - now).total_seconds() > 120: raise EvidenceError('future_run_clock')
+            if assigned or (now - created).total_seconds() < stale_seconds:
+                continue
+            group_id, group_name = job.get('runner_group_id'), job.get('runner_group_name')
+            if group_id is not None and (type(group_id) is not int or group_id <= 0):
+                raise EvidenceError('invalid_runner_group')
+            if group_name is not None and (not isinstance(group_name, str) or len(group_name) > 80):
+                raise EvidenceError('invalid_runner_group')
+            if group_id or group_name:
+                counters['group_access_unverified'] += 1
                 continue
             matching = [r for r in runners if required <= labels(r['labels'])]
             if not matching: counters['label_or_access_gap'] += 1
@@ -116,7 +126,7 @@ def classify(payload, now, stale_seconds=180):
     verdict = ('no_stale_unassigned_jobs' if count == 0 else
                'route_available_but_queued' if counters['available_but_queued'] else
                'runner_busy' if counters['busy'] else
-               'runner_offline' if counters['offline'] and not counters['label_or_access_gap'] else
+               'runner_offline' if counters['offline'] and not (counters['label_or_access_gap'] or counters['group_access_unverified']) else
                'labels_or_access_unproven')
     return {'classification': verdict, 'stale_unassigned_jobs': count,
             'observed_runners': len(runners), 'by_cause': counters,
