@@ -33,6 +33,8 @@ def screen(text):
         raise ValueError('credentials_persisted')
     if "-p 'test_zcloud_runner_route*_20261013.py'" not in jobs:
         raise ValueError('validation_missing')
+    if 'python3 -m unittest discover -v' not in jobs:
+        raise ValueError('full_regression_missing')
     if re.search(r'(?mi)^\s*(?:sudo\b|systemctl\b|curl\b.*-X\s*POST|gh\s+(?:api|workflow|run)\b)', jobs):
         raise ValueError('mutating_step')
     return True
@@ -61,6 +63,11 @@ class HostedOnlyWorkflow(unittest.TestCase):
     def test_checkout_credentials_denied(self):
         with self.assertRaisesRegex(ValueError, 'credentials_persisted'):
             screen(self.content.replace('persist-credentials: false', 'persist-credentials: true', 1))
+
+    def test_missing_full_regression_denied(self):
+        with self.assertRaisesRegex(ValueError, 'full_regression_missing'):
+            screen(self.content.replace('python3 -m unittest discover -v',
+                                        'python3 -m unittest discover -s tests -p narrow_suite.py -v', 1))
 
     def test_missing_ci_execution_denied(self):
         with self.assertRaisesRegex(ValueError, 'validation_missing'):
