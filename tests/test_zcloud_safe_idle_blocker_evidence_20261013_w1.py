@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,33 @@ class SafeIdleEvidenceTests(unittest.TestCase):
                + json.dumps([row()]) + "\n")
         with self.assertRaisesRegex(evidence.UntrustedLog, "future_log_timestamp"):
             evidence.classify(raw)
+
+    def test_historic_marker_never_claims_live_worker_state(self):
+        now = datetime(2026, 10, 13, 22, 15, tzinfo=timezone.utc)
+        data = evidence.classify(log(row()), now=now)
+        self.assertGreater(data["marker_age_seconds"], 900)
+        self.assertFalse(data["fresh_for_triage"])
+        self.assertFalse(data["independent_live_worker_state_verified"])
+        self.assertFalse(data["authorizes_worker_interrupt"])
+
+    def test_fresh_marker_is_triage_only_not_live_worker_proof(self):
+        now = datetime(2026, 10, 13, 21, 48, 15, tzinfo=timezone.utc)
+        data = evidence.classify(log(row()), now=now)
+        self.assertTrue(data["fresh_for_triage"])
+        self.assertLess(data["marker_age_seconds"], 900)
+        self.assertFalse(data["independent_live_worker_state_verified"])
+        self.assertFalse(data["production_deploy_verified"])
+
+    def test_invalid_or_naive_observation_clock_fails_closed(self):
+        for clock in ("untrusted", datetime(2026, 10, 13, 21, 48, 15)):
+            with self.subTest(clock=clock):
+                with self.assertRaisesRegex(evidence.UntrustedLog,
+                                            "invalid_observation_clock"):
+                    evidence.classify(log(row()), now=clock)
+        instant = datetime(2026, 10, 13, 21, 48, tzinfo=timezone.utc)
+        with self.assertRaisesRegex(evidence.UntrustedLog,
+                                    "future_log_timestamp"):
+            evidence.classify(log(row()), now=instant - timedelta(days=1))
 
     def test_double_receipt_denied_even_when_both_valid(self):
         with self.assertRaises(evidence.UntrustedLog):
