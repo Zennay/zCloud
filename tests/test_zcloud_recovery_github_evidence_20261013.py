@@ -187,6 +187,23 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence.observe(fake)["decision"], "NOOP")
         self.assertNotIn(fake.fail_endpoint, fake.calls)
 
+    def test_hosted_observer_permissions_are_get_only(self):
+        workflow = (
+            ROOT / ".github/workflows/zcloud-recovery-retry-reference-20261013.yml"
+        ).read_text()
+        self.assertIn("github-observe-readonly:", workflow)
+        self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("actions: read", workflow)
+        self.assertIn("statuses: read", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertNotIn("actions: write", workflow)
+        self.assertNotIn("statuses: write", workflow)
+        self.assertNotIn("self-hosted", workflow)
+        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertNotIn("systemctl", workflow)
+        self.assertNotIn("POST", workflow)
+
     def test_network_observer_static_safe_policy(self):
         code = (ROOT / "scripts/zcloud_recovery_github_evidence_20261013.py").read_text()
         for forbidden in ("method=\"POST\"", "/dispatches", "sqlite3", "systemctl",
