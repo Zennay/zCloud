@@ -309,8 +309,34 @@
         for (const key of desired.keys()) if (!ownership.has(key)) missingAssigned++;
         const missingCapacity = Math.max(0, poolCount -
           ownership.size - reserves.size - missingAssigned);
+        // "Pool count" alone is not an operator request to manufacture
+        // additional tabs on startup. Require a recent successful Save
+        // that increased the ChatGPT count; this also prevents replay after
+        // unrelated scheduler churn.
+        let savedPoolExpansion = false;
+        if (missingCapacity > 0) {
+          try {
+            const reply = await fetch(API +
+              "/config-audit?key=runner.dynamic_worker_settings&target=portfolio&limit=10",
+              {cache:"no-store"});
+            if (reply.ok) {
+              const audit = await reply.json();
+              const latest = (audit?.items || []).find(x =>
+                x.config_key === "runner.dynamic_worker_settings" &&
+                x.target === "portfolio");
+              const before = Number(latest?.old_value?.chatgpt_count);
+              const after = Number(latest?.new_value?.chatgpt_count);
+              const at = Date.parse(latest?.ts);
+              savedPoolExpansion = latest?.result === "succeeded" &&
+                Number.isInteger(before) && Number.isInteger(after) &&
+                before >= 0 && after > before && after === poolCount &&
+                Number.isFinite(at) && Date.now()-at >= 0 &&
+                Date.now()-at < 10*60*1000;
+            }
+          } catch (_) { /* No new tabs without a verified user Save. */ }
+        }
         let newReserves = 0;
-        for (let slot = 1; slot <= poolCount && newReserves < missingCapacity; slot++) {
+        for (let slot = 1; savedPoolExpansion && slot <= poolCount && newReserves < missingCapacity; slot++) {
           if (used.has(slot) || reserves.has(slot)) continue;
           const observations = (reserveObservations.get(slot) || 0) + 1;
           reserveObservations.set(slot, observations);
@@ -537,5 +563,51 @@
   }
   checkSavedPoolCount();
   setInterval(checkSavedPoolCount, POOL_SAVE_CHECK_MS);
+  // One inexpensive central command watcher, not a heavy 2-second
+  // /runner-targets poll in every ChatGPT tab. React immediately to Forceer
+  // and project switches, but only the verified v2 page runner sends text.
+  const commandWakeAt = new Map();
+  let commandProbeBusy = false;
+  async function checkPendingCommands() {
+    if (commandProbeBusy) return;
+    commandProbeBusy = true;
+    try {
+      const response = await fetch(API + "/runner-commands?limit=100",{cache:"no-store"});
+      if (!response.ok) return;
+      const payload = await response.json();
+      const pending = (Array.isArray(payload?.commands) ? payload.commands : [])
+        .filter(x => x && (x.action === "start" || x.action === "push") &&
+          Number.isInteger(Number(x.id)) && Number(x.id) > 0);
+      if (!pending.length) return;
+      // Pending commands are not proof of a granted queue lease. Reconcile
+      // existing assignments and create missing owned tabs if authorized.
+      await reconcile();
+      const active = lastSnapshot?.workers || [];
+      for (const cmd of pending) {
+        const id = Number(cmd.id);
+        if (Date.now() < (commandWakeAt.get(id) || 0)) continue;
+        const projectId = String(cmd.project_id || "");
+        const key = ownership.has(projectId) ? projectId :
+          active.includes(projectId+"::w1") ? projectId+"::w1" : "";
+        if (!key) continue;
+        const tabId = ownership.get(key);
+        if (tabId == null) continue;
+        // A wakeup only asks the userscript to check authoritative API
+        // state. It never sends a prompt or selects a Firefox tab itself.
+        const tab = await browser.tabs.get(tabId).catch(() => null);
+        if (!tab || await tagOf(tab) !== key || !isWorkerUrl(tab.url)) continue;
+        try {
+          await browser.tabs.executeScript(tabId, {
+            code:'document.documentElement?.dispatchEvent(new Event("zcloud-v2-wake"));'
+          });
+          commandWakeAt.set(id,Date.now()+5000);
+        } catch (_) {}
+      }
+      for (const id of [...commandWakeAt.keys()])
+        if (!pending.some(x => Number(x.id) === id)) commandWakeAt.delete(id);
+    } catch (_) { /* A failed API call cannot authorize prompt dispatch. */ }
+    finally { commandProbeBusy = false; }
+  }
+  setInterval(checkPendingCommands, 2500);
   globalThis.ZCLOUD_V2_CONTROLLER = {snapshot:()=>lastSnapshot};
 })();
