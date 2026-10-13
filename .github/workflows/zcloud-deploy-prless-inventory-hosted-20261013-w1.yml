@@ -47,6 +47,7 @@ jobs:
           assert 'runs-on: ubuntu-latest' in text
           assert 'persist-credentials: false' in text
           assert 'contents: read' in text
-          assert 'self-hosted' not in text
-          assert 'workflow_dispatch:' not in text
+          assert all(line.strip() == 'runs-on: ubuntu-latest' for line in text.splitlines() if line.strip().startswith('runs-on:'))
+          trigger = text.split('\npermissions:', 1)[0]
+          assert '\n  workflow_dispatch:' not in trigger
           PY
