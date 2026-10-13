@@ -51,6 +51,8 @@ class FakeGitHub:
         self.detail = rule_detail() if detail is None else detail
         self.calls = []
         self.main_calls = 0
+        self.ruleset_list_calls = 0
+        self.second_rulesets = None
 
     def __call__(self, path):
         self.calls.append(path)
@@ -61,6 +63,9 @@ class FakeGitHub:
             return {"id": 1389227570, "full_name": "Zennay/zCloud"}
         if path.startswith("/rulesets?"):
             self.assert_path(path)
+            self.ruleset_list_calls += 1
+            if self.ruleset_list_calls > 1 and self.second_rulesets is not None:
+                return self.second_rulesets
             return self.rulesets
         if path == "/rulesets/17?includes_parents=true":
             return self.detail
@@ -89,7 +94,8 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(result["tag_protection_candidate"])
         self.assertFalse(result["authorized"])
         self.assertEqual(fake.main_calls, 2)
-        self.assertEqual(len(fake.calls), 4)
+        self.assertEqual(len(fake.calls), 5)
+        self.assertEqual(fake.ruleset_list_calls, 2)
 
     def test_valid_exact_get_flow_candidate_only(self):
         fake = FakeGitHub()
@@ -100,7 +106,9 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(fake.calls, [
             "/commits/main", "",
             "/rulesets?includes_parents=true&targets=tag&per_page=100&page=1",
-            "/rulesets/17?includes_parents=true", "/commits/main"
+            "/rulesets/17?includes_parents=true",
+            "/rulesets?includes_parents=true&targets=tag&per_page=100&page=1",
+            "/commits/main"
         ])
 
     def test_missing_bypass_actor_list_denied_because_rest_may_omit_it(self):
@@ -243,6 +251,21 @@ class PreflightTests(unittest.TestCase):
         r = preflight.observe(fake)
         self.assertEqual(r["reason"], "untrusted_repository")
         self.assertNotIn("/rulesets/17?includes_parents=true", fake.calls)
+
+    def test_ruleset_removed_between_list_and_details_denies(self):
+        fake = FakeGitHub()
+        fake.second_rulesets = []
+        r = preflight.observe(fake)
+        self.assertEqual(r["reason"], "rulesets_changed_during_snapshot")
+        self.assertFalse(r["tag_protection_candidate"])
+        self.assertFalse(r["authorized"])
+
+    def test_ruleset_policy_changed_between_list_reads_denies(self):
+        fake = FakeGitHub()
+        fake.second_rulesets = [{**rule_summary(), "enforcement": "evaluate"}]
+        r = preflight.observe(fake)
+        self.assertEqual(r["reason"], "rulesets_changed_during_snapshot")
+        self.assertFalse(r["tag_protection_candidate"])
 
     def test_missing_ruleset_detail_denies(self):
         class Missing(FakeGitHub):
