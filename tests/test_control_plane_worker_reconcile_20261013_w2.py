@@ -698,12 +698,32 @@ class ReconcileTests(unittest.TestCase):
             capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["state"], "ok")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["state"], "ok")
+        self.assertEqual(payload["evidence_mode"], "offline_fixture")
+        self.assertFalse(payload["browser_generation_verified"])
         self.assertEqual(before, self.db.read_bytes())
         with sqlite3.connect(self.db) as conn:
             stored = conn.execute("SELECT conversation_id FROM runner_workers").fetchone()[0]
         self.assertEqual(stored, "private-conversation")
         self.assertNotIn("private-conversation", result.stdout)
+
+    def test_live_cli_transport_error_keeps_evidence_provenance(self):
+        # The real localhost service is intentionally not started; verify
+        # failure provenance deterministically by patching read_live in-process.
+        with mock.patch.object(module, "read_roster", return_value=self.roster):
+            with mock.patch.object(module, "read_live",
+                                   side_effect=module.InvalidEvidence("offline")):
+                out = []
+                with mock.patch.object(module, "print", side_effect=lambda *a, **k: out.append(a[0]),
+                                       create=True):
+                    code = module.main(["--db", str(self.db)])
+        self.assertEqual(code, 2)
+        report = json.loads(out[0])
+        self.assertEqual(report["state"], "unknown")
+        self.assertEqual(report["evidence_mode"], "loopback_http")
+        self.assertFalse(report["browser_generation_verified"])
+        self.assertNotIn("offline", out[0])
 
     def test_invalid_fixture_cli_fails_closed_with_no_private_data(self):
         fixture = Path(self.tmp.name) / "bad.json"
@@ -714,7 +734,10 @@ class ReconcileTests(unittest.TestCase):
             capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(json.loads(result.stdout)["state"], "unknown")
+        failure = json.loads(result.stdout)
+        self.assertEqual(failure["state"], "unknown")
+        self.assertEqual(failure["evidence_mode"], "offline_fixture")
+        self.assertFalse(failure["browser_generation_verified"])
         self.assertNotIn("private-conversation", result.stdout)
 
 
