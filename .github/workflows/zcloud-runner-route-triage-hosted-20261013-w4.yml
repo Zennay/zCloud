@@ -8,6 +8,7 @@ on:
       - scripts/zcloud_runner_route_triage_20261013.py
       - tests/test_zcloud_runner_route_triage_20261013.py
       - tests/test_zcloud_runner_route_hosted_workflow_20261013.py
+      - tests/test_zcloud_runner_route_http_20261013.py
       - docs/deploy-ops-runner-route-triage-20261013-w4.md
       - .github/workflows/zcloud-runner-route-triage-hosted-20261013-w4.yml
 
