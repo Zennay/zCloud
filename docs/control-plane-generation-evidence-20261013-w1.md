@@ -20,6 +20,7 @@ The ordinary verifier distinguishes a recent browser **state heartbeat** (`gener
 
 - `all_allocated_chatgpt_generating`: all allocated ChatGPT workers claim a fresh generating state, even if their most recent event is a heartbeat.
 - `all_allocated_chatgpt_progressing`: all allocated ChatGPT workers' **last** reported events are fresh `generation-progress`. One idle, stalled or heartbeat-only worker makes this false.
+- `progress_state` per allocated worker and aggregate `progress_counts`: `recent_text_change`, `heartbeat_only`, `generation_started_no_text`, `progress_stale`, `not_generating` or `not_applicable` (non-ChatGPT provider). These are categorical diagnostics, **never** raw prompt, browser URL, assistant text or backend error details.
 - `--require-progress`: exit 0 iff `all_allocated_chatgpt_progressing` is true. Without the flag, the existing generation-state exit policy remains unchanged for other callers.
 - The trusted zSSH `zcloud-generation-check` recipe uses `--require-progress` so its success cannot be mistaken for a simple heartbeat.
 
