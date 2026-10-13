@@ -138,6 +138,28 @@ class ReconcileTests(unittest.TestCase):
         self.assertFalse(report["authorizes_mutation"])
         self.assertEqual(report["allocated_count"], 1)
 
+    def test_appearing_active_without_persisted_global_slot_is_attention_only(self):
+        payload = live([
+            worker(),
+            {"worker_id": "cloud::w2", "worker_slot": 2, "active": True,
+             "state": "live", "generating": False, "sending": False, "age_seconds": 20}
+        ])
+        result = self.diagnose(payload)
+        self.assertEqual(result["state"], "attention")
+        self.assertEqual(result["problem_counts"]["active_observation_without_persisted_slot"], 1)
+        self.assertEqual(result["allocated_count"], 1)
+        self.assertFalse(result["authorizes_mutation"])
+
+    def test_unallocated_inactive_worker_does_not_trigger_orphan_warning(self):
+        payload = live([
+            worker(),
+            {"worker_id": "cloud::w2", "worker_slot": 2, "active": False,
+             "state": "paused", "generating": False, "sending": False, "age_seconds": None}
+        ])
+        result = self.diagnose(payload)
+        self.assertEqual(result["state"], "ok")
+        self.assertNotIn("active_observation_without_persisted_slot", result["problem_counts"])
+
     def test_stale_pending_push_detected_without_command_body(self):
         from datetime import datetime, timezone
         with sqlite3.connect(self.db) as conn:
