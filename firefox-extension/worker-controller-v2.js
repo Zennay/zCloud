@@ -179,7 +179,53 @@
     // The Firefox crash watcher is responsible for restoring a window.
     return null;
   }
-  async function createWorkerTab(key, target, windowId) {
+  async function rebindReleasedSlot(key, target, allTargets, desired, url, slot) {
+    // Project switches reuse the same *capacity slot* instead of creating
+    // endless new project tabs. Never touch a producing worker, paused tab,
+    // unsent draft, or any tab not explicitly owned by this extension.
+    for (const [oldKey, tabId] of ownership) {
+      if (oldKey === key || desired.has(oldKey) ||
+          lastChatGPTProviderSlot.get(oldKey) !== slot) continue;
+      const old = allTargets?.[oldKey];
+      if (!old || old.active !== false || old.assignment_ready === true ||
+          old.desired_state !== "running" || old.queue_item?.queue_id ||
+          (old.provider && old.provider !== "chatgpt")) continue;
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      if (!tab || !isWorkerUrl(tab.url) || await tagOf(tab) !== oldKey) continue;
+      let state = null;
+      try {
+        [state] = await browser.tabs.executeScript(tabId, {
+          code:'(() => { const el=document.documentElement; const box=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\'); return {owner:el?.getAttribute("data-zcloud-v2-owner")||"",version:el?.getAttribute("data-zcloud-violentmonkey-ready")||"",poll:Number(el?.getAttribute("data-zcloud-v2-last-poll")||0),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(box?.value||box?.innerText||box?.textContent||"").trim()}; })()'
+        });
+      } catch (_) { continue; }
+      if (!state || state.owner !== oldKey ||
+          !/^2\\.0\\.[01]$/.test(state.version) ||
+          state.generating !== false || state.draft !== false ||
+          !Number.isFinite(state.poll) || state.poll <= 0 ||
+          Date.now()-state.poll < 0 || Date.now()-state.poll >= 120000)
+        continue;
+      try {
+        // The new same-origin tab would otherwise inherit sessionStorage's
+        // OLD worker ID and the v2 runner would reject the new URL.
+        await browser.tabs.executeScript(tabId, {
+          code:'for(const k of ["zcloud-v2-worker","zcloud-bound-project","zcloud-v2-chat-at","zcloud-v2-reported-conversation"])sessionStorage.removeItem(k);'
+        });
+        await browser.tabs.update(tabId,{url:String(url),active:false});
+        ownership.delete(oldKey);
+        stalePollObservations.delete(oldKey);
+        candidateRemovals.delete(oldKey);
+        lastChatGPTProviderSlot.delete(oldKey);
+        await forgetWorker(oldKey);
+        ownership.set(key,tabId);
+        await browser.sessions.setTabValue(tabId,TAG,key);
+        await rememberWorker(key);
+        await note("worker-tab-project-rebound",key,"previous-idle-slot="+oldKey);
+        return true;
+      } catch (_) { return false; }
+    }
+    return false;
+  }
+  async function createWorkerTab(key, target, windowId, allTargets, desired) {
     if (Date.now() < Number(closeCooldown.get(key) || 0)) return;
     if (windowId == null || ownership.has(key)) return;
     const url = new URL("https://chatgpt.com/");
@@ -205,6 +251,7 @@
         return;
       }
     }
+    if (await rebindReleasedSlot(key,target,allTargets,desired,url,slot)) return;
     // active:false is absolute: starting a worker may NEVER switch active tabs.
     const tab = await browser.tabs.create({url:String(url), windowId, active:false});
     ownership.set(key, tab.id);
@@ -286,7 +333,7 @@
         // to finish restoring tabs. Then create exactly the missing slot.
         // The v2 in-page runner alone decides whether a prompt is permitted.
         if (!ownership.has(key) && Number(recoveryObservations.get(key) || 0) >= 2)
-          await createWorkerTab(key, target, windowId);
+          await createWorkerTab(key, target, windowId, payload.projects, desired);
       }
       // Saved ChatGPT pool capacity owns exactly one Firefox tab per slot,
       // even while the queue allocator has not assigned a project. Unassigned
