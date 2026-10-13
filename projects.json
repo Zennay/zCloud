@@ -525,5 +525,49 @@
         "progress": 15
       }
     ]
+  },
+  {
+    "id": "mixlab",
+    "name": "MixLab",
+    "eyebrow": "OFFLINE AI DJ · TRANSITION LAB",
+    "goal": "Build an evidence-first AI DJ that finds musically strong track-pair transitions, renders and blind-tests them before planning complete mixes.",
+    "icon": "pulse",
+    "accent": "#eaa5da",
+    "repo_url": "https://github.com/Zennay/Mixlab",
+    "notion_url": "https://app.notion.com/p/3e79e19ac95581a78ee3f24aa5e7e8b6",
+    "handoff_url": "https://app.notion.com/p/3e79e19ac95581f4bf15c26a833da642",
+    "phase": "M0 foundation + partial M1 Transition Lab · real-audio validation open",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Finish ML-01 guarded zCloud/VPS integration, then ML-02 manifest and ingest validation; real licensed audio and listener evidence are separate acceptance gates.",
+    "milestone_revision": "mixlab-m0-m4-initial-20261013",
+    "progress_basis": "Build-only progress from existing synthetic implementation evidence. This does not measure real music mixing quality; real permitted tracks and blinded human listening are required for M1.",
+    "milestones": [
+      {
+        "title": "M0 · Offline foundation and synthetic renderer",
+        "done": false,
+        "progress": 75
+      },
+      {
+        "title": "M1 · Real-track Transition Lab and blind benchmark",
+        "done": false,
+        "progress": 15
+      },
+      {
+        "title": "M2 · Segment-level music discovery",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · Full-set builder",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M4 · Personal and crowd-aware assistant",
+        "done": false,
+        "progress": 0
+      }
+    ]
   }
 ]
