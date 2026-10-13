@@ -17,6 +17,9 @@ EXPIRED = "zcloud-overnight-idle-rescue-20261009.yml"
 # retirement test. These distinctive snippets are implementation fingerprints
 # of the 2026-10-09 incident-specific restart dispatcher, not a ban on ordinary
 # owner-approved incident workflows. Keep this list intentionally narrow.
+MAX_WORKFLOW_SOURCE_BYTES = 2 * 1024 * 1024
+
+
 RETIRED_RESCUE_FINGERPRINTS = frozenset((
     "zcloud-overnight-idle-rescue/1",
     "GUARDED_RESTART_DISPATCHED=1",
@@ -35,7 +38,14 @@ def unexpected_rescue_fingerprints(directory: Path) -> dict[str, list[str]]:
             matches[file.name] = ["untrusted_workflow_file_type"]
             continue
         try:
+            size = file.stat().st_size
+            if not 0 <= size <= MAX_WORKFLOW_SOURCE_BYTES:
+                matches[file.name] = ["oversized_workflow_source"]
+                continue
             contents = file.read_text(encoding="utf-8")
+            if len(contents.encode("utf-8")) != size:
+                matches[file.name] = ["workflow_source_changed_during_scan"]
+                continue
         except (OSError, UnicodeError):
             matches[file.name] = ["unreadable_workflow_source"]
             continue
@@ -107,6 +117,26 @@ class ExpiredOvernightRescueRetirementTests(unittest.TestCase):
                 {"pointed.yml": ["untrusted_workflow_file_type"]},
                 unexpected_rescue_fingerprints(root),
             )
+
+    def test_scan_rejects_oversized_workflow_before_loading_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "large.yml").write_bytes(b"#" * (MAX_WORKFLOW_SOURCE_BYTES + 1))
+            self.assertEqual(
+                {"large.yml": ["oversized_workflow_source"]},
+                unexpected_rescue_fingerprints(root),
+            )
+
+    def test_scan_allows_regular_small_yaml_and_ignores_unrelated_suffix(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "safe.yaml").write_text(
+                "name: safe\npermissions:\n  contents: read\n", encoding="utf-8",
+            )
+            (root / "old-rescue.txt").write_text(
+                "GUARDED_RESTART_DISPATCHED=1\n", encoding="utf-8",
+            )
+            self.assertEqual({}, unexpected_rescue_fingerprints(root))
 
     def test_dated_eight_worker_safety_keeps_automatic_trigger_retired(self):
         # This is a separate existing owner scope. Assert the safe observable
