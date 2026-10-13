@@ -154,6 +154,10 @@
         ![...ownership.values()].includes(t.id));
       let canProvision=ownership.size>0||!unclaimedChatTabs,
           bootstrapped=ownership.size===0;
+      // A genuine process crash can lose *every* tab. The persisted identity
+      // ledger must not be made permanently dependent on whichever new worker
+      // tab happens to load Violentmonkey first. Only remembered, currently
+      // assigned slot keys qualify for the bounded crash-recovery bypass.
       // Firefox may restore only a personal ChatGPT tab or its session
       // restore prompt after a crash. A previously recorded worker slot can
       // be re-created after two complete matching backend snapshots, even
@@ -184,9 +188,14 @@
         // complete snapshots, reconstruct ONLY exact, persisted worker IDs.
         const trustedCrashSlot=knownWorkers.has(key) &&
           Number(recoveryObservations.get(key)||0)>=2;
-        if(!ownership.has(key) && (canProvision || (trustedCrashSlot && !ownership.size))){
+        // Previously this bypass applied only while ownership.size===0.
+        // Once one slot came back, a still-loading/legacy VM instance made
+        // canProvision=false and stranded ALL remaining crash-restored slots.
+        // Exact, persisted identities + two fresh server snapshots avoid
+        // adopting unrelated ChatGPT tabs or inventing unknown workers.
+        if(!ownership.has(key) && (canProvision || trustedCrashSlot)){
           await createWorkerTab(key,target,windowId);
-          if(bootstrapped)canProvision=false; // one cold-start tab per check
+          if(bootstrapped && !trustedCrashSlot)canProvision=false; // cautious cold bootstrap
         }
       }
       // Missing configuration alone is NOT deletion. Require three complete
