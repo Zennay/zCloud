@@ -76,9 +76,14 @@ def classify(evidence):
                     for x in values), "invalid_production_state")
         # Once exact-SHA production status exists, unrelated deploy-run pages
         # are not necessary to refuse a redispatch. This is a NOOP, never green.
-        if any(x["context"] == "zcloud/vps-production" for x in values):
+        production_states = {x["state"] for x in values
+                             if x["context"] == "zcloud/vps-production"}
+        require(len(production_states) <= 1, "conflicting_production_status")
+        if production_states:
+            # NOOP describes non-action only. A failed status is NOT healthy.
+            state = next(iter(production_states))
             return {"decision": "NOOP", "reason": "production_status_present",
-                    "sha": sha, "authorized": False}
+                    "sha": sha, "production_state": state, "authorized": False}
         deploy, regression = runs(evidence, "deploy", sha), runs(evidence, "regression", sha)
         if any(x["status"] in ACTIVE for x in deploy):
             decision, reason = "WAIT", "deploy_active"
