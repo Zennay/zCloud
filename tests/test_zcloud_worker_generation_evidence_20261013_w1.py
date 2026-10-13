@@ -227,6 +227,29 @@ class GenerationEvidenceTests(unittest.TestCase):
             self.assertEqual(2, rc)
             self.assertEqual("invalid_fixture_path", json.loads(output.getvalue())["reason"])
 
+    def test_reviewed_zssh_recipe_is_bounded_and_silent(self):
+        import runpy
+        import subprocess
+        from types import SimpleNamespace
+        recipe = Path(__file__).resolve().parents[1] / "ops/zssh-runner-recipes/zcloud-generation-check.py"
+        for code in (0, 1, 2):
+            with self.subTest(code=code):
+                with patch("subprocess.run", return_value=SimpleNamespace(returncode=code)) as invoked:
+                    with self.assertRaises(SystemExit) as outcome:
+                        runpy.run_path(str(recipe), run_name="__main__")
+                    self.assertEqual(code, outcome.exception.code)
+                args, kw = invoked.call_args
+                self.assertEqual(
+                    [subject.sys.executable, "scripts/zcloud_worker_generation_evidence_20261013_w1.py"],
+                    args[0],
+                )
+                self.assertIs(kw["stdin"], subprocess.DEVNULL)
+                self.assertIs(kw["stdout"], subprocess.DEVNULL)
+                self.assertIs(kw["stderr"], subprocess.DEVNULL)
+                self.assertEqual(15, kw["timeout"])
+                self.assertFalse(kw["check"])
+                self.assertNotIn("shell", kw)
+
     def test_live_http_is_read_only_fixed_localhost_get(self):
         class FakeResponse:
             status = 200
