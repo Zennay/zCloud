@@ -52,3 +52,49 @@ jobs:
           if result["decision"] == "DENY":
               raise SystemExit(2)
           PY
+
+  full-regression-hosted:
+    # Source-only mirror of zcloud-regression-smoke critical-runner-flows,
+    # without workflow_run, VPS listeners, deploy admission or write tokens.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Full Python suite
+        run: python3 -m unittest discover -v
+      - name: Birdseye scheduler isolation
+        run: bash tests/test_birds_eye_review.sh
+      - name: Self-improvement JS stop gate
+        run: bash tests/test_improvement_stopgate_js.sh
+      - name: Autonomy runner isolation
+        run: bash tests/test_autonomy_runner_js.sh
+      - name: Firefox addon reload unit contracts
+        run: node tests/test_reload_extension.mjs
+      - name: Firefox recovery regressions
+        run: |
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
+      - name: Violentmonkey syntax
+        run: node --check public/zcloud-worker.user.js
+      - name: Prechange guard
+        run: python3 -m unittest -v tests.test_prechange_guard
+      - name: Postdeploy canary
+        run: python3 -m unittest -v tests.test_postdeploy_canary
+      - name: Transaction promotion guard
+        run: python3 -m unittest -v tests.test_transactional_promote
+      - name: Control-plane health
+        run: python3 -m unittest -v tests.test_zcloud_healthcheck
+      - name: Config schema
+        run: |
+          python3 -m unittest -v tests.test_config_validation
+          python3 scripts/zcloud_config_validate.py --projects projects.json --layout project-layout.json --resource-policy resource-policy.json --project-contracts project-contracts.json --server server.py --enhancements enhancements.py
