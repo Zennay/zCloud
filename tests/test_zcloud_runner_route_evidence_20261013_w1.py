@@ -59,6 +59,26 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(data["lanes"]["zcloud_vps"]["assigned_count"], 1)
         self.assertFalse(data["production_deploy_verified"])
 
+    def test_matching_labels_on_wrong_vps_are_not_canonical_runner_proof(self):
+        zcloud = make_job(job_id=42, status="completed", conclusion="success",
+                          runner_id=1234, runner_name="stranger-with-same-labels")
+        verified = make_job(job_id=43, status="completed", conclusion="failure",
+                            runner_id=21, runner_name="zcloud-vps-1")
+        result = route.classify_run(5, [zcloud, verified], NOW)
+        self.assertEqual(result["lanes"]["zcloud_vps"]["assigned_count"], 2)
+        self.assertEqual(result["lanes"]["zcloud_vps"]["canonical_vps_assigned_count"], 1)
+        self.assertEqual(result["lanes"]["zcloud_vps"]["unexpected_vps_assigned_count"], 1)
+        self.assertFalse(result["jobs"][0]["canonical_vps_runner"])
+        self.assertTrue(result["jobs"][1]["canonical_vps_runner"])
+        self.assertFalse(result["production_deploy_verified"])
+
+    def test_ftmo_target_never_inflates_canonical_zcloud_vps_counter(self):
+        x = make_job(labels=["self-hosted", "ftmo-research"], status="completed",
+                     conclusion="success", runner_id=21, runner_name="zcloud-vps-1")
+        value = route.classify_run(6, [x], NOW)
+        self.assertEqual(value["lanes"]["zcloud_vps"]["canonical_vps_assigned_count"], 0)
+        self.assertEqual(value["lanes"]["ftmo_research"]["canonical_vps_assigned_count"], 0)
+
     def test_different_ftmo_lane_must_not_close_zcloud_route(self):
         x = make_job(labels=["self-hosted", "ftmo-research"])
         data = route.classify_run(4, [x], NOW)
