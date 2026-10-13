@@ -220,12 +220,29 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise InvalidEvidence("unexpected_redirect")
 
 
+def _verified_job_provenance(job: dict, requested_run_id: int) -> str:
+    """Bind a job receipt to its requested run, not just the runner labels."""
+    if type(job) is not dict or type(job.get("run_id")) is not int:
+        raise InvalidEvidence("untrusted_job_provenance")
+    if job["run_id"] != requested_run_id:
+        raise InvalidEvidence("cross_run_job_evidence")
+    sha = job.get("head_sha")
+    if type(sha) is not str or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+        raise InvalidEvidence("untrusted_job_provenance")
+    name = job.get("workflow_name")
+    if type(name) is not str or not 0 < len(name) <= 180:
+        raise InvalidEvidence("untrusted_job_provenance")
+    return sha
+
+
 def fetch_jobs(run_id: int, token: str) -> list:
     if not token:
         raise InvalidEvidence("missing_actions_token")
     opener = urllib.request.build_opener(NoRedirect())
     jobs = []
     count = None
+    run_head_sha = None
+    run_workflow_name = None
     for page in range(1, MAX_PAGES + 1):
         req = urllib.request.Request(
             f"{API}/{run_id}/jobs?filter=latest&per_page=100&page={page}",
@@ -249,6 +266,14 @@ def fetch_jobs(run_id: int, token: str) -> list:
             count = total
         if total != count or len(page_jobs) > 100:
             raise InvalidEvidence("unstable_pagination")
+        for job in page_jobs:
+            sha = _verified_job_provenance(job, run_id)
+            if run_head_sha is not None and sha != run_head_sha:
+                raise InvalidEvidence("mixed_run_head_sha")
+            if run_workflow_name is not None and job["workflow_name"] != run_workflow_name:
+                raise InvalidEvidence("mixed_run_workflow_name")
+            run_head_sha = sha
+            run_workflow_name = job["workflow_name"]
         jobs.extend(page_jobs)
         if len(jobs) == count:
             return jobs
@@ -353,7 +378,9 @@ def main(argv: list[str] | None = None) -> int:
             "malformed_pagination","unstable_pagination","incomplete_pagination",
             "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection",
             "invalid_step_evidence","untrusted_deploy_run","invalid_unicode",
-            "json_structure_limit"} else "unavailable"
+            "json_structure_limit","untrusted_job_provenance",
+            "cross_run_job_evidence","mixed_run_head_sha",
+            "mixed_run_workflow_name"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
