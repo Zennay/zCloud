@@ -15,7 +15,28 @@ NOW = datetime(2026, 10, 13, 18, 30, tzinfo=timezone.utc)
 
 
 def targets(*items):
-    return {"global_allocation": {"workers": list(items)}}
+    projects = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("worker_key")
+        if not isinstance(key, str) or "::w" not in key:
+            continue
+        project, slot = key.rsplit("::w", 1)
+        try:
+            local_slot = int(slot)
+        except ValueError:
+            continue
+        projects[key] = {
+            "project_id": key, "base_project_id": project,
+            "worker_slot": local_slot,
+            "global_worker_slot": item.get("global_worker_slot"),
+            "provider": item.get("provider", "chatgpt"),
+            "active": True, "assignment_ready": True,
+            "desired_state": "running",
+            "queue_item": {"queue_id": item.get("queue_id")},
+        }
+    return {"projects": projects, "global_allocation": {"workers": list(items)}}
 
 
 def allocation(name="cloud::w1", provider="chatgpt"):
@@ -30,6 +51,7 @@ def row(name="cloud::w1", verdict="generating", **changes):
         "worker": name, "project": project, "slot": int(slot),
         "global_slot": int(slot), "queue_id": "qid-" + name, "provider": "chatgpt",
         "verdict": verdict, "last_event": "heartbeat", "last_event_age_s": 8,
+        "desired_state": "running",
         "last_prompt_age_s": 10,
         **changes,
     }
@@ -66,6 +88,56 @@ class GenerationEvidenceTests(unittest.TestCase):
         result = self.classify(d=debug(row(verdict="prompt-sent")))
         self.assertFalse(result["all_allocated_chatgpt_generating"])
         self.assertEqual("prompt_sent_without_generation", result["workers"][0]["state"])
+
+    def test_runtime_gates_generation_on_assignment_and_pause(self):
+        for changes, expected in [
+            ({"active": False, "desired_state": "paused"}, "inactive_target"),
+            ({"assignment_ready": False}, "assignment_unready"),
+        ]:
+            with self.subTest(changes=changes):
+                t = targets(allocation())
+                t["projects"]["cloud::w1"].update(changes)
+                output = self.classify(t=t)
+                self.assertFalse(output["all_allocated_chatgpt_generating"])
+                self.assertEqual(expected, output["workers"][0]["state"])
+
+    def test_runtime_claim_and_identity_mismatch_denied(self):
+        t = targets(allocation())
+        t["projects"]["cloud::w1"]["queue_item"]["queue_id"] = "other"
+        self.denied(t=t, reason="target_queue_claim_mismatch")
+        t = targets(allocation())
+        t["projects"]["cloud::w1"]["global_worker_slot"] = 2
+        self.denied(t=t, reason="target_assignment_identity_mismatch")
+        self.denied(d=debug(row(desired_state="paused")),
+                    reason="allocation_debug_binding_mismatch")
+        t = targets(allocation())
+        t.pop("projects")
+        self.denied(t=t, reason="missing_target_configuration")
+
+    def test_target_pause_changed_across_reads_is_detected(self):
+        before = targets(allocation())
+        after = targets(allocation())
+        after["projects"]["cloud::w1"]["desired_state"] = "paused"
+        after["projects"]["cloud::w1"]["active"] = False
+        with patch.object(subject, "_fetch", side_effect=[before, debug(row()), after]):
+            with self.assertRaisesRegex(subject.EvidenceDenied, "allocation_changed_during_observation"):
+                subject._live_snapshots()
+
+    def test_http_fetch_bypasses_proxy_environment(self):
+        with patch.object(subject.urllib.request, "build_opener", wraps=subject.urllib.request.build_opener) as make:
+            class FakeResponse:
+                status = 200
+                headers = {"Content-Type": "application/json"}
+                def read(self, _limit):
+                    return b'{}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    return False
+            with patch.object(subject.urllib.request.OpenerDirector, "open", return_value=FakeResponse()):
+                subject._fetch("/api/runner-targets")
+        self.assertTrue(any(isinstance(a, subject.urllib.request.ProxyHandler) and not a.proxies
+                            for a in make.call_args.args))
 
     def test_missing_browser_heartbeat_is_not_generation(self):
         report = self.classify(d=debug(row(verdict="no-heartbeat")))
