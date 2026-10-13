@@ -20,6 +20,7 @@ def fixture(status='online', busy=False, names=('self-hosted', 'zcloud', 'vps'))
             'runners': [{'id': 21, 'status': status, 'busy': busy, 'labels': [{'name': n} for n in names]}],
             'queued_runs': [{'id': 123, 'status': 'queued', 'created_at': (NOW - dt.timedelta(minutes=8)).isoformat()}],
             'jobs_by_run': {'123': [{'id': 456, 'status': 'queued', 'runner_id': 0,
+                                     'created_at': (NOW - dt.timedelta(minutes=8)).isoformat(),
                                      'labels': ['self-hosted', 'zcloud', 'vps']}]}}
 
 class TestRunnerRoute(unittest.TestCase):
@@ -69,11 +70,35 @@ class TestRunnerRoute(unittest.TestCase):
         self.assertIn('status=in_progress', ' '.join(path for path,_ in calls))
         self.assertIn('status=queued', ' '.join(path for path,_ in calls))
         self.assertEqual(len(snap['queued_runs']), len([x for x in calls if x[1]=='workflow_runs']))
+    def test_old_run_but_new_queued_job_is_not_stale(self):
+        x=fixture()
+        x['queued_runs'][0]['created_at']=(NOW-dt.timedelta(hours=3)).isoformat()
+        x['jobs_by_run']['123'][0]['created_at']=(NOW-dt.timedelta(seconds=30)).isoformat()
+        self.assertEqual(self.classify(x)['stale_unassigned_jobs'], 0)
+    def test_queued_job_missing_created_at_is_not_proven_idle(self):
+        x=fixture(); x['jobs_by_run']['123'][0].pop('created_at')
+        with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_queued_job_created_before_workflow_is_invalid(self):
+        x=fixture(); x['jobs_by_run']['123'][0]['created_at']=(NOW-dt.timedelta(hours=1)).isoformat()
+        with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_queued_job_future_clock_is_invalid(self):
+        x=fixture(); x['jobs_by_run']['123'][0]['created_at']=(NOW+dt.timedelta(minutes=10)).isoformat()
+        with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_malformed_api_content_type_refused(self):
+        class Resp:
+            status=200; headers={'content-type':'application/jsonp'}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n): return b'{}'
+        class Opener:
+            def open(self, req, timeout): return Resp()
+        with patch.object(t,'build_opener',return_value=Opener()):
+            with self.assertRaises(t.EvidenceError): t.api('/repos/Zennay/zCloud/actions/runners','secret')
     def test_future_run_clock(self):
         x=fixture(); x['queued_runs'][0]['created_at']=(NOW+dt.timedelta(hours=1)).isoformat()
         with self.assertRaises(t.EvidenceError): self.classify(x)
     def test_young(self):
-        x=fixture(); x['queued_runs'][0]['created_at']=NOW.isoformat()
+        x=fixture(); x['jobs_by_run']['123'][0]['created_at']=NOW.isoformat()
         self.assertEqual(self.classify(x)['classification'], 'no_stale_unassigned_jobs')
     def test_assigned(self):
         x=fixture(); x['jobs_by_run']['123'][0]['runner_id']=21
@@ -136,6 +161,7 @@ class CliContract(unittest.TestCase):
         snap=fixture()
         snap['captured_at']=now.isoformat()
         snap['queued_runs'][0]['created_at']=(now-dt.timedelta(minutes=8)).isoformat()
+        snap['jobs_by_run']['123'][0]['created_at']=(now-dt.timedelta(minutes=8)).isoformat()
         if mutate: mutate(snap)
         with tempfile.TemporaryDirectory() as home:
             path=Path(home)/'snapshot.json'
