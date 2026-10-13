@@ -139,6 +139,41 @@ class PaginationTests(unittest.TestCase):
             with self.assertRaisesRegex(mod.InventoryDenied, "page_cap"):
                 mod.collect(Fixture(), S)
 
+    def test_measured_live_scale_1423_branches_15_pages_completes_without_authority(self):
+        # Measured via GitHub repository branch pagination on 13 October.
+        all_branches = [branch("main", S)] + [
+            branch(f"archive/lane-{i:04d}", A) for i in range(1422)
+        ]
+        pages = [all_branches[i:i + 100] for i in range(0, len(all_branches), 100)]
+        evidence = mod.collect(Fixture(branches=pages, pulls=[[]]), S)
+        self.assertTrue(evidence["inventory_complete"])
+        self.assertEqual(evidence["branch_count"], 1423)
+        self.assertEqual(evidence["branch_pages"], 15)
+        self.assertEqual(len(evidence["pr_less"]), 1422)
+        self.assertFalse(evidence["admission_authorized"])
+        self.assertFalse(evidence["deployment_authorized"])
+
+    def test_missing_or_moving_main_in_branch_pages_is_denied(self):
+        for branches in ([branch("other", A)],
+                         [branch("main", B), branch("other", A)]):
+            with self.subTest(branches=branches):
+                with self.assertRaisesRegex(mod.InventoryDenied, "listed_main_mismatch"):
+                    mod.collect(Fixture(branches=[branches], pulls=[[]]), S)
+
+    def test_malformed_overfull_api_page_denied(self):
+        overfull = [branch("main", S)] + [
+            branch(f"branch-{i}", A) for i in range(100)]
+        with self.assertRaisesRegex(mod.InventoryDenied, "page_size_exceeded"):
+            mod.collect(Fixture(branches=[overfull], pulls=[[]]), S)
+
+    def test_inventory_exceeding_total_branch_cap_is_denied(self):
+        many = [branch("main", S)] + [
+            branch(f"lane-{i:04d}", A) for i in range(mod.MAX_ENTRIES)
+        ]
+        pages = [many[i:i + 100] for i in range(0, len(many), 100)]
+        with self.assertRaisesRegex(mod.InventoryDenied, "entry_cap"):
+            mod.collect(Fixture(branches=pages, pulls=[[]]), S)
+
     def test_full_page_without_next_cursor_never_claims_completeness(self):
         full = [branch("main", S)] + [branch(f"branch-{i}", A) for i in range(99)]
         with self.assertRaisesRegex(mod.InventoryDenied, "full_page_without_cursor"):
