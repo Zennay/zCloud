@@ -208,6 +208,8 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         opener = Opener()
         with patch.object(route.urllib.request, "build_opener", return_value=opener):
             self.assertEqual(route.latest_main_deploy_ids("fake", 2), [222, 111])
+            self.assertEqual(route.latest_main_deploy_receipts("fake", 2),
+                             [(222, "a" * 40, 1), (111, "a" * 40, 1)])
         self.assertTrue(opener.url.startswith("https://api.github.com/repos/Zennay/zCloud/"))
         self.assertEqual(opener.timeout, 15)
 
@@ -335,6 +337,34 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
                   "html_url": "https://github.com/Zennay/zCloud/actions/runs/38471675524/job/115554118242"}
         self.assertEqual(route._verified_job_provenance(actual, 38471675524),
                          (actual["head_sha"], 1))
+
+    def test_recent_deploy_cli_binds_list_head_and_attempt_to_job_receipts(self):
+        import contextlib
+        import io
+        import json
+        from unittest.mock import patch
+        job = make_job(status="completed", runner_id=21,
+                       runner_name="zcloud-vps-1", conclusion="failure")
+        job["head_sha"] = "a" * 40
+        job["run_attempt"] = 1
+        receipt = [(38471675524, "a" * 40, 1)]
+        for altered in ({}, {"head_sha": "b" * 40}, {"run_attempt": 2}):
+            with self.subTest(altered=altered):
+                output = io.StringIO()
+                mutated = dict(job, **altered)
+                with (patch.dict("os.environ", {"GH_TOKEN": "fake"}),
+                      patch.object(route, "latest_main_deploy_receipts", return_value=receipt),
+                      patch.object(route, "fetch_jobs", return_value=[mutated]),
+                      contextlib.redirect_stdout(output)):
+                    result = route.main(["--recent-deploy"])
+                value = json.loads(output.getvalue())
+                self.assertFalse(value["authorizes_mutation"])
+                if not altered:
+                    self.assertEqual(result, 0)
+                    self.assertFalse(value["runs"][0]["production_deploy_verified"])
+                else:
+                    self.assertEqual(result, 2)
+                    self.assertEqual(value["error"], "deploy_job_metadata_mismatch")
 
     def test_latest_deploy_missing_token_denies_without_api(self):
         with self.assertRaises(route.InvalidEvidence):
