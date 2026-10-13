@@ -5,11 +5,44 @@ one-shot workflow from regaining Actions-write, issue-write, or VPS restart
 privileges via GitHub's manual dispatch endpoint.
 """
 from pathlib import Path
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 EXPIRED = "zcloud-overnight-idle-rescue-20261009.yml"
+
+
+# A renamed copy of the expired rescue could bypass an exact-filename-only
+# retirement test. These distinctive snippets are implementation fingerprints
+# of the 2026-10-09 incident-specific restart dispatcher, not a ban on ordinary
+# owner-approved incident workflows. Keep this list intentionally narrow.
+RETIRED_RESCUE_FINGERPRINTS = frozenset((
+    "zcloud-overnight-idle-rescue/1",
+    "GUARDED_RESTART_DISPATCHED=1",
+    "RESCUE_SKIPPED=no-old-pending-work",
+    "OLD_ALLOCATED_PENDING",
+))
+
+
+def unexpected_rescue_fingerprints(directory: Path) -> dict[str, list[str]]:
+    """Scan workflow sources offline, never dispatch or inspect VPS services."""
+    matches = {}
+    for file in sorted(directory.iterdir()):
+        if file.suffix.lower() not in {".yml", ".yaml"}:
+            continue
+        if file.is_symlink() or not file.is_file():
+            matches[file.name] = ["untrusted_workflow_file_type"]
+            continue
+        try:
+            contents = file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            matches[file.name] = ["unreadable_workflow_source"]
+            continue
+        hits = [needle for needle in sorted(RETIRED_RESCUE_FINGERPRINTS) if needle in contents]
+        if hits:
+            matches[file.name] = hits
+    return matches
 
 
 class ExpiredOvernightRescueRetirementTests(unittest.TestCase):
@@ -33,6 +66,47 @@ class ExpiredOvernightRescueRetirementTests(unittest.TestCase):
                 continue
             with self.subTest(workflow=candidate.name):
                 self.assertNotIn(EXPIRED, candidate.read_text(encoding="utf-8"))
+
+    def test_renamed_expired_rescue_signatures_never_reappear(self):
+        self.assertEqual({}, unexpected_rescue_fingerprints(WORKFLOWS))
+
+    def test_renamed_copy_and_alternate_extension_cannot_bypass_policy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "replacement-restart.yml").write_text(
+                "name: different\n# dormant?\nOLD_ALLOCATED_PENDING\n"
+                "GUARDED_RESTART_DISPATCHED=1\n", encoding="utf-8",
+            )
+            (root / "renamed-worker.yaml").write_text(
+                "name: another\n# zcloud-overnight-idle-rescue/1\n",
+                encoding="utf-8",
+            )
+            result = unexpected_rescue_fingerprints(root)
+            self.assertEqual(set(result), {"replacement-restart.yml", "renamed-worker.yaml"})
+            self.assertIn("OLD_ALLOCATED_PENDING", result["replacement-restart.yml"])
+            self.assertIn("zcloud-overnight-idle-rescue/1", result["renamed-worker.yaml"])
+
+    def test_safe_manual_recovery_does_not_trigger_old_rescue_fingerprint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "explicit-owner-manual.yml").write_text(
+                "name: owner manual check\non: [workflow_dispatch]\n"
+                "permissions:\n  contents: read\n"
+                "jobs:\n  check:\n    runs-on: ubuntu-latest\n",
+                encoding="utf-8",
+            )
+            self.assertEqual({}, unexpected_rescue_fingerprints(root))
+
+    def test_retirement_scan_rejects_symlinked_workflows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "safe.txt"
+            source.write_text("name: safe", encoding="utf-8")
+            (root / "pointed.yml").symlink_to(source)
+            self.assertEqual(
+                {"pointed.yml": ["untrusted_workflow_file_type"]},
+                unexpected_rescue_fingerprints(root),
+            )
 
     def test_dated_eight_worker_safety_keeps_automatic_trigger_retired(self):
         # This is a separate existing owner scope. Assert the safe observable
