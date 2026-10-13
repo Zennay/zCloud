@@ -34,7 +34,7 @@ def log(*rows):
 class SafeIdleEvidenceTests(unittest.TestCase):
     def test_real_sqlite_readonly_marker_not_conflated_with_generating_timeout(self):
         raw = ("2026-10-13T18:10:48.9881315Z " + evidence.SQLITE_READONLY_MARKER
-               + "\\n")
+               + "\n")
         at = datetime(2026, 10, 13, 18, 11, tzinfo=timezone.utc)
         record = evidence.classify(raw, now=at)
         self.assertEqual(record["failure_category"], "sqlite_readonly_error_marker")
@@ -46,13 +46,13 @@ class SafeIdleEvidenceTests(unittest.TestCase):
 
     def test_mixed_sqlite_and_generation_markers_are_ambiguous(self):
         raw = ("2026-10-13T18:10:48.9881315Z " + evidence.SQLITE_READONLY_MARKER
-               + "\\n" + log(row()))
+               + "\n" + log(row()))
         with self.assertRaisesRegex(evidence.UntrustedLog,
                                     "ambiguous_or_missing_safe_idle_marker"):
             evidence.classify(raw)
 
     def test_sqlite_marker_future_timestamp_rejected(self):
-        raw = "2099-10-13T18:10:48Z " + evidence.SQLITE_READONLY_MARKER + "\\n"
+        raw = "2099-10-13T18:10:48Z " + evidence.SQLITE_READONLY_MARKER + "\n"
         with self.assertRaisesRegex(evidence.UntrustedLog, "future_log_timestamp"):
             evidence.classify(raw)
 

@@ -22,7 +22,7 @@ LOG_LINE = re.compile(
 )
 SQLITE_READONLY_MARKER = "ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: attempt to write a readonly database"
 SQLITE_READONLY_LINE = re.compile(
-    r"^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z) " +
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) " +
     re.escape(SQLITE_READONLY_MARKER) + r"$", re.MULTILINE
 )
 _ALLOWED_EVENT = {"heartbeat", "generation-progress", "generation-started",
