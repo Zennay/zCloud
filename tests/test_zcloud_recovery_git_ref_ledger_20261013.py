@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 from pathlib import Path
 from threading import Lock
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,9 @@ MODULE = ROOT / "scripts" / "zcloud_recovery_git_ref_ledger_20261013.py"
 spec = importlib.util.spec_from_file_location("ref_claim", MODULE)
 ledger = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ledger)
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import zcloud_recovery_retry_policy_20261013 as policy
 
 S = "a" * 40
 T = "b" * 40
@@ -55,6 +59,43 @@ class GitRefReservationTests(unittest.TestCase):
         self.assertIs(outcome["dispatch_allowed"], False)
         self.assertTrue(outcome["do_not_retry_automatically"])
         return outcome
+
+    def test_actual_failed_production_status_cannot_create_ref_plan(self):
+        snapshot = {
+            "schema": policy.SCHEMA, "repository": policy.REPO,
+            "main_sha": S,
+            "production_status": {
+                "sha": S, "complete": True,
+                "statuses": [{"context": "zcloud/vps-production", "state": "failure"}],
+            },
+        }
+        # Deliberately no workflow history: exact status takes precedence.
+        outcome = policy.classify(snapshot)
+        self.assertEqual(outcome["decision"], "NOOP")
+        self.assertEqual(outcome["production_state"], "failure")
+        with self.assertRaises(ledger.ContractViolation):
+            ledger.reservation_plan(outcome)
+
+    def test_trusted_green_regression_remains_non_authorizing_candidate(self):
+        run = {
+            "id": 1, "run_attempt": 1, "head_sha": S, "head_branch": "main",
+            "event": "push", "status": "completed", "conclusion": "success",
+        }
+        snapshot = {
+            "schema": policy.SCHEMA, "repository": policy.REPO,
+            "main_sha": S,
+            "production_status": {"sha": S, "complete": True, "statuses": []},
+            "deploy": {"sha": S, "workflow": policy.WORKFLOWS["deploy"],
+                       "complete": True, "has_next_page": False, "runs": []},
+            "regression": {"sha": S, "workflow": policy.WORKFLOWS["regression"],
+                           "complete": True, "has_next_page": False, "runs": [run]},
+        }
+        candidate = policy.classify(snapshot)
+        self.assertEqual(candidate["decision"], "READY_FOR_EXCLUSIVE_RESERVATION")
+        planned = ledger.reservation_plan(candidate)
+        self.assertEqual(planned["sha"], S)
+        self.assertFalse(planned["authorized"])
+        self.assertFalse(planned["dispatch_allowed"])
 
     def test_deterministic_exact_main_git_ref(self):
         p1 = self.plan()
