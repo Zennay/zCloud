@@ -1,5 +1,5 @@
 // Regression: after an actual Firefox process loss, restore every assigned
-// worker in the same window, including paused workers. Never adopt experts,
+// worker in the same window, excluding paused or inactive worker replacements. Never adopt experts,
 // rotate tabs or create extra windows; recover old sessionStorage identities.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -76,13 +76,16 @@ async function settle(){await new Promise(r=>setTimeout(r,25))}
 (async()=>{
   let ctx=startup();
   await settle();
-  assert.equal(tabs.length,4,"restore known sessionStorage owner; allocate exactly two missing tabs");
+  assert.equal(tabs.length,2,"first snapshot reclaims restored owner without creating tabs");
+  await ctx.tick();
+  assert.equal(tabs.length,3,"second snapshot creates missing active worker, not paused worker");
   assert.ok(tabs.some(t=>t.id===2),"restored supa tab reused with no duplicates");
   assert.ok(tabs.some(t=>t.id===1),"personal expert tab untouched");
   assert.equal(stored[key].length,3,"persist exact worker slot ledger");
-  assert.equal(calls.filter(c=>c.action==="create").length,2);
+  assert.equal(calls.filter(c=>c.action==="create").length,1);
+  assert.equal(tabs.filter(t=>t.url.includes("haxlab::w1")).length,0,"paused tabs are never regenerated");
   await ctx.tick();
-  assert.equal(calls.filter(c=>c.action==="create").length,2,"polling creates no duplicates");
+  assert.equal(calls.filter(c=>c.action==="create").length,1,"polling creates no duplicates");
 
   // Firefox dies; sessionstore comes back with ONLY the expert. The ledger
   // survives as extension storage, and all worker tabs must be reconstructed.
@@ -92,13 +95,13 @@ async function settle(){await new Promise(r=>setTimeout(r,25))}
   await settle();
   assert.equal(tabs.length,1,"first snapshot waits for Firefox session restore");
   await ctx.tick();
-  assert.equal(tabs.length,2,"second valid snapshot restores one trusted worker slot");
+  assert.equal(tabs.length,3,"second valid snapshot restores all running worker slots");
   await ctx.tick();
-  assert.equal(tabs.length,4,"all three assigned worker tabs are now present");
+  assert.equal(tabs.length,3,"paused worker remains uncreated after additional polls");
   assert.equal(new Set(tabs.map(t=>t.id)).size,tabs.length);
-  assert.equal(calls.filter(c=>c.action==="create").length,5);
+  assert.equal(calls.filter(c=>c.action==="create").length,3);
   assert.equal(calls.filter(c=>c.action==="remove").length,0);
-  assert.equal(tabs.filter(t=>t.url.includes("zcloud_worker=")).length,3);
+  assert.equal(tabs.filter(t=>t.url.includes("zcloud_worker=")).length,2);
   assert.ok(tabs.some(t=>t.id===3),"expert still present after full crash recovery");
   const before=tabs.length;
   networkOk=false;
@@ -107,6 +110,6 @@ async function settle(){await new Promise(r=>setTimeout(r,25))}
   networkOk=true;
   await ctx.tick();
   assert.equal(tabs.length,before,"steady state maintains one tab per worker");
-  assert.equal(ctx.ZCLOUD_V2_CONTROLLER.snapshot().tabs.length,3);
-  console.log("Firefox crash recovery: ledger, restored tabs, paused slots, expert isolation PASS");
+  assert.equal(ctx.ZCLOUD_V2_CONTROLLER.snapshot().tabs.length,2);
+  console.log("Firefox crash recovery: active slots reconstructed, paused slots ignored, expert isolation PASS");
 })().catch(err=>{console.error(err);process.exitCode=1});
