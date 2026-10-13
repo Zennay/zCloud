@@ -181,17 +181,64 @@ def fetch_jobs(run_id: int, token: str) -> list:
     raise InvalidEvidence("page_limit_exceeded")
 
 
+def latest_main_deploy_ids(token: str, count: int = 2) -> list[int]:
+    """Snapshot the newest main deploy attempts; no workflow dispatch or writes."""
+    if not token:
+        raise InvalidEvidence("missing_actions_token")
+    if type(count) is not int or not 1 <= count <= 3:
+        raise InvalidEvidence("invalid_run_selection")
+    url = ("https://api.github.com/repos/Zennay/zCloud/actions/workflows/"
+           "zcloud-vps-deploy.yml/runs?branch=main&per_page=10")
+    request = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "zcloud-deployops-runner-route-evidence"})
+    try:
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=15) as response:
+            if response.headers.get_content_type() != "application/json":
+                raise InvalidEvidence("nonjson_api_reply")
+            payload = strict_json(response.read(MAX_BYTES + 1))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+        raise InvalidEvidence("github_api_unavailable") from exc
+    runs = payload.get("workflow_runs")
+    if type(runs) is not list or type(payload.get("total_count")) is not int:
+        raise InvalidEvidence("malformed_pagination")
+    ids = []
+    for item in runs:
+        if type(item) is not dict or item.get("head_branch") != "main":
+            continue
+        if item.get("name") != "zCloud VPS deploy":
+            continue
+        if type(item.get("id")) is not int or item["id"] <= 0:
+            raise InvalidEvidence("invalid_run_id")
+        ids.append(item["id"])
+    if len(ids) < count or len(set(ids)) != len(ids):
+        raise InvalidEvidence("incomplete_recent_deploys")
+    return ids[:count]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-id", type=int, required=True, action="append")
+    parser.add_argument("--run-id", type=int, default=[], action="append")
+    parser.add_argument("--recent-deploy", action="store_true",
+                        help="Also inspect the latest two main deployment runs")
     args = parser.parse_args(argv)
-    if len(args.run_id) > 10 or len(set(args.run_id)) != len(args.run_id):
+    if (not args.run_id and not args.recent_deploy or
+            len(args.run_id) > 10 or len(set(args.run_id)) != len(args.run_id)):
         print('{"error":"invalid_run_selection","authorizes_mutation":false}')
         return 2
     token = os.environ.get("GH_TOKEN", "")
     try:
+        ids = list(args.run_id)
+        if args.recent_deploy:
+            ids.extend(latest_main_deploy_ids(token))
+        # Duplicates across requested/recent run IDs are the same observation.
+        ids = list(dict.fromkeys(ids))
+        if len(ids) > 10:
+            raise InvalidEvidence("invalid_run_selection")
         data = [classify_run(run_id, fetch_jobs(run_id, token))
-                for run_id in args.run_id]
+                for run_id in ids]
     except (InvalidEvidence, OSError) as exc:
         # Emit only a finite allowlisted diagnostic; never dump URL, token or logs.
         reason = str(exc)
@@ -205,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
             "duplicate_job_id","invalid_run_id","missing_actions_token",
             "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
             "malformed_pagination","unstable_pagination","incomplete_pagination",
-            "page_limit_exceeded"} else "unavailable"
+            "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
