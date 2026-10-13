@@ -589,5 +589,21 @@ class CLIOverlapTests(unittest.TestCase):
                     self.assertFalse(json.loads(output.getvalue())["admission_authorized"])
 
 
+class HostedProofWorkflowTests(unittest.TestCase):
+    def test_ci_is_readonly_and_pins_true_pr_head_not_merge_ref(self):
+        workflow = (ROOT / '.github/workflows/zcloud-deploy-prless-inventory-hosted-20261013-w1.yml').read_text()
+        event_sha = 'github.event.pull_request.head.sha || github.sha'
+        self.assertGreaterEqual(workflow.count(event_sha), 2)
+        self.assertNotIn('ref: 
+    unittest.main()
+ + '{' + '{ github.sha }}', workflow)
+        self.assertIn('EXPECTED_HEAD_SHA:', workflow)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"', workflow)
+        self.assertIn('runs-on: ubuntu-latest', workflow)
+        self.assertIn('persist-credentials: false', workflow)
+        self.assertIn('contents: read', workflow)
+        self.assertNotIn('runs-on: self-hosted', workflow)
+        self.assertNotIn('\n  workflow_dispatch:', workflow)
+
 if __name__ == "__main__":
     unittest.main()
