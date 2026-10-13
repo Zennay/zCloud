@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import urllib.error
@@ -43,11 +44,32 @@ def _load(raw):
     if not isinstance(raw, bytes) or len(raw) > MAX_BYTES:
         raise EvidenceDenied("oversized_observation")
     try:
-        payload = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_pairs_unique)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        payload = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_pairs_unique,
+                             parse_constant=lambda _: (_ for _ in ()).throw(EvidenceDenied("nonfinite_json")))
+    except EvidenceDenied:
+        raise
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise EvidenceDenied("malformed_json") from exc
     if not isinstance(payload, dict):
         raise EvidenceDenied("invalid_top_level")
+    # json.loads accepts unpaired surrogate escapes and non-finite floats by default.
+    # Reject those before they can cross evidence/provenance boundaries.
+    def validate(value):
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise EvidenceDenied("invalid_decoded_unicode") from exc
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise EvidenceDenied("nonfinite_json")
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                validate(key)
+                validate(child)
+        elif isinstance(value, list):
+            for child in value:
+                validate(child)
+    validate(payload)
     return payload
 
 
@@ -65,12 +87,55 @@ def _fetch(path):
     )
     try:
         with opener.open(request, timeout=5) as response:
-            if response.status != 200 or "application/json" not in response.headers.get("Content-Type", "").lower():
+            media_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if response.status != 200 or media_type != "application/json":
                 raise EvidenceDenied("invalid_http_response")
             raw = response.read(MAX_BYTES + 1)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise EvidenceDenied("observation_unavailable") from exc
     return _load(raw)
+
+
+def _allocation_fingerprint(targets):
+    """Critical identity only; volatile memory/telemetry fields are excluded."""
+    allocation = targets.get("global_allocation") if isinstance(targets, dict) else None
+    rows = allocation.get("workers") if isinstance(allocation, dict) else None
+    if not isinstance(rows, list) or len(rows) > MAX_WORKERS:
+        raise EvidenceDenied("invalid_allocation_snapshot")
+    seen_keys = set()
+    seen_slots = set()
+    identity = []
+    for item in rows:
+        if not isinstance(item, dict):
+            raise EvidenceDenied("invalid_allocation_snapshot")
+        key = _key(item.get("worker_key"))
+        project, local_slot = key.rsplit("::w", 1)
+        global_slot = item.get("global_worker_slot")
+        queue_id = item.get("queue_id")
+        provider = item.get("provider", "chatgpt")
+        if (key in seen_keys or type(global_slot) is not int
+                or not 1 <= global_slot <= MAX_WORKERS or global_slot in seen_slots
+                or item.get("project_id") != project
+                or type(item.get("worker_slot")) is not int
+                or item["worker_slot"] != int(local_slot)
+                or not isinstance(queue_id, str) or not 0 < len(queue_id) <= 160
+                or provider not in ("chatgpt", "claude")):
+            raise EvidenceDenied("ambiguous_allocation_snapshot")
+        seen_keys.add(key)
+        seen_slots.add(global_slot)
+        identity.append((key, global_slot, queue_id, provider))
+    return tuple(sorted(identity))
+
+
+def _live_snapshots():
+    # API endpoints are separately read, not an atomic SQLite snapshot. Bracket
+    # the telemetry read and deny observed reassignment instead of false-green.
+    before = _fetch("/api/runner-targets")
+    middle = _fetch("/api/worker-debug")
+    after = _fetch("/api/runner-targets")
+    if _allocation_fingerprint(before) != _allocation_fingerprint(after):
+        raise EvidenceDenied("allocation_changed_during_observation")
+    return after, middle
 
 
 def _instant(value):
@@ -225,8 +290,7 @@ def main(argv=None):
             targets = _load(file_bytes(args.targets_file))
             debug = _load(file_bytes(args.debug_file))
         else:
-            targets = _fetch("/api/runner-targets")
-            debug = _fetch("/api/worker-debug")
+            targets, debug = _live_snapshots()
         result = classify(targets, debug)
     except (EvidenceDenied, OSError) as exc:
         reason = str(exc) if isinstance(exc, EvidenceDenied) else "fixture_unavailable"
