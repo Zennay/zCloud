@@ -140,7 +140,10 @@ def classify(payload, now, stale_seconds=180):
             else:
                 target_profiles['other'] += 1
             group_id, group_name = job.get('runner_group_id'), job.get('runner_group_name')
-            if group_id is not None and (type(group_id) is not int or group_id <= 0):
+            # GitHub's actual Actions job payload uses runner_group_id=0 and
+            # runner_group_name="" for an unassigned/no-group job. This is a
+            # valid sentinel, NOT a positive runner-group entitlement.
+            if group_id is not None and (type(group_id) is not int or group_id < 0):
                 raise EvidenceError('invalid_runner_group')
             if group_name is not None and (not isinstance(group_name, str) or len(group_name) > 80):
                 raise EvidenceError('invalid_runner_group')
