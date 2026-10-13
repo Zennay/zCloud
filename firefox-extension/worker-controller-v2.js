@@ -8,17 +8,20 @@
   const TAG = "zcloud-v2-worker-key";
   const KNOWN_KEY = "zcloud-v2-known-worker-ids";
   const TICK_MS = 30000;
+  const STALE_POLL_MS = 4 * 60 * 1000;
+  const RELOAD_COOLDOWN_MS = 10 * 60 * 1000;
   const ownership = new Map(); // worker key -> tab ID (same tab across chats)
   const candidateRemovals = new Map();
   const closeCooldown = new Map();
+  const stalePollObservations = new Map();
+  const reloadCooldown = new Map();
   let workerWindow = null;
   let busy = false;
   let lastSnapshot = null;
   let knownWorkers = new Set();
   let knownLoaded = false;
   const recoveryObservations = new Map();
-  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
+ 
   function isWorkerUrl(url) {
     try { return new URL(url).hostname === "chatgpt.com"; } catch (_) { return false; }
   }
@@ -87,9 +90,15 @@
   async function recoverOwnership() {
     const tabs = await browser.tabs.query({});
     const liveIds = new Set(tabs.map(t => t.id));
-    for (const [id, tabId] of ownership) if (!liveIds.has(tabId)) {
-      ownership.delete(id);
-      closeCooldown.set(id, Date.now() + 30000);
+    for (const [id, tabId] of ownership) {
+      const tab = tabs.find(t => t.id === tabId);
+      if (!liveIds.has(tabId) || (tab && !isWorkerUrl(tab.url))) {
+        // An owned tab was closed or navigated away. The latter is now a
+        // personal tab: never navigate/remove it to reclaim the slot.
+        ownership.delete(id);
+        stalePollObservations.delete(id);
+        closeCooldown.set(id, Date.now() + 30000);
+      }
     }
     const claimed = new Set(ownership.values());
     for (const tab of tabs) {
@@ -142,52 +151,59 @@
       const tabs = await recoverOwnership();
       const desired = new Map(Object.values(payload.projects).filter(assigned).map(t => [t.project_id,t]));
       const windowId = await chooseWindow(tabs);
-      // Never start additional workers while any existing tagged worker is
-      // still running the old Violentmonkey script. The previous v1 script
-      // could send prompts in Medium and restart chats on stale commands.
-      // A cold empty window may bootstrap ONE tab, then prove the installed
-      // v2 script before provisioning the next one.
-      // If this profile already contains unbound ChatGPT tabs, assume they
-      // may be legacy workers or an expert. Never provision a duplicate
-      // until identity is proven. A genuinely empty profile can bootstrap.
-      const unclaimedChatTabs=tabs.some(t=>isWorkerUrl(t.url) &&
-        ![...ownership.values()].includes(t.id));
-      let canProvision=ownership.size>0||!unclaimedChatTabs,
-          bootstrapped=ownership.size===0;
-      // Firefox may restore only a personal ChatGPT tab or its session
-      // restore prompt after a crash. A previously recorded worker slot can
-      // be re-created after two complete matching backend snapshots, even
-      // when an unrelated ChatGPT tab exists. Unknown slots are STILL blocked
-      // in this ambiguous state, so an expert tab is never commandeered.
-      for(const key of desired.keys()){
-        if(ownership.has(key)){recoveryObservations.delete(key);continue}
-        recoveryObservations.set(key,(recoveryObservations.get(key)||0)+1);
+      // The authenticated local backend is the authority for active worker
+      // identities. A restored personal/expert ChatGPT tab must not block
+      // creation of an unrelated, missing worker tab. Conversely, we NEVER
+      // adopt an untagged ChatGPT tab by its position or conversation URL.
+      for (const key of desired.keys()) {
+        if (ownership.has(key)) { recoveryObservations.delete(key); continue; }
+        recoveryObservations.set(key, (recoveryObservations.get(key) || 0) + 1);
       }
-      for(const [key,tabId] of ownership){
-        try{
-          const result=await browser.tabs.executeScript(tabId,{
-            code:'document.documentElement?.getAttribute("data-zcloud-violentmonkey-ready") || ""'
-          });
-          if(!Array.isArray(result)||String(result[0]||"")!=="2.0.0"){
-            canProvision=false;
-            await note("v2-provision-deferred",key,"old-or-unverified-monkeyscript");
-          }
-        }catch(_){
-          canProvision=false;
-          await note("v2-provision-deferred",key,"script-version-not-readable");
-        }
-      }
-      // Workers are never moved between tabs. Existing tabs are preferred.
       for (const [key, target] of desired) {
         candidateRemovals.delete(key);
-        // Don't wait forever for Firefox's own session restore: after two
-        // complete snapshots, reconstruct ONLY exact, persisted worker IDs.
-        const trustedCrashSlot=knownWorkers.has(key) &&
-          Number(recoveryObservations.get(key)||0)>=2;
-        if(!ownership.has(key) && (canProvision || (trustedCrashSlot && !ownership.size))){
-          await createWorkerTab(key,target,windowId);
-          if(bootstrapped)canProvision=false; // one cold-start tab per check
+        // Paused workers don't generate and must NOT be recreated. Existing
+        // paused tabs remain untouched if Firefox happened to restore them.
+        if (target.desired_state === "paused" || target.active !== true) continue;
+        // Wait for two valid backend snapshots to allow Firefox sessionstore
+        // to finish restoring tabs. Then create exactly the missing slot.
+        // The v2 in-page runner alone decides whether a prompt is permitted.
+        if (!ownership.has(key) && Number(recoveryObservations.get(key) || 0) >= 2)
+          await createWorkerTab(key, target, windowId);
+      }
+      // Detect a *stalled running worker*, not an inactive browser tab.
+      // Background/minimized tabs are healthy when their v2 poll timestamp
+      // advances. Reload ONLY a verified idle, identity-matched tab after
+      // two stale observations; never close or duplicate a generating tab.
+      for (const [key, tabId] of ownership) {
+        const target = desired.get(key);
+        if (!target || !target.active || target.desired_state === "paused" ||
+            target.desired_state === "draining") {
+          stalePollObservations.delete(key);
+          continue;
         }
+        let probe = null;
+        try {
+          const [result] = await browser.tabs.executeScript(tabId, {code:"(() => { const e=document.documentElement; const b=document.querySelector('button[data-testid=\"stop-button\"],button[aria-label=\"Stop generating\"],button[aria-label=\"Stop response\"]'); const d=document.querySelector('#prompt-textarea,[contenteditable=\"true\"][role=\"textbox\"],textarea'); return {version:e?.getAttribute(\"data-zcloud-violentmonkey-ready\")||\"\",owner:e?.getAttribute(\"data-zcloud-v2-owner\")||\"\",lastPoll:Number(e?.getAttribute(\"data-zcloud-v2-last-poll\")||0),generating:!!b,draft:!!String(d?.value||d?.innerText||d?.textContent||\"\").trim()}; })()"});
+          probe = result;
+        } catch (_) { /* A loading/unresponsive tab is not proven idle. */ }
+        if (!probe || probe.version !== "2.0.0" || probe.owner !== key ||
+            !Number.isFinite(probe.lastPoll) || probe.lastPoll <= 0 ||
+            Date.now() - probe.lastPoll < STALE_POLL_MS ||
+            probe.generating || probe.draft) {
+          stalePollObservations.delete(key);
+          continue;
+        }
+        const observations = (stalePollObservations.get(key) || 0) + 1;
+        stalePollObservations.set(key, observations);
+        if (observations < 2 || Date.now() < Number(reloadCooldown.get(key) || 0)) continue;
+        const tab = await browser.tabs.get(tabId).catch(() => null);
+        if (!tab || await tagOf(tab) !== key || !isWorkerUrl(tab.url)) continue;
+        // browser.tabs.reload does not activate/focus the tab or create a new
+        // Firefox window. No active generation or composer draft is discarded.
+        await browser.tabs.reload(tabId);
+        reloadCooldown.set(key, Date.now() + RELOAD_COOLDOWN_MS);
+        stalePollObservations.delete(key);
+        await note("stalled-idle-worker-reloaded", key, "v2-poll-stale-and-generation-idle");
       }
       // Missing configuration alone is NOT deletion. Require three complete
       // snapshots plus the latest durable dashboard worker-count reduction,
@@ -267,6 +283,7 @@
     for (const [id, ownedTab] of ownership)
       if (ownedTab === tabId) {
         ownership.delete(id);
+        stalePollObservations.delete(id);
         closeCooldown.set(id, Date.now() + 30000);
       }
   });

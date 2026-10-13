@@ -165,6 +165,10 @@
   }
   async function poll(){
     if(inflight)return;inflight=true;
+    // This is a liveness signal for the Firefox controller; independent of
+    // the selected tab or an ongoing assignment. A paused worker may report
+    // liveness, but it is NEVER reloaded while its assignment is paused.
+    document.documentElement?.setAttribute("data-zcloud-v2-last-poll",String(Date.now()));
     try{
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
