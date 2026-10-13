@@ -16,7 +16,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MAX_BYTES = 65536
@@ -129,7 +129,10 @@ def _target_binding(targets, key, item):
         raise EvidenceDenied("target_queue_claim_mismatch")
     if queue_id is not None and queue_id != item["queue_id"]:
         raise EvidenceDenied("target_queue_claim_mismatch")
-    return (active, ready, desired, queue_id)
+    claimed_at = queue.get("claimed_at") if isinstance(queue, dict) else None
+    if ready:
+        _instant(claimed_at)
+    return (active, ready, desired, queue_id, claimed_at)
 
 
 def _allocation_fingerprint(targets):
@@ -255,7 +258,7 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         provider = item.get("provider", "chatgpt")
         if provider not in ("chatgpt", "claude"):
             raise EvidenceDenied("unknown_provider")
-        target_active, assignment_ready, desired_state, _ = _target_binding(targets, key, item)
+        target_active, assignment_ready, desired_state, _, claimed_at = _target_binding(targets, key, item)
         if provider == "claude":
             findings.append({"worker": key, "state": "other_provider", "generation_evidence": False})
             continue
@@ -289,7 +292,17 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
             if last_event not in ("heartbeat", "generation-started", "generation-progress"):
                 state = "untrusted_generation_event"
             else:
-                state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
+                claim_time = _instant(claimed_at)
+                if claim_time > timestamp + timedelta(seconds=10):
+                    raise EvidenceDenied("future_target_claim")
+                # The backend rounds age to whole seconds. Its reconstructed
+                # event time is an optimistic upper bound (up to ~1s too new);
+                # reject when even that estimate predates the current claim.
+                event_upper_bound = timestamp - timedelta(seconds=telemetry_age)
+                if event_upper_bound < claim_time:
+                    state = "generation_predates_claim"
+                else:
+                    state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
         elif verdict == "prompt-sent":
             _age(row.get("last_prompt_age_s"))
             state = "prompt_sent_without_generation"
