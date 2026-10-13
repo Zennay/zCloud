@@ -273,20 +273,20 @@ def classify(targets, debug, *, at=None, max_age_seconds=120, require_progress=F
         target_active, assignment_ready, desired_state, _, claimed_at, expires_at = _target_binding(targets, key, item)
         if provider == "claude":
             findings.append({"worker": key, "state": "other_provider", "generation_evidence": False,
-                             "progress_evidence": False})
+                             "progress_evidence": False, "progress_state": "not_applicable"})
             continue
         if not target_active or desired_state != "running":
             findings.append({"worker": key, "state": "inactive_target", "generation_evidence": False,
-                             "progress_evidence": False})
+                             "progress_evidence": False, "progress_state": "not_generating"})
             continue
         if not assignment_ready:
             findings.append({"worker": key, "state": "assignment_unready", "generation_evidence": False,
-                             "progress_evidence": False})
+                             "progress_evidence": False, "progress_state": "not_generating"})
             continue
         row = by_key.get(key)
         if row is None:
             findings.append({"worker": key, "state": "missing_worker_telemetry", "generation_evidence": False,
-                             "progress_evidence": False})
+                             "progress_evidence": False, "progress_state": "not_generating"})
             continue
         if row.get("project") != project or type(row.get("slot")) is not int or row["slot"] != int(slot):
             raise EvidenceDenied("debug_identity_mismatch")
@@ -339,15 +339,29 @@ def classify(targets, debug, *, at=None, max_age_seconds=120, require_progress=F
             row.get("last_event") == "generation-progress" and
             telemetry_age <= MAX_PROGRESS_AGE_SECONDS
         )
+        if progressing:
+            progress_state = "recent_text_change"
+        elif generating and row.get("last_event") == "generation-progress":
+            progress_state = "progress_stale"
+        elif generating and row.get("last_event") == "generation-started":
+            progress_state = "generation_started_no_text"
+        elif generating:
+            progress_state = "heartbeat_only"
+        else:
+            progress_state = "not_generating"
         findings.append({
             "worker": key,
             "state": state,
             "generation_evidence": generating,
             "progress_evidence": progressing,
+            "progress_state": progress_state,
         })
     counts = {}
     for row in findings:
         counts[row["state"]] = counts.get(row["state"], 0) + 1
+    progress_counts = {}
+    for finding in findings:
+        progress_counts[finding["progress_state"]] = progress_counts.get(finding["progress_state"], 0) + 1
     chatgpt = [x for x in findings if x["state"] != "other_provider"]
     return {
         "schema": "zcloud-worker-generation-evidence-v1",
@@ -360,6 +374,7 @@ def classify(targets, debug, *, at=None, max_age_seconds=120, require_progress=F
         "all_allocated_chatgpt_progressing": bool(chatgpt) and all(x["progress_evidence"] for x in chatgpt),
         "allocated_count": len(findings),
         "counts": counts,
+        "progress_counts": progress_counts,
         "workers": findings,
     }
 
