@@ -137,7 +137,7 @@ def read_roster(db: Path) -> dict:
     try:
         conn.execute("PRAGMA query_only=ON")
         conn.execute("BEGIN")
-        if not {"slot", "project_id", "worker_slot"}.issubset(
+        if not {"slot", "project_id", "worker_slot", "assigned_at"}.issubset(
             _table_columns(conn, "ai_global_slots")
         ):
             raise InvalidEvidence("unsupported ai_global_slots schema")
@@ -146,7 +146,7 @@ def read_roster(db: Path) -> dict:
         ):
             raise InvalidEvidence("unsupported runner_workers schema")
         slots = [dict(r) for r in conn.execute(
-            "SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot"
+            "SELECT slot,project_id,worker_slot,assigned_at FROM ai_global_slots ORDER BY slot"
         )]
         targets = [dict(r) for r in conn.execute(
             "SELECT project_id,worker_slot,desired_state FROM runner_workers "
@@ -160,7 +160,7 @@ def read_roster(db: Path) -> dict:
         # Read all relevant queue owners within the same transaction to detect
         # conflicting simultaneous claims of a single global worker slot.
         queue_rows = [dict(r) for r in conn.execute(
-            "SELECT project_id,worker_slot,claim_expires FROM portfolio_queue "
+            "SELECT queue_id,project_id,worker_slot,claim_expires,updated_at FROM portfolio_queue "
             "WHERE worker_slot IS NOT NULL AND status IN ('claimed','running','verifying') "
             "ORDER BY updated_at DESC LIMIT 1025"
         )]
@@ -176,7 +176,7 @@ def read_roster(db: Path) -> dict:
         ):
             raise InvalidEvidence("unsupported runner_commands schema")
         pending = [dict(r) for r in conn.execute(
-            "SELECT project_id,action,created_at FROM runner_commands "
+            "SELECT id,project_id,action,created_at FROM runner_commands "
             "WHERE status='pending' AND project_id LIKE '%::w%' "
             "AND action IN ('start','push','force_start','new_chat') "
             "ORDER BY id DESC LIMIT 1025"
@@ -193,6 +193,8 @@ def read_roster(db: Path) -> dict:
         key = (_project(row["project_id"]), _positive_int(row["worker_slot"], "worker slot"))
         if slot in seen_slots or key in seen_keys:
             raise InvalidEvidence("duplicate global slot or allocation")
+        if not isinstance(row["assigned_at"], str) or len(row["assigned_at"]) > 64:
+            raise InvalidEvidence("invalid global slot assignment watermark")
         seen_slots.add(slot)
         seen_keys.add(key)
     target_map = {}
@@ -218,12 +220,18 @@ def read_roster(db: Path) -> dict:
         count = _positive_int(row["worker_count"], "target worker count")
         project_targets[project] = {"active": bool(row["active"]), "worker_count": count}
     for row in queue_rows:
+        if not isinstance(row["queue_id"], str) or not row["queue_id"] or len(row["queue_id"]) > 160:
+            raise InvalidEvidence("invalid queue claim identity")
+        if not isinstance(row["updated_at"], str) or len(row["updated_at"]) > 64:
+            raise InvalidEvidence("invalid queue claim watermark")
         _project(row["project_id"])
         _positive_int(row["worker_slot"], "queue global slot")
         until = row["claim_expires"]
         if until is not None and (not isinstance(until, str) or len(until) > 64):
             raise InvalidEvidence("invalid queue claim deadline")
     for item in pending:
+        if type(item["id"]) is not int or item["id"] <= 0:
+            raise InvalidEvidence("invalid pending command sequence")
         key = item["project_id"]
         if not isinstance(key, str) or len(key) > 180 or "::w" not in key:
             raise InvalidEvidence("invalid pending command worker key")
