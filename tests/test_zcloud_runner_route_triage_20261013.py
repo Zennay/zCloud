@@ -186,6 +186,20 @@ class TestRunnerRoute(unittest.TestCase):
     def test_missing_runner(self):
         x=fixture(); del x['runners']
         with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_stale_queued_run_without_jobs_is_not_green(self):
+        x=fixture()
+        x['jobs_by_run']['123']=[]
+        with self.assertRaisesRegex(t.EvidenceError,'stale_queued_run_without_job_evidence'):
+            self.classify(x)
+
+    def test_fresh_empty_run_does_not_claim_runner_failure(self):
+        x=fixture()
+        x['queued_runs'][0]['created_at']=NOW.isoformat()
+        x['jobs_by_run']['123']=[]
+        result=self.classify(x)
+        self.assertEqual(result['classification'],'no_stale_unassigned_jobs')
+        self.assertFalse(result['generation_verified'])
+
     def test_missing_jobs(self):
         x=fixture(); x['jobs_by_run']={}
         with self.assertRaises(t.EvidenceError): self.classify(x)
