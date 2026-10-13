@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 import re
 import sys
 
@@ -40,6 +41,43 @@ def _no_constant(_):
     raise UntrustedLog("nonfinite_json")
 
 
+def _validated_marker_payload(raw: str) -> object:
+    """Deny ambiguous JSON throughout the receipt, including ignored extras."""
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise UntrustedLog("nonfinite_json")
+        return number
+
+    try:
+        value = json.loads(raw, object_pairs_hook=_no_duplicates,
+                           parse_constant=_no_constant, parse_float=finite_float)
+    except (ValueError, OverflowError, RecursionError) as exc:
+        if isinstance(exc, UntrustedLog):
+            raise
+        raise UntrustedLog("invalid_blocker_json") from exc
+
+    remaining = [4096]
+    def scan(item: object, depth: int = 0) -> None:
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > 24:
+            raise UntrustedLog("invalid_blocker_structure")
+        if type(item) is str:
+            if any(0xD800 <= ord(character) <= 0xDFFF for character in item):
+                raise UntrustedLog("invalid_unicode")
+        elif type(item) is dict:
+            for key, nested in item.items():
+                scan(key, depth + 1)
+                scan(nested, depth + 1)
+        elif type(item) is list:
+            for nested in item:
+                scan(nested, depth + 1)
+        elif type(item) is float and not math.isfinite(item):
+            raise UntrustedLog("nonfinite_json")
+    scan(value)
+    return value
+
+
 def classify(text: str, now: datetime | None = None) -> dict:
     if type(text) is not str or len(text.encode("utf-8", errors="replace")) > MAX_LOG_BYTES:
         raise UntrustedLog("invalid_log_size")
@@ -62,11 +100,7 @@ def classify(text: str, now: datetime | None = None) -> dict:
     fresh_for_triage = marker_age_seconds <= 900
     if len(payload.encode("utf-8")) > MAX_MARKER_BYTES:
         raise UntrustedLog("oversized_marker")
-    try:
-        rows = json.loads(payload, object_pairs_hook=_no_duplicates,
-                          parse_constant=_no_constant)
-    except (json.JSONDecodeError, UnicodeError, RecursionError) as exc:
-        raise UntrustedLog("invalid_blocker_json") from exc
+    rows = _validated_marker_payload(payload)
     if type(rows) is not list or not 1 <= len(rows) <= 32:
         raise UntrustedLog("invalid_blocker_count")
     categories = {"generating_after_acknowledged_drain": 0,
@@ -86,11 +120,13 @@ def classify(text: str, now: datetime | None = None) -> dict:
         if row["generating"] is False and row["sending"] is False:
             raise UntrustedLog("idle_worker_claimed_as_blocker")
         desired = row.get("desired_state")
-        if desired is not None and desired not in {"running", "draining", "paused", "stopped"}:
+        if desired is not None and (type(desired) is not str or
+                                    desired not in {"running", "draining", "paused", "stopped"}):
             raise UntrustedLog("invalid_desired_state")
         status = row.get("drain_command_status")
-        if status is not None and status not in {"pending", "completed", "failed",
-                                                   "skipped", "running", "cancelled"}:
+        if status is not None and (type(status) is not str or
+                                   status not in {"pending", "completed", "failed",
+                                                  "skipped", "running", "cancelled"}):
             raise UntrustedLog("invalid_drain_status")
         age = row.get("last_event_age_seconds")
         if age is not None and (type(age) not in (int, float) or not 0 <= age <= 3600):
@@ -144,7 +180,7 @@ def main() -> int:
             "idle_worker_claimed_as_blocker", "invalid_desired_state",
             "invalid_drain_status", "invalid_event_age", "unknown_event_type",
             "invalid_command_id", "invalid_log_timestamp", "future_log_timestamp",
-            "invalid_observation_clock"
+            "invalid_observation_clock", "invalid_unicode", "invalid_blocker_structure"
         } else "invalid_log"
         print(json.dumps({"schema": "zcloud-safe-idle-blocker-evidence-v1",
                           "error": public, "authorizes_mutation": False,

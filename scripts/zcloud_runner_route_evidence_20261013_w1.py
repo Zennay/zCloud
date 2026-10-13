@@ -140,7 +140,7 @@ def classify_job(job: dict, now: datetime) -> dict:
     if type(job) is not dict or type(job.get("id")) is not int or job["id"] <= 0:
         raise InvalidEvidence("invalid_job_identity")
     status = job.get("status")
-    if status not in ALLOWED_STATUS:
+    if type(status) is not str or status not in ALLOWED_STATUS:
         raise InvalidEvidence("invalid_job_status")
     labels = job.get("labels")
     if not isinstance(labels, list) or not all(type(x) is str and 0 < len(x) < 80 for x in labels):

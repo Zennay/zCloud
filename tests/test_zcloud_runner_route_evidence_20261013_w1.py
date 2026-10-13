@@ -37,6 +37,12 @@ def make_deploy_run(run_id=111, created="2026-10-13T21:35:00Z"):
 
 
 class RunnerRouteEvidenceTests(unittest.TestCase):
+    def test_unhashable_status_evidence_fails_closed(self):
+        for bad in ([], {}, {"value": "completed"}, True, 1, None):
+            with self.subTest(value=bad):
+                with self.assertRaisesRegex(route.InvalidEvidence, "invalid_job_status"):
+                    route.classify_job(make_job(status=bad), NOW)
+
     def test_unassigned_queue_is_not_false_green(self):
         data = route.classify_run(1, [make_job()], NOW)
         self.assertEqual(data["lanes"]["zcloud_vps"]["unassigned_count"], 1)

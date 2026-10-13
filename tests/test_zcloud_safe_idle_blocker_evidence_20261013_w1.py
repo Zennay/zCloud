@@ -32,6 +32,32 @@ def log(*rows):
 
 
 class SafeIdleEvidenceTests(unittest.TestCase):
+    def test_unhashable_drain_and_desired_states_are_safely_denied(self):
+        for value in ({}, [], {"fake": "completed"}, True, 2):
+            for attribute, reason in (("desired_state", "invalid_desired_state"),
+                                      ("drain_command_status", "invalid_drain_status")):
+                with self.subTest(value=value, attribute=attribute):
+                    sample = row()
+                    sample[attribute] = value
+                    with self.assertRaisesRegex(evidence.UntrustedLog, reason):
+                        evidence.classify(log(sample))
+
+    def test_nonfinite_or_surrogate_data_in_ignored_fields_denied(self):
+        samples = [
+            '{"worker_id":"supa::w1","ignored":1e999}',
+            '{"worker_id":"supa::w1","ignored":"\\\\ud800"}',
+            '{"worker_id":"supa::w1","ignored":{"x":NaN}}',
+        ]
+        for raw in samples:
+            with self.subTest(raw=raw):
+                with self.assertRaises(evidence.UntrustedLog):
+                    evidence._validated_marker_payload("[" + raw + "]")
+
+    def test_deep_nested_untrusted_extras_are_bounded(self):
+        raw = '{"worker_id":"supa::w1","opaque":' + "[" * 35 + "0" + "]" * 35 + "}"
+        with self.assertRaisesRegex(evidence.UntrustedLog, "invalid_blocker_structure"):
+            evidence._validated_marker_payload("[" + raw + "]")
+
     def test_completed_drain_but_generation_active_is_not_success(self):
         result = evidence.classify(log(row(), row("supa::w2"), row("zguard::w1")))
         self.assertEqual(result["blocker_count"], 3)
