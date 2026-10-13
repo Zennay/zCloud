@@ -11,11 +11,11 @@ const target={
  queue_item:{queue_id:"qid"},desired_state:"running",
  prompt:"Werk verder aan Supa. Kijk in Notion in welke fase het project zit, werk verder."
 };
-function harness({age=0,failure=false,high=true}={}){
+function harness({age=0,failure=false,high=true,initialAssistant="",initialAssistantCount=0}={}){
  const state=new Map();
  if(age)state.set("zcloud-v2-chat-at",String(Date.now()-age));
  const sent=[],statuses=[],chatClicks=[];
- let generating=false,assistantText="",assistantMessages=0;
+ let generating=false,assistantText=initialAssistant,assistantMessages=initialAssistantCount;
  const element=(name)=>({tagName:"BUTTON",disabled:false,
   getAttribute:k=>k==="aria-label"?name:null,
   getBoundingClientRect:()=>({width:20,height:20}),
@@ -74,9 +74,12 @@ function harness({age=0,failure=false,high=true}={}){
  worker.setGenerating(false);worker.setAssistant("Result of the work");await worker.tick();
  assert.equal(worker.sent.length,2,"completed response sends next canonical prompt");
  assert.ok(worker.statuses.filter(x=>x.event==="prompt-sent").every(x=>x.thinkingEffort==="high"));
- const identical=harness();await wait(40);
+ const identical=harness({initialAssistant:"Unchanged answer text",initialAssistantCount:1});await wait(40);
+ assert.equal(identical.sent.length,1);
  identical.setAssistant("Unchanged answer text",1);await identical.tick();
- assert.equal(identical.sent.length,2,"a newly rendered assistant message completes generation even with unchanged previous reply text");
+ assert.equal(identical.sent.length,1,"unchanged older assistant node must not trigger a duplicate");
+ identical.setAssistant("Unchanged answer text",2);await identical.tick();
+ assert.equal(identical.sent.length,2,"a new assistant message completes generation even with unchanged previous reply text");
  const broken=harness({failure:true});await wait(40);
  assert.equal(broken.chatClicks.length,1,"failed conversation uses in-page New chat control");
  assert.equal(broken.sent.length,0,"recovery does not send while clicking New chat");
