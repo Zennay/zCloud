@@ -548,7 +548,7 @@ class GenerationEvidenceTests(unittest.TestCase):
                     self.assertEqual(code, outcome.exception.code)
                 args, kw = invoked.call_args
                 self.assertEqual(
-                    [subject.sys.executable, "scripts/zcloud_worker_generation_evidence_20261013_w1.py"],
+                    [subject.sys.executable, "scripts/zcloud_worker_generation_evidence_20261013_w1.py", "--require-progress"],
                     args[0],
                 )
                 self.assertIs(kw["stdin"], subprocess.DEVNULL)
