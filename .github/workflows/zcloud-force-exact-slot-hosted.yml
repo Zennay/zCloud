@@ -1,0 +1,34 @@
+name: zCloud Force exact-slot hosted regression
+on:
+  pull_request:
+    paths:
+      - server.py
+      - project-contracts.json
+      - public/app.js
+      - public/zcloud-worker-v2-engine.js
+      - public/zcloud-worker.user.js
+      - firefox-extension/worker-controller-v2.js
+      - tests/test_portfolio_queue_backend.py
+      - tests/test_global_worker_console_ui.py
+      - .github/workflows/zcloud-force-exact-slot-hosted.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check syntax and screenshot regression end to end
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py project_runtime.py lane_generator.py
+          node --check public/app.js
+          node --check firefox-extension/worker-controller-v2.js
+          node --check public/zcloud-worker-v2-engine.js
+          node --check public/zcloud-worker.user.js
+          python3 -m unittest -v tests.test_global_worker_console_ui tests.test_portfolio_queue_backend
+          node tests/test_single_tab_worker_v2.js
+          echo FORCE_EXACT_SLOT_HOSTED_REGRESSION=PASS

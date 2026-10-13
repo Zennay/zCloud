@@ -161,7 +161,7 @@
     "lightup": {
       "queue_mode": "execution",
       "lane_profile": "security-lab",
-      "ai_worker_cap": 1,
+      "ai_worker_cap": 2,
       "autonomy": {
         "mode": "ai_worker",
         "auto_start": true
