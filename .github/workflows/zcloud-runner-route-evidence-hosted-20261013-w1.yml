@@ -80,12 +80,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/zcloud_runner_route_evidence_20261013_w1.py \
-            --run-id 38417582567 --run-id 38417793892 --run-id 38417002886 > route-receipt.json
+            --run-id 38417582567 --run-id 38417793892 --run-id 38417002886 \
+            --run-id 38473312856 > route-receipt.json
           python3 - <<'PY'
           import json
           data = json.load(open("route-receipt.json", encoding="utf-8"))
           assert data["authorizes_mutation"] is False
-          assert len(data["runs"]) == 3
+          assert len(data["runs"]) == 4
           by_id = {item["run_id"]: item for item in data["runs"]}
           # Past assigned jobs prove the canonical runner route worked at the
           # recorded timestamps, not that production deployment succeeded.
@@ -98,6 +99,12 @@ jobs:
           assert by_id[38417793892]["lanes"]["zcloud_vps"]["assigned_count"] >= 1
           assert by_id[38417793892]["lanes"]["zcloud_vps"]["canonical_vps_assigned_count"] >= 1
           assert by_id[38417002886]["lanes"]["ftmo_research"]["job_count"] >= 1
+          # A real GH skipped job with matching labels was NEVER dispatched.
+          skipped = by_id[38473312856]["lanes"]["zcloud_vps"]
+          assert skipped["job_count"] == 2
+          assert skipped["not_dispatched_count"] == 2
+          assert skipped["unassigned_count"] == 0
+          assert skipped["canonical_vps_assigned_count"] == 0
           print("Historical runner route evidence: PASS; no release authority")
           PY
       - name: Sample the latest two canonical main deploy routes (non-authorizing)
@@ -141,8 +148,8 @@ jobs:
               "",
               "No VPS workers, services or databases were changed by this check.",
               "",
-              "| Main deployment | VPS runner assigned | Canonical zcloud-vps-1 | Unexpected target | Still unassigned | Failed job | Known failure class |",
-              "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
+              "| Main deployment | VPS runner assigned | Canonical zcloud-vps-1 | Unexpected target | Queued, no runner | Waiting / approval | Skipped | Unknown identity | Failed job | Known failure class |",
+              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
           ]
           allowed = {
               "browser_safe_idle", "runtime_promotion", "self_heal_rearm",
@@ -154,11 +161,15 @@ jobs:
               lane = run["lanes"]["zcloud_vps"]
               phases = lane["failure_phases"]
               keys = sorted(k if k in allowed else "unclassified" for k in phases)
-              lines.append("| %s | %s | %s | %s | %s | %s | %s |" %
+              lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" %
                            (run["run_id"], lane["assigned_count"],
                             lane["canonical_vps_assigned_count"],
                             lane["unexpected_vps_assigned_count"],
-                            lane["unassigned_count"], lane["failed_jobs"],
+                            lane["unassigned_count"],
+                            lane["not_yet_scheduled_count"],
+                            lane["not_dispatched_count"],
+                            lane["unproven_runner_count"],
+                            lane["failed_jobs"],
                             ", ".join(keys) or "none reported"))
           lines.extend(["", "Safety: source validated, production still unverified.",
                         "Browser heartbeats and synthetic log fixtures do not prove real text progress."])
