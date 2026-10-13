@@ -91,6 +91,10 @@ class DashboardProbeTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(probe.probe_once(Opener(Response(raw=raw))), "invalid_json")
 
+    def test_reject_float_exponent_overflow_in_ignored_fields(self):
+        raw = b'{"time":"2026-10-13T22:41:00Z","projects":[1e999]}'
+        self.assertEqual(probe.probe_once(Opener(Response(raw=raw))), "invalid_json")
+
     def test_nested_surrogate_and_depth_rejected(self):
         raw = b'{"time":"2026-10-13T22:41:00Z","projects":["\\ud800"]}'
         self.assertEqual(probe.probe_once(Opener(Response(raw=raw))), "invalid_json")
