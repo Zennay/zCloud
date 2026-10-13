@@ -34,7 +34,7 @@
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
-  let promptAt=0,awaitingAt=0,baseline="",next=false,lastBlock="",lastCommand=0;
+  let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
   let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
   let chatAt=Number(sessionStorage.getItem("zcloud-v2-chat-at")||0);
   if(!chatAt||chatAt>Date.now())chatAt=Date.now();
@@ -44,6 +44,7 @@
   const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]');
   const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
   const conversation=()=>location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i)?.[1]||"";
+  const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"]').length;
   function api(path,method="GET",body=null){
     return new Promise((resolve,reject)=>GM_xmlhttpRequest({
       method,url:API+path,timeout:9000,headers:body?{"Content-Type":"application/json"}:undefined,
@@ -151,7 +152,7 @@
       if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
         await blocked("send-button-unavailable");return false;
       }
-      baseline=reply();button.click();promptAt=Date.now();awaitingAt=promptAt;
+      baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
       await status("prompt-sent",{reason,thinkingEffort:"high"});
       return true;
@@ -206,7 +207,7 @@
       }
       const result=reply();
       if(awaiting){
-        if(everGenerating||(result&&result!==baseline)){
+        if(everGenerating||assistantCount()>baselineAssistantCount||(result&&result!==baseline)){
           awaiting=false;everGenerating=false;next=true;
           await status("generation-finished");
         }else if(Date.now()-awaitingAt<120000){return}
