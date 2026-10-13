@@ -82,6 +82,29 @@ class TestReceipt(unittest.TestCase):
         self.assertEqual(out['incompleteness_cause'], 'unclassified_missing_evidence')
         self.assertNotIn('SECRET_TEST', json.dumps(out))
 
+    def test_pinned_error_code_only(self):
+        x = {'classification': 'unknown_incomplete_evidence',
+             'reason': 'incomplete_run_jobs',
+             'recovery_authorized': False, 'queue_cancel_authorized': False,
+             'deploy_authorized': False}
+        got = self.parse(x, 2)
+        self.assertEqual(got['probe_error_code'], 'incomplete_run_jobs')
+
+    def test_error_code_never_echoes_raw_credentials(self):
+        x = {'classification': 'unknown_incomplete_evidence',
+             'reason': 'incomplete_run_jobs SECRET_TEST_TOKEN',
+             'recovery_authorized': False, 'queue_cancel_authorized': False,
+             'deploy_authorized': False}
+        got = self.parse(x, 2)
+        self.assertEqual(got['probe_error_code'], 'none')
+        self.assertNotIn('SECRET_TEST', json.dumps(got))
+
+    def test_success_cannot_bring_probe_error_claim(self):
+        x = item('no_stale_unassigned_jobs', 0, 0)
+        x['reason'] = 'api_unavailable_or_permission_denied'
+        got = self.parse(x, 0)
+        self.assertEqual(got['probe_error_code'], 'none')
+
     def test_denies_mutation_authority(self):
         for k in r.DENIED:
             x = item()
