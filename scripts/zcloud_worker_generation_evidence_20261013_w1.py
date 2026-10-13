@@ -69,7 +69,10 @@ def _load(raw):
         elif isinstance(value, list):
             for child in value:
                 validate(child)
-    validate(payload)
+    try:
+        validate(payload)
+    except RecursionError as exc:
+        raise EvidenceDenied("malformed_json") from exc
     return payload
 
 
