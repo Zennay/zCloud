@@ -44,7 +44,12 @@ deployment or force-start approval.
   surrogate escapes, missing identities, non-boolean activity flags and
   inconsistent/missing schemas fail closed. The urllib opener explicitly disables
   process-environment HTTP proxies so local runner status cannot be relayed to
-  an unintended external HTTP_PROXY endpoint.
+  an unintended external HTTP_PROXY endpoint. For real HTTP observations,
+  `/api/runner-live` must also carry a timezone-aware server `time` no
+  more than 30 seconds from the local host clock; stale/replayed, future,
+  missing, or naive timestamps return `unknown` instead of green. Explicit
+  `--runner-live-fixture` observations bypass the freshness gate because
+  fixture results are **offline**, not live-VPS evidence.
 - `active_worker_not_observed`: selected worker not in the observed roster.
   **Does not prove a Firefox tab is missing.** Check browser tabs and the
   extension-to-worker binding before creating a new tab.
