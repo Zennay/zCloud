@@ -42,3 +42,15 @@ python3 scripts/zcloud_recovery_github_evidence_20261013.py
 ```
 
 The observation CLI exits 0 only for NOOP/WAIT and exits 2 on DENY or unapproved READY; neither outcome authorizes deploy/restart/redispatch.
+
+## Shared idempotency alternative — GitHub create-only tag refs (13 October)
+
+New implementation: scripts/zcloud_recovery_git_ref_ledger_20261013.py and tests/test_zcloud_recovery_git_ref_ledger_20261013.py.
+
+This OFFLINE reference replaces the *conceptual* disposable SQLite claim with a **durable repository-scoped create-only Git reference plan** for an owner's evaluation. The GitHub REST Create a reference endpoint POST /repos/Zennay/zCloud/git/refs can point a lightweight tag to an existing main commit. A ref named refs/tags/zcloud-recovery-reserved-v1/regression/<exact-40-hex-main-sha> is deterministic across independently started GitHub-hosted runs; an attempted second create cannot create a second ref with the same name. **No actual Git ref has been created, read or deleted by this reference or its CI.**
+
+Source-only reservation_plan requires the pure classifier's READY_FOR_EXCLUSIVE_RESERVATION with authorized=false, canonical SHA, repository and fixed ref prefix. classify_create_result considers only HTTP 201 plus an exact matching ref, object type commit and SHA a valid *reservation recorded*; the result ALWAYS has authorized=false and dispatch_allowed=false. 409/422 are ambiguous errors (validation, uniqueness or spam), never duplicate-success. 401/403, redirects, 5xx, timeout or malformed 201 response never allow automatic retry. classify_existing_ref can report a matching pre-existing ref to an operator but cannot prove which request created it. Mock server concurrence verifies one winner among 64 requests, and a new commit SHA produces a new key; this does **not** prove server behavior or permission applicability on GitHub itself.
+
+Owner integration requirements: confirm repository rules/tag protection and GitHub API semantics under controlled approval, use **contents:write only in the specifically guarded owner workflow**, keep hosted probes contents/actions/statuses:read, pin exact current main and trusted event provenance, perform status/main revalidation before and after claim and prior to any privileged action; maintain policy distinguishing reservation from dispatch authorization. Never delete, force-update, overwrite or retag a reservation automatically. Branch/tag deletion or forced updates by privileged users are outside the proof boundary: protect the dedicated tag prefix or choose another managed durable store if needed. Do not claim GitHub ref creation has been exercised in production; integration remains behind PR #913 / #580 / #1089 / #1135. Git refs have retention/namespace cost and should be reviewed before adopting them as a production ledger.
+
+GitHub endpoint reference: https://docs.github.com/en/rest/git/refs#create-a-reference (requires Contents write; create returns 201 and may return 409/422). No code here issues a POST.
