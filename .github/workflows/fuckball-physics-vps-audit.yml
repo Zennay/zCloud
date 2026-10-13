@@ -10,13 +10,14 @@ permissions:
 
 jobs:
   audit:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 5
     steps:
       - name: Snapshot current live physics and Git recovery evidence
         shell: bash
         run: |
           set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
           out="$RUNNER_TEMP/fuckball-vps-evidence"
           mkdir -p "$out"
           if [ ! -d /opt/fuckball/.git ]; then
