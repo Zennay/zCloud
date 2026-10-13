@@ -320,9 +320,16 @@ def github_fetcher(token):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     try:
-        if len(argv) != 1:
-            raise InventoryDenied("expected_exact_main_sha")
-        evidence = collect(github_fetcher(os.environ.get("GITHUB_TOKEN", "")), argv[0])
+        if not argv or len(argv) > 401 or len(argv[1:]) % 2:
+            raise InventoryDenied("expected_exact_main_sha_and_optional_owned_paths")
+        path_args = argv[1:]
+        if any(path_args[i] != "--owned-path" for i in range(0, len(path_args), 2)):
+            raise InventoryDenied("invalid_owned_path_argument")
+        owned_paths = [path_args[i + 1] for i in range(0, len(path_args), 2)]
+        fetch = github_fetcher(os.environ.get("GITHUB_TOKEN", ""))
+        evidence = collect(fetch, argv[0])
+        if owned_paths:
+            evidence = compare_owned_paths(fetch, evidence, owned_paths)
         print(json.dumps(evidence, sort_keys=True, separators=(",", ":")))
         return 0
     except InventoryDenied as error:
