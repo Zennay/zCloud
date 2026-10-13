@@ -12,8 +12,10 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from html.parser import HTMLParser
 import re
 import subprocess
+from urllib.parse import urlsplit
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 STATIC_ALLOWLIST = frozenset((
@@ -165,6 +167,67 @@ SNAPSHOT_REQUIRED = (
 )
 
 
+
+class _IndexDependencyLinks(HTMLParser):
+    """Extract HTML references; never fetch or evaluate a referenced script."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.scripts: list[str] = []
+        self.styles: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in {"script", "link"}:
+            return
+        fields = {}
+        for key, value in attrs:
+            if key in fields:
+                raise PlanError("duplicate_index_attribute")
+            fields[key] = value
+        if tag == "script" and "src" in fields:
+            self.scripts.append(fields["src"] or "")
+        elif tag == "link" and "stylesheet" in (fields.get("rel") or "").lower().split():
+            self.styles.append(fields.get("href") or "")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+
+
+def index_bundle_versions(raw_html: bytes) -> dict[str, str]:
+    """Require unambiguous, cache-pinned app and cockpit CSS references.
+
+    Referenced versions are informational only; they cannot attest browser
+    cache state, runtime responses or successful production deployment.
+    """
+    parser = _IndexDependencyLinks()
+    try:
+        parser.feed(raw_html.decode("utf-8"))
+        parser.close()
+    except (ValueError, UnicodeError) as exc:
+        if isinstance(exc, PlanError):
+            raise
+        raise PlanError("malformed_index_asset_reference") from None
+    revisions: dict[str, str] = {}
+    for asset, urls in (
+        ("app.js", parser.scripts),
+        ("enhancements.css", parser.styles),
+    ):
+        possible = [
+            url for url in urls
+            if urlsplit(url).path.rsplit("/", 1)[-1] == asset
+        ]
+        if not possible:
+            raise PlanError("missing_index_asset_reference")
+        if len(possible) != 1:
+            raise PlanError("ambiguous_index_asset_reference")
+        value = possible[0]
+        match = re.fullmatch(r"/" + re.escape(asset) + r"\?v=([A-Za-z0-9][A-Za-z0-9._-]{0,31})", value)
+        if not match:
+            raise PlanError("untrusted_index_asset_reference")
+        revisions[asset] = match.group(1)
+    return revisions
+
+
 def snapshot(root: Path, revision: str) -> dict:
     """Inventory immutable Git tree bytes, NEVER read live or authorize publish.
 
@@ -178,6 +241,7 @@ def snapshot(root: Path, revision: str) -> dict:
         raise PlanError("revision_not_commit")
     result = []
     total = 0
+    index_html = None
     required = set(SNAPSHOT_REQUIRED)
     for path in sorted(STATIC_ALLOWLIST):
         blob = blob_at(root, revision, path)
@@ -199,14 +263,21 @@ def snapshot(root: Path, revision: str) -> dict:
         except UnicodeDecodeError:
             raise PlanError("non_utf8_static_asset") from None
         total += size
+        if path == "public/index.html":
+            index_html = raw
         result.append({
             "path": path,
             "git_blob_sha": blob,
             "sha256": hashlib.sha256(raw).hexdigest(),
             "bytes": size,
         })
+    if index_html is None:
+        raise PlanError("required_dashboard_asset_missing")
+    referenced_versions = index_bundle_versions(index_html)
     return {
         "schema": "zcloud-dashboard-git-snapshot-v1",
+        "index_asset_versions": referenced_versions,
+        "index_references_pinned": True,
         "source_revision_sha": revision,
         "source_bytes_only": True,
         "runtime_bytes_observed": False,
