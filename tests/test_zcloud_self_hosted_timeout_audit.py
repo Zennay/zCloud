@@ -114,6 +114,39 @@ jobs:
             [(row.path, row.job, row.status) for row in introduced],
         )
 
+    def test_runner_expression_is_not_silently_treated_as_hosted(self):
+        text = """jobs:
+  dynamic:
+    runs-on: \u0024{{ matrix.runner }}
+    timeout-minutes: 5
+  alias:
+    runs-on: *private_runner
+    timeout-minutes: 10
+  hosted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+  misleading:
+    runs-on: not-self-hosted
+    timeout-minutes: 99
+"""
+        rows = audit.inspect_workflow(".github/workflows/dynamic.yml", text, max_minutes=30)
+        self.assertEqual(["dynamic", "alias"], [row.job for row in rows])
+        self.assertTrue(all(row.status == "dynamic_runner_unknown" for row in rows))
+        self.assertEqual(2, audit.summarize(rows, max_minutes=30)["finding_count"])
+
+    def test_existing_over_limit_timeout_cannot_worsen(self):
+        path = ".github/workflows/old.yml"
+        before = [audit.TimeoutFinding(path, "slow", 35, "over_limit")]
+        worsened = [audit.TimeoutFinding(path, "slow", 60, "over_limit")]
+        removed = [audit.TimeoutFinding(path, "slow", None, "missing")]
+        improved = [audit.TimeoutFinding(path, "slow", 31, "over_limit")]
+        self.assertEqual(worsened, audit.new_debt(before, worsened))
+        self.assertEqual(removed, audit.new_debt(before, removed))
+        self.assertEqual([], audit.new_debt(before, improved))
+        self.assertEqual([], audit.new_debt(before, [
+            audit.TimeoutFinding(path, "slow", 30, "bounded")
+        ]))
+
     def test_scan_git_ref_reads_committed_workflow_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
