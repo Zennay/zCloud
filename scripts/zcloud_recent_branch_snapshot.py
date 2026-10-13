@@ -283,7 +283,8 @@ def collect_snapshot(
             ahead_by = compare["ahead_by"]
             behind_by = compare["behind_by"]
             merge_base_sha = _validate_sha(compare["merge_base_commit"]["sha"])
-            files_raw = compare.get("files", [])
+            # Missing compare paths must never be interpreted as zero changed files.
+            files_raw = compare["files"]
         except (KeyError, TypeError) as exc:
             raise CollectorError("compare_payload_invalid") from exc
         if (
