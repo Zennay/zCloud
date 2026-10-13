@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import zcloud_recent_branch_snapshot as collector
+import zcloud_recent_branch_ownership_audit as audit
 
 
 SHA = "a" * 40
@@ -146,6 +147,58 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
         target = next(b for b in snapshot["branches"] if b["name"] == "recent-unpr")
         self.assertEqual(target["compare"]["files"], [])
         self.assertTrue(target["compare"]["file_list_complete"])
+
+
+
+    @staticmethod
+    def _snapshot_count_fixture():
+        return {
+            "schema_version": collector.SCHEMA_VERSION,
+            "repository": "Zennay/zCloud",
+            "main_sha": SHA,
+            "as_of": STAMP,
+            "recent_hours": 72,
+            "branch_count": 1,
+            "open_pr_head_count": 0,
+            "branches": [
+                {
+                    "name": "main",
+                    "sha": SHA,
+                    "committed_at": STAMP,
+                    "has_open_pr": False,
+                    "compare": None,
+                }
+            ],
+        }
+
+    def test_strict_branch_cardinality_rejects_boolean_and_float(self):
+        for invalid in (True, 1.0, "1"):
+            with self.subTest(invalid=invalid):
+                sample = self._snapshot_count_fixture()
+                sample["branch_count"] = invalid
+                with self.assertRaisesRegex(audit.AuditError, "snapshot_branch_count_mismatch"):
+                    audit.parse_snapshot(sample)
+
+    def test_missing_or_boolean_open_pr_count_is_denied(self):
+        for invalid in (None, False, 0.0, "0"):
+            with self.subTest(invalid=invalid):
+                sample = self._snapshot_count_fixture()
+                if invalid is None:
+                    del sample["open_pr_head_count"]
+                else:
+                    sample["open_pr_head_count"] = invalid
+                with self.assertRaisesRegex(audit.AuditError, "snapshot_open_pr_head_count_invalid"):
+                    audit.parse_snapshot(sample)
+
+    def test_open_pr_count_mismatch_is_denied(self):
+        sample = self._snapshot_count_fixture()
+        sample["open_pr_head_count"] = 1
+        with self.assertRaisesRegex(audit.AuditError, "snapshot_open_pr_head_count_mismatch"):
+            audit.parse_snapshot(sample)
+
+    def test_coherent_snapshot_counts_still_pass(self):
+        sample = self._snapshot_count_fixture()
+        self.assertEqual(len(audit.parse_snapshot(sample)["branches"]), 1)
 
 
 
