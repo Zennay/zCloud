@@ -424,9 +424,10 @@ class ReconcileTests(unittest.TestCase):
         with self.assertRaises(module.InvalidEvidence):
             module.read_roster(alias)
 
-    def test_empty_roster_is_valid_with_empty_runner_collection(self):
+    def test_fully_drained_queue_and_empty_roster_is_valid(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute("DELETE FROM ai_global_slots")
+            conn.execute("UPDATE portfolio_queue SET status='done' WHERE worker_slot=1")
         result = module.reconcile(module.read_roster(self.db), live([]))
         self.assertEqual(result["state"], "ok")
         self.assertEqual(result["allocated_count"], 0)
