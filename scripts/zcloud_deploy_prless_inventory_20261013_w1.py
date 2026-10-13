@@ -17,8 +17,9 @@ OWNER, REPO = "Zennay", "zCloud"
 API = "https://api.github.com"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 NAME = re.compile(r"^[A-Za-z0-9_./-]{1,200}$")
-MAX_PAGES = 12
-MAX_ENTRIES = 1000
+MAX_PAGES = 24
+MAX_ENTRIES = 2400
+MAX_PAGE_SIZE = 100
 
 
 class InventoryDenied(ValueError):
@@ -50,6 +51,8 @@ def _pages(fetch, kind):
         payload, following = fetch(kind, page)
         if not isinstance(payload, list):
             raise InventoryDenied("malformed_page")
+        if len(payload) > MAX_PAGE_SIZE:
+            raise InventoryDenied("page_size_exceeded")
         for entry in payload:
             if not isinstance(entry, dict):
                 raise InventoryDenied("malformed_entry")
@@ -59,7 +62,7 @@ def _pages(fetch, kind):
         if following is None:
             # A full final page is ambiguous if Link pagination was omitted.
             # Deny rather than treating potentially truncated ownership as clear.
-            if len(payload) >= 100:
+            if len(payload) >= MAX_PAGE_SIZE:
                 raise InventoryDenied("full_page_without_cursor")
             return entries, page
         if isinstance(following, bool) or not isinstance(following, int):
@@ -114,6 +117,8 @@ def collect(fetch, expected_main_sha):
     prs_raw, pr_pages = _pages(fetch, "pulls")
     branches = _map_branches(branches_raw)
     pr_heads = _map_pr_heads(prs_raw)
+    if branches.get("main") != expected:
+        raise InventoryDenied("listed_main_mismatch")
     for branch, head_sha in pr_heads.items():
         if branch in branches and branches[branch] != head_sha:
             raise InventoryDenied("pr_head_drift")
