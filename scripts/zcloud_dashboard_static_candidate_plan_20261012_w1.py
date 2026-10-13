@@ -212,10 +212,14 @@ def index_bundle_versions(raw_html: bytes) -> dict[str, str]:
         ("app.js", parser.scripts),
         ("enhancements.css", parser.styles),
     ):
-        possible = [
-            url for url in urls
-            if urlsplit(url).path.rsplit("/", 1)[-1] == asset
-        ]
+        possible = []
+        for url in urls:
+            try:
+                path = urlsplit(url).path
+            except ValueError:
+                raise PlanError("malformed_index_asset_reference") from None
+            if path.rsplit("/", 1)[-1] == asset:
+                possible.append(url)
         if not possible:
             raise PlanError("missing_index_asset_reference")
         if len(possible) != 1:
