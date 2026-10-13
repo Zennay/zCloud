@@ -6,6 +6,7 @@ on:
       - "tests/test_zcloud_worker_generation_evidence_20261013_w1.py"
       - "tests/test_zcloud_worker_generation_http_integration_20261013_w1.py"
       - "ops/zssh-runner-recipes/zcloud-generation-check.py"
+      - "docs/control-plane-generation-evidence-20261013-w1.md"
       - ".github/workflows/zcloud-worker-generation-evidence-hosted-20261013-w1.yml"
   workflow_dispatch:
 
