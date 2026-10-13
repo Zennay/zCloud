@@ -16,6 +16,7 @@
   const closeCooldown = new Map();
   const stalePollObservations = new Map();
   const reloadCooldown = new Map();
+  const lastChatGPTProviderSlot = new Map(); // verified allocation before a pool resize
   let workerWindow = null;
   let busy = false;
   let quickRecheckTimer = null;
@@ -207,6 +208,13 @@
           reconcile();
         }, MISSING_TAB_RECHECK_MS);
       for (const [key, target] of desired) {
+        // A dynamic ChatGPT pool reduction can remove a worker from the
+        // allocation entirely. Remember its last *provider* slot, never its
+        // project-local ordinal, to recognize only the actually removed slot.
+        const providerSlot = Number(target.provider_worker_slot ?? target.global_worker_slot);
+        if (target.provider === "chatgpt" && Number.isInteger(providerSlot) &&
+            providerSlot >= 1 && providerSlot <= 128)
+          lastChatGPTProviderSlot.set(key, providerSlot);
         candidateRemovals.delete(key);
         // Paused workers don't generate and must NOT be recreated. Existing
         // paused tabs remain untouched if Firefox happened to restore them.
@@ -264,11 +272,30 @@
       }
       const waiting=[...candidateRemovals].filter(([id,count])=>count>=3&&!desired.has(id));
       if(waiting.length){
-        let audit=null;
+        let audit=null,poolAudit=null;
         try{
           const reply=await fetch(API+"/config-audit?key=runner.worker_count&limit=200",{cache:"no-store"});
           if(reply.ok)audit=await reply.json();
         }catch(_){}
+        // Dashboard Opslaan changes the GLOBAL provider pool through a
+        // different audit key than per-project worker_count. Never close a
+        // tab for a generic allocation/preemption gap: require a recent,
+        // successful pool reduction matching the backend's current count.
+        try{
+          const reply=await fetch(API+"/config-audit?key=runner.dynamic_worker_settings&target=portfolio&limit=20",{cache:"no-store"});
+          if(reply.ok)poolAudit=await reply.json();
+        }catch(_){}
+        const poolChange=(poolAudit?.items||[]).find(row=>
+          row.config_key==="runner.dynamic_worker_settings" && row.target==="portfolio");
+        const oldPool=Number(poolChange?.old_value?.chatgpt_count);
+        const newPool=Number(poolChange?.new_value?.chatgpt_count);
+        const currentPool=Number(payload.dynamic_workers?.chatgpt_count);
+        const poolChangeAt=Date.parse(poolChange?.ts);
+        const poolReduced=poolChange?.result==="succeeded" &&
+          Number.isInteger(oldPool) && Number.isInteger(newPool) &&
+          Number.isInteger(currentPool) && oldPool>newPool && newPool>=0 &&
+          currentPool===newPool && Number.isFinite(poolChangeAt) &&
+          Date.now()-poolChangeAt>=0 && Date.now()-poolChangeAt<10*60*1000;
         const latest=new Map();
         for(const entry of audit?.items||[]){
           if(entry.config_key!=="runner.worker_count"||latest.has(entry.target))continue;
@@ -282,24 +309,37 @@
           const recent=Number.isFinite(Date.parse(row?.ts))&&Date.now()-Date.parse(row.ts)>=0&&Date.now()-Date.parse(row.ts)<10*60*1000;
           const explicitlyReduced=row?.result==="succeeded"&&
             oldCount>newCount&&Number(match[2])>newCount&&recent;
-          if(!explicitlyReduced||payload.projects?.[key])continue;
+          const previousProviderSlot=lastChatGPTProviderSlot.get(key);
+          const explicitlyRemovedPoolSlot=poolReduced &&
+            Number.isInteger(previousProviderSlot) &&
+            previousProviderSlot>newPool && previousProviderSlot<=oldPool;
+          // Pausing, draining, or an active backend identity does not grant
+          // permission to remove a worker, even if Save recently ran.
+          const current=payload.projects?.[key];
+          if((!explicitlyReduced&&!explicitlyRemovedPoolSlot) ||
+             current?.active===true || current?.assignment_ready===true ||
+             current?.desired_state==="paused" || current?.desired_state==="draining")continue;
           const tabId=ownership.get(key);
           if(tabId==null)continue;
           const tab=await browser.tabs.get(tabId).catch(()=>null);
           if(!tab||await tagOf(tab)!==key)continue;
           let idle=false;
           try{
-            const [running]=await browser.tabs.executeScript(tabId,{
-              code:'!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"]\')'
+            const [state]=await browser.tabs.executeScript(tabId,{
+              code:'(() => { const e=document.documentElement; const box=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\'); return {owner:e?.getAttribute("data-zcloud-v2-owner")||"",version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"",lastPoll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(box?.value||box?.innerText||box?.textContent||"").trim()}; })()'
             });
-            idle=running===true;
+            idle=state?.owner===key && /^2\\.0\\.[01]$/.test(state.version) &&
+              state.generating===false && state.draft===false &&
+              Number.isFinite(state.lastPoll) && state.lastPoll>0 &&
+              Date.now()-state.lastPoll>=0 && Date.now()-state.lastPoll<120000;
           }catch(_){}
           if(!idle){await note("remove-deferred",key,"generation-or-idle-unverified");continue}
           await browser.tabs.remove(tabId);
           ownership.delete(key);
           candidateRemovals.delete(key);
           await forgetWorker(key);
-          await note("worker-tab-removed",key,"verified-dashboard-worker-count-decrease");
+          lastChatGPTProviderSlot.delete(key);
+          await note("worker-tab-removed",key,explicitlyReduced?"verified-project-count-decrease":"verified-provider-pool-decrease");
         }
       }
       lastSnapshot = {at:Date.now(),workers:[...desired.keys()],tabs:[...ownership]};
