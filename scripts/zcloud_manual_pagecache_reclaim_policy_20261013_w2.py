@@ -17,7 +17,7 @@ HIGH = 2048 * KIB
 MIN_CACHE = 256 * KIB
 MAX_DIRTY = 128 * KIB
 REQUIRED = ("MemTotal", "MemAvailable", "Cached", "Dirty", "Writeback")
-FIELD = re.compile(r"^([A-Za-z][A-Za-z0-9_]*):\s+([0-9]+)\s+kB$")
+FIELD = re.compile(r"^([A-Za-z][A-Za-z0-9_]*):\s+([0-9]+)(?:\s+(kB))?$")
 
 
 class Denied(ValueError):
@@ -36,6 +36,8 @@ def parse_meminfo(raw):
         if not match:
             raise Denied("malformed memory evidence")
         key = match.group(1)
+        if key in REQUIRED and match.group(3) != "kB":
+            raise Denied("required memory field units missing")
         if key in values:
             raise Denied("duplicate memory field")
         values[key] = int(match.group(2))
