@@ -17,6 +17,7 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  const state=new Map();
  if(age)state.set("zcloud-v2-chat-at",String(Date.now()-age));
  const sent=[],statuses=[],chatClicks=[];
+ const finishTimers=new Map();let timerId=0,mutationCallback=null;
  let generating=false,assistantText=initialAssistant,assistantMessages=initialAssistantCount;
  const element=(name)=>({tagName:"BUTTON",disabled:false,
   getAttribute:k=>k==="aria-label"?name:null,
@@ -51,6 +52,7 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
   sessionStorage:{getItem:k=>state.get(k)||null,setItem:(k,v)=>state.set(k,String(v))},
   document:doc,URL,Array,String,Number,Date:Clock,Map,Set,Promise,
   getComputedStyle:()=>({display:"block",visibility:"visible"}),
+  MutationObserver:class{constructor(cb){mutationCallback=cb}observe(){}},
   Event:class{constructor(type){this.type=type}},HTMLTextAreaElement:class{},
   HTMLInputElement:class{},
   GM_xmlhttpRequest:opt=>{
@@ -61,10 +63,13 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
    queueMicrotask(()=>opt.onload({status:200,responseText:JSON.stringify(json)}));
   },
   setInterval:(fn,ms)=>{assert.equal(ms,30000);check=fn;return 1},
-  setTimeout:(fn,ms)=>{queueMicrotask(fn);return 1}
+  setTimeout:(fn,ms)=>{const id=++timerId;if(ms===1800)finishTimers.set(id,fn);else queueMicrotask(fn);return id},
+  clearTimeout:id=>finishTimers.delete(id)
  });
  vm.runInContext(code,ctx,{timeout:1000});
  return {tick:async()=>{check();await wait(20)},sent,statuses,chatClicks,
+  dom:()=>mutationCallback?.(),
+  settle:async()=>{clock+=1800;const calls=[...finishTimers.values()];finishTimers.clear();calls.forEach(cb=>cb());await wait(40)},
   setPath:p=>{ctx.location.pathname=p},advance:ms=>{clock+=ms},setGenerating:v=>generating=v,setAssistant:(v,n=1)=>{assistantText=v;assistantMessages=n;}};
 }
 (async()=>{
@@ -76,6 +81,27 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  worker.setGenerating(false);worker.setAssistant("Result of the work");await worker.tick();
  assert.equal(worker.sent.length,2,"completed response sends next canonical prompt");
  assert.ok(worker.statuses.filter(x=>x.event==="prompt-sent").every(x=>x.thinkingEffort==="high"));
+ // This must work in a background tab WITHOUT waiting for the 30s timer.
+ const fast=harness();await wait(40);
+ assert.equal(fast.sent.length,1);
+ fast.setGenerating(true);fast.dom();
+ fast.setGenerating(false);fast.setAssistant("Fresh result");fast.dom();
+ assert.equal(fast.sent.length,1,"no dispatch before DOM settles");
+ await fast.settle();
+ assert.equal(fast.sent.length,2,"next prompt after stable DOM completion");
+ const resumed=harness();await wait(40);
+ resumed.setGenerating(true);resumed.dom();
+ resumed.setGenerating(false);resumed.dom();
+ resumed.setGenerating(true);resumed.dom();
+ await resumed.settle();
+ assert.equal(resumed.sent.length,1,"transient stop disappearance cannot dispatch");
+ resumed.setGenerating(false);resumed.setAssistant("Completed stable response");resumed.dom();
+ await resumed.settle();
+ assert.equal(resumed.sent.length,2,"sends promptly after stable generation stop");
+ const quick=harness();await wait(40);
+ quick.setAssistant("Immediate assistant answer");quick.dom();
+ await quick.settle();
+ assert.equal(quick.sent.length,2,"very fast assistant completion detected");
  const identical=harness({initialAssistant:"Unchanged answer text",initialAssistantCount:1});await wait(40);
  assert.equal(identical.sent.length,1);
  identical.setAssistant("Unchanged answer text",1);await identical.tick();
@@ -102,5 +128,5 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  const medium=harness({high:false});await wait(40);
  assert.equal(medium.sent.length,0,"never send without verified High");
  assert.ok(medium.statuses.some(x=>x.event==="thinking-high-unavailable"||x.reason==="high-not-verified"));
- console.log("single-tab v2: High, 30s generation, next prompt, broken chat, one-hour rotation PASS");
+ console.log("single-tab v2: High, DOM-completion next prompt, 30s fallback, transient safety, broken chat PASS");
 })().catch(e=>{console.error(e);process.exitCode=1});
