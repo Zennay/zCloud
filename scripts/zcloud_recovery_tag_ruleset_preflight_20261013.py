@@ -115,15 +115,8 @@ def screen_snapshot(*, repo_id, before_sha, after_sha, listing_complete, summari
     return result("no_strict_update_delete_protection", sha=before_sha)
 
 
-def collect(get=github_get):
-    """Bounded complete list+detail observer. A missing page aborts the proof.
-
-    No trust is derived from Github list summaries, which omit bypass/rules.
-    """
-    before = read_main_sha(get)
-    repo = get("")
-    if not isinstance(repo, dict) or repo.get("id") != 1389227570 or repo.get("full_name") != "Zennay/zCloud":
-        raise SourceDenied("untrusted_repository")
+def list_rulesets(get):
+    """Read all tag ruleset summaries without accepting truncation."""
     summaries = []
     for page in range(1, MAX_PAGES + 1):
         batch = get(f"/rulesets?includes_parents=true&targets=tag&per_page={PAGE_SIZE}&page={page}")
@@ -131,9 +124,17 @@ def collect(get=github_get):
             raise SourceDenied("bad_ruleset_listing")
         summaries.extend(batch)
         if len(batch) < PAGE_SIZE:
-            break
-    else:
-        raise SourceDenied("ruleset_pagination_exceeds_limit")
+            return summaries
+    raise SourceDenied("ruleset_pagination_exceeds_limit")
+
+
+def collect(get=github_get):
+    """Bounded double-read list + exact detail snapshot, fail on any drift."""
+    before = read_main_sha(get)
+    repo = get("")
+    if not isinstance(repo, dict) or repo.get("id") != 1389227570 or repo.get("full_name") != "Zennay/zCloud":
+        raise SourceDenied("untrusted_repository")
+    summaries = list_rulesets(get)
     details = {}
     for summary in summaries:
         if not isinstance(summary, dict) or type(summary.get("id")) is not int or summary["id"] < 1:
@@ -142,6 +143,11 @@ def collect(get=github_get):
         if ident in details:
             raise SourceDenied("duplicate_ruleset")
         details[ident] = get(f"/rulesets/{ident}?includes_parents=true")
+    # A second complete inventory proves there was no *observed* drift
+    # between initial list and fetched details. It is not an immutable
+    # snapshot, and it never confers authorization.
+    if list_rulesets(get) != summaries:
+        raise SourceDenied("rulesets_changed_during_snapshot")
     after = read_main_sha(get)
     return {"repo_id": repo["id"], "before_sha": before, "after_sha": after,
             "listing_complete": True, "summaries": summaries, "details": details}
