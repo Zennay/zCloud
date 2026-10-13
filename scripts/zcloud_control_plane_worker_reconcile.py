@@ -115,6 +115,13 @@ def read_roster(db: Path) -> dict:
             "SELECT project_id,worker_slot,desired_state FROM runner_workers "
             "ORDER BY project_id,worker_slot"
         )]
+        if not {"project_id", "active", "worker_count"}.issubset(
+            _table_columns(conn, "runner_targets")
+        ):
+            raise InvalidEvidence("unsupported runner_targets schema")
+        project_rows = [dict(r) for r in conn.execute(
+            "SELECT project_id,active,worker_count FROM runner_targets ORDER BY project_id"
+        )]
         if not {"id", "project_id", "action", "status", "created_at"}.issubset(
             _table_columns(conn, "runner_commands")
         ):
@@ -128,7 +135,7 @@ def read_roster(db: Path) -> dict:
         conn.execute("ROLLBACK")
     finally:
         conn.close()
-    if len(slots) > MAX_SLOTS or len(targets) > 4096 or len(pending) > 1024:
+    if len(slots) > MAX_SLOTS or len(targets) > 4096 or len(project_rows) > 4096 or len(pending) > 1024:
         raise InvalidEvidence("roster exceeds diagnostic bounds")
     seen_slots, seen_keys = set(), set()
     for row in slots:
@@ -149,6 +156,17 @@ def read_roster(db: Path) -> dict:
         ):
             raise InvalidEvidence("invalid desired worker state")
         target_map[key] = state
+    project_targets = {}
+    for row in project_rows:
+        project = _project(row["project_id"])
+        if project in project_targets:
+            raise InvalidEvidence("duplicate project target")
+        if type(row["active"]) is not int or row["active"] not in (0, 1):
+            raise InvalidEvidence("invalid project active flag")
+        # A target count smaller than the worker's slot would hide that slot
+        # in the runtime projector even if ai_global_slots still allocates it.
+        count = _positive_int(row["worker_count"], "target worker count")
+        project_targets[project] = {"active": bool(row["active"]), "worker_count": count}
     for item in pending:
         key = item["project_id"]
         if not isinstance(key, str) or len(key) > 180 or "::w" not in key:
@@ -158,7 +176,8 @@ def read_roster(db: Path) -> dict:
         _positive_int(int(suffix) if suffix.isdigit() else None, "pending worker slot")
         if not isinstance(item["created_at"], str):
             raise InvalidEvidence("invalid pending command timestamp")
-    return {"slots": slots, "targets": target_map, "pending": pending}
+    return {"slots": slots, "targets": target_map, "project_targets": project_targets,
+            "pending": pending}
 
 
 def _live_workers(payload):
@@ -235,6 +254,15 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
     for row in roster["slots"]:
         key = (row["project_id"], row["worker_slot"])
         label = f"{key[0]}::w{key[1]}"
+        project_target = roster.get("project_targets", {}).get(key[0])
+        if project_target is None and "project_targets" in roster:
+            problems.append({"worker": label, "code": "allocation_without_project_target",
+                             "level": "degraded"})
+            continue
+        if project_target is not None and key[1] > project_target["worker_count"]:
+            problems.append({"worker": label, "code": "allocation_outside_worker_count",
+                             "level": "degraded"})
+            continue
         if key not in targets:
             problems.append({"worker": label, "code": "allocation_without_target",
                              "level": "degraded"})
