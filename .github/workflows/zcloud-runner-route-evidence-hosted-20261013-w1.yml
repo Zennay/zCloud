@@ -161,16 +161,19 @@ jobs:
               lane = run["lanes"]["zcloud_vps"]
               phases = lane["failure_phases"]
               keys = sorted(k if k in allowed else "unclassified" for k in phases)
-              lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" %
-                           (run["run_id"], lane["assigned_count"],
-                            lane["canonical_vps_assigned_count"],
-                            lane["unexpected_vps_assigned_count"],
-                            lane["unassigned_count"],
-                            lane["not_yet_scheduled_count"],
-                            lane["not_dispatched_count"],
-                            lane["unproven_runner_count"],
-                            lane["failed_jobs"],
-                            ", ".join(keys) or "none reported"))
+              fields = (
+                  run["run_id"], lane["assigned_count"],
+                  lane["canonical_vps_assigned_count"],
+                  lane["unexpected_vps_assigned_count"],
+                  lane["unassigned_count"],
+                  lane["not_yet_scheduled_count"],
+                  lane["not_dispatched_count"],
+                  lane["unproven_runner_count"],
+                  lane["failed_jobs"],
+                  ", ".join(keys) or "none reported",
+              )
+              assert len(fields) == len(lines[4].strip("|").split("|"))
+              lines.append("| " + " | ".join(str(value) for value in fields) + " |")
           lines.extend(["", "Safety: source validated, production still unverified.",
                         "Browser heartbeats and synthetic log fixtures do not prove real text progress."])
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
