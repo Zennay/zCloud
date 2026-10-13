@@ -83,6 +83,9 @@ class TestRunnerRoute(unittest.TestCase):
         with self.assertRaises(t.EvidenceError): t.api('/repos/Zennay/zCloud/issues', 'x')
     def test_missing_token(self):
         with self.assertRaises(t.EvidenceError): t.live('')
+    def test_redirect_denied_before_follow(self):
+        with self.assertRaises(t.EvidenceError):
+            t.RefuseRedirect().redirect_request(None, None, 302, 'moved', {}, 'https://example.invalid/')
     def test_api_get_only(self):
         calls=[]
         def fake(req, timeout):
@@ -93,7 +96,10 @@ class TestRunnerRoute(unittest.TestCase):
                 def __exit__(self,*a): pass
                 def read(self,n): return b'{"runners":[]}'
             return Resp()
-        with patch.object(t,'urlopen',side_effect=fake): t.api('/repos/Zennay/zCloud/actions/runners', 'x')
+        class Opener:
+            def open(self, req, timeout): return fake(req, timeout)
+        with patch.object(t, 'build_opener', return_value=Opener()):
+            t.api('/repos/Zennay/zCloud/actions/runners', 'x')
         self.assertEqual(calls,['GET'])
 class CliContract(unittest.TestCase):
     def call_fixture(self, mutate=None):
