@@ -243,6 +243,35 @@ class PaginationTests(unittest.TestCase):
         self.assertFalse(result["deployment_authorized"])
         self.assertNotIn("pr_less", result)
 
+    def test_wall_clock_budget_expired_before_request_is_fail_closed(self):
+        with patch.object(mod.time, "monotonic", side_effect=[0, 181]):
+            with patch.object(mod.urllib.request, "build_opener",
+                              side_effect=AssertionError("network must not open")):
+                fetch = mod.github_fetcher("")
+                with self.assertRaisesRegex(mod.InventoryDenied,
+                                            "inventory_wall_clock_budget_exceeded"):
+                    fetch("branches", 1)
+
+    def test_wall_clock_budget_expiring_after_read_is_fail_closed(self):
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, n):
+                return b"[]"
+        class Opener:
+            def open(self, request, timeout):
+                return Response()
+        with patch.object(mod.time, "monotonic", side_effect=[0, 2, 181]):
+            with patch.object(mod.urllib.request, "build_opener", return_value=Opener()):
+                fetch = mod.github_fetcher("")
+                with self.assertRaisesRegex(mod.InventoryDenied,
+                                            "inventory_wall_clock_budget_exceeded"):
+                    fetch("branches", 1)
+
     def test_transport_rejects_foreign_next_link(self):
         class Response:
             status = 200
