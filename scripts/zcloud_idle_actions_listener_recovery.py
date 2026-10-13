@@ -40,7 +40,7 @@ def call(*argv: str) -> str:
 
 def runner_process_count(user: str) -> int:
     """Conservative per-user check: other runner work must not be interrupted."""
-    output = call("ps", "-eo", "user=,args=")
+    output = call("ps", "-eo", "user:32=,args=")
     count = 0
     for line in output.splitlines():
         fields = line.split(maxsplit=1)
