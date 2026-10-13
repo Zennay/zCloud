@@ -31,13 +31,23 @@
   // A paused or draining assignment STILL owns its Firefox tab. The page
   // runner controls dispatch; the extension must restore the tab, not run it.
   function assigned(t) {
-    if (!t || t.assignment_ready !== true) return false;
+    if (!t) return false;
     const key = String(t.project_id || "");
     const count = Number(t.global_worker_count || 0);
     const slot = Number(t.global_worker_slot || 0);
-    return /^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key) &&
-      count >= 1 && slot >= 1 && slot <= count &&
+    const chatgpt = !t.provider || t.provider === "chatgpt";
+    // A worker slot is already owned by the backend allocation even while its
+    // queue claim is being reconciled. Create the missing identity-bound tab
+    // independently of assignment_ready/queue_id; only the page runner may
+    // dispatch, and it still requires a valid lease. Never invent unallocated
+    // projects or take over untagged personal ChatGPT tabs.
+    const runningSlot = t.active === true && t.desired_state !== "paused" &&
+      t.desired_state !== "draining";
+    const leasedSlot = t.assignment_ready === true &&
       !!String(t.queue_item?.queue_id || "");
+    return chatgpt && /^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key) &&
+      count >= 1 && slot >= 1 && slot <= count &&
+      (runningSlot || leasedSlot);
   }
   async function loadKnownWorkers() {
     if (knownLoaded) return;
