@@ -417,6 +417,15 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
             observed["busy"] += 1
         else:
             observed["idle"] += 1
+    # Conversely, the browser/runner projector may show an active worker that
+    # is absent from the persisted global slot map (e.g. manual bootstrap).
+    # This is useful routing evidence, not proof an unexpected tab is open.
+    allocated_keys = {(row["project_id"], row["worker_slot"]) for row in roster["slots"]}
+    for key, observed_worker in sorted(workers.items()):
+        if key not in allocated_keys and observed_worker.get("active") is True:
+            problems.append({"worker": f"{key[0]}::w{key[1]}",
+                             "code": "active_observation_without_persisted_slot",
+                             "level": "attention"})
     problems.sort(key=lambda x: (x["worker"], x["code"]))
     degraded = any(p["level"] == "degraded" for p in problems)
     return {
