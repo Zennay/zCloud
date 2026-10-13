@@ -134,6 +134,31 @@ class PreflightTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertFalse(preflight.exact_protection(data))
 
+    def test_unsupported_extra_condition_is_ambiguous(self):
+        item = rule_detail()
+        item["conditions"]["repository_name"] = {
+            "include": ["other"], "exclude": []
+        }
+        self.assertFalse(preflight.exact_protection(item))
+
+    def test_unsupported_ref_name_field_fails_closed(self):
+        item = rule_detail()
+        item["conditions"]["ref_name"]["case_sensitive"] = False
+        self.assertFalse(preflight.exact_protection(item))
+
+    def test_extra_creation_rule_denies_candidate_as_unusable(self):
+        item = rule_detail()
+        item["rules"].append({"type": "creation"})
+        self.assertFalse(preflight.exact_protection(item))
+
+    def test_unrelated_organization_ruleset_source_denied(self):
+        summary = {**rule_summary(), "source_type": "Organization",
+                   "source": "other_org"}
+        detail = {**rule_detail(), "source_type": "Organization",
+                  "source": "other_org"}
+        observation = screen(summaries=[summary], details={17: detail})
+        self.assertEqual(observation["reason"], "untrusted_ruleset_source")
+
     def test_any_exclusion_denies(self):
         data = rule_detail()
         data["conditions"]["ref_name"]["exclude"] = [
