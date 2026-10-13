@@ -27,6 +27,17 @@ class TestRunnerRoute(unittest.TestCase):
     def test_offline(self): self.assertEqual(self.classify(fixture(status='offline'))['classification'], 'runner_offline')
     def test_busy(self): self.assertEqual(self.classify(fixture(busy=True))['classification'], 'runner_busy')
     def test_wrong_labels(self): self.assertEqual(self.classify(fixture(names=('self-hosted','ftmo-research')))['classification'], 'labels_or_access_unproven')
+    def test_group_not_assumed_routable(self):
+        x=fixture(); x['jobs_by_run']['123'][0]['runner_group_id']=101
+        result=self.classify(x)
+        self.assertEqual(result['classification'], 'labels_or_access_unproven')
+        self.assertEqual(result['by_cause']['group_access_unverified'], 1)
+    def test_invalid_group_id(self):
+        x=fixture(); x['jobs_by_run']['123'][0]['runner_group_id']=True
+        with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_future_run_clock(self):
+        x=fixture(); x['queued_runs'][0]['created_at']=(NOW+dt.timedelta(hours=1)).isoformat()
+        with self.assertRaises(t.EvidenceError): self.classify(x)
     def test_young(self):
         x=fixture(); x['queued_runs'][0]['created_at']=NOW.isoformat()
         self.assertEqual(self.classify(x)['classification'], 'no_stale_unassigned_jobs')
