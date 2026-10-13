@@ -191,8 +191,7 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  const createsBeforeForce=calls.filter(x=>x.type==="create").length;
  pendingCommands=[{id:102,project_id:"lightup",action:"start",force:true}];
  await ctx.commandProbe();
- const forced=ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")?.[1] ||
-   tabs.find(t=>t.url.includes("zcloud_force_command=102"))?.id;
+ const forced=tabs.find(t=>t.url.includes("zcloud_force_command=102"))?.id;
  assert.ok(forced&&forced!==rebound,"Force replaces same-ID worker with a new tab");
  assert.equal(calls.filter(x=>x.type==="create").length,createsBeforeForce+1);
  assert.ok(!tabs.some(t=>t.id===rebound),"verified idle old worker tab is retired");
