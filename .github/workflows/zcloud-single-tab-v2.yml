@@ -13,6 +13,7 @@ on:
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
       - tests/test_single_tab_v2_cycle.js
+      - tests/test_v2_dispatch_recovery_20261013_w3.js
       - .github/workflows/zcloud-single-tab-v2.yml
   push:
     branches: [main]
@@ -52,6 +53,7 @@ jobs:
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
           node tests/test_single_tab_v2_cycle.js
+          node tests/test_v2_dispatch_recovery_20261013_w3.js
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tab_reuse.js
           node tests/test_firefox_recovery_contract.js
