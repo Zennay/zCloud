@@ -83,6 +83,7 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertEqual(sleeps, [5, 5])
         self.assertFalse(result.authorized)
         self.assertFalse(result.mutations_performed)
+        self.assertFalse(result.transport_authenticated)
 
     def test_unexpected_exception_counts_as_transport_failure_then_recovers(self):
         calls = []
@@ -324,6 +325,7 @@ class DashboardProbeTests(unittest.TestCase):
         doc = json.loads(capture.getvalue())
         self.assertFalse(doc["authorized"])
         self.assertFalse(doc["mutations_performed"])
+        self.assertFalse(doc["transport_authenticated"])
 
     def test_default_opener_cannot_use_inherited_proxy(self):
         with mock.patch.object(probe.urllib.request, "build_opener") as builder:
@@ -343,6 +345,18 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertIn(chr(10), output)
         self.assertIn("nooit automatisch", output)
         self.assertNotIn(probe.STATUS_URL, output)
+
+    def test_unauthenticated_http_is_explicit_in_status_outputs(self):
+        for status in ("healthy", "timeout"):
+            with self.subTest(status=status):
+                result = probe.run_probe(lambda: status, lambda _: None, attempts=1)
+                self.assertFalse(result.transport_authenticated)
+                self.assertFalse(result.authorized)
+                self.assertIn('"transport_authenticated": false',
+                              json.dumps(probe.asdict(result), sort_keys=True))
+                text = probe.operator_markdown(result)
+                self.assertIn("publiek HTTP zonder TLS", text)
+                self.assertIn("niet cryptografisch bevestigd", text)
 
     def test_operator_markdown_recovered_does_not_claim_prod_health(self):
         summary = probe.ProbeSummary("healthy", None, 2, True, {"connection": 1})
