@@ -1,0 +1,88 @@
+name: Explicit Fuckball native-engine release cfb9836
+# Deliberate one-release promotion. This branch-only trigger does not resume
+# automatic deployment of Fuckball main or touch the frozen legacy workflow.
+on:
+  push:
+    branches: [codex/fuckball-release-cfb9836]
+    paths: ['.github/workflows/fuckball-release-cfb9836.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fuckball-vps-deploy
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: [self-hosted, haxlab]
+    timeout-minutes: 12
+    env:
+      APPROVED_SHA: cfb9836358da803b19b87aef9e52505762ad8370
+      APP_PORT: '3417'
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Stage and test the exact recovered release
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/fuckball-release-$GITHUB_RUN_ID"
+          git clone --no-checkout --filter=blob:none https://github.com/Zennay/fuckball.git "$stage"
+          cd "$stage"
+          git fetch --depth 1 origin "$APPROVED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
+          npm test
+          npm run build:solo
+          node --check dist/match-ui.js
+          node --check dist/server-client.js
+          echo "RELEASE_STAGE=$stage" >> "$GITHUB_ENV"
+      - name: Install immutable release and verify live physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RELEASE_STAGE"
+          release="/opt/fuckball-releases/$APPROVED_SHA-$GITHUB_RUN_ID"
+          backup="/opt/fuckball-release-backups/$GITHUB_RUN_ID"
+          # Deliberately leave /opt/fuckball and every uncommitted file intact.
+          sudo -n mkdir -p "$release" "$backup"
+          if [ -e /etc/systemd/system/fuckball.service ]; then
+            sudo -n cp -a /etc/systemd/system/fuckball.service "$backup/fuckball.service"
+          fi
+          tar --exclude=.git -cf - . | sudo -n tar -xf - -C "$release"
+          sudo -n chmod -R a+rX "$release"
+          node_binary="$(command -v node)"
+          run_user="$(id -un)"
+          run_group="$(id -gn)"
+          rollback() {
+            code=$?
+            if [ -f "$backup/fuckball.service" ]; then
+              sudo -n cp "$backup/fuckball.service" /etc/systemd/system/fuckball.service
+              sudo -n systemctl daemon-reload
+              sudo -n systemctl restart fuckball.service
+            fi
+            echo "::error::Release verification failed; previous service restored. All source directories preserved."
+            exit "$code"
+          }
+          trap rollback ERR
+          printf '[Unit]\nDescription=Fuckball native engine release\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=%s\nEnvironment=NODE_ENV=production\nEnvironment=PORT=%s\nEnvironment=FUCKBALL_RELEASE_SHA=%s\nExecStart=%s %s/server.js\nRestart=always\nRestartSec=3\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\n\n[Install]\nWantedBy=multi-user.target\n' "$run_user" "$run_group" "$release" "$APP_PORT" "$APPROVED_SHA" "$node_binary" "$release" | sudo -n tee /etc/systemd/system/fuckball.service >/dev/null
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl restart fuckball.service
+          ready=0
+          for attempt in $(seq 1 15); do
+            if curl -fsS --max-time 3 "http://127.0.0.1:$APP_PORT/health" >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          node scripts/verify-live.cjs "http://127.0.0.1:$APP_PORT" "$APPROVED_SHA" | tee "$RUNNER_TEMP/fuckball-release-proof.json"
+          sudo -n systemctl is-active --quiet fuckball.service
+          trap - ERR
+          echo "Recovered Fuckball release verified: $APPROVED_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "New immutable directory: $release" >> "$GITHUB_STEP_SUMMARY"
+          echo "Previous service backup: $backup" >> "$GITHUB_STEP_SUMMARY"
+          echo "Original /opt/fuckball was not reset, cleaned or overwritten. Legacy scheduled deployment remains disabled." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fuckball-native-release-proof
+          path: ${{ runner.temp }}/fuckball-release-proof.json
+          retention-days: 14
