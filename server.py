@@ -3423,6 +3423,15 @@ def portfolio_queue_allocation():
                 'SELECT slot,project_id,worker_slot FROM ai_global_slots'
             ).fetchall()
         }
+    # Reserve ALL surviving worker ordinals before filling any newly
+    # available global slot. Allocating low-numbered slots first otherwise
+    # steals w1 from an already-generating worker on global slot 2.
+    surviving={(str(item['project_id']),int(item['worker_slot']))
+               for item in active}
+    protected={}
+    for (project_id,global_slot),old in previous.items():
+        if (project_id,global_slot) in surviving and old > 0:
+            protected.setdefault(project_id,set()).add(old)
     used={}
     workers=[]
     for item in sorted(active,key=lambda x:int(x.get('worker_slot') or 99)):
@@ -3430,9 +3439,12 @@ def portfolio_queue_allocation():
         global_slot=int(item['worker_slot'])
         reserved=used.setdefault(project_id,set())
         old=previous.get((project_id,global_slot))
-        local_slot=old if old and old > 0 and old not in reserved else 1
-        while local_slot in reserved:
-            local_slot+=1
+        if old and old > 0 and old not in reserved:
+            local_slot=old
+        else:
+            local_slot=1
+            while local_slot in reserved or local_slot in protected.get(project_id,set()):
+                local_slot+=1
         reserved.add(local_slot)
         workers.append({
             'worker_key':f'{project_id}::w{local_slot}',
