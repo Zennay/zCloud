@@ -81,7 +81,7 @@ def active_workers(data):
             if type(slot) is not int or not (1 <= slot <= 128):
                 raise ProofDenied("missing or invalid worker slot")
             prefix, encoded_slot = wid.rsplit("::w", 1)
-            if int(encoded_slot) != slot or not prefix:
+            if encoded_slot != str(slot) or not prefix:
                 raise ProofDenied("worker identity and slot mismatch")
             item = (prefix, slot)
             if item in selected:
