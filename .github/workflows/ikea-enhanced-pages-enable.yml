@@ -1,0 +1,30 @@
+name: Enable private IKEA Enhanced App Pages using owner GitHub CLI
+on:
+  push:
+    branches: [feature/bootstrap-ikea-enhanced-app-20261013]
+    paths: [".github/workflows/ikea-enhanced-pages-enable.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  configure:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Configure Pages with authenticated owner safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          unset GH_TOKEN GITHUB_TOKEN GITHUB_PAT
+          gh auth status --hostname github.com >/dev/null 2>&1
+          test "$(gh api user --jq '.login')" = "Zennay"
+          test "$(gh api repos/Zennay/ikea-enhanced-app --jq '.private')" = "true"
+          if gh api repos/Zennay/ikea-enhanced-app/pages >/dev/null 2>&1; then
+            echo "PAGES_ALREADY_CONFIGURED=1" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh api -X POST repos/Zennay/ikea-enhanced-app/pages -f build_type=workflow --silent
+            echo "PAGES_OWNER_CONFIGURED=1" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gh api repos/Zennay/ikea-enhanced-app/pages --jq '{status,html_url,build_type}' >> "$GITHUB_STEP_SUMMARY"
