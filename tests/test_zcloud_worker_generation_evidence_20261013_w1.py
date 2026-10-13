@@ -443,7 +443,11 @@ class GenerationEvidenceTests(unittest.TestCase):
     def test_fixture_cli_green_and_non_green_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
             first, second = Path(directory)/"targets.json", Path(directory)/"debug.json"
-            first.write_text(json.dumps(targets(allocation())), encoding="utf-8")
+            live_targets = targets(allocation())
+            live_targets["projects"]["cloud::w1"]["queue_item"]["claim_expires"] = (
+                datetime.now(timezone.utc) + timedelta(minutes=5)
+            ).isoformat()
+            first.write_text(json.dumps(live_targets), encoding="utf-8")
             second.write_text(json.dumps(debug(row(), at=datetime.now(timezone.utc))), encoding="utf-8")
             output = StringIO()
             with redirect_stdout(output):
