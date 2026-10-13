@@ -338,11 +338,14 @@ def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
     if before_index is None:
         raise PlanError("baseline_index_asset_reference_untrusted")
     try:
+        size = int(git(root, "cat-file", "-s", before_index).strip())
+        if not 0 <= size <= MAX_ASSET_BYTES:
+            raise PlanError("baseline_index_asset_reference_untrusted")
         raw = git(root, "cat-file", "blob", before_index)
-        if len(raw) > MAX_ASSET_BYTES or b"\0" in raw:
+        if len(raw) != size or b"\0" in raw:
             raise PlanError("baseline_index_asset_reference_untrusted")
         before_versions = index_bundle_versions(raw)
-    except PlanError:
+    except (PlanError, ValueError, UnicodeError):
         raise PlanError("baseline_index_asset_reference_untrusted") from None
 
     for name in ("app.js", "enhancements.css"):
