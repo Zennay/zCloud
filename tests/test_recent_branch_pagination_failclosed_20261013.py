@@ -104,7 +104,7 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
         self.assertIn("endCursor=one", calls[1])
 
 
-    def _compare_fixture_runner(self, file_field):
+    def _compare_fixture_runner(self, file_field, compare_calls=None):
         def runner(args):
             joined = " ".join(args)
             if "/git/ref/heads/main" in joined:
@@ -117,6 +117,8 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
                     next_page=False,
                 )
             if "/compare/" in joined:
+                if compare_calls is not None:
+                    compare_calls.append(args)
                 result = {
                     "ahead_by": 1,
                     "behind_by": 0,
@@ -138,6 +140,21 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
                 72,
                 self._compare_fixture_runner(None),
             )
+
+    def test_jq_preserves_missing_file_array_as_null(self):
+        # Without this expression, .files[]? converts missing API evidence
+        # into an apparently complete empty list before Python sees it.
+        calls = []
+        when = collector.parse_utc("2026-10-13T07:05:00Z")
+        collector.collect_snapshot(
+            "Zennay/zCloud", when, 72,
+            self._compare_fixture_runner([], compare_calls=calls),
+        )
+        self.assertEqual(len(calls), 1)
+        projected = " ".join(calls[0])
+        self.assertIn('(.files|type)==', projected)
+        self.assertIn('else null end', projected)
+        self.assertNotIn('.files[]?', projected)
 
     def test_explicit_empty_compare_file_list_is_supported(self):
         when = collector.parse_utc("2026-10-13T07:05:00Z")
