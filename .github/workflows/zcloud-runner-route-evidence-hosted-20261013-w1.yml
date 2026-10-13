@@ -160,7 +160,7 @@ jobs:
           lines.extend(["", "Safety: source validated, production still unverified.",
                         "Browser heartbeats and synthetic log fixtures do not prove real text progress."])
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("\\n".join(lines) + "\\n")
+              summary.write("\n".join(lines) + "\n")
           PY
       - name: Retain only sanitized JSON receipts for short-lived review
         if: success()
