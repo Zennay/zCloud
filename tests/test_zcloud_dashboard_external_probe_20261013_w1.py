@@ -118,9 +118,34 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertEqual(result.attempts, 3)
 
     def test_http_non_200_is_not_healthy(self):
-        self.assertEqual(probe.probe_once(Opener(Response(status=503))), "http_status")
+        self.assertEqual(probe.probe_once(Opener(Response(status=503))), "http_server_error")
         self.assertEqual(probe.probe_once(Opener(error=urllib.error.HTTPError(
-            probe.STATUS_URL, 302, "redirect", {}, None))), "http_status")
+            probe.STATUS_URL, 302, "redirect", {}, None))), "http_redirect")
+
+    def test_grouped_http_failures_never_claim_recovery(self):
+        examples = ((201, "http_status"), (302, "http_redirect"),
+                    (401, "http_client_error"), (404, "http_client_error"),
+                    (429, "http_client_error"), (500, "http_server_error"),
+                    (503, "http_server_error"), (599, "http_server_error"),
+                    (700, "http_status"), (True, "http_status"))
+        for status, expected in examples:
+            with self.subTest(status=status):
+                self.assertEqual(probe.probe_once(Opener(Response(status=status))), expected)
+                self.assertEqual(probe.probe_once(Opener(error=urllib.error.HTTPError(
+                    probe.STATUS_URL, status, "SECRET_RESPONSE", {}, None))), expected)
+        labels = (
+            ("http_redirect", "Onverwachte HTTP-doorverwijzing"),
+            ("http_client_error", "HTTP-aanvraag geweigerd (4xx)"),
+            ("http_server_error", "HTTP-serverfout (5xx)"),
+        )
+        for category, label in labels:
+            with self.subTest(category=category):
+                result = probe.run_probe(lambda: category, lambda _: None, attempts=1)
+                self.assertEqual(result.status, "unhealthy")
+                self.assertFalse(result.authorized)
+                markdown = probe.operator_markdown(result)
+                self.assertIn(label, markdown)
+                self.assertNotIn(probe.STATUS_URL, markdown)
 
     def test_requires_json_mime_type(self):
         self.assertEqual(probe.probe_once(Opener(Response(content_type="text/html"))), "content_type")
@@ -428,10 +453,10 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
         self._run("healthy")
 
     def test_actual_http_503_denied(self):
-        self._run("http_status", code=503)
+        self._run("http_server_error", code=503)
 
     def test_actual_http_redirect_is_never_followed(self):
-        self._run("http_status", redirect=True)
+        self._run("http_redirect", redirect=True)
 
     def test_actual_http_wrong_media_type(self):
         self._run("content_type", media_type="text/html")
