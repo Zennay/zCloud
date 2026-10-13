@@ -222,6 +222,79 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(route.CANONICAL_DEPLOY_WORKFLOW_PATH,
                          ".github/workflows/zcloud-vps-deploy.yml")
 
+    def test_jobs_api_bind_exact_run_sha_and_workflow_across_pages(self):
+        import json
+        from unittest.mock import patch
+
+        class Headers:
+            def get_content_type(self):
+                return "application/json"
+
+        class Response:
+            headers = Headers()
+            def __init__(self, data):
+                self.data = data
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def read(self, _):
+                return json.dumps(self.data).encode("utf-8")
+
+        class Opener:
+            def __init__(self, pages):
+                self.pages = pages
+                self.calls = []
+            def open(self, request, timeout):
+                self.calls.append((request.full_url, timeout))
+                return Response(self.pages[len(self.calls) - 1])
+
+        def receipt(job_id, *, run_id=34, sha="a" * 40, name="zCloud VPS deploy"):
+            job = make_job(job_id=job_id, status="completed", runner_id=21,
+                           runner_name="zcloud-vps-1", conclusion="success")
+            job.update({"run_id": run_id, "head_sha": sha, "workflow_name": name})
+            return job
+
+        good = [{"total_count": 2, "jobs": [receipt(101)]},
+                {"total_count": 2, "jobs": [receipt(102)]}]
+        opener = Opener(good)
+        with patch.object(route.urllib.request, "build_opener", return_value=opener):
+            result = route.fetch_jobs(34, "synthetic-test-token")
+        self.assertEqual([j["id"] for j in result], [101, 102])
+        self.assertIn("/actions/runs/34/jobs?", opener.calls[0][0])
+        self.assertEqual([call[1] for call in opener.calls], [15, 15])
+        self.assertFalse(route.classify_run(34, result, NOW)["authorizes_mutation"])
+
+        invalid = [
+            ([{"total_count": 1, "jobs": [receipt(101, run_id=35)]}],
+             "cross_run_job_evidence"),
+            ([{"total_count": 1, "jobs": [dict(receipt(101), run_id=True)]}],
+             "untrusted_job_provenance"),
+            ([{"total_count": 1, "jobs": [dict(receipt(101), head_sha="not-a-sha")]}],
+             "untrusted_job_provenance"),
+            ([{"total_count": 1, "jobs": [dict(receipt(101), workflow_name="")]}],
+             "untrusted_job_provenance"),
+            ([{"total_count": 2, "jobs": [receipt(101)]},
+              {"total_count": 2, "jobs": [receipt(102, sha="b" * 40)]}],
+             "mixed_run_head_sha"),
+            ([{"total_count": 2, "jobs": [receipt(101)]},
+              {"total_count": 2, "jobs": [receipt(102, name="Other workflow")]}],
+             "mixed_run_workflow_name"),
+        ]
+        for pages, expected in invalid:
+            with self.subTest(error=expected):
+                opener = Opener(pages)
+                with patch.object(route.urllib.request, "build_opener", return_value=opener):
+                    with self.assertRaisesRegex(route.InvalidEvidence, expected):
+                        route.fetch_jobs(34, "synthetic-test-token")
+
+    def test_job_receipt_matches_observed_github_metadata_contract(self):
+        actual = {"run_id": 38471675524, "head_sha":
+                  "e5a63e3efb508d8b0a42c148262f9515b5753bed",
+                  "workflow_name": "zCloud VPS deploy"}
+        self.assertEqual(route._verified_job_provenance(actual, 38471675524),
+                         actual["head_sha"])
+
     def test_latest_deploy_missing_token_denies_without_api(self):
         with self.assertRaises(route.InvalidEvidence):
             route.latest_main_deploy_ids("")
