@@ -173,14 +173,26 @@ def api(path, token):
 
 def pages(path, field, token, limit=500):
     found = []
+    expected_total = None
     for page in range(1, MAX_PAGES + 1):
         response = api(path + ('&' if '?' in path else '?') + f'per_page=100&page={page}', token)
+        total = response.get('total_count')
+        # GitHub's list-runners, list-runs and list-jobs endpoints all publish
+        # total_count. Missing, contradictory or changing totals are not proof
+        # the collection was completely observed.
+        if type(total) is not int or total < 0 or total > limit:
+            raise EvidenceError('invalid_or_unbounded_total_count')
+        if expected_total is None:
+            expected_total = total
+        elif total != expected_total:
+            raise EvidenceError('pagination_race')
         batch = array(response.get(field), 'api_page')
         if len(batch) > 100: raise EvidenceError('oversized_api_page')
         found.extend(batch)
-        if len(found) > limit: raise EvidenceError('incomplete_inventory')
+        if len(found) > total:
+            raise EvidenceError('pagination_count_conflict')
         if len(batch) < 100:
-            if type(response.get('total_count')) is int and response['total_count'] > len(found):
+            if len(found) != total:
                 raise EvidenceError('incomplete_inventory')
             return found
     raise EvidenceError('pagination_cap_reached')
