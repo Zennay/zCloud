@@ -2333,6 +2333,23 @@ def _manual_start_priority_key(project_id):
 def _manual_force_start_priority_key(project_id):
     return 'manual_force_start_priority:' + str(project_id or '').strip().lower()
 
+def _manual_force_start_slot_key(project_id):
+    return 'manual_force_start_slot:' + str(project_id or '').strip().lower()
+
+def _manual_force_start_slot_locked(connection, project_id, at=None):
+    """Return a fresh explicitly requested provider slot; stale hints deny themselves."""
+    if not _manual_force_start_priority_active_locked(connection, project_id, at):
+        return 0
+    row=connection.execute(
+        'SELECT value FROM runtime_settings WHERE key=?',
+        (_manual_force_start_slot_key(project_id),),
+    ).fetchone()
+    raw=str(row['value'] or '') if row else ''
+    if not raw.isdecimal() or raw.startswith('0'):
+        return 0
+    requested=int(raw)
+    return requested if 1 <= requested <= GLOBAL_CHATGPT_WORKER_LIMIT else 0
+
 def _bounded_manual_intent_active_locked(connection, key, at=None):
     row=connection.execute(
         'SELECT value FROM runtime_settings WHERE key=?',
@@ -2901,6 +2918,7 @@ def portfolio_queue_allocate():
     # browser work. Read this outside the allocator transaction to avoid opening
     # a nested SQLite connection while the write lock is held.
     busy_worker_keys=_busy_ai_worker_keys()
+    prior_worker_by_slot={slot:key for key,slot in _current_global_slot_map().items()}
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2938,7 +2956,9 @@ def portfolio_queue_allocate():
                 row_project=str(occupied['project_id'] or '')
                 local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
                 local_slot=local_ordinals[row_project]
-                worker_key=f'{row_project}::w{local_slot}'
+                previous_key=prior_worker_by_slot.get(int(occupied['worker_slot'] or 0),'')
+                worker_key=(previous_key if previous_key.startswith(row_project+'::w')
+                            else f'{row_project}::w{local_slot}')
                 status=str(occupied['status'] or '')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
                 if status=='verifying' or project_priority=='system':
@@ -2981,10 +3001,26 @@ def portfolio_queue_allocate():
         # A Force Start only needs an allocation override when its project is not
         # already resident. Pick one queued force-intent candidate deterministically.
         force_pairs=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+        occupied_counts={}
+        for occupied in occupied_rows:
+            pid=str(occupied['project_id'] or '')
+            occupied_counts[pid]=occupied_counts.get(pid,0)+1
+        occupied_slots={int(x['worker_slot']):str(x['project_id'] or '') for x in occupied_rows}
         force_pairs=[
             pair for pair in force_pairs
-            if str(pair[0]['project_id'] or '') not in occupied_projects
-            and _manual_force_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+            if _manual_force_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+            and (
+                str(pair[0]['project_id'] or '') not in occupied_projects
+                or (
+                    # A project that already has a worker may be forced into
+                    # another, explicitly selected slot ONLY when a separate,
+                    # scope-compatible queued lane and contractual capacity exist.
+                    (hint:=_manual_force_start_slot_locked(c,pair[0]['project_id'],ts_dt)) > 0
+                    and occupied_slots.get(hint) != str(pair[0]['project_id'] or '')
+                    and occupied_counts.get(str(pair[0]['project_id'] or ''),0)
+                        < _portfolio_project_hard_cap(pair[0]['project_id'])
+                )
+            )
         ]
         force_pair=min(
             force_pairs,
@@ -2996,6 +3032,7 @@ def portfolio_queue_allocate():
         ) if force_pairs else None
         force_project=str(force_pair[0]['project_id'] or '') if force_pair else ''
         force_queue_id=str(force_pair[0]['queue_id'] or '') if force_pair else ''
+        force_preferred_slot=_manual_force_start_slot_locked(c,force_project,ts_dt) if force_pair else 0
 
         # If Force Start targets an already-resident project, the normal command
         # path is enough; consume the transient allocation override immediately.
@@ -3005,6 +3042,8 @@ def portfolio_queue_allocate():
                     'DELETE FROM runtime_settings WHERE key=?',
                     (_manual_force_start_priority_key(project_id),),
                 )
+                c.execute('DELETE FROM runtime_settings WHERE key=?',
+                          (_manual_force_start_slot_key(project_id),))
 
         force_victim_slot=None
         if force_pair:
@@ -3015,7 +3054,9 @@ def portfolio_queue_allocate():
                 row_project=str(occupied['project_id'] or '')
                 local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
                 local_slot=local_ordinals[row_project]
-                worker_key=f'{row_project}::w{local_slot}'
+                previous_key=prior_worker_by_slot.get(int(occupied['worker_slot'] or 0),'')
+                worker_key=(previous_key if previous_key.startswith(row_project+'::w')
+                            else f'{row_project}::w{local_slot}')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
                 if row_project==force_project or project_priority=='system':
                     continue
@@ -3032,7 +3073,11 @@ def portfolio_queue_allocate():
                     int(occupied['worker_slot'] or 0),
                 ))
             if victims:
-                force_victim_slot=min(victims)[-1]
+                # Force for a specific UI worker MUST NOT preempt an unrelated
+                # slot. A busy/protected requested slot remains untouched.
+                eligible=[v for v in victims if not force_preferred_slot or v[-1]==force_preferred_slot]
+                if eligible:
+                    force_victim_slot=min(eligible)[-1]
 
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
@@ -3044,6 +3089,10 @@ def portfolio_queue_allocate():
             # slot was occupied before any priority/manual-start preemption below.
             slot_was_occupied = row is not None
             lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+            # Do not admit this forced queue item in the wrong global slot.
+            if force_pair and force_preferred_slot and slot!=force_preferred_slot:
+                lane_candidates=[pair for pair in lane_candidates
+                                 if str(pair[0]['queue_id'] or '')!=force_queue_id]
             used_counts={}
             for item in selected:
                 pid=str(item.get('project_id') or '')
@@ -3174,6 +3223,15 @@ def portfolio_queue_allocate():
                 if not lane_candidates:
                     continue
 
+            # A selected Force target outranks unrelated queued lanes in its
+            # exact idle slot. It still needs a real eligible queue claim and
+            # still passes the hard-cap and memory admission checks below.
+            if force_pair and force_preferred_slot==slot and not force_replacement:
+                force_candidates=[pair for pair in lane_candidates
+                                  if str(pair[0]['queue_id'] or '')==force_queue_id]
+                if force_candidates:
+                    lane_candidates=force_candidates
+
             # Hard caps are project-specific and apply even when no alternative
             # project is runnable. This prevents FTMO PR/CI churn from consuming
             # more browser/code-worker slots than the runner can productively serve.
@@ -3219,15 +3277,17 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
-            if force_replacement and str(row['project_id'] or '')==force_project:
+            if (force_replacement or force_preferred_slot==slot) and str(row['project_id'] or '')==force_project:
                 c.execute(
-                    'DELETE FROM runtime_settings WHERE key=?',
-                    (_manual_force_start_priority_key(force_project),),
+                    'DELETE FROM runtime_settings WHERE key IN (?,?)',
+                    (_manual_force_start_priority_key(force_project),
+                     _manual_force_start_slot_key(force_project)),
                 )
                 force_pair=None
                 force_project=''
                 force_queue_id=''
                 force_victim_slot=None
+                force_preferred_slot=0
             if not slot_was_occupied:
                 new_workers_claimed += 1
     return selected
@@ -3352,12 +3412,28 @@ def portfolio_queue_allocation():
         item=portfolio_queue_current_for_slot(slot)
         if item:
             active.append(item)
+    # Keep an existing project's worker ordinal bound to its previous
+    # physical slot. If an idle lower-numbered slot is later Force-assigned
+    # to the same project, renumbering its generating worker would silently
+    # orphan the active browser session.
+    with connect() as c:
+        previous={
+            (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
+            for r in c.execute(
+                'SELECT slot,project_id,worker_slot FROM ai_global_slots'
+            ).fetchall()
+        }
     used={}
     workers=[]
     for item in sorted(active,key=lambda x:int(x.get('worker_slot') or 99)):
         project_id=item['project_id']
-        local_slot=used.get(project_id,0)+1
-        used[project_id]=local_slot
+        global_slot=int(item['worker_slot'])
+        reserved=used.setdefault(project_id,set())
+        old=previous.get((project_id,global_slot))
+        local_slot=old if old and old > 0 and old not in reserved else 1
+        while local_slot in reserved:
+            local_slot+=1
+        reserved.add(local_slot)
         workers.append({
             'worker_key':f'{project_id}::w{local_slot}',
             'project_id':project_id,
@@ -4256,6 +4332,14 @@ class Handler(BaseHTTPRequestHandler):
                 project_id=str(payload.get('project_id') or '')
                 action=str(payload.get('action') or '')
                 force_start=action=='start' and payload.get('force') is True
+                force_slot=0
+                if force_start and payload.get('global_worker_slot') is not None:
+                    raw=payload.get('global_worker_slot')
+                    if isinstance(raw,bool) or not isinstance(raw,int) or not (1 <= raw <= GLOBAL_CHATGPT_WORKER_LIMIT):
+                        return self.reply({'error':'Ongeldig workerslot voor Forceer'},400)
+                    force_slot=raw
+                    if force_slot>dynamic_provider_count('chatgpt'):
+                        return self.reply({'error':'Dit slot is geen ChatGPT-worker'},409)
                 if action=='restart_firefox':
                     try:
                         status=restart_firefox_runtime()
@@ -4296,6 +4380,12 @@ class Handler(BaseHTTPRequestHandler):
                                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
                                 (_manual_force_start_priority_key(base_project_id),intent_ts,intent_ts,actor),
                             )
+                            if force_slot:
+                                c.execute(
+                                    "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                                    (_manual_force_start_slot_key(base_project_id),str(force_slot),intent_ts,actor),
+                                )
                     elif not is_worker and action=='pause':
                         c.execute(
                             'DELETE FROM runtime_settings WHERE key IN (?,?)',
@@ -4304,6 +4394,8 @@ class Handler(BaseHTTPRequestHandler):
                                 _manual_force_start_priority_key(base_project_id),
                             ),
                         )
+                        c.execute('DELETE FROM runtime_settings WHERE key=?',
+                                  (_manual_force_start_slot_key(base_project_id),))
                     # Health treats pending browser commands older than the
                     # canonical threshold as invalid. Keep admission fail-safe too,
                     # even though the scheduler now reconciles the same global set
@@ -4371,7 +4463,8 @@ class Handler(BaseHTTPRequestHandler):
                                     c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
                                     c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
                             ts=now()
-                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',(project_id,action,'pending',ts,ts,'force-new-tab' if force_start else None))
+                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',(project_id,action,'pending',ts,ts,('force-new-tab:slot='+str(force_slot)) if force_start and force_slot else
+                                ('force-new-tab' if force_start else None)))
                             command_id=cur.lastrowid
                 if rate_limited:
                     return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
@@ -4684,8 +4777,12 @@ class Handler(BaseHTTPRequestHandler):
             # action for Force so an outdated tab can NEVER consume its fresh
             # replacement-tab ticket while Firefox/Violentmonkey updates.
             return self.reply({'commands':[{'id':r['id'],'project_id':r['project_id'],
-                'action':'force_start' if r['result']=='force-new-tab' else r['action'],
-                'created_at':r['created_at'],'force':r['result']=='force-new-tab'}
+                'action':'force_start' if str(r['result'] or '').startswith('force-new-tab') else r['action'],
+                'created_at':r['created_at'],
+                'force':str(r['result'] or '').startswith('force-new-tab'),
+                'global_worker_slot':(int(r['result'].split('slot=',1)[1]) if
+                                      str(r['result'] or '').startswith('force-new-tab:slot=') and
+                                      str(r['result'].split('slot=',1)[1]).isdecimal() else None)}
                 for r in rows]})
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
