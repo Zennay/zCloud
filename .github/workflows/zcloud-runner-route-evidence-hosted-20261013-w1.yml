@@ -120,3 +120,56 @@ jobs:
                      json.dumps(lane["failure_phases"], sort_keys=True)))
           assert all("production_deploy_verified" in item for item in data["runs"])
           PY
+
+      - name: Publish human-readable bounded deploy-ops evidence
+        if: success()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          current = json.loads(Path("current-route-receipt.json").read_text(encoding="utf-8"))
+          drain = json.loads(Path("drain-receipt.json").read_text(encoding="utf-8"))
+          assert current["authorizes_mutation"] is False
+          assert drain["authorizes_mutation"] is False
+          assert all(r["production_deploy_verified"] is False for r in current["runs"])
+          lines = [
+              "## zCloud deploy-ops (observation, not release)",
+              "",
+              "No VPS workers, services or databases were changed by this check.",
+              "",
+              "| Main deployment | VPS runner assigned | Still unassigned | Failed job | Known failure class |",
+              "| --- | ---: | ---: | ---: | --- |",
+          ]
+          allowed = {
+              "browser_safe_idle", "runtime_promotion", "self_heal_rearm",
+              "multiple_failure_phases", "step_evidence_missing",
+              "step_evidence_inconsistent", "other_step",
+              "runner_identity", "regression_provenance", "production_status",
+          }
+          for run in current["runs"]:
+              lane = run["lanes"]["zcloud_vps"]
+              phases = lane["failure_phases"]
+              keys = sorted(k if k in allowed else "unclassified" for k in phases)
+              lines.append("| %s | %s | %s | %s | %s |" %
+                           (run["run_id"], lane["assigned_count"],
+                            lane["unassigned_count"], lane["failed_jobs"],
+                            ", ".join(keys) or "none reported"))
+          lines.extend(["", "Safety: source validated, production still unverified.",
+                        "Browser heartbeats and synthetic log fixtures do not prove real text progress."])
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\\n".join(lines) + "\\n")
+          PY
+      - name: Retain only sanitized JSON receipts for short-lived review
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcloud-deployops-readonly-evidence-${{ github.run_id }}
+          path: |
+            route-receipt.json
+            current-route-receipt.json
+            drain-receipt.json
+          if-no-files-found: error
+          retention-days: 3
