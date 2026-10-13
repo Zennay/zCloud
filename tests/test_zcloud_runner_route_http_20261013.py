@@ -62,9 +62,14 @@ class Handler(BaseHTTPRequestHandler):
                         for i in range(41)]
             else:
                 runs = [{'id':123,'status':'in_progress','created_at':owner.run_time}] if state == 'in_progress' else []
+                if owner.mode == 'mixed_zero_job' and state == 'queued':
+                    runs = [{'id':999,'status':'queued','created_at':owner.run_time}]
             page = int(parse_qs(p.query).get('page',['1'])[0])
             self.reply_json({'total_count':len(runs),
                              'workflow_runs':runs[(page-1)*100:page*100]})
+            return
+        if p.path == base + '/runs/999/jobs':
+            self.reply_json({'total_count':0,'jobs':[]})
             return
         if p.path == base + '/runs/123/jobs':
             if owner.mode == 'jobs_empty':
@@ -188,8 +193,19 @@ class RealHttpTests(unittest.TestCase):
     def test_real_http_stale_queued_run_without_jobs_denied(self):
         self.mode='jobs_empty'
         snap=self.live()
-        with self.assertRaisesRegex(route.EvidenceError,'stale_queued_run_without_job_evidence'):
-            route.classify(snap,datetime.now(timezone.utc))
+        result=route.classify(snap,datetime.now(timezone.utc))
+        self.assertEqual(result['classification'],'unknown_incomplete_evidence')
+        self.assertEqual(result['unknown_stale_queued_runs'],1)
+        self.assertEqual(result['stale_unassigned_jobs'],0)
+
+    def test_real_http_mixed_queued_jobs_and_empty_stale_runs(self):
+        self.mode='mixed_zero_job'
+        snap=self.live()
+        result=route.classify(snap,datetime.now(timezone.utc))
+        self.assertEqual(result['classification'],'unknown_incomplete_evidence')
+        self.assertEqual(result['unknown_stale_queued_runs'],1)
+        self.assertEqual(result['stale_unassigned_jobs'],1)
+        self.assertFalse(result['deploy_authorized'])
 
     def test_real_http_stale_run_empty_jobs_cli_is_unknown_and_silent(self):
         self.mode='jobs_empty'
