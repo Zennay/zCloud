@@ -191,6 +191,23 @@
         "priority": "normal",
         "protected": false
       }
+    },
+    "mixlab": {
+      "queue_mode": "execution",
+      "lane_profile": "product",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": false
+      },
+      "compute": {
+        "class": "build",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 512,
+        "priority": "background",
+        "protected": false
+      }
     }
   }
 }
