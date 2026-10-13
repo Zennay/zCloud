@@ -7,6 +7,8 @@ on:
     paths:
       - scripts/zcloud_runner_route_evidence_20261013_w1.py
       - tests/test_zcloud_runner_route_evidence_20261013_w1.py
+      - scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py
+      - tests/test_zcloud_safe_idle_blocker_evidence_20261013_w1.py
       - .github/workflows/zcloud-runner-route-evidence-hosted-20261013-w1.yml
   workflow_dispatch:
 
@@ -28,8 +30,30 @@ jobs:
       - name: Strict unit validation and Python compile
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/zcloud_runner_route_evidence_20261013_w1.py
+          python3 -m py_compile scripts/zcloud_runner_route_evidence_20261013_w1.py scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py
           python3 -m unittest discover -s tests -p 'test_zcloud_runner_route_evidence_20261013_w1.py' -v
+          python3 -m unittest discover -s tests -p 'test_zcloud_safe_idle_blocker_evidence_20261013_w1.py' -v
+      - name: Validate synthetic completed-drain log receipt without touching workers
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | python3 scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py > drain-receipt.json
+          import json
+          print("2026-10-13T21:48:06.0879606Z ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: browser workers did not reach safe-idle before deployment timeout; " + json.dumps([
+              {"worker_id":"cloud::w1", "desired_state":"draining",
+               "drain_command_id":321, "drain_command_status":"completed",
+               "generating":True, "sending":False, "last_event":"heartbeat",
+               "last_event_age_seconds":6.4}
+          ], separators=(",", ":")))
+          PY
+          python3 - <<'PY'
+          import json
+          data = json.load(open("drain-receipt.json", encoding="utf-8"))
+          assert data["only_acknowledged_draining_generation"] is True
+          assert data["authorizes_mutation"] is False
+          assert data["proves_process_stuck"] is False
+          assert data["production_deploy_verified"] is False
+          print("Safe-idle drain classification: PASS (observational only)")
+          PY
       - name: Read historical real runner-route receipts without changing jobs
         env:
           GH_TOKEN: ${{ github.token }}
