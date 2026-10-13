@@ -1,12 +1,11 @@
 name: Deploy Fuckball on VPS
 
+# Physics recovery hold (2026-10-13): do NOT silently re-sync an older
+# GitHub main onto a Work-session game build. Resume automatic deploy only
+# once the approved HaxBall-copy physics have been committed, compared
+# side-by-side, and intentionally promoted. Explicit dispatch remains possible.
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/deploy-fuckball.yml']
   workflow_dispatch:
-  schedule:
-    - cron: '*/10 * * * *'
 
 permissions:
   contents: read
