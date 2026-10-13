@@ -85,6 +85,33 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         for key in claude:
             self.assertEqual("other_provider", observed[key])
 
+    def test_real_http_progress_is_not_interchangeable_with_generating_heartbeat(self):
+        chatgpt, _ = self.allocated_keys()
+        for worker in chatgpt:
+            self.emit(worker, generating=True, reason="violentmonkey-primary-runner")
+        proof = self.report()
+        self.assertTrue(proof["all_allocated_chatgpt_generating"])
+        self.assertFalse(proof["all_allocated_chatgpt_progressing"])
+        # A real browser driver's generated-text change sends this distinct
+        # event, unlike the timer heartbeat which reports state only.
+        for worker in chatgpt:
+            self.emit(worker, event="generation-progress", generating=True,
+                      reason="response-text-changed")
+        proof = self.report()
+        self.assertTrue(proof["all_allocated_chatgpt_progressing"], proof)
+        self.assertTrue(all(row["progress_evidence"] for row in proof["workers"]
+                            if row["state"] != "other_provider"))
+
+    def test_real_http_single_worker_progress_does_not_green_entire_pool(self):
+        chatgpt, _ = self.allocated_keys()
+        for worker in chatgpt:
+            self.emit(worker, generating=True, reason="violentmonkey-primary-runner")
+        self.emit(chatgpt[0], event="generation-progress", generating=True,
+                  reason="response-text-changed")
+        proof = self.report()
+        self.assertTrue(proof["all_allocated_chatgpt_generating"])
+        self.assertFalse(proof["all_allocated_chatgpt_progressing"])
+
     def test_actual_server_paused_worker_cannot_be_green_after_heartbeat(self):
         chatgpt, _ = self.allocated_keys()
         for key in chatgpt:
