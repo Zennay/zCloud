@@ -96,7 +96,13 @@ def classify_create_result(
             plan.get("path") != API_PATH or
             plan.get("payload") != {"ref": ref, "sha": sha} or
             plan.get("authorized") is not False or
-            plan.get("dispatch_allowed") is not False):
+            plan.get("dispatch_allowed") is not False or
+            plan.get("requires_owner_provenance") is not True or
+            plan.get("requires_exact_main_recheck_before_claim") is not True or
+            plan.get("requires_exact_main_recheck_after_claim") is not True or
+            plan.get("requires_protected_tag_namespace") is not True or
+            plan.get("requires_durable_owner_review") is not True or
+            plan.get("requires_no_tag_deletion_or_rewrite") is not True):
         raise ContractViolation("unsafe_or_inconsistent_plan")
     state, reason = "DENY", "indeterminate_or_failed_create"
     if status == 201:
