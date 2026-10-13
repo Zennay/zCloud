@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from scripts.zcloud_dashboard_static_candidate_plan_20261012_w1 import (
-    PlanError, plan, snapshot, verify_cache_bust,
+    PlanError, plan, snapshot, verify_cache_bust, audit_cache_pins,
 )
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_dashboard_static_candidate_plan_20261012_w1.py"
@@ -472,6 +472,99 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         self.assertEqual([x["path"] for x in out["assets"]], ["public/index.html"])
         self.assertTrue(out["cache_bust_verified"])
         self.assertFalse(out["promotion_authorized"])
+
+    def test_mixed_backend_change_can_be_audited_but_never_admitted(self):
+        base = self.build_cache_baseline()
+        self.write("server.py", b"print('backend changed')\n")
+        self.write("public/app.js", b"const changed=2;\n")
+        head = self.commit("mixed app and backend, stale JS pin")
+        self.deny(base, head, "non_static_or_deleted_change")
+        report = audit_cache_pins(self.repo, base, head)
+        self.assertFalse(report["cache_pins_coherent"])
+        self.assertEqual(report["reason"], "changed_asset_pin_unchanged")
+        self.assertTrue(report["structural_static_diff_not_evaluated"])
+        self.assertFalse(report["static_diff_eligible"])
+        self.assertTrue(report["assets"][0]["blob_changed"])
+        self.assertFalse(report["assets"][0]["version_changed"])
+        for field in ("release_authorized", "promotion_authorized",
+                      "production_status_proven", "runtime_bytes_observed"):
+            self.assertFalse(report[field], field)
+
+    def test_mixed_bundle_with_correct_cache_pins_remains_non_authorizing(self):
+        base = self.build_cache_baseline()
+        self.write("server.py", b"print('backend changed')\n")
+        self.write("public/app.js", b"const changed=2;\n")
+        self.write("public/enhancements.css", b".new{}")
+        self.write("public/index.html", self.pinned_index(
+            app="/app.js?v=r9", css="/enhancements.css?v=r6"))
+        head = self.commit("mixed backend plus independently bumped app and CSS")
+        self.deny(base, head, "non_static_or_deleted_change")
+        evidence = audit_cache_pins(self.repo, base, head)
+        self.assertTrue(evidence["cache_pins_coherent"])
+        self.assertFalse(evidence["static_diff_eligible"])
+        self.assertFalse(evidence["release_authorized"])
+        self.assertFalse(evidence["promotion_authorized"])
+        self.assertTrue(all(x["blob_changed"] and x["version_changed"]
+                            for x in evidence["assets"]))
+
+    def test_backend_only_source_change_is_not_a_static_release(self):
+        base = self.build_cache_baseline()
+        self.write("server.py", b"print('backend changed')\n")
+        head = self.commit("backend only")
+        report = audit_cache_pins(self.repo, base, head)
+        self.assertTrue(report["cache_pins_coherent"])
+        self.assertFalse(report["static_diff_eligible"])
+        self.assertTrue(all(not asset["blob_changed"] for asset in report["assets"]))
+        self.assertFalse(report["promotion_authorized"])
+
+    def test_mixed_audit_still_requires_exact_head_and_ancestor(self):
+        base = self.build_cache_baseline()
+        self.write("public/app.js", b"const changed=2;")
+        stale = self.commit("stale source")
+        self.write("public/index.html", self.pinned_index(app="/app.js?v=r9"))
+        head = self.commit("new source")
+        with self.assertRaisesRegex(PlanError, "candidate_does_not_equal_checked_out_head"):
+            audit_cache_pins(self.repo, base, stale)
+        self.assertTrue(audit_cache_pins(self.repo, base, head)["cache_pins_coherent"])
+        with self.assertRaisesRegex(PlanError, "invalid_commit_sha"):
+            audit_cache_pins(self.repo, "not-a-sha", head)
+
+    def test_mixed_audit_cli_returns_failure_when_asset_versions_stale(self):
+        base = self.build_cache_baseline()
+        self.write("server.py", b"print('backend changed')")
+        self.write("public/app.js", b"const changed=2;")
+        head = self.commit("unsafe mixed source")
+        argv = [sys.executable, str(SCRIPT), "--root", str(self.repo),
+                "--baseline-sha", base, "--candidate-sha", head,
+                "--audit-cache-pins"]
+        report = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+        self.assertEqual(report.returncode, 2, report.stderr)
+        obj = json.loads(report.stdout)
+        self.assertFalse(obj["cache_pins_coherent"])
+        self.assertFalse(obj["static_diff_eligible"])
+        self.assertFalse(obj["release_authorized"])
+        self.assertFalse(obj["promotion_authorized"])
+
+    def test_mixed_audit_cli_can_report_coherent_without_promotion(self):
+        base = self.build_cache_baseline()
+        self.write("server.py", b"print('backend changed')")
+        self.write("public/app.js", b"const changed=2;")
+        self.write("public/index.html", self.pinned_index(app="/app.js?v=r9"))
+        head = self.commit("mixed with valid cache revision")
+        argv = [sys.executable, str(SCRIPT), "--root", str(self.repo),
+                "--baseline-sha", base, "--candidate-sha", head,
+                "--audit-cache-pins"]
+        report = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+        self.assertEqual(report.returncode, 0, report.stderr)
+        obj = json.loads(report.stdout)
+        self.assertTrue(obj["cache_pins_coherent"])
+        self.assertFalse(obj["static_diff_eligible"])
+        self.assertFalse(obj["promotion_authorized"])
+        bad = subprocess.run(
+            argv + ["--check-cache-bust"], capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(bad.returncode, 2)
+        self.assertEqual(json.loads(bad.stdout)["reason"], "incompatible_modes")
 
     def test_cache_contract_cli_mode_json_and_denial(self):
         base = self.build_cache_baseline()
