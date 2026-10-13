@@ -34,10 +34,13 @@ def accepted_fixture():
 
 def actual_github_payload():
     fixture = accepted_fixture()
+    run = deepcopy(fixture["workflow_run"])
+    run["repository"] = {"full_name": REPOSITORY, "id": 42}
+    run["head_repository"]["id"] = 42
     return {
         "action": "completed",
         "repository": {"full_name": REPOSITORY, "id": 42, "private": True},
-        "workflow_run": deepcopy(fixture["workflow_run"]),
+        "workflow_run": run,
         "sender": {"login": "not-an-authorization"},
     }
 
@@ -73,6 +76,56 @@ class WorkflowRunOriginOfflineTests(unittest.TestCase):
                 self.assertEqual(result.reason, "event_not_workflow_run")
                 self.assertFalse(result.trusted_origin_observed)
                 self.assertFalse(result.deploy_authorized)
+
+    def test_actual_webhook_requires_positive_exact_event_repo_id(self):
+        for invalid in (None, True, False, 0, -1, 42.0, "42", [], {}):
+            with self.subTest(id=repr(invalid)):
+                payload = actual_github_payload()
+                payload["repository"]["id"] = invalid
+                decision = classify_github_payload(
+                    payload, event_name="workflow_run", canonical_main_sha=MAIN,
+                )
+                self.assertEqual(decision.reason, "invalid_event_repository_id")
+                self.assertFalse(decision.trusted_origin_observed)
+                self.assertFalse(decision.deploy_authorized)
+
+    def test_actual_webhook_rejects_malformed_or_forked_run_repository(self):
+        for invalid in (None, [], {}, "Zennay/zCloud",
+                        {"full_name": "fork/zCloud", "id": 42},
+                        {"full_name": REPOSITORY + " ", "id": 42}):
+            with self.subTest(repo=repr(invalid)):
+                payload = actual_github_payload()
+                payload["workflow_run"]["repository"] = invalid
+                decision = classify_github_payload(
+                    payload, event_name="workflow_run", canonical_main_sha=MAIN,
+                )
+                self.assertEqual(decision.reason, "untrusted_run_repository")
+                self.assertFalse(decision.trusted_origin_observed)
+                self.assertFalse(decision.actions_cancel_authorized)
+
+    def test_actual_webhook_run_repo_id_must_match_event_repo_id(self):
+        for invalid in (None, True, 0, 99, 42.0, "42"):
+            with self.subTest(id=repr(invalid)):
+                payload = actual_github_payload()
+                payload["workflow_run"]["repository"]["id"] = invalid
+                decision = classify_github_payload(
+                    payload, event_name="workflow_run", canonical_main_sha=MAIN,
+                )
+                self.assertEqual(decision.reason, "run_repository_id_mismatch")
+                self.assertFalse(decision.trusted_origin_observed)
+                self.assertFalse(decision.runner_restart_authorized)
+
+    def test_actual_webhook_head_repo_id_must_match_event_repo_id(self):
+        for invalid in (None, True, 0, 99, 42.0, "42"):
+            with self.subTest(id=repr(invalid)):
+                payload = actual_github_payload()
+                payload["workflow_run"]["head_repository"]["id"] = invalid
+                decision = classify_github_payload(
+                    payload, event_name="workflow_run", canonical_main_sha=MAIN,
+                )
+                self.assertEqual(decision.reason, "head_repository_id_mismatch")
+                self.assertFalse(decision.trusted_origin_observed)
+                self.assertFalse(decision.worker_push_authorized)
 
     def test_real_webhook_requires_completed_outer_action(self):
         for invalid in (None, True, "requested", "in_progress", "completed "):
