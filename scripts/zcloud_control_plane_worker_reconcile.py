@@ -143,6 +143,18 @@ def read_roster(db: Path) -> dict:
             "SELECT project_id,worker_slot,desired_state FROM runner_workers "
             "ORDER BY project_id,worker_slot"
         )]
+        if not {"queue_id", "project_id", "worker_slot", "status", "claim_expires", "updated_at"}.issubset(
+            _table_columns(conn, "portfolio_queue")
+        ):
+            raise InvalidEvidence("unsupported portfolio_queue schema")
+        # Never read titles, prompts, claim metadata, or work item evidence.
+        # Read all relevant queue owners within the same transaction to detect
+        # conflicting simultaneous claims of a single global worker slot.
+        queue_rows = [dict(r) for r in conn.execute(
+            "SELECT project_id,worker_slot,claim_expires FROM portfolio_queue "
+            "WHERE worker_slot IS NOT NULL AND status IN ('claimed','running','verifying') "
+            "ORDER BY updated_at DESC LIMIT 1025"
+        )]
         if not {"project_id", "active", "worker_count"}.issubset(
             _table_columns(conn, "runner_targets")
         ):
@@ -163,7 +175,8 @@ def read_roster(db: Path) -> dict:
         conn.execute("ROLLBACK")
     finally:
         conn.close()
-    if len(slots) > MAX_SLOTS or len(targets) > 4096 or len(project_rows) > 4096 or len(pending) > 1024:
+    if (len(slots) > MAX_SLOTS or len(targets) > 4096 or len(project_rows) > 4096
+            or len(pending) > 1024 or len(queue_rows) > 1024):
         raise InvalidEvidence("roster exceeds diagnostic bounds")
     seen_slots, seen_keys = set(), set()
     for row in slots:
@@ -195,6 +208,12 @@ def read_roster(db: Path) -> dict:
         # in the runtime projector even if ai_global_slots still allocates it.
         count = _positive_int(row["worker_count"], "target worker count")
         project_targets[project] = {"active": bool(row["active"]), "worker_count": count}
+    for row in queue_rows:
+        _project(row["project_id"])
+        _positive_int(row["worker_slot"], "queue global slot")
+        until = row["claim_expires"]
+        if until is not None and (not isinstance(until, str) or len(until) > 64):
+            raise InvalidEvidence("invalid queue claim deadline")
     for item in pending:
         key = item["project_id"]
         if not isinstance(key, str) or len(key) > 180 or "::w" not in key:
@@ -205,7 +224,7 @@ def read_roster(db: Path) -> dict:
         if not isinstance(item["created_at"], str):
             raise InvalidEvidence("invalid pending command timestamp")
     return {"slots": slots, "targets": target_map, "project_targets": project_targets,
-            "pending": pending}
+            "queue_rows": queue_rows, "pending": pending}
 
 
 def _live_workers(payload):
@@ -259,6 +278,24 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
         raise InvalidEvidence("naive reference clock")
     pending_total = 0
     stale_pending = 0
+    # Identity-safe queue correlation; a persisted global allocation might be
+    # from manual/bootstrap state, so absence is attention not authorization.
+    # Time-bounded claimed rows are evaluated against one UTC reference.
+    queue_by_slot = {}
+    for claim in roster.get("queue_rows", []):
+        deadline = claim["claim_expires"]
+        if deadline:
+            try:
+                parsed = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("naive claim deadline")
+                if parsed.astimezone(timezone.utc) <= now.astimezone(timezone.utc):
+                    continue
+            except (TypeError, ValueError, OverflowError):
+                problems.append({"worker": f"{claim['project_id']}::slot{claim['worker_slot']}",
+                                 "code": "queue_claim_deadline_unverifiable", "level": "degraded"})
+                continue
+        queue_by_slot.setdefault(claim["worker_slot"], []).append(claim["project_id"])
     # Recent command intent is not proof of dispatch. Detect stuck pending work
     # without ever returning command results, payloads or actor identifiers.
     for cmd in roster.get("pending", []):
@@ -282,6 +319,19 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
     for row in roster["slots"]:
         key = (row["project_id"], row["worker_slot"])
         label = f"{key[0]}::w{key[1]}"
+        if "queue_rows" in roster:
+            claimed_projects = queue_by_slot.get(row["slot"], [])
+            if len(claimed_projects) > 1:
+                problems.append({"worker": label, "code": "multiple_live_queue_claims",
+                                 "level": "degraded"})
+            elif len(claimed_projects) == 1 and claimed_projects[0] != key[0]:
+                problems.append({"worker": label, "code": "queue_claim_allocation_mismatch",
+                                 "level": "degraded"})
+            elif not claimed_projects:
+                # During bootstrap no queue-owned work is required. Attention
+                # only; never assert browser absence or permission to retry.
+                problems.append({"worker": label, "code": "allocation_without_live_queue_claim",
+                                 "level": "attention"})
         project_target = roster.get("project_targets", {}).get(key[0])
         if project_target is None and "project_targets" in roster:
             problems.append({"worker": label, "code": "allocation_without_project_target",
