@@ -89,6 +89,38 @@ assert.match(source,/No immediate slot switch is guaranteed|no immediate slot sw
         self.assertIn("min-width:0", css)
         self.assertIn("overflow-wrap:anywhere", css)
 
+    def test_worker_notice_is_single_compact_disclosure(self):
+        app = APP.read_text(encoding="utf-8")
+        css = (ROOT / "public" / "enhancements.css").read_text(encoding="utf-8")
+        self.assertIn('class="global-worker-note"', app)
+        self.assertNotIn('class="global-worker-hint"', app)
+        self.assertNotIn('class="global-worker-feedback"', app)
+        self.assertIn('grid-template-areas:"identity status project actions" "chat chat note note"', css)
+        self.assertIn('grid-template-areas:"identity status" "project project" "actions actions" "chat chat" "note note"', css)
+        self.assertIn('text-overflow:ellipsis;white-space:nowrap', css)
+        self.assertIn('position:absolute;top:calc(100% + 6px)', css)
+        script = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const ctx = vm.createContext({});
+vm.runInContext(source.slice(0, source.indexOf('let draggedProject=null;')), ctx);
+vm.runInContext('DATA={dynamic_workers:{chatgpt_count:1,claude_count:0},projects:[{id:"supa",name:"Supa"}]};WORKER_DEBUG={workers:[{global_slot:1,project:"",verdict:"idle"}]};GLOBAL_WORKER_PROJECT_REQUESTS[1]="supa";GLOBAL_WORKER_REQUEST_RESULTS[1]="Project priority requested with very long scheduler text to reproduce the overflow";GLOBAL_WORKER_REQUEST_AT[1]=Date.now();', ctx);
+const row = vm.runInContext('globalWorkerRows()', ctx);
+assert.equal((row.match(/class="global-worker-note"/g) || []).length, 1);
+assert.equal((row.match(/<summary>/g) || []).length, 1);
+assert.match(row, /Projectwissel aangevraagd/);
+assert.match(row, /very long scheduler text/);
+assert.doesNotMatch(row, /class="global-worker-hint"|class="global-worker-feedback"/);
+vm.runInContext('GLOBAL_WORKER_REQUEST_AT[1]=0;',ctx);
+const retry = vm.runInContext('globalWorkerRows()',ctx);
+assert.match(retry, /Nog niet toegewezen/);
+"""
+        result = subprocess.run(["node", "-e", script, str(APP)],
+                                cwd=ROOT,capture_output=True,text=True,check=False,timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

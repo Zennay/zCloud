@@ -377,7 +377,7 @@
 .worker-cockpit .global-worker-row{
   display:grid;
   grid-template-columns:minmax(135px,1fr) minmax(130px,.78fr) minmax(170px,1.1fr) auto;
-  grid-template-areas:"identity status project actions" "chat chat hint feedback";
+  grid-template-areas:"identity status project actions" "chat chat note note";
   align-items:center;gap:10px 17px;
   padding:15px 17px;border:1px solid #2e3b47;border-radius:15px;
   background:linear-gradient(100deg,rgba(255,255,255,.025),rgba(255,255,255,.008));
@@ -425,15 +425,34 @@
 .worker-cockpit .dynamic-worker-save:focus-visible{outline:2px solid #baf775;outline-offset:3px}
 .worker-cockpit .global-worker-chat{grid-area:chat;font-size:11px;padding:4px 0;min-height:auto;border:0;background:none;color:#78c8bd}
 .worker-cockpit .global-worker-telemetry{display:none}
-.worker-cockpit .global-worker-hint{grid-area:hint}
-.worker-cockpit .global-worker-feedback{grid-area:feedback}
+.worker-cockpit .global-worker-note{grid-area:note;position:relative;min-width:0;max-width:100%;justify-self:stretch}
+.worker-cockpit .global-worker-note summary{
+  display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;
+  padding:6px 9px;border:1px solid rgba(211,169,95,.28);border-radius:8px;
+  background:rgba(211,169,95,.07);color:#dec791;
+  font-size:11px;line-height:1.35;cursor:pointer;list-style:none;
+}
+.worker-cockpit .global-worker-note summary::-webkit-details-marker{display:none}
+.worker-cockpit .global-worker-note summary:focus-visible{outline:2px solid #baf775;outline-offset:2px}
+.worker-cockpit .global-worker-note-icon{
+  flex:0 0 15px;width:15px;height:15px;display:grid;place-items:center;
+  border:1px solid currentColor;border-radius:50%;font-size:10px;font-weight:750;
+}
+.worker-cockpit .global-worker-note-label{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.worker-cockpit .global-worker-note-detail{
+  position:absolute;top:calc(100% + 6px);right:0;z-index:20;
+  width:min(400px,calc(100vw - 64px));max-width:none;margin:0;
+  padding:11px 13px;border:1px solid #6a5940;border-radius:10px;
+  background:#1d252d;color:#e6d7b8;box-shadow:0 12px 28px rgba(0,0,0,.45);
+  font-size:12px;line-height:1.5;overflow-wrap:anywhere;
+}
 .worker-cockpit .worker-console-diagnostics{padding:0 26px;border-color:#2e3b47}
 .worker-cockpit .worker-console-diagnostics>summary{min-height:52px;color:#8fa2b3}
 .worker-cockpit .global-worker-empty{margin:0 26px 26px}
 @media(max-width:1050px){
   .worker-cockpit .global-worker-row{
     grid-template-columns:minmax(0,1fr) minmax(115px,.7fr);
-    grid-template-areas:"identity status" "project actions" "hint hint" "feedback feedback" "chat chat";
+    grid-template-areas:"identity status" "project actions" "chat note";
   }
 }
 @media(max-width:760px){
@@ -459,7 +478,7 @@
   .worker-cockpit .worker-console-heading{flex-direction:column;gap:8px}
   .worker-cockpit .global-worker-row{
     grid-template-columns:minmax(0,1fr) auto;
-    grid-template-areas:"identity status" "project project" "actions actions" "hint hint" "feedback feedback" "chat chat";
+    grid-template-areas:"identity status" "project project" "actions actions" "chat chat" "note note";
   }
   .worker-cockpit .global-worker-actions{justify-content:flex-start;gap:10px}
   .worker-cockpit .global-worker-actions .worker-icon-action{flex-basis:48px;width:48px;height:48px}

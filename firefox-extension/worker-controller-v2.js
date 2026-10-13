@@ -6,6 +6,7 @@
   "use strict";
   const API = "http://127.0.0.1:8765/api";
   const TAG = "zcloud-v2-worker-key";
+  const KNOWN_KEY = "zcloud-v2-known-worker-ids";
   const TICK_MS = 30000;
   const ownership = new Map(); // worker key -> tab ID (same tab across chats)
   const candidateRemovals = new Map();
@@ -13,6 +14,9 @@
   let workerWindow = null;
   let busy = false;
   let lastSnapshot = null;
+  let knownWorkers = new Set();
+  let knownLoaded = false;
+  const recoveryObservations = new Map();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   function isWorkerUrl(url) {
@@ -21,14 +25,35 @@
   function workerMarker(url) {
     try { return new URL(url).searchParams.get("zcloud_worker") || ""; } catch (_) { return ""; }
   }
-  function ready(t) {
-    if (!t || t.active !== true || t.assignment_ready !== true ||
-        t.desired_state === "paused" || t.desired_state === "draining") return false;
+  // A paused or draining assignment STILL owns its Firefox tab. The page
+  // runner controls dispatch; the extension must restore the tab, not run it.
+  function assigned(t) {
+    if (!t || t.assignment_ready !== true) return false;
     const key = String(t.project_id || "");
     const count = Number(t.global_worker_count || 0);
     const slot = Number(t.global_worker_slot || 0);
-    return !!key && count >= 1 && slot >= 1 && slot <= count &&
-      !!String(t.queue_item?.queue_id || "") && String(t.prompt || "").startsWith("Werk verder aan ");
+    return /^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key) &&
+      count >= 1 && slot >= 1 && slot <= count &&
+      !!String(t.queue_item?.queue_id || "");
+  }
+  async function loadKnownWorkers() {
+    if (knownLoaded) return;
+    const saved = await browser.storage.local.get(KNOWN_KEY);
+    const ids = saved?.[KNOWN_KEY];
+    knownWorkers = new Set((Array.isArray(ids) ? ids : []).filter(id =>
+      /^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(String(id))));
+    knownLoaded = true;
+  }
+  async function rememberWorker(key) {
+    if (knownWorkers.has(key)) return;
+    knownWorkers.add(key);
+    // Persist the SLOT identity, not Firefox's ephemeral tab ID. Tab IDs can
+    // change across a real browser crash and session restore.
+    await browser.storage.local.set({[KNOWN_KEY]:[...knownWorkers].slice(-128)});
+  }
+  async function forgetWorker(key) {
+    if (!knownWorkers.delete(key)) return;
+    await browser.storage.local.set({[KNOWN_KEY]:[...knownWorkers]});
   }
   async function tagOf(tab) {
     for (const sessionKey of [TAG, "zcloud-worker-id"]) {
@@ -40,6 +65,20 @@
       } catch (_) {}
     }
     return workerMarker(tab.url);
+  }
+  async function restoredTabIdentity(tab) {
+    const tagged = await tagOf(tab);
+    if (tagged) return tagged;
+    if (!knownWorkers.size) return "";
+    // Firefox sessionstore can restore an URL but lose an extension's tab
+    // session value. Recover an exact worker marker from that SAME restored
+    // page before considering a replacement tab.
+    try {
+      const [worker] = await browser.tabs.executeScript(tab.id, {
+        code:'sessionStorage.getItem("zcloud-v2-worker") || document.documentElement?.getAttribute("data-zcloud-v2-owner") || ""'
+      });
+      return knownWorkers.has(String(worker || "")) ? String(worker) : "";
+    } catch (_) { return ""; }
   }
   async function note(event, id, reason) {
     // Status only: never use a synthetic user prompt to report failure.
@@ -55,11 +94,12 @@
     const claimed = new Set(ownership.values());
     for (const tab of tabs) {
       if (claimed.has(tab.id) || !isWorkerUrl(tab.url)) continue;
-      const id = await tagOf(tab);
-      if (!id || ownership.has(id)) continue;
+      const id = await restoredTabIdentity(tab);
+      if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || ownership.has(id)) continue;
       ownership.set(id, tab.id);
       claimed.add(tab.id);
       try { await browser.sessions.setTabValue(tab.id, TAG, id); } catch (_) {}
+      await rememberWorker(id);
       if (workerWindow === null) workerWindow = tab.windowId;
     }
     return tabs;
@@ -86,19 +126,21 @@
     const tab = await browser.tabs.create({url:String(url), windowId, active:false});
     ownership.set(key, tab.id);
     try { await browser.sessions.setTabValue(tab.id, TAG, key); } catch (_) {}
-    await note("worker-tab-created", key, "allocated-new-worker");
+    await rememberWorker(key);
+    await note("worker-tab-created", key, "allocated-or-crash-restored-worker");
   }
   async function reconcile() {
     if (busy) return;
     busy = true;
     try {
+      await loadKnownWorkers();
       const response = await fetch(API + "/runner-targets", {cache:"no-store"});
       if (!response.ok) throw new Error("targets-http-" + response.status);
       const payload = await response.json();
       if (!payload || typeof payload.projects !== "object" || !payload.projects)
         throw new Error("invalid-target-payload");
       const tabs = await recoverOwnership();
-      const desired = new Map(Object.values(payload.projects).filter(ready).map(t => [t.project_id,t]));
+      const desired = new Map(Object.values(payload.projects).filter(assigned).map(t => [t.project_id,t]));
       const windowId = await chooseWindow(tabs);
       // Never start additional workers while any existing tagged worker is
       // still running the old Violentmonkey script. The previous v1 script
@@ -112,6 +154,15 @@
         ![...ownership.values()].includes(t.id));
       let canProvision=ownership.size>0||!unclaimedChatTabs,
           bootstrapped=ownership.size===0;
+      // Firefox may restore only a personal ChatGPT tab or its session
+      // restore prompt after a crash. A previously recorded worker slot can
+      // be re-created after two complete matching backend snapshots, even
+      // when an unrelated ChatGPT tab exists. Unknown slots are STILL blocked
+      // in this ambiguous state, so an expert tab is never commandeered.
+      for(const key of desired.keys()){
+        if(ownership.has(key)){recoveryObservations.delete(key);continue}
+        recoveryObservations.set(key,(recoveryObservations.get(key)||0)+1);
+      }
       for(const [key,tabId] of ownership){
         try{
           const result=await browser.tabs.executeScript(tabId,{
@@ -129,7 +180,11 @@
       // Workers are never moved between tabs. Existing tabs are preferred.
       for (const [key, target] of desired) {
         candidateRemovals.delete(key);
-        if(!ownership.has(key) && canProvision){
+        // Don't wait forever for Firefox's own session restore: after two
+        // complete snapshots, reconstruct ONLY exact, persisted worker IDs.
+        const trustedCrashSlot=knownWorkers.has(key) &&
+          Number(recoveryObservations.get(key)||0)>=2;
+        if(!ownership.has(key) && (canProvision || (trustedCrashSlot && !ownership.size))){
           await createWorkerTab(key,target,windowId);
           if(bootstrapped)canProvision=false; // one cold-start tab per check
         }
@@ -179,6 +234,7 @@
           await browser.tabs.remove(tabId);
           ownership.delete(key);
           candidateRemovals.delete(key);
+          await forgetWorker(key);
           await note("worker-tab-removed",key,"verified-dashboard-worker-count-decrease");
         }
       }
@@ -204,6 +260,7 @@
     await browser.tabs.remove(tabId);
     ownership.delete(key);
     candidateRemovals.delete(key);
+    await forgetWorker(key);
     return {ok:true,workerId:key};
   });
   browser.tabs.onRemoved.addListener(tabId => {
@@ -219,7 +276,8 @@
     if (key && details.url && !isWorkerUrl(details.url))
       note("worker-navigated-outside-chatgpt",key,"preserving-tab");
   });
-  // Browser restarts: Firefox restores windows/tabs; tags restore bindings.
+  // Browser restarts: Firefox restores windows/tabs; durable worker slots
+  // reconstruct any assigned tabs that sessionstore failed to restore.
   // This controller NEVER starts Firefox and NEVER calls windows.create.
   reconcile();
   setInterval(reconcile,TICK_MS);
