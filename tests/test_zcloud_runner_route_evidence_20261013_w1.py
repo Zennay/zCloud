@@ -37,6 +37,33 @@ def make_deploy_run(run_id=111, created="2026-10-13T21:35:00Z"):
 
 
 class RunnerRouteEvidenceTests(unittest.TestCase):
+    def test_skipped_and_approval_waits_are_not_runner_outages(self):
+        jobs = [
+            make_job(job_id=101, status="waiting"),
+            make_job(job_id=102, status="pending"),
+            make_job(job_id=103, status="requested"),
+            make_job(job_id=104, status="completed", conclusion="skipped"),
+            make_job(job_id=105, status="queued"),
+        ]
+        report = route.classify_run(34, jobs, NOW)
+        lane = report["lanes"]["zcloud_vps"]
+        self.assertEqual(lane["job_count"], 5)
+        self.assertEqual(lane["not_yet_scheduled_count"], 3)
+        self.assertEqual(lane["not_dispatched_count"], 1)
+        self.assertEqual(lane["unassigned_count"], 1)
+        self.assertEqual(lane["max_unassigned_seconds"], 600)
+        self.assertEqual(lane["assigned_count"], 0)
+        self.assertFalse(report["authorizes_mutation"])
+        self.assertEqual([j["route"] for j in report["jobs"]],
+                         ["not_yet_scheduled"] * 3 + ["not_dispatched", "unassigned"])
+
+    def test_completed_failure_with_missing_runner_is_unknown_not_queued(self):
+        data = route.classify_run(44, [
+            make_job(status="completed", conclusion="failure")], NOW)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["unassigned_count"], 0)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["unproven_runner_count"], 1)
+        self.assertFalse(data["production_deploy_verified"])
+
     def test_unhashable_status_evidence_fails_closed(self):
         for bad in ([], {}, {"value": "completed"}, True, 1, None):
             with self.subTest(value=bad):

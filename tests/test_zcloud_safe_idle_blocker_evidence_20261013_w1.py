@@ -45,7 +45,7 @@ class SafeIdleEvidenceTests(unittest.TestCase):
     def test_nonfinite_or_surrogate_data_in_ignored_fields_denied(self):
         samples = [
             '{"worker_id":"supa::w1","ignored":1e999}',
-            '{"worker_id":"supa::w1","ignored":"\\\\ud800"}',
+            '{"worker_id":"supa::w1","ignored":"\\ud800"}',
             '{"worker_id":"supa::w1","ignored":{"x":NaN}}',
         ]
         for raw in samples:

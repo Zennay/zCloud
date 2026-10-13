@@ -172,8 +172,13 @@ def classify_job(job: dict, now: datetime) -> dict:
         route = "runner_assigned"
     elif runner_id:
         route = "inconsistent_runner_state"
-    elif status in {"queued", "waiting", "pending", "requested"}:
+    elif status == "queued":
         route = "unassigned"
+    elif status in {"waiting", "pending", "requested"}:
+        # Pending authorization/prerequisites are not an offline runner proof.
+        route = "not_yet_scheduled"
+    elif status == "completed" and conclusion == "skipped":
+        route = "not_dispatched"
     else:
         route = "missing_runner_identity"
     canonical_vps_runner = (lane == "zcloud_vps" and route == "runner_assigned"
@@ -207,6 +212,13 @@ def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
                 j["route"] == "runner_assigned" and not j["canonical_vps_runner"]
                 for j in relevant) if name == "zcloud_vps" else 0,
             "unassigned_count": sum(j["route"] == "unassigned" for j in relevant),
+            "not_yet_scheduled_count": sum(
+                j["route"] == "not_yet_scheduled" for j in relevant),
+            "not_dispatched_count": sum(
+                j["route"] == "not_dispatched" for j in relevant),
+            "unproven_runner_count": sum(
+                j["route"] in {"inconsistent_runner_state", "missing_runner_identity"}
+                for j in relevant),
             "max_unassigned_seconds": max(
                 (j["queue_age_seconds"] for j in relevant if j["queue_age_seconds"] is not None),
                 default=None),
