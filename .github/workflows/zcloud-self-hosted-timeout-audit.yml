@@ -118,7 +118,7 @@ jobs:
       - name: Re-run focused regressions on permanent VPS
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit
+          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit tests.test_zcloud_self_hosted_timeout_manual_gate_20261013_w1
           python3 -m py_compile scripts/zcloud_self_hosted_timeout_audit.py
 
       - name: Audit self-hosted job timeout bounds read only
