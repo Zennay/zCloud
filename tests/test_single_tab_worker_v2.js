@@ -74,19 +74,21 @@ vm.runInContext(source,ctx,{timeout:1000});
 const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
 (async()=>{
  await new Promise(r=>setTimeout(r,10)); // initial reconcile
- assert.equal(tabs.length,3,"one new worker is opened; personal tab untouched");
+ assert.equal(tabs.length,2,"first snapshot waits for Firefox sessionstore");
+ await pump();
+ assert.equal(tabs.length,3,"second snapshot opens the one missing worker; personal tab untouched");
  const mapping1=ctx.ZCLOUD_V2_CONTROLLER.snapshot();
  assert.equal(mapping1.tabs.length,2);
  assert.ok(mapping1.tabs.some(([key,id])=>key==="supa::w1"&&id===1));
  assert.equal(tabs.find(t=>t.id===2).url,"https://chatgpt.com/c/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
  await pump();await pump();
  assert.equal(tabs.length,3,"30-second refresh preserves every existing tab");
- // A live v1 userscript must not cause v2 to open more worker tabs in Medium.
+ // New allocation needs two confirmed snapshots; a v1 userscript must not authorize sending in Medium.
  v2VersionConfirmed=false;
  snapshot={...snapshot,"supa::w3":row("supa::w3",3)};
  await pump();
  assert.equal(calls.filter(x=>x.type==="create").length,1,
-   "new worker is deferred when old MonkeyScript still owns existing tabs");
+   "single snapshot never opens a worker or disturbs a legacy tab");
  v2VersionConfirmed=true;
  snapshot={"supa::w1":row("supa::w1",1),"supa::w2":row("supa::w2",2)};
  // A temporary data outage or missing worker allocation never permits remove.
