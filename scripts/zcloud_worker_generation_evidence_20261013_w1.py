@@ -21,6 +21,7 @@ from pathlib import Path
 
 MAX_BYTES = 65536
 MAX_WORKERS = 32
+MAX_PROGRESS_AGE_SECONDS = 45
 KEY = re.compile(r"^[a-z][a-z0-9-]{0,63}::w[1-9][0-9]{0,3}$")
 ENDPOINT = "http://127.0.0.1:8765"
 VERDICTS = {
@@ -211,7 +212,7 @@ def _age(value):
     return value
 
 
-def classify(targets, debug, *, at=None, max_age_seconds=120):
+def classify(targets, debug, *, at=None, max_age_seconds=120, require_progress=False):
     """Return bounded sanitized worker findings; raises on unclear evidence.
 
     'generation_evidence' means fresh self-reported browser telemetry, not a
@@ -221,6 +222,8 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         raise EvidenceDenied("invalid_observation_shape")
     if type(max_age_seconds) is not int or max_age_seconds < 1 or max_age_seconds > 900:
         raise EvidenceDenied("invalid_freshness_policy")
+    if type(require_progress) is not bool:
+        raise EvidenceDenied("invalid_progress_policy")
     now = at or datetime.now(timezone.utc)
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise EvidenceDenied("invalid_clock")
@@ -269,17 +272,21 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
             raise EvidenceDenied("unknown_provider")
         target_active, assignment_ready, desired_state, _, claimed_at, expires_at = _target_binding(targets, key, item)
         if provider == "claude":
-            findings.append({"worker": key, "state": "other_provider", "generation_evidence": False})
+            findings.append({"worker": key, "state": "other_provider", "generation_evidence": False,
+                             "progress_evidence": False})
             continue
         if not target_active or desired_state != "running":
-            findings.append({"worker": key, "state": "inactive_target", "generation_evidence": False})
+            findings.append({"worker": key, "state": "inactive_target", "generation_evidence": False,
+                             "progress_evidence": False})
             continue
         if not assignment_ready:
-            findings.append({"worker": key, "state": "assignment_unready", "generation_evidence": False})
+            findings.append({"worker": key, "state": "assignment_unready", "generation_evidence": False,
+                             "progress_evidence": False})
             continue
         row = by_key.get(key)
         if row is None:
-            findings.append({"worker": key, "state": "missing_worker_telemetry", "generation_evidence": False})
+            findings.append({"worker": key, "state": "missing_worker_telemetry", "generation_evidence": False,
+                             "progress_evidence": False})
             continue
         if row.get("project") != project or type(row.get("slot")) is not int or row["slot"] != int(slot):
             raise EvidenceDenied("debug_identity_mismatch")
@@ -326,23 +333,31 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
             state = "blocked"
         else:
             state = "not_generating"
+        generating = state == "generating_observed"
+        progressing = (
+            generating and verdict == "generating" and
+            row.get("last_event") == "generation-progress" and
+            telemetry_age <= MAX_PROGRESS_AGE_SECONDS
+        )
         findings.append({
             "worker": key,
             "state": state,
-            "generation_evidence": state == "generating_observed",
+            "generation_evidence": generating,
+            "progress_evidence": progressing,
         })
     counts = {}
     for row in findings:
         counts[row["state"]] = counts.get(row["state"], 0) + 1
+    chatgpt = [x for x in findings if x["state"] != "other_provider"]
     return {
         "schema": "zcloud-worker-generation-evidence-v1",
         "observation": "http_get_only",
         "control_authorized": False,
         "tab_presence_verified": False,
         "generation_directly_verified": False,
-        "all_allocated_chatgpt_generating": bool(
-            [x for x in findings if x["state"] != "other_provider"]
-        ) and all(x["generation_evidence"] for x in findings if x["state"] != "other_provider"),
+        "progress_policy_requested": require_progress,
+        "all_allocated_chatgpt_generating": bool(chatgpt) and all(x["generation_evidence"] for x in chatgpt),
+        "all_allocated_chatgpt_progressing": bool(chatgpt) and all(x["progress_evidence"] for x in chatgpt),
         "allocated_count": len(findings),
         "counts": counts,
         "workers": findings,
@@ -353,6 +368,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--targets-file", type=Path)
     parser.add_argument("--debug-file", type=Path)
+    parser.add_argument("--require-progress", action="store_true",
+                        help="Exit 0 only with fresh generation-progress events for every ChatGPT worker.")
     args = parser.parse_args(argv)
     try:
         if bool(args.targets_file) != bool(args.debug_file):
@@ -368,7 +385,7 @@ def main(argv=None):
             debug = _load(file_bytes(args.debug_file))
         else:
             targets, debug = _live_snapshots()
-        result = classify(targets, debug)
+        result = classify(targets, debug, require_progress=args.require_progress)
     except (EvidenceDenied, OSError) as exc:
         reason = str(exc) if isinstance(exc, EvidenceDenied) else "fixture_unavailable"
         print(json.dumps({"schema": "zcloud-worker-generation-evidence-v1", "status": "denied",
@@ -376,7 +393,9 @@ def main(argv=None):
                           "tab_presence_verified": False}, sort_keys=True))
         return 2
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["all_allocated_chatgpt_generating"] else 1
+    good = (result["all_allocated_chatgpt_progressing"] if args.require_progress
+            else result["all_allocated_chatgpt_generating"])
+    return 0 if good else 1
 
 
 if __name__ == "__main__":
