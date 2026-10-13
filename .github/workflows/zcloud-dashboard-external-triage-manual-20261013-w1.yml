@@ -21,24 +21,29 @@ jobs:
           persist-credentials: false
       - name: Classify externally observed dashboard API health
         shell: bash
+        env:
+          # Ephemeral read-only Actions token: works for private repositories.
+          # Never persist credentials in checkout or print the token.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Reject a manual main dispatch whose pinned SHA is no longer current.
           verify_main_head() {
-            local observed ref
+            local observed
             [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || {
               echo "DASHBOARD_TRIAGE_INVALID_EVENT_SHA"
               return 2
             }
-            ref="$(GIT_TERMINAL_PROMPT=0 timeout -k 2s 12s git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)" || {
+            # Read-only GitHub REST via the workflow's contents:read token.
+            # Unlike anonymous ls-remote this also works in private repos.
+            observed="$(timeout -k 2s 12s gh api --method GET repos/Zennay/zCloud/git/ref/heads/main --jq '.object.sha' 2>/dev/null)" || {
               echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
               return 2
             }
-            [[ "$ref" =~ ^[0-9a-f]{40}[[:space:]]refs/heads/main$ ]] || {
+            [[ "$observed" =~ ^[0-9a-f]{40}$ ]] || {
               echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
               return 2
             }
-            observed="$(printf '%s' "$ref" | cut -c1-40)"
             [[ "$observed" == "$GITHUB_SHA" ]] || {
               echo "DASHBOARD_TRIAGE_MAIN_CHANGED"
               return 2
