@@ -7,7 +7,9 @@ on:
     paths:
       - '.github/workflows/zcloud-recovery-retry-reference-20261013.yml'
       - 'scripts/zcloud_recovery_retry_policy_20261013.py'
+      - 'scripts/zcloud_recovery_github_evidence_20261013.py'
       - 'tests/test_zcloud_recovery_retry_policy_20261013.py'
+      - 'tests/test_zcloud_recovery_github_evidence_20261013.py'
 
 permissions:
   contents: read
@@ -21,4 +23,5 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_retry_policy_20261013.py' -v
-      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py
+      - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_github_evidence_20261013.py' -v
+      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py scripts/zcloud_recovery_github_evidence_20261013.py
