@@ -34,6 +34,18 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
             targets, debug = subject._live_snapshots()
         return subject.classify(targets, debug)
 
+    def allocated_keys(self):
+        # Allocation is the authority; priority can reorder providers across
+        # projects, so never assume a fixed project is the Claude slot.
+        with patch.object(subject, "ENDPOINT", self.base):
+            current = subject._fetch("/api/runner-targets")
+        workers = current["global_allocation"]["workers"]
+        chatgpt = [w["worker_key"] for w in workers if w["provider"] == "chatgpt"]
+        claude = [w["worker_key"] for w in workers if w["provider"] == "claude"]
+        self.assertEqual(2, len(chatgpt), current)
+        self.assertEqual(1, len(claude), current)
+        return chatgpt, claude
+
     def emit(self, key, event="heartbeat", **kwargs):
         project, ordinal = key.split("::w")
         body = {
@@ -62,24 +74,27 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         self.assertFalse(proof["generation_directly_verified"])
 
     def test_two_chatgpt_heartbeats_and_one_claude_are_classified_correctly(self):
-        self.emit("cloud::w1", generating=True, reason="violentmonkey-primary-runner")
-        self.emit("haxlab::w1", generating=True, reason="violentmonkey-primary-runner")
+        chatgpt, claude = self.allocated_keys()
+        for key in chatgpt:
+            self.emit(key, generating=True, reason="violentmonkey-primary-runner")
         proof = self.report()
         self.assertTrue(proof["all_allocated_chatgpt_generating"], proof)
         observed = {row["worker"]: row["state"] for row in proof["workers"]}
-        self.assertEqual("generating_observed", observed["cloud::w1"])
-        self.assertEqual("generating_observed", observed["haxlab::w1"])
-        self.assertEqual("other_provider", observed["raiseai::w1"])
+        for key in chatgpt:
+            self.assertEqual("generating_observed", observed[key])
+        for key in claude:
+            self.assertEqual("other_provider", observed[key])
 
     def test_prompt_sent_after_generating_does_not_stay_green(self):
-        self.emit("cloud::w1", generating=True, reason="violentmonkey-primary-runner")
-        self.emit("haxlab::w1", generating=True, reason="violentmonkey-primary-runner")
-        self.emit("haxlab::w1", event="prompt-sent",
+        chatgpt, _ = self.allocated_keys()
+        for key in chatgpt:
+            self.emit(key, generating=True, reason="violentmonkey-primary-runner")
+        self.emit(chatgpt[-1], event="prompt-sent",
                   generating=False, reason="violentmonkey-command-push")
         proof = self.report()
         self.assertFalse(proof["all_allocated_chatgpt_generating"])
         observed = {row["worker"]: row["state"] for row in proof["workers"]}
-        self.assertEqual("prompt_sent_without_generation", observed["haxlab::w1"])
+        self.assertEqual("prompt_sent_without_generation", observed[chatgpt[-1]])
 
 
 if __name__ == "__main__":
