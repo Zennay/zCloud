@@ -407,10 +407,10 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         manual = self._workflow_shell()
         self.assertIn("timeout -k 2s 12s git ls-remote --exit-code", manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
-        self.assertEqual(manual.count("verify_main_head\\n"), 2)
-        self.assertLess(manual.index("verify_main_head\\n"),
+        self.assertEqual(manual.count("verify_main_head\n"), 2)
+        self.assertLess(manual.index("verify_main_head\n"),
                         manual.index("summary_file="))
-        self.assertLess(manual.rindex("verify_main_head\\n"),
+        self.assertLess(manual.rindex("verify_main_head\n"),
                         manual.index('cat "$summary_file" | tee'))
 
     def test_workflow_bash_parses_without_network(self):
