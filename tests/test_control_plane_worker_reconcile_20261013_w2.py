@@ -39,6 +39,8 @@ class ReconcileTests(unittest.TestCase):
             conn.execute("CREATE TABLE runner_workers(project_id TEXT,worker_slot INTEGER,desired_state TEXT,conversation_id TEXT)")
             conn.execute("CREATE TABLE runner_commands(id INTEGER PRIMARY KEY,project_id TEXT,action TEXT,status TEXT,created_at TEXT,updated_at TEXT,result TEXT)")
             conn.execute("CREATE TABLE runner_targets(project_id TEXT PRIMARY KEY,active INTEGER,worker_count INTEGER)")
+            conn.execute("CREATE TABLE portfolio_queue(queue_id TEXT PRIMARY KEY,project_id TEXT,worker_slot INTEGER,status TEXT,claim_expires TEXT,updated_at TEXT)")
+            conn.execute("INSERT INTO portfolio_queue VALUES('private-claim-id','cloud',1,'running',NULL,'2026-10-13')")
             conn.execute("INSERT INTO runner_targets VALUES('cloud',1,2)")
             conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'running','private-conversation')")
@@ -253,6 +255,66 @@ class ReconcileTests(unittest.TestCase):
             conn.execute("DROP TABLE runner_targets")
         with self.assertRaisesRegex(module.InvalidEvidence, "missing runner_targets"):
             module.read_roster(self.db)
+
+    def test_global_slot_queue_project_mismatch_is_degraded(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE portfolio_queue SET project_id='supa' WHERE worker_slot=1")
+        result = module.reconcile(module.read_roster(self.db), live([worker()]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["queue_claim_allocation_mismatch"], 1)
+        self.assertNotIn("private-claim-id", json.dumps(result))
+
+    def test_multiple_queue_claims_in_one_global_slot_are_rejected(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO portfolio_queue VALUES('private-second','supa',1,'claimed',NULL,'2026-10-13')")
+        result = module.reconcile(module.read_roster(self.db), live([worker()]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["multiple_live_queue_claims"], 1)
+        self.assertNotIn("private-second", json.dumps(result))
+
+    def test_missing_queue_claim_cannot_certify_worker_is_ready(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM portfolio_queue")
+        result = module.reconcile(module.read_roster(self.db), live([worker()]))
+        self.assertEqual(result["state"], "attention")
+        self.assertEqual(result["problem_counts"]["allocation_without_live_queue_claim"], 1)
+        self.assertFalse(result["authorizes_mutation"])
+
+    def test_expired_queue_claim_does_not_certify_current_ownership(self):
+        from datetime import datetime, timezone
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE portfolio_queue SET claim_expires='2026-10-12T23:00:00+00:00'")
+        at = datetime(2026, 10, 13, 0, 0, tzinfo=timezone.utc)
+        result = module.reconcile(module.read_roster(self.db), live([worker()]), now=at)
+        self.assertEqual(result["state"], "attention")
+        self.assertEqual(result["problem_counts"]["allocation_without_live_queue_claim"], 1)
+
+    def test_bad_queue_claim_deadline_fails_closed_without_leaking(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE portfolio_queue SET claim_expires='not-a-timestamp'")
+        result = module.reconcile(module.read_roster(self.db), live([worker()]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["queue_claim_deadline_unverifiable"], 1)
+        self.assertNotIn("not-a-timestamp", json.dumps(result))
+
+    def test_queue_change_during_http_read_requires_retry(self):
+        def change_claim(_fixture):
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("UPDATE portfolio_queue SET project_id='supa' WHERE worker_slot=1")
+            return live([worker()])
+        with mock.patch.object(module, "read_live", side_effect=change_claim):
+            with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
+                module.observe(self.db)
+
+    def test_queue_claim_does_not_leak_raw_evidence_on_cli(self):
+        fixture = Path(self.tmp.name) / "live-queue-fixture.json"
+        fixture.write_text(json.dumps(live([worker()])), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SOURCE),
+                                 "--db", str(self.db), "--runner-live-fixture", str(fixture)],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["state"], "ok")
+        self.assertNotIn("private-claim-id", result.stdout)
 
     def test_mismatched_worker_id_and_reported_slot_rejected(self):
         with self.assertRaisesRegex(module.InvalidEvidence, "disagree"):
