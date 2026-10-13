@@ -102,20 +102,30 @@ def _validate_payload(raw, *, now=None):
 
 
 def _exception_category(exc):
-    if isinstance(exc, urllib.error.HTTPError):
-        return "http_status"
-    if isinstance(exc, (TimeoutError, socket.timeout)):
-        return "timeout"
-    if isinstance(exc, ssl.SSLError):
-        return "tls"
-    if isinstance(exc, socket.gaierror):
-        return "dns"
-    if isinstance(exc, (ConnectionRefusedError, ConnectionResetError, BrokenPipeError)):
-        return "connection"
-    if isinstance(exc, urllib.error.URLError):
-        return _exception_category(exc.reason)
-    if isinstance(exc, OSError):
-        return "connection"
+    """Sanitize transport faults even if their cause chain is cyclic or corrupt."""
+    visited = set()
+    # HTTPS stacks can wrap errno in several URLError layers. Never recurse
+    # through untrusted .reason indefinitely and NEVER stringify exceptions.
+    for _ in range(8):
+        if isinstance(exc, urllib.error.HTTPError):
+            return "http_status"
+        if isinstance(exc, (TimeoutError, socket.timeout)):
+            return "timeout"
+        if isinstance(exc, ssl.SSLError):
+            return "tls"
+        if isinstance(exc, socket.gaierror):
+            return "dns"
+        if isinstance(exc, (ConnectionRefusedError, ConnectionResetError, BrokenPipeError)):
+            return "connection"
+        if isinstance(exc, urllib.error.URLError):
+            if id(exc) in visited:
+                return "transport_failure"
+            visited.add(id(exc))
+            exc = exc.reason
+            continue
+        if isinstance(exc, OSError):
+            return "connection"
+        return "transport_failure"
     return "transport_failure"
 
 
