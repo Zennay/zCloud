@@ -86,7 +86,44 @@ class GenerationEvidenceTests(unittest.TestCase):
         self.assertFalse(report["tab_presence_verified"])
         self.assertFalse(report["generation_directly_verified"])
         self.assertEqual([{"worker": "cloud::w1", "state": "generating_observed",
-                           "generation_evidence": True}], report["workers"])
+                           "generation_evidence": True, "progress_evidence": False}], report["workers"])
+
+    def test_heartbeat_generating_is_not_evidence_of_new_answer_text(self):
+        report = self.classify(require_progress=True)
+        self.assertTrue(report["all_allocated_chatgpt_generating"])
+        self.assertFalse(report["all_allocated_chatgpt_progressing"])
+        self.assertFalse(report["workers"][0]["progress_evidence"])
+        self.assertTrue(report["progress_policy_requested"])
+
+    def test_fresh_generation_progress_event_is_both_evidence_types(self):
+        report = self.classify(d=debug(row(last_event="generation-progress", last_event_age_s=12)),
+                               require_progress=True)
+        self.assertTrue(report["all_allocated_chatgpt_generating"])
+        self.assertTrue(report["all_allocated_chatgpt_progressing"])
+        self.assertTrue(report["workers"][0]["progress_evidence"])
+
+    def test_old_progress_event_can_still_be_generating_but_not_progressing(self):
+        report = self.classify(d=debug(row(last_event="generation-progress",
+                                           last_event_age_s=subject.MAX_PROGRESS_AGE_SECONDS + 1)),
+                               require_progress=True)
+        self.assertTrue(report["all_allocated_chatgpt_generating"])
+        self.assertFalse(report["all_allocated_chatgpt_progressing"])
+
+    def test_strict_progress_requires_every_allocated_chatgpt_worker(self):
+        r = self.classify(
+            t=targets(allocation(), allocation("haxlab::w1")),
+            d=debug(row(last_event="generation-progress"), row("haxlab::w1")),
+            require_progress=True,
+        )
+        self.assertTrue(r["all_allocated_chatgpt_generating"])
+        self.assertFalse(r["all_allocated_chatgpt_progressing"])
+        self.assertEqual([True, False], [x["progress_evidence"] for x in r["workers"]])
+
+    def test_progress_must_be_boolean_policy(self):
+        for invalid in ("true", 1, None, [], -1):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    subject.EvidenceDenied, "invalid_progress_policy"):
+                self.classify(require_progress=invalid)
 
     def test_prompt_sent_is_not_generation(self):
         result = self.classify(d=debug(row(verdict="prompt-sent")))
@@ -458,6 +495,32 @@ class GenerationEvidenceTests(unittest.TestCase):
             second.write_text(json.dumps(debug(row(verdict="prompt-sent"), at=datetime.now(timezone.utc))), encoding="utf-8")
             with redirect_stdout(StringIO()):
                 self.assertEqual(1, subject.main(["--targets-file", str(first), "--debug-file", str(second)]))
+
+    def test_strict_progress_cli_has_distinct_exit_while_preserving_old_one(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = Path(directory)/"targets.json", Path(directory)/"debug.json"
+            evidence = targets(allocation())
+            evidence["projects"]["cloud::w1"]["queue_item"]["claim_expires"] = (
+                datetime.now(timezone.utc) + timedelta(minutes=5)
+            ).isoformat()
+            first.write_text(json.dumps(evidence), encoding="utf-8")
+            heartbeat = debug(row(last_event="heartbeat"), at=datetime.now(timezone.utc))
+            second.write_text(json.dumps(heartbeat), encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(0, subject.main(["--targets-file", str(first), "--debug-file", str(second)]))
+            buf = StringIO()
+            with redirect_stdout(buf):
+                code = subject.main(["--targets-file", str(first), "--debug-file", str(second),
+                                     "--require-progress"])
+            self.assertEqual(1, code)
+            report = json.loads(buf.getvalue())
+            self.assertTrue(report["all_allocated_chatgpt_generating"])
+            self.assertFalse(report["all_allocated_chatgpt_progressing"])
+            heartbeat["workers"][0]["last_event"] = "generation-progress"
+            second.write_text(json.dumps(heartbeat), encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(0, subject.main(["--targets-file", str(first), "--debug-file", str(second),
+                                                  "--require-progress"]))
 
     def test_symlink_fixture_denied_before_read(self):
         with tempfile.TemporaryDirectory() as directory:
