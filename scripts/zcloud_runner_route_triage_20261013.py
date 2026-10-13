@@ -7,6 +7,7 @@ queues, services, runners, browsers or deployments. Results are not authority.
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 import re
 import sys
@@ -36,6 +37,8 @@ def strict_json(raw):
         raise EvidenceError('invalid_json') from exc
     def validate(obj, depth=0):
         if depth > 40: raise EvidenceError('deep_json')
+        if isinstance(obj, float) and not math.isfinite(obj):
+            raise EvidenceError('nonfinite_json')
         if isinstance(obj, str) and (len(obj) > 8192 or any(0xd800 <= ord(c) <= 0xdfff for c in obj)):
             raise EvidenceError('invalid_json_string')
         if isinstance(obj, dict):
@@ -193,6 +196,8 @@ def live(token):
                 raise EvidenceError('invalid_run')
             # A run may have moved states while sequential API calls were made.
             # Reject a torn observation rather than claim reliable queue health.
+            if run.get('status') != status:
+                raise EvidenceError('run_state_race')
             if run['id'] in seen:
                 raise EvidenceError('run_state_race')
             seen.add(run['id'])
