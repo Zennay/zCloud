@@ -31,6 +31,7 @@ jobs:
           node --check firefox-extension/worker-controller-v2.js
           node --check public/zcloud-worker.user.js
           node tests/test_single_tab_v2_crash_recovery.js
+          node tests/test_single_tab_v2_auto_heal.js
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
           node tests/test_single_tab_v2_cycle.js
@@ -90,4 +91,5 @@ jobs:
           echo "SAME_FIREFOX_PROCESS_VERIFIED=1"
           echo "V2_ADDON_CONTROLLER_HOT_RELOADED=1"
           echo "CRASH_TAB_REHYDRATION_INSTALLED=1"
+          echo "ACTIVE_TAB_SELF_HEAL_INSTALLED=1"
           echo "NOTE=Violentmonkey installed script must independently upgrade to 2.0.0; existing tabs have not been reloaded."
