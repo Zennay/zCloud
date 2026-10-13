@@ -163,6 +163,29 @@ class DashboardProbeTests(unittest.TestCase):
             self.assertEqual(builder.call_args.args[0].proxies, {})
             self.assertIsInstance(builder.call_args.args[1], probe.NoRedirect)
 
+    def test_operator_markdown_is_readable_private_and_non_authorizing(self):
+        summary = probe.ProbeSummary("unhealthy", "timeout", 3, False,
+                                     {"timeout": 2, "dns": 1})
+        output = probe.operator_markdown(summary)
+        self.assertIn("API niet aantoonbaar bereikbaar", output)
+        self.assertIn("DNS / naamoplossing: 1", output)
+        self.assertIn("Time-out: 2", output)
+        self.assertIn(chr(10), output)
+        self.assertIn("nooit automatisch", output)
+        self.assertNotIn(probe.STATUS_URL, output)
+
+    def test_operator_markdown_recovered_does_not_claim_prod_health(self):
+        summary = probe.ProbeSummary("healthy", None, 2, True, {"connection": 1})
+        output = probe.operator_markdown(summary)
+        self.assertIn("API bereikbaar", output)
+        self.assertIn("Hersteld na hercontrole:** ja", output)
+        self.assertIn("bewijst niet", output)
+        with mock.patch.object(probe, "run_probe", return_value=summary):
+            capture = io.StringIO()
+            with redirect_stdout(capture):
+                self.assertEqual(probe.main(["--format", "markdown"]), 0)
+        self.assertIn("## zCloud", capture.getvalue())
+
     def test_manual_observation_workflow_is_owner_main_hosted_only(self):
         workflow = (MODULE.parents[1] / ".github/workflows/"
                     "zcloud-dashboard-external-triage-manual-20261013-w1.yml")
