@@ -169,6 +169,8 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
    "lightup::w1":{...row("lightup::w1",2),provider:"chatgpt"}
  };
  await pump();await pump();
+ if(ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")?.[1]!==previous)
+   console.log("rebind-diagnostic",JSON.stringify({events:events.slice(-12),calls:calls.slice(-8),tabs:ownershipSnapshot().tabs}));
  assert.equal(ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")[1],previous,
    "Force project switch reuses the released worker slot");
  assert.ok(!ownershipSnapshot().tabs.some(([k])=>k==="ftmo::w1"),"retired project identity released");
