@@ -8,6 +8,9 @@ import json
 import pathlib
 import socket
 import os
+import subprocess
+import tempfile
+import textwrap
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -328,6 +331,81 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
         stamp = (datetime.now(timezone.utc) - timedelta(seconds=240)).isoformat()
         raw = json.dumps({"time": stamp, "projects": []}).encode("utf-8")
         self._run("stale_timestamp", payload=raw)
+
+
+class DashboardManualMainLeaseTests(unittest.TestCase):
+    """Execute the real workflow shell in a fake-Git transport, never touching VPS."""
+
+    def _workflow_shell(self):
+        path = MODULE.parents[1] / ".github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml"
+        body = path.read_text(encoding="utf-8").split("        run: |\\n", 1)[1]
+        return textwrap.dedent(body)
+
+    def _simulate(self, refs, expected_rc):
+        shell = self._workflow_shell()
+        # Replace the only external dashboard probe command. Real main/SHA
+        # bash logic is executed, but no live external request is possible.
+        expected = ('python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py '
+                    '--attempts 6 --format markdown > "$summary_file" || probe_rc=$?')
+        self.assertIn(expected, shell)
+        shell = shell.replace(expected, 'echo OFFLINE_HEALTH > "$summary_file"')
+        current = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            shim = root / "git"
+            shim.write_text(
+                "#!/usr/bin/env python3\\n"
+                "import os, pathlib, sys\\n"
+                "expected=['ls-remote','--exit-code','https://github.com/Zennay/zCloud.git','refs/heads/main']\\n"
+                "if sys.argv[1:] != expected: sys.exit(87)\\n"
+                "count=pathlib.Path(os.environ['FAKE_GIT_COUNT'])\\n"
+                "n=int(count.read_text()) if count.exists() else 0\\n"
+                "count.write_text(str(n+1))\\n"
+                "refs=os.environ['FAKE_GIT_REFS'].split(',')\\n"
+                "if n>=len(refs) or refs[n]=='ERROR': sys.exit(88)\\n"
+                "print(refs[n]+'\\trefs/heads/main')\\n",
+                encoding="utf-8",
+            )
+            shim.chmod(0o755)
+            summary = root / "summary.md"
+            env = dict(os.environ)
+            env.update({
+                "PATH": str(root) + os.pathsep + env.get("PATH", ""),
+                "GITHUB_SHA": current,
+                "GITHUB_STEP_SUMMARY": str(summary),
+                "FAKE_GIT_REFS": ",".join(refs),
+                "FAKE_GIT_COUNT": str(root / "calls"),
+                "GIT_TERMINAL_PROMPT": "0",
+            })
+            proc = subprocess.run(["bash", "-c", shell], env=env, cwd=root,
+                                  text=True, capture_output=True, timeout=10,
+                                  check=False)
+            self.assertEqual(proc.returncode, expected_rc, proc.stdout + proc.stderr)
+            observed = summary.read_text() if summary.exists() else ""
+            # No raw response, secrets, URL or implied recovery authority.
+            self.assertNotIn("https://github.com/", observed)
+            self.assertEqual(observed != "", expected_rc == 0)
+            self.assertEqual((root / "calls").read_text(),
+                             "2" if refs[0] == current else "1")
+            return observed
+
+    def test_workflow_bash_parses_without_network(self):
+        result = subprocess.run(["bash", "-n"], input=self._workflow_shell(),
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_current_main_same_before_after_can_publish(self):
+        observed = self._simulate(["a" * 40, "a" * 40], 0)
+        self.assertIn("OFFLINE_HEALTH", observed)
+
+    def test_main_moved_during_probe_denies_summary(self):
+        self._simulate(["a" * 40, "b" * 40], 2)
+
+    def test_stale_initial_main_denies_probe_and_summary(self):
+        self._simulate(["b" * 40], 2)
+
+    def test_missing_main_ref_denies_probe_and_summary(self):
+        self._simulate(["ERROR"], 2)
 
 
 if __name__ == "__main__":
