@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 SCHEMA_VERSION = "recent-branch-ownership-snapshot-v1"
 MAX_BRANCHES = 500
+MAX_BRANCH_PAGES = MAX_BRANCHES + 1
 MAX_OPEN_PRS = 500
 MAX_COMPARE_FILES = 300
 MAX_RECENT_COMPARE_BRANCHES = 100
@@ -117,6 +118,14 @@ query($owner:String!, $name:String!, $endCursor:String) {
     if cursor:
         args.extend(["-f", f"endCursor={cursor}"])
     payload = runner(args)
+    # GitHub GraphQL permits both partial data and nonempty errors in one
+    # response. Never accept its pageInfo as proof of a complete inventory.
+    if not isinstance(payload, dict):
+        raise CollectorError("branch_page_invalid")
+    if "errors" in payload:
+        errors = payload["errors"]
+        if not isinstance(errors, list) or errors:
+            raise CollectorError("branch_graphql_errors")
     try:
         refs = payload["data"]["repository"]["refs"]
         if not isinstance(refs["nodes"], list) or not isinstance(refs["pageInfo"], dict):
@@ -163,7 +172,14 @@ def _branch_refs(
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
     cursor: str | None = None
+    seen_cursors: set[str] = set()
+    page_count = 0
+    # A non-advancing GitHub cursor can otherwise hold the entire worker
+    # ownership preflight indefinitely, even when the branch count stays zero.
     while True:
+        if page_count >= MAX_BRANCH_PAGES:
+            raise CollectorError("branch_page_bound_exceeded")
+        page_count += 1
         refs = _graphql_page(owner, name, cursor, runner)
         for node in refs["nodes"]:
             if not isinstance(node, dict):
@@ -195,8 +211,13 @@ def _branch_refs(
             break
         if len(rows) >= MAX_BRANCHES:
             raise CollectorError("branch_bound_exceeded")
+        if not refs["nodes"]:
+            raise CollectorError("branch_page_empty")
         if not isinstance(next_cursor, str) or not next_cursor:
             raise CollectorError("branch_page_invalid")
+        if next_cursor in seen_cursors:
+            raise CollectorError("branch_cursor_repeated")
+        seen_cursors.add(next_cursor)
         cursor = next_cursor
 
     return tuple(sorted(rows, key=lambda item: item["name"]))
@@ -262,15 +283,19 @@ def collect_snapshot(
             (
                 "{ahead_by:.ahead_by,behind_by:.behind_by,"
                 "merge_base_commit:{sha:.merge_base_commit.sha},"
-                "files:[.files[]?|{filename:.filename,"
-                "previous_filename:.previous_filename}]}"
+                # Preserve missing/wrong-typed API file evidence as null
+                # instead of masking it as an empty array with []?.
+                "files:(if (.files|type)==\"array\" then "
+                "[.files[]|{filename:.filename,"
+                "previous_filename:.previous_filename}] else null end)}"
             ),
         ])
         try:
             ahead_by = compare["ahead_by"]
             behind_by = compare["behind_by"]
             merge_base_sha = _validate_sha(compare["merge_base_commit"]["sha"])
-            files_raw = compare.get("files", [])
+            # Missing compare paths must never be interpreted as zero changed files.
+            files_raw = compare["files"]
         except (KeyError, TypeError) as exc:
             raise CollectorError("compare_payload_invalid") from exc
         if (

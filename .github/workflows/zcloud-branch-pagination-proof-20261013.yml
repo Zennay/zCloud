@@ -1,0 +1,123 @@
+name: zCloud branch pagination fail-closed proof
+
+on:
+  push:
+    branches:
+      - fix/control-plane-branch-pagination-failclosed-20261013
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-branch-pagination-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-tests:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.ref == 'refs/heads/fix/control-plane-branch-pagination-failclosed-20261013'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact branch commit without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify Git checkout SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Run offline branch-ownership and pagination tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_recent_branch_pagination_failclosed_20261013 \
+            tests.test_recent_branch_ownership_audit \
+            tests.test_recent_branch_ownership_workflow
+          python3 -m py_compile \
+            scripts/zcloud_recent_branch_snapshot.py \
+            scripts/zcloud_recent_branch_ownership_audit.py
+
+  hosted-full-regression:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.ref == 'refs/heads/fix/control-plane-branch-pagination-failclosed-20261013'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out exact branch commit without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable test source
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Run full Python regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+      - name: Run shell and browser contracts without live service operations
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node --check public/zcloud-worker.user.js
+
+  prove:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.ref == 'refs/heads/fix/control-plane-branch-pagination-failclosed-20261013'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      EXACT_HEAD: ${{ github.sha }}
+    steps:
+      - name: Check out this exact trusted commit without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXACT_HEAD }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify canonical runner and immutable checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run pure branch-ownership and pagination regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_recent_branch_pagination_failclosed_20261013 \
+            tests.test_recent_branch_ownership_audit \
+            tests.test_recent_branch_ownership_workflow
+
+      - name: Confirm parser compiles without external state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            scripts/zcloud_recent_branch_snapshot.py \
+            scripts/zcloud_recent_branch_ownership_audit.py

@@ -117,8 +117,17 @@ def parse_snapshot(payload: Any) -> dict[str, Any]:
         raise AuditError("snapshot_branches_invalid")
     if len(branches) > MAX_BRANCHES:
         raise AuditError("snapshot_branch_bound_exceeded")
-    if payload.get("branch_count") != len(branches):
+    # Python considers bool and floats such as 1.0 equal to integer 1.
+    # Snapshot cardinalities are provenance evidence, not coercible values.
+    branch_count = payload.get("branch_count")
+    if type(branch_count) is not int or branch_count != len(branches):
         raise AuditError("snapshot_branch_count_mismatch")
+    open_pr_head_count = payload.get("open_pr_head_count")
+    if (
+        type(open_pr_head_count) is not int
+        or not 0 <= open_pr_head_count <= len(branches)
+    ):
+        raise AuditError("snapshot_open_pr_head_count_invalid")
 
     normalized: list[dict[str, Any]] = []
     names: set[str] = set()
@@ -188,6 +197,9 @@ def parse_snapshot(payload: Any) -> dict[str, Any]:
                 "compare": normalized_compare,
             }
         )
+
+    if sum(1 for row in normalized if row["has_open_pr"]) != open_pr_head_count:
+        raise AuditError("snapshot_open_pr_head_count_mismatch")
 
     return {
         "repository": repository,
