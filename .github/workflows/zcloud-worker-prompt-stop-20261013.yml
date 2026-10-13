@@ -1,0 +1,63 @@
+name: zCloud P0 worker prompt stop diagnostic 2026-10-13
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-worker-prompt-stop-20261013.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: self-hosted
+    timeout-minutes: 4
+    steps:
+      - name: Verify actual Firefox worker generation and blockers without changing runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          hostname
+          test "$(hostname)" = "vps-bb300bba"
+          python3 - <<'PY'
+          import json, subprocess, urllib.request
+          base="http://127.0.0.1:8765"
+          def get(path):
+              with urllib.request.urlopen(base+path,timeout=12) as response:
+                  return json.load(response)
+          for path in ("/api/runner-targets","/api/worker-debug"):
+              try:
+                  d=get(path)
+                  if path.endswith("runner-targets"):
+                      alloc=(d.get("global_allocation") or {}).get("workers") or []
+                      print("POOL_SIZE="+str((d.get("dynamic_workers") or {}).get("count")))
+                      print("QUEUE_WORKER_COUNT="+str(len(alloc)))
+                      print("ASSIGNED_KEYS="+json.dumps([w.get("worker_key") for w in alloc]))
+                      print("ACTIVE_TARGETS="+json.dumps([{
+                          "worker":k,"active":w.get("active"),
+                          "ready":w.get("assignment_ready"),
+                          "paused":w.get("desired_state")=="paused",
+                          "provider":w.get("provider"),
+                          "queue":bool((w.get("queue_item") or {}).get("queue_id")),
+                      } for k,w in (d.get("projects") or {}).items() if w.get("global_worker_slot") is not None],sort_keys=True))
+                  else:
+                      print("VERDICTS="+json.dumps(d.get("summary") or {},sort_keys=True))
+                      print("RECENT_EVENTS="+json.dumps(d.get("events_15m") or {},sort_keys=True))
+                      print("WORKER_BLOCKERS="+json.dumps([{
+                          "worker":w.get("worker"),"verdict":w.get("verdict"),
+                          "reason":w.get("reason"),"last_event":w.get("last_event"),
+                          "last_event_age_s":w.get("last_event_age_s"),
+                          "last_prompt_age_s":w.get("last_prompt_age_s"),
+                          "contract_failures":w.get("contract_failures"),
+                      } for w in d.get("workers") or []],sort_keys=True))
+              except Exception as exc:
+                  print("READ_FAILED_"+path.rsplit("/",1)[-1]+"="+type(exc).__name__+":"+str(exc)[:160])
+          p=subprocess.run(["ps","-eo","pid=,args="],text=True,capture_output=True,timeout=10)
+          firefox=[line for line in p.stdout.splitlines() if "-start-debugger-server" in line and "/firefox" in line]
+          print("FIREFOX_MAIN_COUNT="+str(len(firefox)))
+          print("FIREFOX_PROFILE_CORRECT="+str(any("chatgpt-webext-profile" in line for line in firefox)))
+          from pathlib import Path
+          addon=Path("/home/ubuntu/snap/firefox/common/chatgpt-project-extension")
+          print("CONTROLLER_SOURCE_INSTALLED="+str((addon/"worker-controller-v2.js").is_file()))
+          print("USER_SCRIPT_V2_SOURCE_INSTALLED="+str((Path("/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js")).is_file()))
+          print("DIAGNOSTIC_READ_ONLY=1")
+          PY
