@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 import urllib.parse
@@ -34,6 +35,13 @@ def _unique_pairs(pairs):
             raise InvalidEvidence("duplicate JSON key")
         result[key] = value
     return result
+
+
+def _finite_float(token: str) -> float:
+    value = float(token)
+    if not math.isfinite(value):
+        raise InvalidEvidence("non-finite JSON number")
+    return value
 
 
 def _strict_json(raw: bytes):
@@ -69,6 +77,7 @@ def _strict_json(raw: bytes):
         if depth != 0 or in_string:
             raise InvalidEvidence("incomplete runner-live JSON")
         data = json.loads(decoded, object_pairs_hook=_unique_pairs,
+                          parse_float=_finite_float,
                           parse_constant=lambda _: (_ for _ in ()).throw(
                               InvalidEvidence("non-finite JSON value")))
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
