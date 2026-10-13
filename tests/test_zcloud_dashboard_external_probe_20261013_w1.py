@@ -163,6 +163,24 @@ class DashboardProbeTests(unittest.TestCase):
             self.assertEqual(builder.call_args.args[0].proxies, {})
             self.assertIsInstance(builder.call_args.args[1], probe.NoRedirect)
 
+    def test_manual_observation_workflow_is_owner_main_hosted_only(self):
+        workflow = (MODULE.parents[1] / ".github/workflows/"
+                    "zcloud-dashboard-external-triage-manual-20261013-w1.yml")
+        text = workflow.read_text(encoding="utf-8")
+        self.assertIn("  workflow_dispatch:", text)
+        self.assertIn("github.repository == 'Zennay/zCloud'", text)
+        self.assertIn("github.actor == 'Zennay'", text)
+        self.assertIn("github.ref == 'refs/heads/main'", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("permissions:\\n  contents: read".replace("\\\\n", "\\n"), text)
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn("scripts/zcloud_dashboard_external_probe_20261013_w1.py", text)
+        self.assertNotIn("self-hosted", text)
+        self.assertNotIn("sudo ", text)
+        self.assertNotIn("workflow_run:", text)
+        self.assertNotIn("pull_request:", text)
+        self.assertNotIn("push:", text)
+
     def test_source_has_no_mutation_methods(self):
         source = MODULE.read_text(encoding="utf-8")
         self.assertNotIn("method=\"POST\"", source)
