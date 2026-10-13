@@ -1,0 +1,36 @@
+name: zCloud SQLite deploy-write preflight (read-only)
+
+on:
+  push:
+    branches:
+      - fix/deployops-sqlite-preflight-20261013-w3
+    paths:
+      - ".github/workflows/zcloud-sqlite-write-preflight-20261013.yml"
+      - "scripts/zcloud_sqlite_permission_preflight_20261013.py"
+      - "tests/test_zcloud_sqlite_permission_preflight_20261013.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Run fail-closed filesystem matrix
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_sqlite_permission_preflight_20261013.py' -v
+
+  vps-observe:
+    # Feature-branch push is an observation only; this job never fixes permissions.
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Inspect only SQLite filesystem access as runner user
+        run: python3 scripts/zcloud_sqlite_permission_preflight_20261013.py
