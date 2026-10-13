@@ -20,6 +20,7 @@ NAME = re.compile(r"^[A-Za-z0-9_./-]{1,200}$")
 MAX_PAGES = 24
 MAX_ENTRIES = 2400
 MAX_PAGE_SIZE = 100
+MAX_OVERLAPS = 256
 
 
 class InventoryDenied(ValueError):
@@ -225,13 +226,19 @@ def compare_owned_paths(fetch, snapshot, owned_paths):
         for changed in files:
             if not isinstance(changed, dict):
                 raise InventoryDenied("malformed_compare_file")
+            status = changed.get("status")
+            if status not in ("added", "removed", "modified", "renamed",
+                              "copied", "changed", "unchanged"):
+                raise InventoryDenied("unknown_compare_file_status")
             paths = [_path(changed.get("filename"))]
-            if changed.get("status") == "renamed":
+            if status == "renamed":
                 paths.append(_path(changed.get("previous_filename")))
             for item in paths:
                 for claim in owned:
                     if _path_conflict(item, claim):
                         collisions.add((candidate["branch"], item, claim))
+                        if len(collisions) > MAX_OVERLAPS:
+                            raise InventoryDenied("overlap_evidence_cap")
         checked += 1
     # Expensive comparisons cannot span a silently moving branch inventory.
     fresh = collect(fetch, main_sha)
