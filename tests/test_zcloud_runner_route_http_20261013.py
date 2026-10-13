@@ -143,6 +143,43 @@ class RealHttpTests(unittest.TestCase):
         with self.assertRaisesRegex(route.EvidenceError,'roster_changed'):
             self.live()
 
+    def test_real_http_jobs_only_no_runner_permission_needed(self):
+        self.mode='runner_forbidden'
+        snap=route.live('PRIVATE_SENTINEL_TOKEN', jobs_only=True)
+        self.assertEqual(self.runner_reads, 0)
+        self.assertTrue(snap['runner_inventory_unverified'])
+        self.assertFalse(snap['runners'])
+        result=route.classify(snap, datetime.now(timezone.utc))
+        self.assertEqual(result['classification'],'labels_or_access_unproven')
+        self.assertFalse(result['runner_inventory_verified'])
+        self.assertFalse(result['recovery_authorized'])
+        self.assertTrue(all('/actions/runners' not in c[1] for c in self.calls))
+
+    def test_real_http_jobs_only_cli_sanitized_read_only(self):
+        self.mode='runner_forbidden'
+        output=io.StringIO()
+        with patch.dict(os.environ, {'GITHUB_TOKEN':'PRIVATE_SENTINEL_TOKEN'}):
+            with contextlib.redirect_stdout(output):
+                rc=route.main(['--jobs-only'])
+        result=json.loads(output.getvalue())
+        self.assertEqual(rc,1)
+        self.assertEqual(result['evidence_mode'],'github_api_jobs_only')
+        self.assertFalse(result['runner_inventory_verified'])
+        self.assertFalse(result['deploy_authorized'])
+        self.assertFalse(any(c[1].endswith('/runners') for c in self.calls))
+        self.assertNotIn('PRIVATE_SENTINEL_TOKEN',output.getvalue())
+
+    def test_real_http_jobs_only_stale_empty_jobs_remains_unknown(self):
+        self.mode='jobs_empty'
+        output=io.StringIO()
+        with patch.dict(os.environ, {'GITHUB_TOKEN':'PRIVATE_SENTINEL_TOKEN'}):
+            with contextlib.redirect_stdout(output):
+                rc=route.main(['--jobs-only'])
+        result=json.loads(output.getvalue())
+        self.assertEqual(rc,2)
+        self.assertEqual(result['classification'],'unknown_incomplete_evidence')
+        self.assertFalse(result['queue_cancel_authorized'])
+
     def test_real_http_runner_permission_denial_is_unknown(self):
         self.mode='runner_forbidden'
         with self.assertRaisesRegex(route.EvidenceError,'api_unavailable'):
