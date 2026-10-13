@@ -243,7 +243,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(self.diagnose(live([worker(age_seconds=90)]))["state"], "ok")
         self.assertEqual(self.diagnose(live([worker(age_seconds=91)]))["state"], "degraded")
 
-    def test_slot_outside_configured_worker_count_is_degraded(self):
+    def test_scheduler_expands_worker_count_to_cover_second_allocation(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2,'2026-10-13T17:00:00Z')")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running','redacted')")
@@ -253,8 +253,29 @@ class ReconcileTests(unittest.TestCase):
             {"worker_id": "cloud::w2", "worker_slot": 2, "state": "live",
              "active": True, "generating": False, "sending": False, "age_seconds": 20}
         ]))
-        self.assertEqual(report["state"], "degraded")
-        self.assertEqual(report["problem_counts"]["allocation_outside_worker_count"], 1)
+        self.assertEqual(report["state"], "attention")
+        self.assertEqual(report["problem_counts"]["worker_count_expanded_by_allocation"], 1)
+        self.assertNotIn("allocation_outside_projected_worker_count", report["problem_counts"])
+
+    def test_high_ordinal_outside_effective_projected_count_is_degraded(self):
+        # Runtime count = max(configured 1, allocated count 2) = 2.
+        # A third local ordinal is invisible even if it holds a global slot.
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',3,'2026-10-13T17:00:00Z')")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',3,'running','private')")
+            conn.execute("UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'")
+        roster = module.read_roster(self.db)
+        result = module.reconcile(roster, live([worker()]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["allocation_outside_projected_worker_count"], 1)
+
+    def test_single_allocated_high_ordinal_not_in_projected_count(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE ai_global_slots SET worker_slot=2 WHERE slot=1")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running','private')")
+            conn.execute("UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'")
+        result = module.reconcile(module.read_roster(self.db), live([]))
+        self.assertEqual(result["problem_counts"]["allocation_outside_projected_worker_count"], 1)
 
     def test_missing_project_target_is_not_a_valid_worker_allocation(self):
         with sqlite3.connect(self.db) as conn:
@@ -516,6 +537,43 @@ class ReconcileTests(unittest.TestCase):
     def test_normal_finite_fraction_still_accepted(self):
         payload = module._strict_json(b'{"chatgpt_runners":{},"foo":1.25e-2}')
         self.assertEqual(payload["foo"], 0.0125)
+
+    def test_escaped_surrogate_value_is_denied_before_reconciliation(self):
+        raw = b'{"chatgpt_runners":{},"ignored":"\\uD800"}'
+        with self.assertRaisesRegex(module.InvalidEvidence, "invalid Unicode surrogate"):
+            module._strict_json(raw)
+
+    def test_escaped_surrogate_key_is_denied(self):
+        raw = b'{"chatgpt_runners":{},"\\uDC00":"value"}'
+        with self.assertRaisesRegex(module.InvalidEvidence, "invalid Unicode surrogate"):
+            module._strict_json(raw)
+
+    def test_valid_escaped_surrogate_pair_decodes_normally(self):
+        raw = b'{"chatgpt_runners":{},"emoji":"\\uD83D\\uDE80"}'
+        self.assertEqual(module._strict_json(raw)["emoji"], "🚀")
+
+    def test_live_http_opener_disables_environment_proxy(self):
+        # No actual network: inspect the configured transport while an
+        # adversarial proxy is present in the worker process environment.
+        from urllib.request import ProxyHandler
+        fake_response = mock.MagicMock()
+        fake_response.status = 200
+        fake_response.headers.get_content_type.return_value = "application/json"
+        fake_response.read.return_value = json.dumps(live([worker()])).encode()
+        fake_opener = mock.MagicMock()
+        fake_opener.open.return_value.__enter__.return_value = fake_response
+        with mock.patch.dict("os.environ", {"HTTP_PROXY": "http://untrusted-proxy.invalid:9090"}):
+            with mock.patch.object(module.urllib.request, "build_opener",
+                                   return_value=fake_opener) as factory:
+                result = module.read_live()
+        self.assertIn("chatgpt_runners", result)
+        handler, redirect = factory.call_args.args
+        self.assertIsInstance(handler, ProxyHandler)
+        self.assertEqual(handler.proxies, {})
+        self.assertIsInstance(redirect, module._NoRedirect)
+        request = fake_opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, module.API)
+        self.assertEqual(request.get_method(), "GET")
 
     def test_oversize_json_rejected(self):
         with self.assertRaises(module.InvalidEvidence):
