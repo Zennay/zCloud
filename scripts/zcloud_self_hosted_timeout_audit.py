@@ -16,6 +16,9 @@ WORKFLOW_SUFFIXES = {".yml", ".yaml"}
 JOB_RE = re.compile(r"^  (?P<job>[A-Za-z0-9_-]+):\s*(?:#.*)?$")
 RUNS_ON_RE = re.compile(r"(?m)^ {4}runs-on:\s*(?P<value>[^#\n]*)")
 TIMEOUT_RE = re.compile(r"(?m)^ {4}timeout-minutes:\s*(?P<value>[^#\n]+?)\s*$")
+SELF_HOSTED_LABEL_RE = re.compile(r"(?<![\w-])self-hosted(?![\w-])", re.IGNORECASE)
+# An expression can resolve to a self-hosted runner at execution time.
+DYNAMIC_RUNNER_RE = re.compile(r"\$\{\{|\*[A-Za-z_][\w-]*")
 
 
 @dataclass(frozen=True)
@@ -80,7 +83,10 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
     findings: list[TimeoutFinding] = []
     for job, block in iter_job_blocks(text):
         runs_on = _runs_on_text(block)
-        if runs_on is None or "self-hosted" not in runs_on.lower():
+        if runs_on is None:
+            continue
+        runner_is_dynamic = bool(DYNAMIC_RUNNER_RE.search(runs_on))
+        if not runner_is_dynamic and not SELF_HOSTED_LABEL_RE.search(runs_on):
             continue
 
         timeout_match = TIMEOUT_RE.search(block)
@@ -101,6 +107,10 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
                     status = "over_limit"
                 else:
                     status = "bounded"
+
+        if runner_is_dynamic:
+            # Even a short timeout is not proof the unknown runner is hosted.
+            status = "dynamic_runner_unknown"
 
         findings.append(
             TimeoutFinding(
@@ -174,21 +184,31 @@ def new_debt(
 ) -> list[TimeoutFinding]:
     """Return debt introduced for job identities that were not already debt."""
     base_debt = {
-        (row.path, row.job)
+        (row.path, row.job): row
         for row in base_rows
         if row.status != "bounded"
     }
-    return [
-        row
-        for row in head_rows
-        if row.status != "bounded" and (row.path, row.job) not in base_debt
-    ]
+    introduced: list[TimeoutFinding] = []
+    for row in head_rows:
+        if row.status == "bounded":
+            continue
+        previous = base_debt.get((row.path, row.job))
+        if previous is None:
+            introduced.append(row)
+        elif previous.status == "over_limit":
+            # Legacy debt is grandfathered, but its timeout cannot grow or disappear.
+            if (row.status != "over_limit"
+                    or row.timeout_minutes is None
+                    or previous.timeout_minutes is None
+                    or row.timeout_minutes > previous.timeout_minutes):
+                introduced.append(row)
+    return introduced
 
 
 def summarize(rows: list[TimeoutFinding], *, max_minutes: int) -> dict[str, object]:
     by_status = {
         status: sum(1 for row in rows if row.status == status)
-        for status in ("bounded", "missing", "over_limit", "dynamic_or_invalid", "invalid")
+        for status in ("bounded", "missing", "over_limit", "dynamic_or_invalid", "invalid", "dynamic_runner_unknown")
     }
     debt = [row.bounded() for row in rows if row.status != "bounded"]
     return {
