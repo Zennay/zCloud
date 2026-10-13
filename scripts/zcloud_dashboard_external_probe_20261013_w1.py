@@ -205,6 +205,8 @@ class ProbeSummary:
     probe_only: bool = True
     authorized: bool = False
     mutations_performed: bool = False
+    # The pinned external endpoint is plain HTTP: no authenticated origin proof.
+    transport_authenticated: bool = False
 
 
 def run_probe(probe=probe_once, sleep=time.sleep, attempts=MAX_ATTEMPTS):
@@ -269,6 +271,8 @@ def operator_markdown(summary: ProbeSummary) -> str:
         "",
         "**Let op:** deze controle bewijst niet dat de volledige productie-deploy "
         "gezond is of dat AI-workers tekst genereren.",
+        "**Bronvertrouwen:** publiek HTTP zonder TLS; de antwoordherkomst is "
+        "niet cryptografisch bevestigd.",
         "**Herstel of herstart wordt nooit automatisch uitgevoerd.**",
     ])
     return chr(10).join(lines)
@@ -285,6 +289,7 @@ def main(argv=None):
         print(json.dumps({
             "status": "invalid_configuration", "authorized": False,
             "mutations_performed": False, "probe_only": True,
+            "transport_authenticated": False,
         }, sort_keys=True))
         return 2
     print(operator_markdown(summary) if options.format == "markdown"
