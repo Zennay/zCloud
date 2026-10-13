@@ -31,7 +31,7 @@ De manual job verifieert current-main tweemaal via **GitHub REST / GitHub CLI** 
 
 - PR-CI checkt de onveranderlijke head-commit rechtstreeks, niet de synthetische PR-merge. Een andere repository als PR-bron wordt geweigerd.
 - Negatieve tests gebruiken tevens een echte tijdelijke 127.0.0.1 HTTP-server, inclusief redirects, 503, foutieve body, oversize, stale snapshot en proxy-injectie. Geen productie-GET in de PR-tests.
-- De vaste API GET heeft maximaal 128 KiB body-budget, controle van de aangegeven Content-Length (ook vroege oversize-weigering), weigering van dubbele kritische HTTP-headers en onverwachte Content-Encoding, beperkte nested JSON, duplicate-key/Unicode/nonfinite denial, strenge MIME- en UTC-freshnesscontrole.
+- De vaste API GET zet `Cache-Control: no-cache, no-store, max-age=0` en `Pragma: no-cache`, zodat tussenliggende HTTP-caches geen oud succesantwoord behoren te hergebruiken; timestampcontrole blijft verplicht. De vaste API GET heeft maximaal 128 KiB body-budget, controle van de aangegeven Content-Length (ook vroege oversize-weigering), weigering van dubbele kritische HTTP-headers en onverwachte Content-Encoding, beperkte nested JSON, duplicate-key/Unicode/nonfinite denial, strenge MIME- en UTC-freshnesscontrole.
 - De originele dashboard recovery workflow blijft ongewijzigd; de privilegieerde recover-job blijft gedeactiveerd.
 - Succesvolle CI is geen herstelsleutel. Productiedeploy en zCloud-workers behoren aan andere geserialiseerde eigenaren.
 
