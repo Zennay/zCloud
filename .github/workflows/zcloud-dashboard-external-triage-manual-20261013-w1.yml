@@ -30,7 +30,7 @@ jobs:
               echo "DASHBOARD_TRIAGE_INVALID_EVENT_SHA"
               return 2
             }
-            ref="$(GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)" || {
+            ref="$(GIT_TERMINAL_PROMPT=0 timeout -k 2s 12s git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)" || {
               echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
               return 2
             }
