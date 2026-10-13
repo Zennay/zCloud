@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from scripts.zcloud_dashboard_static_candidate_plan_20261012_w1 import (
-    PlanError, plan, snapshot,
+    PlanError, plan, snapshot, verify_cache_bust,
 )
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_dashboard_static_candidate_plan_20261012_w1.py"
@@ -303,6 +303,104 @@ class StaticDashboardCandidateTests(unittest.TestCase):
             snapshot(self.repo, head)
         with self.assertRaisesRegex(PlanError, "invalid_commit_sha"):
             snapshot(self.repo, "deadbeef")
+
+    def build_cache_baseline(self):
+        self.write("public/index.html", self.pinned_index())
+        self.write("public/app.js", b"const first=1;\n")
+        self.write("public/enhancements.css", b".layout{display:grid}")
+        return self.commit("complete pinned baseline")
+
+    def test_cache_contract_refuses_changed_app_without_version_bump(self):
+        base = self.build_cache_baseline()
+        self.write("public/app.js", b"const second=2;\n")
+        head = self.commit("app changes but old cache pin")
+        self.assertTrue(plan(self.repo, base, head)["static_diff_eligible"])
+        with self.assertRaisesRegex(PlanError, "cache_revision_not_bumped"):
+            verify_cache_bust(self.repo, base, head)
+
+    def test_cache_contract_refuses_changed_css_without_version_bump(self):
+        base = self.build_cache_baseline()
+        self.write("public/enhancements.css", b".layout{display:flex}")
+        head = self.commit("CSS changed with stale version")
+        with self.assertRaisesRegex(PlanError, "cache_revision_not_bumped"):
+            verify_cache_bust(self.repo, base, head)
+
+    def test_cache_contract_requires_bump_for_every_changed_asset(self):
+        base = self.build_cache_baseline()
+        self.write("public/app.js", b"const second=2;\n")
+        self.write("public/enhancements.css", b".layout{display:flex}")
+        self.write("public/index.html", self.pinned_index(app="/app.js?v=r9"))
+        head = self.commit("only JS pin bumped")
+        with self.assertRaisesRegex(PlanError, "cache_revision_not_bumped"):
+            verify_cache_bust(self.repo, base, head)
+
+    def test_cache_contract_both_bumped_remains_non_authorizing(self):
+        base = self.build_cache_baseline()
+        self.write("public/app.js", b"const second=2;\n")
+        self.write("public/enhancements.css", b".layout{display:flex}")
+        self.write("public/index.html", self.pinned_index(
+            app="/app.js?v=r9", css="/enhancements.css?v=r6"))
+        head = self.commit("both assets changed and independently versioned")
+        result = verify_cache_bust(self.repo, base, head)
+        self.assertTrue(result["cache_bust_checked"])
+        self.assertTrue(result["cache_bust_verified"])
+        self.assertEqual(result["baseline_index_asset_versions"],
+                         {"app.js": "r8", "enhancements.css": "r5"})
+        self.assertEqual(result["candidate_index_asset_versions"],
+                         {"app.js": "r9", "enhancements.css": "r6"})
+        self.assertFalse(result["runtime_bytes_observed"])
+        self.assertFalse(result["release_authorized"])
+        self.assertFalse(result["promotion_authorized"])
+
+    def test_cache_contract_missing_or_invalid_baseline_denied(self):
+        self.write("public/app.js", b"const first=1")
+        self.write("public/enhancements.css", b".first{}")
+        missing_refs = self.commit("assets exist but no index refs")
+        self.write("public/index.html", self.pinned_index())
+        head = self.commit("valid cache refs only in candidate")
+        with self.assertRaisesRegex(PlanError, "baseline_index_asset_reference_untrusted"):
+            verify_cache_bust(self.repo, missing_refs, head)
+
+    def test_cache_contract_missing_baseline_asset_denied(self):
+        self.write("public/index.html", self.pinned_index())
+        base = self.commit("baseline mentions absent JS")
+        self.write("public/app.js", b"const app=1")
+        self.write("public/enhancements.css", b"body{}")
+        head = self.commit("adds missing assets")
+        with self.assertRaisesRegex(PlanError, "baseline_dashboard_asset_missing"):
+            verify_cache_bust(self.repo, base, head)
+
+    def test_cache_contract_index_only_valid_change(self):
+        base = self.build_cache_baseline()
+        self.write("public/index.html", self.pinned_index(
+            app="/app.js?v=r8", css="/enhancements.css?v=r5") + b"<!-- layout -->")
+        head = self.commit("index layout comment only")
+        out = verify_cache_bust(self.repo, base, head)
+        self.assertEqual([x["path"] for x in out["assets"]], ["public/index.html"])
+        self.assertTrue(out["cache_bust_verified"])
+        self.assertFalse(out["promotion_authorized"])
+
+    def test_cache_contract_cli_mode_json_and_denial(self):
+        base = self.build_cache_baseline()
+        self.write("public/app.js", b"const second=2;\n")
+        self.write("public/index.html", self.pinned_index(app="/app.js?v=r9"))
+        head = self.commit("app update pinned")
+        accepted = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.repo),
+             "--baseline-sha", base, "--candidate-sha", head, "--check-cache-bust"],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        obj = json.loads(accepted.stdout)
+        self.assertTrue(obj["cache_bust_verified"])
+        self.assertFalse(obj["release_authorized"])
+        denied = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.repo),
+             "--snapshot-sha", head, "--check-cache-bust"],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(denied.returncode, 2, denied.stdout)
+        self.assertEqual(json.loads(denied.stdout)["reason"], "incompatible_modes")
 
     def test_snapshot_cli_never_authorizes_and_modes_are_exclusive(self):
         head = self.write_snapshot_bundle()
