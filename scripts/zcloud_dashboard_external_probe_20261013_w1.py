@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import math
 import socket
 import ssl
 import sys
@@ -57,6 +58,8 @@ def _validate_tree(value, depth=0):
     if isinstance(value, str):
         if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
             raise ValueError("surrogate codepoint")
+    elif isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("nonfinite JSON numeric overflow")
     elif isinstance(value, list):
         for item in value:
             _validate_tree(item, depth + 1)
