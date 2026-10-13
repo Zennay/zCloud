@@ -199,6 +199,92 @@ class GenerationEvidenceTests(unittest.TestCase):
                 with self.assertRaises(subject.EvidenceDenied):
                     subject._load(raw)
 
+    def test_decoded_unpaired_surrogates_fail_closed_at_all_depths(self):
+        cases = [
+            b'{"x":"\\\\ud800"}', b'{"x":"\\\\udc00"}',
+            b'{"\\\\ud800":"val"}', b'{"nested":[{"key":"\\\\udfff"}]}',
+        ]
+        for raw in cases:
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(subject.EvidenceDenied, "invalid_decoded_unicode"):
+                    subject._load(raw)
+
+    def test_valid_surrogate_pair_and_utf8_emoji_accepted(self):
+        self.assertEqual(subject._load(b'{"x":"\\\\ud83d\\\\ude80"}')["x"], "\uD83D\uDE80".encode("utf-16", "surrogatepass").decode("utf-16"))
+        self.assertEqual(subject._load(json.dumps({"x": "🚀"}, ensure_ascii=False).encode())["x"], "🚀")
+
+    def test_nonfinite_json_constants_and_overflow_denied(self):
+        for raw in (b'{"x":NaN}', b'{"x":Infinity}', b'{"x":-Infinity}',
+                    b'{"nested":[1e999]}'):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(subject.EvidenceDenied, "nonfinite_json"):
+                    subject._load(raw)
+
+    def test_allocation_fingerprint_stable_under_nonidentity_changes(self):
+        left = targets(allocation())
+        right = targets(allocation())
+        right["memory_guard"] = {"available_mb": 42}
+        right["global_allocation"]["workers"][0]["score"] = 17
+        self.assertEqual(subject._allocation_fingerprint(left), subject._allocation_fingerprint(right))
+
+    def test_allocation_fingerprint_deny_reassigned_queue(self):
+        before = targets(allocation())
+        after = targets(allocation())
+        after["global_allocation"]["workers"][0]["queue_id"] = "different"
+        self.assertNotEqual(subject._allocation_fingerprint(before), subject._allocation_fingerprint(after))
+
+    def test_allocation_fingerprint_rejects_duplicate_global_slots(self):
+        second = allocation("haxlab::w1")
+        with self.assertRaisesRegex(subject.EvidenceDenied, "ambiguous_allocation_snapshot"):
+            subject._allocation_fingerprint(targets(allocation(), second))
+
+    def test_live_bracketing_rejects_reassignment_during_debug(self):
+        first = targets(allocation())
+        second = targets(allocation())
+        second["global_allocation"]["workers"][0]["queue_id"] = "reassigned"
+        with patch.object(subject, "_fetch", side_effect=[first, debug(row()), second]) as fetch:
+            with self.assertRaisesRegex(subject.EvidenceDenied, "allocation_changed_during_observation"):
+                subject._live_snapshots()
+            self.assertEqual(
+                ["/api/runner-targets", "/api/worker-debug", "/api/runner-targets"],
+                [call.args[0] for call in fetch.call_args_list],
+            )
+
+    def test_live_bracketing_accepts_stable_identity(self):
+        first = targets(allocation())
+        second = targets(allocation())
+        second["global_allocation"]["workers"][0]["priority"] = "P1"
+        evidence = debug(row())
+        with patch.object(subject, "_fetch", side_effect=[first, evidence, second]):
+            self.assertEqual((second, evidence), subject._live_snapshots())
+
+    def test_live_cli_denies_changed_allocation_without_secret_output(self):
+        first = targets(allocation())
+        second = targets(allocation())
+        second["global_allocation"]["workers"][0]["queue_id"] = "private-queue-identifier"
+        output = StringIO()
+        with patch.object(subject, "_fetch", side_effect=[first, debug(row()), second]):
+            with redirect_stdout(output):
+                rc = subject.main([])
+        self.assertEqual(2, rc)
+        report = json.loads(output.getvalue())
+        self.assertEqual("allocation_changed_during_observation", report["reason"])
+        self.assertNotIn("private-queue-identifier", output.getvalue())
+        self.assertFalse(report["control_authorized"])
+
+    def test_strict_json_content_type_denies_html_with_json_token(self):
+        class FakeResponse:
+            status = 200
+            headers = {"Content-Type": "text/html; application/json"}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        with patch.object(subject.urllib.request.OpenerDirector, "open",
+                          return_value=FakeResponse()):
+            with self.assertRaisesRegex(subject.EvidenceDenied, "invalid_http_response"):
+                subject._fetch("/api/worker-debug")
+
     def test_fixture_cli_green_and_non_green_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
             first, second = Path(directory)/"targets.json", Path(directory)/"debug.json"
