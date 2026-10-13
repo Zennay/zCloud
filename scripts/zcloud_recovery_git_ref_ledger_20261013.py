@@ -128,7 +128,8 @@ def classify_create_result(
         "ref": ref,
         "authorized": False,
         "dispatch_allowed": False,
-        "mutations_performed": False,
+        "local_mutations_performed": False,
+        "external_ref_creation_observed": state == "RESERVATION_RECORDED",
         "do_not_retry_automatically": True,
     }
 
@@ -151,5 +152,6 @@ def classify_existing_ref(plan: dict[str, Any], response: Any) -> dict[str, Any]
         "reservation_state": "EXISTING_RESERVATION" if match else "DENY",
         "reason": "matching_ref_already_present" if match
                   else "missing_or_ambiguous_ref",
+        "external_ref_creation_observed": False,
         "do_not_retry_automatically": True,
     }
