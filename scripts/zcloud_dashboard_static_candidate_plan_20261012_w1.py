@@ -169,14 +169,20 @@ SNAPSHOT_REQUIRED = (
 
 
 class _IndexDependencyLinks(HTMLParser):
-    """Extract HTML references; never fetch or evaluate a referenced script."""
+    """Track active executable/style references without executing source."""
+
+    INERT_CONTAINERS = frozenset(("template", "noscript"))
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.scripts: list[str] = []
-        self.styles: list[str] = []
+        self.scripts: list[tuple[str, bool]] = []
+        self.styles: list[tuple[str, bool]] = []
+        self._inert_stack: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.INERT_CONTAINERS:
+            self._inert_stack.append(tag)
+            return
         if tag not in {"script", "link"}:
             return
         fields = {}
@@ -184,13 +190,33 @@ class _IndexDependencyLinks(HTMLParser):
             if key in fields:
                 raise PlanError("duplicate_index_attribute")
             fields[key] = value
+        active = not self._inert_stack
         if tag == "script" and "src" in fields:
-            self.scripts.append(fields["src"] or "")
+            script_type = (fields.get("type") or "").strip().lower()
+            active = active and script_type in {"", "module", "text/javascript",
+                                                 "application/javascript"} and "nomodule" not in fields
+            self.scripts.append((fields["src"] or "", active))
         elif tag == "link" and "stylesheet" in (fields.get("rel") or "").lower().split():
-            self.styles.append(fields.get("href") or "")
+            tokens = (fields.get("rel") or "").lower().split()
+            media = (fields.get("media") or "all").strip().lower()
+            active = active and "alternate" not in tokens and "disabled" not in fields
+            active = active and media in {"", "all", "screen"}
+            self.styles.append((fields.get("href") or "", active))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.INERT_CONTAINERS and self._inert_stack:
+            if tag != self._inert_stack[-1]:
+                raise PlanError("malformed_inert_index_structure")
+            self._inert_stack.pop()
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def close(self) -> None:
+        super().close()
+        if self._inert_stack:
+            raise PlanError("malformed_inert_index_structure")
 
 
 def index_bundle_versions(raw_html: bytes) -> dict[str, str]:
@@ -212,19 +238,21 @@ def index_bundle_versions(raw_html: bytes) -> dict[str, str]:
         ("app.js", parser.scripts),
         ("enhancements.css", parser.styles),
     ):
-        possible = []
-        for url in urls:
+        possible: list[tuple[str, bool]] = []
+        for url, active in urls:
             try:
                 path = urlsplit(url).path
             except ValueError:
                 raise PlanError("malformed_index_asset_reference") from None
             if path.rsplit("/", 1)[-1] == asset:
-                possible.append(url)
+                possible.append((url, active))
         if not possible:
             raise PlanError("missing_index_asset_reference")
         if len(possible) != 1:
             raise PlanError("ambiguous_index_asset_reference")
-        value = possible[0]
+        value, active = possible[0]
+        if not active:
+            raise PlanError("inactive_index_asset_reference")
         match = re.fullmatch(r"/" + re.escape(asset) + r"\?v=([A-Za-z0-9][A-Za-z0-9._-]{0,31})", value)
         if not match:
             raise PlanError("untrusted_index_asset_reference")
