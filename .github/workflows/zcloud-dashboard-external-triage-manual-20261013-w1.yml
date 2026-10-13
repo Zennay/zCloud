@@ -68,8 +68,18 @@ jobs:
             echo "DASHBOARD_TRIAGE_INVALID_SUMMARY"
             exit 3
           }
-          grep -Fxq '## zCloud · externe dashboardcontrole' "$summary_file" || {
+          [[ $(grep -Fc '## zCloud · externe dashboardcontrole' "$summary_file") -eq 1 ]] || {
             echo "DASHBOARD_TRIAGE_INVALID_SUMMARY"
+            exit 3
+          }
+          # Exactly one status claim; contradictory or repeated health lines
+          # must fail even when the probe process returned exit code zero.
+          [[ $(grep -c '^\\*\\*Status:\\*\\*' "$summary_file") -eq 1 ]] || {
+            echo "DASHBOARD_TRIAGE_AMBIGUOUS_STATUS"
+            exit 3
+          }
+          grep -Fxq '**Herstel of herstart wordt nooit automatisch uitgevoerd.**' "$summary_file" || {
+            echo "DASHBOARD_TRIAGE_MISSING_SAFETY_NOTE"
             exit 3
           }
           if (( probe_rc == 0 )); then
