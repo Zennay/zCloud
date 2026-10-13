@@ -95,6 +95,7 @@ def classify(payload, now, stale_seconds=180):
             raise EvidenceError('unknown_runner_state')
         labels(runner.get('labels'))
     counters = {'offline': 0, 'busy': 0, 'label_or_access_gap': 0, 'group_access_unverified': 0, 'available_but_queued': 0}
+    unknown_stale_runs = 0
     seen_runs = set()
     for run in runs:
         if not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] <= 0 or run['id'] in seen_runs or run.get('status') not in PENDING_RUN_STATES:
@@ -103,10 +104,11 @@ def classify(payload, now, stale_seconds=180):
         if str(rid) not in jobs_by_run: raise EvidenceError('incomplete_run_jobs')
         jobs = array(jobs_by_run[str(rid)], 'run_jobs')
         if len(jobs) > 500: raise EvidenceError('incomplete_run_jobs')
-        # Real GitHub queued runs can return zero jobs (e.g. old workflow_run
-        # events). Silence is not proof that the runner queue is drained.
+        # Real GitHub queued runs can return zero jobs. Retain the known
+        # unassigned-job counts as partial evidence, but never report green.
         if not jobs and (now - when(run.get('created_at'))).total_seconds() >= stale_seconds:
-            raise EvidenceError('stale_queued_run_without_job_evidence')
+            unknown_stale_runs += 1
+            continue
         seen_jobs = set()
         for job in jobs:
             if not isinstance(job, dict) or type(job.get('id')) is not int or job['id'] <= 0 or job['id'] in seen_jobs:
@@ -145,12 +147,14 @@ def classify(payload, now, stale_seconds=180):
                 counters['busy'] += 1
             else: counters['offline'] += 1
     count = sum(counters.values())
-    verdict = ('no_stale_unassigned_jobs' if count == 0 else
+    verdict = ('unknown_incomplete_evidence' if unknown_stale_runs else
+               'no_stale_unassigned_jobs' if count == 0 else
                'route_available_but_queued' if counters['available_but_queued'] else
                'runner_busy' if counters['busy'] else
                'runner_offline' if counters['offline'] and not (counters['label_or_access_gap'] or counters['group_access_unverified']) else
                'labels_or_access_unproven')
     return {'classification': verdict, 'stale_unassigned_jobs': count,
+            'unknown_stale_queued_runs': unknown_stale_runs,
             'observed_runners': len(runners),
             'runner_inventory_verified': not unverified_roster,
             'by_cause': counters,
@@ -286,7 +290,8 @@ def main(argv=None):
                                    'github_api_jobs_only' if args.jobs_only else
                                    'github_api_get_only')
         print(json.dumps(result, sort_keys=True))
-        return 0 if result['classification'] == 'no_stale_unassigned_jobs' else 1
+        return (2 if result['classification'] == 'unknown_incomplete_evidence'
+                else 0 if result['classification'] == 'no_stale_unassigned_jobs' else 1)
     except (EvidenceError, OSError) as exc:
         print(json.dumps({'classification': 'unknown_incomplete_evidence',
                           'reason': str(exc) if isinstance(exc, EvidenceError) else 'unreadable_fixture',
