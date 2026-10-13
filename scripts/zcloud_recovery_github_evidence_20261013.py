@@ -55,11 +55,12 @@ class DenyRedirects(urllib.request.HTTPRedirectHandler):
 
 def github_get(path: str):
     """Canonical same-repository GET. Never accepts an external response URL."""
-    require(path.startswith("/") and not path.startswith("//"), "invalid_api_path")
+    require(path == "" or (path.startswith("/") and not path.startswith("//")), "invalid_api_path")
     url = BASE + path
     parsed = urllib.parse.urlsplit(url)
     require(parsed.scheme == "https" and parsed.netloc == "api.github.com"
-            and parsed.path.startswith("/repos/Zennay/zCloud/"), "invalid_origin")
+            and (parsed.path == "/repos/Zennay/zCloud"
+                 or parsed.path.startswith("/repos/Zennay/zCloud/")), "invalid_origin")
     request = urllib.request.Request(url, method="GET", headers={
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
