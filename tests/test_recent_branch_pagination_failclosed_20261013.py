@@ -65,6 +65,33 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
             collector._branch_refs("Zennay", "zCloud", runner)
         self.assertEqual(len(calls), 1)
 
+    def test_partial_graphql_data_with_errors_is_rejected(self):
+        response = page([node("main")], next_page=False)
+        response["errors"] = [{"message": "partial repository visibility"}]
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            return response
+
+        with self.assertRaisesRegex(collector.CollectorError, "branch_graphql_errors"):
+            collector._branch_refs("Zennay", "zCloud", runner)
+        self.assertEqual(len(calls), 1)
+
+    def test_malformed_graphql_error_envelope_is_rejected(self):
+        for invalid in (None, {}, "error", True):
+            with self.subTest(invalid=invalid):
+                response = page([node("main")], next_page=False)
+                response["errors"] = invalid
+                with self.assertRaisesRegex(collector.CollectorError, "branch_graphql_errors"):
+                    collector._branch_refs("Zennay", "zCloud", lambda args: response)
+
+    def test_explicit_empty_graphql_errors_does_not_mask_valid_page(self):
+        response = page([node("main")], next_page=False)
+        response["errors"] = []
+        rows = collector._branch_refs("Zennay", "zCloud", lambda args: response)
+        self.assertEqual([r["name"] for r in rows], ["main"])
+
     def test_zero_node_last_page_is_allowed(self):
         responses = [
             page([node("main")], next_page=True, cursor="one"),
