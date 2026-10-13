@@ -162,6 +162,15 @@ class DashboardProbeTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
                 self.assertEqual(probe.probe_once(Opener(error=error)), category)
 
+    def test_unhashable_and_nonstring_probe_categories_fail_closed(self):
+        for invalid in ([], {}, None, True, 4.2):
+            with self.subTest(invalid=type(invalid).__name__):
+                summary = probe.run_probe(lambda: invalid, lambda _: None, attempts=1)
+                self.assertEqual(summary.last_failure_category, "transport_failure")
+                self.assertEqual(summary.status, "unhealthy")
+                self.assertFalse(summary.authorized)
+                self.assertFalse(summary.mutations_performed)
+
     def test_nonstandard_telemetry_never_includes_raw_values(self):
         marker = "SECRET_TOKEN_OR_PRIVATE_URL"
         result = probe.run_probe(lambda: marker, lambda _: None, attempts=1)
@@ -388,6 +397,21 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             self.assertEqual((root / "calls").read_text(),
                              "2" if refs[0] == current else "1")
             return observed
+
+    def test_exact_head_checkout_and_bounded_main_transport_contract(self):
+        hosted_path = MODULE.parents[1] / ".github/workflows/zcloud-dashboard-external-probe-hosted-20261013-w1.yml"
+        hosted = hosted_path.read_text(encoding="utf-8")
+        self.assertIn("head.repo.full_name == 'Zennay/zCloud'", hosted)
+        self.assertIn("github.event.pull_request.head.sha || github.sha", hosted)
+        self.assertIn("persist-credentials: false", hosted)
+        manual = self._workflow_shell()
+        self.assertIn("timeout -k 2s 12s git ls-remote --exit-code", manual)
+        self.assertEqual(manual.count("          verify_main_head"), 0)
+        self.assertEqual(manual.count("verify_main_head\\n"), 2)
+        self.assertLess(manual.index("verify_main_head\\n"),
+                        manual.index("summary_file="))
+        self.assertLess(manual.rindex("verify_main_head\\n"),
+                        manual.index('cat "$summary_file" | tee'))
 
     def test_workflow_bash_parses_without_network(self):
         result = subprocess.run(["bash", "-n"], input=self._workflow_shell(),
