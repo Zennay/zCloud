@@ -1,6 +1,6 @@
 # zCloud externe dashboardtriage — operatorgids
 
-Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/1351). Alleen observatie. Een groen API-antwoord bewijst geen gezonde productie-deploy, SQLite-write, afgeronde worker-drain of echte AI-generatie.
+Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/1351). Alleen observatie. Een groen API-antwoord bewijst geen gezonde productie-deploy, SQLite-write, afgeronde worker-drain of echte AI-generatie. De vastgepinde status-URL gebruikt openbaar HTTP zonder TLS: **een antwoord bewijst ook niet de cryptografisch geverifieerde identiteit van de server**. Machine-uitvoer meldt altijd `transport_authenticated=false`, ook bij status healthy.
 
 ## Gebruik — pas NA bevoegde integratie op main
 
