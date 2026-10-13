@@ -118,19 +118,33 @@ jobs:
           # Read-only check. The legacy safe_idle enter action mutates runner
           # commands/drain state; it must NEVER be used just for addon reload.
           if python3 - <<'PY'
-          import json, urllib.request
-          try:
-              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=6) as r:
-                  data=json.load(r)
-              runners=list((data.get("chatgpt_runners") or {}).values())
-              workers=[w for p in runners for w in (p.get("workers") or []) if w.get("active")]
-              if not workers:raise ValueError("No observed active workers")
-              if any(w.get("sending") or w.get("generating") or w.get("desired_state")=="draining" for w in workers):
-                  raise ValueError("An active worker is busy")
-              print("READ_ONLY_IDLE_WORKERS="+str(len(workers)))
-          except Exception as e:
-              print("IDLE_UNVERIFIED="+type(e).__name__)
-              raise SystemExit(1)
+          import json, time, urllib.request
+          # The local API may be briefly slow under Firefox memory pressure.
+          # Never treat a timeout as idle, but also do not give up forever
+          # after the first 6-second miss. This check is read-only.
+          for attempt in range(1, 6):
+              try:
+                  with urllib.request.urlopen(
+                      "http://127.0.0.1:8765/api/runner-live", timeout=15
+                  ) as response:
+                      data=json.load(response)
+                  runners=list((data.get("chatgpt_runners") or {}).values())
+                  workers=[w for p in runners for w in (p.get("workers") or []) if w.get("active")]
+                  if not workers:
+                      raise ValueError("No observed active workers")
+                  if any(w.get("sending") or w.get("generating") or
+                         w.get("desired_state")=="draining" for w in workers):
+                      raise ValueError("An active worker is busy")
+                  print("READ_ONLY_IDLE_WORKERS="+str(len(workers)))
+                  raise SystemExit(0)
+              except Exception as exc:
+                  print("IDLE_PROBE_ATTEMPT="+str(attempt)+":"
+                        +type(exc).__name__+":"+str(exc)[:120])
+                  if attempt < 5:
+                      time.sleep(3)
+          # All retries failed. Preserve the current Firefox addon and tabs.
+          print("IDLE_UNVERIFIED=all-probes-failed")
+          raise SystemExit(1)
           PY
           then
             if node scripts/zcloud_reload_extension.mjs; then
