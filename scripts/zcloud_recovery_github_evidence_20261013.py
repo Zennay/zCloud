@@ -192,11 +192,13 @@ def observe(get=github_get):
                 "decision": decision["decision"],
                 "reason": decision["reason"],
                 "sha": decision["sha"],
+                "production_state": decision.get("production_state"),
                 "authorized": False, "mutations_performed": False}
     except (SourceDenied, TypeError, KeyError, ValueError) as exc:
         reason = str(exc) if isinstance(exc, SourceDenied) else "malformed_github_evidence"
         return {"schema": "zcloud-recovery-github-observation-v1",
                 "decision": "DENY", "reason": reason, "sha": None,
+                "production_state": None,
                 "authorized": False, "mutations_performed": False}
 
 
