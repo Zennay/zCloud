@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import textwrap
 import unittest
+import urllib.request
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +50,7 @@ class OneShotManualGateTests(unittest.TestCase):
         tree = ast.parse(textwrap.dedent(code))
         defs = [item for item in tree.body if isinstance(item, ast.FunctionDef)]
         assert {d.name for d in defs} == {"unique", "snapshot"}
-        scope = {}
+        scope = {"json": json, "urllib": urllib}
         exec(compile(ast.Module(body=defs, type_ignores=[]), "<offline-idle-guard>", "exec"), scope)
         cls.snapshot = staticmethod(scope["snapshot"])
 
