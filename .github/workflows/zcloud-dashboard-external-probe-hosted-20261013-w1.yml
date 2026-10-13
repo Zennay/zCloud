@@ -1,0 +1,33 @@
+name: Dashboard external probe offline acceptance (2026-10-13 w1)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/zcloud_dashboard_external_probe_20261013_w1.py'
+      - 'tests/test_zcloud_dashboard_external_probe_20261013_w1.py'
+      - '.github/workflows/zcloud-dashboard-external-probe-hosted-20261013-w1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classify-offline:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout immutable tested commit without credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile safe probe and fixture tests
+        run: |
+          python3 -m py_compile scripts/zcloud_dashboard_external_probe_20261013_w1.py tests/test_zcloud_dashboard_external_probe_20261013_w1.py
+      - name: Run failure taxonomy, privacy and retry tests (no network)
+        run: |
+          python3 -m unittest discover -s tests -p 'test_zcloud_dashboard_external_probe_20261013_w1.py' -v
+      - name: Run full Python regression (hosted only)
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py' -q
