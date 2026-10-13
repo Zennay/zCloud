@@ -207,20 +207,16 @@
       try {
         // The new same-origin tab would otherwise inherit sessionStorage's
         // OLD worker ID and the v2 runner would reject the new URL.
-        await browser.tabs.executeScript(tabId, {
-          code:'for(const k of ["zcloud-v2-worker","zcloud-bound-project","zcloud-v2-chat-at","zcloud-v2-reported-conversation"])sessionStorage.removeItem(k);'
-        });
-        await browser.tabs.update(tabId,{url:String(url),active:false});
+        // Project switch: retire only an independently verified idle OLD tab.
+        // A Force request must launch a NEW identity-owned Firefox tab.
+        await browser.tabs.remove(tabId);
         ownership.delete(oldKey);
         stalePollObservations.delete(oldKey);
         candidateRemovals.delete(oldKey);
         lastChatGPTProviderSlot.delete(oldKey);
         await forgetWorker(oldKey);
-        ownership.set(key,tabId);
-        await browser.sessions.setTabValue(tabId,TAG,key);
-        await rememberWorker(key);
-        await note("worker-tab-project-rebound",key,"previous-idle-slot="+oldKey);
-        return true;
+        await note("worker-tab-project-retired",oldKey,"replacement-worker="+key);
+        return false; // createWorkerTab now opens a brand-new key-bound tab
       } catch (_) { return false; }
     }
     return false;
@@ -251,7 +247,9 @@
         return;
       }
     }
-    if (await rebindReleasedSlot(key,target,allTargets,desired,url,slot)) return;
+    // Retire a released slot only if verified idle; NEVER navigate it into a
+    // different project. Even if retirement is unsafe, open the new owner tab.
+    await rebindReleasedSlot(key,target,allTargets,desired,url,slot);
     // active:false is absolute: starting a worker may NEVER switch active tabs.
     const tab = await browser.tabs.create({url:String(url), windowId, active:false});
     ownership.set(key, tab.id);
@@ -625,6 +623,64 @@
   // /runner-targets poll in every ChatGPT tab. React immediately to Forceer
   // and project switches, but only the verified v2 page runner sends text.
   const commandWakeAt = new Map();
+  async function forceNewWorkerTab(key, commandId, active) {
+    const commandKey = Number(commandId);
+    if (!Number.isSafeInteger(commandKey) || commandKey <= 0 ||
+        !active.includes(key)) return null;
+    const previous = ownership.get(key);
+    const existing = previous == null ? null :
+      await browser.tabs.get(previous).catch(() => null);
+    if (existing) {
+      try {
+        const current = new URL(existing.url);
+        if (current.searchParams.get("zcloud_worker") === key &&
+            current.searchParams.get("zcloud_force_command") === String(commandKey))
+          return previous;
+      } catch (_) {}
+      if (await tagOf(existing) !== key || !isWorkerUrl(existing.url)) return null;
+      // A Force never interrupts generation, a draft, pending send, or an
+      // unverified/missing userscript. Retry when the worker becomes safe.
+      let state = null;
+      try {
+        [state] = await browser.tabs.executeScript(previous, {
+          code:'(() => {const e=document.documentElement;const b=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\');return {owner:e?.getAttribute("data-zcloud-v2-owner")||"",version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"",poll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),busy:e?.getAttribute("data-zcloud-v2-busy"),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(b?.value||b?.innerText||b?.textContent||"").trim()};})()'
+        });
+      } catch (_) { return null; }
+      if (!state || state.owner !== key || !/^2\\.0\\.[012]$/.test(state.version) ||
+          state.busy !== "false" || state.generating !== false ||
+          state.draft !== false || !Number.isFinite(state.poll) ||
+          state.poll <= 0 || Date.now()-state.poll < 0 ||
+          Date.now()-state.poll >= 120000) return null;
+    }
+    const allTabs = await browser.tabs.query({});
+    const windowId = await chooseWindow(allTabs);
+    if (windowId == null) return null;
+    // Pre-create and tag the replacement before retiring old ownership.
+    // The old tab cannot consume Force: only the tab with this command ID can.
+    const url = new URL("https://chatgpt.com/");
+    url.searchParams.set("zcloud_worker",key);
+    url.searchParams.set("zcloud_force_command",String(commandKey));
+    const tab = await browser.tabs.create({url:String(url),windowId,active:false});
+    try {
+      await browser.sessions.setTabValue(tab.id,TAG,key);
+      await rememberWorker(key);
+    } catch (error) {
+      await browser.tabs.remove(tab.id).catch(() => {});
+      await note("force-new-tab-tag-failed",key,String(error));
+      return null;
+    }
+    if (previous != null && existing) {
+      // A trusted idle tab can be closed only AFTER its successor was tagged.
+      await browser.tabs.remove(previous).catch(() => {});
+    }
+    ownership.set(key,tab.id);
+    stalePollObservations.delete(key);
+    closeCooldown.delete(key);
+    forceTabAt.set(commandKey,tab.id);
+    await note("worker-force-tab-created",key,"command="+commandKey);
+    return tab.id;
+  }
+  const forceTabAt = new Map(); // command ID -> one newly bound tab; no repeated churn
   let commandProbeBusy = false;
   async function checkPendingCommands() {
     if (commandProbeBusy) return;
@@ -648,7 +704,11 @@
         const key = ownership.has(projectId) ? projectId :
           active.includes(projectId+"::w1") ? projectId+"::w1" : "";
         if (!key) continue;
-        const tabId = ownership.get(key);
+        // Force requests demand a NEW tab, not a recycled project tab.
+        // The command ID travels in the URL and the in-page runner checks it
+        // before processing the corresponding force action.
+        const tabId = cmd.force === true ?
+          await forceNewWorkerTab(key,id,active) : ownership.get(key);
         if (tabId == null) continue;
         // A wakeup only asks the userscript to check authoritative API
         // state. It never sends a prompt or selects a Firefox tab itself.
@@ -663,6 +723,8 @@
       }
       for (const id of [...commandWakeAt.keys()])
         if (!pending.some(x => Number(x.id) === id)) commandWakeAt.delete(id);
+      for (const id of [...forceTabAt.keys()])
+        if (!pending.some(x => Number(x.id) === id)) forceTabAt.delete(id);
     } catch (_) { /* A failed API call cannot authorize prompt dispatch. */ }
     finally { commandProbeBusy = false; }
   }
