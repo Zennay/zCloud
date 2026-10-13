@@ -26,7 +26,8 @@ deployment or force-start approval.
 ## Sources and classification
 
 - Each bounded `BEGIN` read transaction gets `ai_global_slots`,
-  `runner_workers` and pending worker commands using SQLite read-only mode.
+  `runner_workers`, `runner_targets` (configured worker_count) and pending
+  worker commands using SQLite read-only mode.
   It does not initialize, delete, vacuum, migrate, checkpoint, commit or claim.
   The API GET is **bracketed by two coherent SQLite read snapshots**; if the
   roster or command set changes mid-request, the report becomes `unknown`
@@ -41,6 +42,11 @@ deployment or force-start approval.
   trigger a retry.
 - `allocation_without_target` / `allocated_but_not_runnable`: control-plane
   consistency issues that require ownership-aware operator review.
+- `allocation_without_project_target` / `allocation_outside_worker_count`:
+  a global scheduler slot is selected for a missing project or an impossible
+  per-project worker index (e.g. `cloud::w2` while target worker_count=1).
+  The real runtime target projector may omit this slot; do **not** interpret
+  the absence as proof of a missing Firefox tab.
 - `worker_not_live`: selected worker is reported offline or stale even if
   its configured `active=true` flag says it is allocated. A `generating=true`
   flag **cannot** override a stale/offline classification.
