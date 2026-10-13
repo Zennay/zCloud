@@ -57,6 +57,10 @@ def _pages(fetch, kind):
             if len(entries) > MAX_ENTRIES:
                 raise InventoryDenied("entry_cap")
         if following is None:
+            # A full final page is ambiguous if Link pagination was omitted.
+            # Deny rather than treating potentially truncated ownership as clear.
+            if len(payload) >= 100:
+                raise InventoryDenied("full_page_without_cursor")
             return entries, page
         if isinstance(following, bool) or not isinstance(following, int):
             raise InventoryDenied("malformed_cursor")
