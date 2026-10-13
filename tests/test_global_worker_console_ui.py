@@ -36,6 +36,14 @@ assert.doesNotMatch(rows,/Prompt:/);
 assert.doesNotMatch(rows,/Taak:/);
 assert.match(rows,/https:\/\/chatgpt.com\/c\/a123/);
 assert.match(rows,/https:\/\/claude.ai\/chat\/b234/);
+// Pending request must not disable Force forever; screenshot regression.
+vm.runInContext('GLOBAL_WORKER_PROJECT_REQUESTS[2]="lightup"; GLOBAL_WORKER_REQUEST_RESULTS[2]="Project priority requested. Waiting for queue allocation; no immediate slot switch is guaranteed."; GLOBAL_WORKER_REQUEST_AT[2]=Date.now()',ctx);
+rows=vm.runInContext('globalWorkerRows()',ctx);
+const force2=rows.match(/<button[^>]*data-global-worker-force="2"[^>]*>/)?.[0]||"";
+assert.ok(force2,"Force button must exist for available worker 2");
+assert.doesNotMatch(force2,/\\bdisabled\\b/,"pending scheduler request must not deadlock Force");
+assert.match(source,/global_worker_slot:slot/,"project Force must send the selected global slot");
+assert.match(source,/global_worker_slot:globalSlot/,"assigned worker Force must send the same global slot");
 vm.runInContext('GLOBAL_WORKER_PROJECT_REQUESTS[2]="supa"',ctx);
 rows=vm.runInContext('globalWorkerRows()',ctx);
 assert.match(rows,/data-global-worker-project="2"[^>]*>[\s\S]*?value="supa" selected/);
