@@ -103,5 +103,39 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
         self.assertIn("NO_PROCESS_OR_TAB_MUTATION=1", job)
 
 
+    def test_manual_probe_denies_moved_main_before_any_live_read(self):
+        vps = self.job(self.text, "inspect")
+        gate = vps.split("- name: Enforce exact commit and permanent VPS identity", 1)[1].split("- name: Read-only bounded worker service inventory", 1)[0]
+        self.assertIn("git ls-remote --exit-code origin refs/heads/main", gate)
+        self.assertIn('test "$current_main" = "$GITHUB_SHA"', gate)
+        self.assertLess(gate.index("git ls-remote"), gate.index("python3 scripts/zcloud_vps_runner_guard.py"))
+
+    def test_trigger_matrix_deny_untrusted_events_and_manual_drift(self):
+        vps = self.job(self.text, "inspect")
+        guard = vps.split("    if: >-\n", 1)[1].split("\n    runs-on:", 1)[0]
+        self.assertEqual([line.strip() for line in guard.splitlines()], [
+            "github.event_name == 'workflow_dispatch' &&",
+            "github.ref == 'refs/heads/main' &&",
+            "github.repository == 'Zennay/zCloud' &&",
+            "github.actor == 'Zennay'",
+        ])
+        cases = [
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", True),
+            ("pull_request", "refs/pull/1313/merge", "Zennay/zCloud", "Zennay", False),
+            ("push", "refs/heads/main", "Zennay/zCloud", "Zennay", False),
+            ("workflow_run", "refs/heads/main", "Zennay/zCloud", "Zennay", False),
+            ("workflow_dispatch", "refs/heads/feature", "Zennay/zCloud", "Zennay", False),
+            ("workflow_dispatch", "refs/heads/main", "fork/zCloud", "Zennay", False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "outside", False),
+        ]
+        for event, ref, repo, actor, expected in cases:
+            with self.subTest(event=event, ref=ref, repo=repo, actor=actor):
+                result = (event == "workflow_dispatch"
+                          and ref == "refs/heads/main"
+                          and repo == "Zennay/zCloud"
+                          and actor == "Zennay")
+                self.assertEqual(result, expected)
+
+
 if __name__ == "__main__":
     unittest.main()
