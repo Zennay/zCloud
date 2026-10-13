@@ -39,7 +39,7 @@ class MixLabPortfolioRegistrationTests(unittest.TestCase):
         self.assertEqual("execution", contract["queue_mode"])
         self.assertEqual("product", contract["lane_profile"])
         self.assertEqual(1, contract["ai_worker_cap"])
-        self.assertEqual({"mode": "ai_worker", "auto_start": False}, contract["autonomy"])
+        self.assertEqual({"mode": "external_gate", "auto_start": False}, contract["autonomy"])
         compute = contract["compute"]
         self.assertEqual("build", compute["pool"])
         self.assertFalse(compute["protected"])
