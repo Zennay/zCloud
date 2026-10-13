@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Deliberately fixed. Arbitrary user-provided URLs or proxy routing are forbidden.
 STATUS_URL = "http://198.244.191.182:8765/api/status"
@@ -30,7 +30,7 @@ TIMEOUT_SECONDS = 12
 CATEGORIES = frozenset({
     "healthy", "dns", "connection", "timeout", "tls", "http_status",
     "content_type", "body_too_large", "invalid_json", "invalid_schema",
-    "transport_failure",
+    "transport_failure", "stale_timestamp", "future_timestamp",
 })
 
 
@@ -69,7 +69,7 @@ def _validate_tree(value, depth=0):
             _validate_tree(item, depth + 1)
 
 
-def _validate_payload(raw):
+def _validate_payload(raw, *, now=None):
     try:
         doc = json.loads(
             raw.decode("utf-8", errors="strict"),
@@ -90,6 +90,14 @@ def _validate_payload(raw):
         return "invalid_schema"
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return "invalid_schema"
+    reference = datetime.now(timezone.utc) if now is None else now
+    if reference.tzinfo is None or reference.utcoffset() is None:
+        raise ValueError("reference time must be timezone-aware")
+    age = (reference - parsed).total_seconds()
+    if age < -30:
+        return "future_timestamp"
+    if age > 180:
+        return "stale_timestamp"
     return "healthy"
 
 
@@ -178,6 +186,8 @@ def operator_markdown(summary: ProbeSummary) -> str:
         "invalid_json": "Ongeldige JSON",
         "invalid_schema": "API-antwoord heeft verkeerde structuur",
         "transport_failure": "Onbekende transportfout",
+        "stale_timestamp": "Verouderd statusantwoord",
+        "future_timestamp": "Statusantwoord ligt in de toekomst",
     }
     is_healthy = summary.status == "healthy"
     lines = [
