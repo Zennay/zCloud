@@ -19,6 +19,7 @@ Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/135
 | DNS, TLS of time-out | Externe verbinding kon niet binnen budget worden geverifieerd. |
 | HTTP-status niet 200 | Serverstatus/redirect geweigerd; nooit responsebody of geheimen loggen. |
 | Onverwacht antwoordtype of te groot | Ongeldige API-representatie; fail closed. |
+| Tegenstrijdige HTTP-headers | Dubbele content headers, opgegeven lengte die niet klopt, ongeldige lengte of ongewenste content-encoding. Ook met HTTP 200 geen geldige status. |
 | Ongeldige JSON of schema | Body onbruikbaar, of vereiste velden ontbreken. |
 | Verouderd of toekomstige tijd | >180 seconden oud of >30 seconden in de toekomst: mogelijk cache, replay of klokafwijking. |
 | MAIN_CHANGED / MAIN_UNVERIFIABLE | Exacte actuele main-head vóór/na observatie niet bewezen; geen groene samenvatting publiceren. |
@@ -30,7 +31,7 @@ De manual job verifieert current-main tweemaal via **GitHub REST / GitHub CLI** 
 
 - PR-CI checkt de onveranderlijke head-commit rechtstreeks, niet de synthetische PR-merge. Een andere repository als PR-bron wordt geweigerd.
 - Negatieve tests gebruiken tevens een echte tijdelijke 127.0.0.1 HTTP-server, inclusief redirects, 503, foutieve body, oversize, stale snapshot en proxy-injectie. Geen productie-GET in de PR-tests.
-- De vaste API GET heeft maximaal 128 KiB body-budget, beperkte nested JSON, duplicate-key/Unicode/nonfinite denial, strenge MIME- en UTC-freshnesscontrole.
+- De vaste API GET heeft maximaal 128 KiB body-budget, controle van de aangegeven Content-Length (ook vroege oversize-weigering), weigering van dubbele kritische HTTP-headers en onverwachte Content-Encoding, beperkte nested JSON, duplicate-key/Unicode/nonfinite denial, strenge MIME- en UTC-freshnesscontrole.
 - De originele dashboard recovery workflow blijft ongewijzigd; de privilegieerde recover-job blijft gedeactiveerd.
 - Succesvolle CI is geen herstelsleutel. Productiedeploy en zCloud-workers behoren aan andere geserialiseerde eigenaren.
 
