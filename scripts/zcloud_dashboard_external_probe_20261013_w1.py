@@ -159,7 +159,7 @@ def run_probe(probe=probe_once, sleep=time.sleep, attempts=MAX_ATTEMPTS):
     failures = collections.Counter()
     for index in range(attempts):
         category = probe()
-        if category not in CATEGORIES:
+        if type(category) is not str or category not in CATEGORIES:
             category = "transport_failure"
         if category == "healthy":
             return ProbeSummary(
