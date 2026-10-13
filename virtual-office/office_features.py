@@ -187,7 +187,8 @@ def relay_poll(core, body):
                 if row:
                     claim = uuid.uuid4().hex
                     db.execute("UPDATE office_chat SET status='claimed',client_id=?,claim_token=?,updated_at=? WHERE id=?", (client, claim, core.timestamp(), row["id"]))
-                    job = {"id": row["id"], "instruction": row["instruction"], "claim_token": claim}
+                    job = {"id": row["id"], "instruction": row["instruction"], "claim_token": claim,
+                           "persona": str((core.PERSONAS.get(employee) or {}).get("persona_prompt") or "")[:1800]}
         db.execute("COMMIT")
     return {"ok": True, "job": job}
 

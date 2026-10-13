@@ -8,6 +8,8 @@ const {Worker} = require('worker_threads');
 const {validate, isComplete, publicView} = require('./lib/settings');
 const {openTunnel} = require('./lib/tunnel');
 const pcm = require('./lib/pcm');
+const {buildRdp, launcherFor} = require('./lib/rdp');
+const {spawn} = require('child_process');
 
 let win = null, tunnel = null, settings = null, passphrase = '', sessionToken = '', reconnecting = false, quitting = false;
 let worker = null, workerReady = false, pending = new Map(), nextId = 1;
@@ -57,7 +59,7 @@ async function connect() {
     tunnel = await openTunnel({
       host: settings.host, port: settings.port, username: settings.username, privateKey, passphrase,
       expectedFingerprint: settings.hostFingerprint, confirmFingerprint,
-      localPort: settings.localPort, remotePort: settings.remotePort,
+      localPort: settings.localPort, remotePort: settings.remotePort, extraForwards: [{name: 'rdp', remotePort: settings.rdpRemotePort}],
       onClose: reason => { tunnel = null; if (!quitting) scheduleReconnect(reason); },
     });
   } catch (err) { return showSetup(err.message); }
@@ -78,7 +80,7 @@ function scheduleReconnect(reason, attempt = 1) {
       tunnel = await openTunnel({
         host: settings.host, port: settings.port, username: settings.username, privateKey: key, passphrase,
         expectedFingerprint: settings.hostFingerprint, confirmFingerprint: async () => false,
-        localPort: settings.localPort, remotePort: settings.remotePort,
+        localPort: settings.localPort, remotePort: settings.remotePort, extraForwards: [{name: 'rdp', remotePort: settings.rdpRemotePort}],
         onClose: r => { tunnel = null; if (!quitting) scheduleReconnect(r); },
       });
       reconnecting = false;
@@ -120,6 +122,18 @@ ipcMain.handle('voice:transcribe', async (event, {samples, rate}) => {
   });
   return pcm.cleanTranscript(text);
 });
+/** Open the bare VPS desktop (RDP) through the SSH tunnel. The owner types the desktop password in Windows' own dialog. */
+function openVpsDesktop() {
+  if (!tunnel?.forwards?.rdp) throw new Error('Het VPS-bureaublad is nog niet verbonden. Wacht tot de tunnel staat.');
+  const file = path.join(app.getPath('userData'), 'vps-desktop.rdp');
+  fs.writeFileSync(file, buildRdp({port: tunnel.forwards.rdp, username: settings.rdpUsername}), {mode: 0o600});
+  const {cmd, args} = launcherFor(process.platform, file, tunnel.forwards.rdp);
+  const child = spawn(cmd, args, {detached: true, stdio: 'ignore'});
+  child.on('error', err => dialog.showErrorBox('VPS-bureaublad', 'Kon ' + cmd + ' niet starten: ' + err.message + '\n\nHandmatig verbinden kan met 127.0.0.1:' + tunnel.forwards.rdp + ' zolang deze app verbonden is.'));
+  child.unref();
+  return true;
+}
+ipcMain.handle('rdp:open', e => { if (!isOfficeSender(e)) throw new Error('Niet toegestaan'); return openVpsDesktop(); });
 ipcMain.handle('token:get', e => (isOfficeSender(e) ? getToken() : ''));
 
 // ---------------------------------------------------------------- setup page
@@ -150,6 +164,7 @@ function buildMenu() {
       {label: 'Verbinding en instellingen…', click: () => showSetup()},
       {label: 'Opnieuw verbinden', accelerator: 'F5', click: () => (isComplete(settings) ? connect() : showSetup())},
       {label: 'Volledig scherm', accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen())},
+      {label: 'VPS-bureaublad openen (RDP)', accelerator: 'F9', click: () => { try { openVpsDesktop(); } catch (e) { dialog.showErrorBox('VPS-bureaublad', e.message); } }},
       {type: 'separator'}, {role: 'quit', label: 'Afsluiten'}]},
     {label: 'Beeld', submenu: [{role: 'zoomIn'}, {role: 'zoomOut'}, {role: 'resetZoom'}]},
   ]));

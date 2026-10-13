@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('officeDesktop', {
   version: 1,
   getToken: () => ipcRenderer.invoke('token:get'),
   voice: {start, stop},
+  openVpsDesktop: () => ipcRenderer.invoke('rdp:open'),
   onVoiceStatus: cb => ipcRenderer.on('voice:status', (_e, text) => cb(String(text))),
 });
 // Exposed to the local setup page only; main re-checks the sender URL on every call.

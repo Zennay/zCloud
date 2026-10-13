@@ -2,23 +2,52 @@
 
 Live browser entry: http://198.244.191.182:3422/
 
-A desktop-first, 38 × 30 metre penthouse above a procedural Manhattan-inspired skyline. This is an original Three.js/WebGL scene, not a GTA port, and does not require a headset. All assets in the scene are procedural/original; the only external runtime dependency is the pinned Three.js module.
+A desktop-first, 38 × 30 metre penthouse above a **real 3D, procedurally generated city**. This is an original Three.js/WebGL scene, not a GTA port, and does not require a headset. Everything in the scene is generated in code (no photos, no downloaded models or textures). The only third-party code is Three.js r170, vendored in `vendor/` (MIT, licence included), so nothing is loaded from a CDN.
 
 ## Implemented
-- Full-screen environment with curtain-wall windows, walnut, stone, brass, a skyline, warm lighting, shadows, quality settings and four navigable zones.
+- Full-screen environment with curtain-wall windows, walnut, marble, brass, warm lighting, shadows, quality settings and five navigable zones (lounge, work floor, executive office, boardroom, creative corner).
 - Seated staff at correctly aligned workstations. WASD/arrow keys, drag-to-look, optional pointer lock, touch movement, collision bounds and room shortcuts.
 - Immediate **system** acknowledgement after a durable work submission; server dispatch wakes immediately and forwards to the existing zCloud queue. Existing queue status remains the evidence of progress, not an invented AI answer.
 - Authenticated real VPS console: uptime, memory, disk, fixed service status and the Office queue. This is a managed command palette, not unrestricted SSH.
 - Presentation studio: up to 20 slides, SQLite persistence, edit/reopen/import, standalone HTML export (print to PDF), presentation mode, live texture on the 3D boardroom screen. Requesting Maya's slide content creates a normal project task; import her delivered JSON. Automatic artifact ingestion and PPTX export are not implemented.
 - Separate opt-in ChatGPT conversation relay. The server persists messages and accepts an answer only for the claiming relay. No API keys, Codex CLI or model billing service.
 
+## Rendering (phase 2)
+- `city.js`: procedural sky dome (sun, haze, stars), an instanced city (towers with setbacks and spires, streets, river, park, moving traffic) with shader-drawn lit windows, fog and three time presets (`golden`, `day`, `night`; `?time=` or the daylight button, remembered per browser).
+- `post.js`: MSAA render target, ambient occlusion (GTAO), bloom and tone mapping through three's `EffectComposer`. The sky/city is captured once into an environment map (PMREM) so glass, marble and metal reflect the real skyline; it is re-captured when the time of day changes.
+- `materials.js` / `interior.js` / `people.js`: procedural PBR materials (veined marble, planks, brushed brass, leather, fabric), rounded furniture, lounge, executive office, boardroom, ops monitor wall, creative corner and an articulated staff model (seated and standing poses).
+- Quality ladder `high` / `balanced` / `low`; the game steps down by itself when the frame rate is poor (not when `?q=` is set).
+- Honest limit: this is a strong real-time look for a browser, **not** GTA V production quality. That level needs hand-made assets and a native engine; the page is generated entirely in code.
+
+## Staff and experts
+- The roster is stored in SQLite (`office_staff.py`, max 8 desks) and managed from the **Beheer** panel (tab *Team*) or `POST /api/staff`. Maya, Noah and Lina are the default seed. A new expert (name, role, expertise, colour) gets a desk, a walking figure and its own ChatGPT conversation once a ChatGPT tab is paired through the Office Relay userscript (v0.3.8 accepts any `[a-z][a-z0-9]{1,15}` id and carries the persona with each job).
+- `walk.js` / `layout.js`: staff really stand up, find a route with grid A* around the furniture, wait in front of you, present at the boardroom screen and walk home and sit down. Both modules are pure and unit tested.
+- `office_experts.py`: every `OFFICE_REVIEW_MINUTES` (default 180; `0` switches it off) each expert is asked, through its relay chat, to review the zCloud state (queue, workers, priorities and, if that chat has Notion connected, Notion). Answers must be strict JSON; they are validated and become **proposals** (`GET /api/proposals`), never direct changes. An expert can only propose what the control room can do.
+- Answers are also **spoken** (Web Speech API; voice quality depends on the voices installed on the PC). Speaking is interrupted when you start talking; "Hardop antwoorden" can be switched off.
+
+## Control room (zCloud workers from the game)
+The **Beheer** dock button (or a click on the ops monitor) opens tabs *Workers*, *Queue*, *Voorstellen*, *Team* and *Logboek*.
+- **One source of truth:** the zCloud API on loopback. Office keeps no copy of worker state; the panel re-reads it every 15 s and a change made in the dashboard shows up by itself. Changes go through the same endpoints as the dashboard (`/api/runner-control`, `/api/resource-priority`, `/api/runner-workers`, `/api/portfolio-queue`) with the header `X-ZCloud-Actor: virtual-office`, so zCloud's own log shows where a change came from.
+- **Two steps:** `POST /api/control/prepare` returns a plain-language description and a `pending_id`; nothing happens until `POST /api/control/confirm` (valid for 90 s). Expert proposals are approved the same way (`POST /api/proposals/<id>/approve`, by panel or by voicing "ja").
+- **Guard rails:** control and proposal-approval endpoints are loopback-only and token-protected; turbo mode is not available from Office and new queue tasks are capped at P1 (P0 stays reserved for the dashboard); every action is written to an audit log (tab *Logboek*).
+
+## VPS desktop ("lean VM")
+From the Windows game, **F9** (or the tile in the connection dialog) opens an RDP window to the bare VPS desktop through the same SSH tunnel; no extra port is exposed. This needs an RDP server (e.g. xrdp) on the VPS, which Office does not install. See [`desktop/README.md`](./desktop/README.md).
+
 ## Desktop game (branch `feat/office-desktop-game-20261013`)
-A downloadable Windows client lives in [`desktop/`](./desktop/README.md) (Electron, SSH tunnel to the VPS, push-to-talk with local Whisper). The VPS keeps running employees, queue and relays. New in the backend and scene:
+A downloadable Windows client lives in [`desktop/`](./desktop/README.md) (Electron, SSH tunnel to the VPS, push-to-talk with local Whisper). The VPS keeps running employees, queue and relays. In the backend and scene:
 - `office_game.py`: durable event feed (`GET /api/events`), evidence-grounded job summaries (`GET /api/jobs/<id>/summary`; the relay only rephrases the queue's `evidence`, with a deterministic fallback) and employee-made decks (`POST /api/decks/request`; strict JSON reply validated and cleaned by `office_features.clean_slide`).
 - `slides.js`: richer slide layouts (title, bullets, stat, quote, split, bars, steps, accents) drawn onto the boardroom screen.
-- `game.js` + scene additions: staff stand up and walk to you when a job is finished and wait; they speak only after you say e.g. "ok, zeg maar"; they walk to the boardroom screen and present their own deck.
-- The deploy workflow now also installs `office_game.py`, `slides.js` and `game.js`.
-Tests: `python3 -m unittest discover -s virtual-office/tests` and `node --test virtual-office/tests/*.mjs virtual-office/desktop/tests/*.mjs`. Visual 3D behaviour, the Electron shell, a live SSH tunnel and a real relay round trip are not verified.
+- `game.js`: staff walk to you when a job is finished and wait; they speak only after you say e.g. "ok, zeg maar"; they walk to the boardroom screen and present their own deck.
+- The deploy workflow installs all Python modules, the JavaScript modules and the `vendor/` tree.
+
+## Developer tools
+- `python3 tools/render_office.py OUT [view ...]` renders views headlessly with software WebGL (env `Q`, `TIME`, `W`, `H`, `SETTLE`, `WALK=id:secs`). Slow; use `Q=balanced W=960 H=540` on machines without a GPU.
+- `python3 tools/e2e_ui.py [OUT]` runs the UI against `tools/fake_zcloud.py` (a stateful stand-in for the zCloud API) in a real browser: control room lists workers, confirmation before a change, change reaches zCloud with the Office actor, a dashboard change appears by itself, queue add, a new expert appears and walks, no page errors.
+- Tests: `python3 -m unittest discover -s virtual-office/tests` and `node --test virtual-office/tests/*.mjs virtual-office/desktop/tests/*.mjs`.
+
+## Not verified on the real system
+Everything above was exercised with the fake zCloud and a headless software renderer. **Not** verified: the Electron shell, a real SSH tunnel and RDP launch, Whisper on a real microphone, Windows TTS voices, the real zCloud endpoints on the VPS, real ChatGPT relay round trips (including whether an expert's chat has Notion access) and frame rates on a real GPU. Expect a round of fixes after the first real start.
 
 ## Private workspace
 The scene is public; jobs, messages, decks, relay and workstation endpoints require the existing X-Office-Token. The browser stores the entered code only in the open page's memory. The service's token is held in /etc/virtual-office/office.env and is never published in CI output.
@@ -81,9 +110,7 @@ https://emscripten.org/docs/porting/multimedia_and_graphics/OpenGL-support.html
 Unreal Pixel Streaming renders an Unreal application on another machine and streams it to a browser:
 https://dev.epicgames.com/documentation/en-us/unreal-engine/pixel-streaming-in-unreal-engine
 
-This bounded office remains native browser WebGL to work with the current VPS architecture without requiring a GPU rendering service. It is an upgraded architectural prototype; it is not represented as GTA-level production art or verified AAA performance.
+This bounded office remains native browser WebGL to work with the current VPS architecture without requiring a GPU rendering service. It is a real-time architectural scene with a modern lighting pipeline; it is not GTA-level production art and no AAA performance is claimed.
 
-## Office rework (12 October)
-The city now uses a licensed high-altitude Manhattan photograph rather than close procedural building boxes. The backdrop is a flat image, not a 360-degree map. Side-on staff camera positions avoid looking through monitors. Glass partitions have marked open portals, brass safety rails and matching collision. Branding and introductory overlays are hidden during exploration. Maya has a dedicated assistant shortcut. The creative desk offers remembered plush, garden and minimal styles in this browser. The 3D wall screen reflects real Office jobs; the monitor also shows filtered live project milestones from zCloud, with explicit offline state.
-
-28 existing API tests passed for the visual rework. Browser visual validation remains unavailable in the cloud browser because it upgrades the HTTP origin to HTTPS and the server does not speak TLS there. Separate project-monitor tests verify privacy filtering, caching, and offline behavior. Shared human presence, invitations/accounts, expandable staff, native desktop packaging, isolated Ubuntu desktop, arbitrary image-to-3D conversion and TLS remain incomplete. This release does not label them connected or working.
+## Office rework (12 October, superseded)
+The 12 October version used a Wikimedia skyline photograph on flat planes. That has been replaced by the generated 3D city described above; the photo, its attribution note and the `/skyline.jpg` route are gone. Shared human presence, invitations/accounts, arbitrary image-to-3D conversion and TLS remain incomplete and are not labelled as working.

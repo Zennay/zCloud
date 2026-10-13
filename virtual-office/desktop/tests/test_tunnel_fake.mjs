@@ -104,3 +104,15 @@ test('busy preferred port falls back to a free one instead of failing', async ()
   assert.equal((await get(t.port)).body, 'penthouse ok');
   t.close(); srv.close(); blocker.close();
 });
+
+test('an extra forward (VPS desktop over RDP) gets its own loopback port and reaches the chosen remote port', async () => {
+  const srv = await office(); const Client = makeClient({officePort: srv.address().port});
+  const t = await openTunnel({Client, host: 'h', username: 'u', privateKey: 'k', expectedFingerprint: fingerprint(HOST_KEY), remotePort: 3422, extraForwards: [{name: 'rdp', remotePort: 3389}]});
+  assert.ok(t.forwards.rdp > 0 && t.forwards.rdp !== t.port);
+  const r = await get(t.forwards.rdp);
+  assert.equal(r.body, 'penthouse ok');
+  assert.equal(Client.instances[0].forwarded.dstPort, 3389);
+  const again = await get(t.port); assert.equal(again.body, 'penthouse ok');
+  assert.equal(Client.instances[0].forwarded.dstPort, 3422);
+  t.close(); srv.close();
+});

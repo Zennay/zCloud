@@ -27,6 +27,9 @@ button:disabled{opacity:.5;cursor:wait}
 <label for="passphrase">Wachtwoordzin van de sleutel (alleen als die er een heeft; wordt niet opgeslagen)</label><input id="passphrase" type="password" autocomplete="off">
 <label for="token">Office-toegangscode (de waarde van OFFICE_ACCESS_TOKEN op de VPS)</label><input id="token" type="password" autocomplete="off" placeholder="leeg laten om de opgeslagen code te houden">
 <div class="small" id="tokenNote"></div>
+<div class="row"><div class="grow"><label for="rdpUsername">VPS-bureaublad: gebruikersnaam (optioneel)</label><input id="rdpUsername" autocomplete="off" placeholder="leeg = Windows vraagt erom"></div>
+<div style="width:110px"><label for="rdpRemotePort">RDP-poort op VPS</label><input id="rdpRemotePort" value="3389" inputmode="numeric"></div></div>
+<div class="small">Het wachtwoord van het bureaublad typ je in het Windows-venster zelf; het wordt nergens opgeslagen.</div>
 <label class="check"><input type="checkbox" id="clearFp"> Vingerafdruk van de VPS wissen (alleen na een nieuwe VPS-installatie)</label>
 <div class="err" id="err" role="alert"></div>
 <button class="primary" id="go">Verbinden</button>
@@ -38,13 +41,13 @@ function showError(t){$('err').textContent=t;$('err').style.display=t?'block':'n
 (async()=>{
   showError(q.get('error')||'');
   const s=await window.setupApi.get();
-  $('host').value=s.host||'';$('username').value=s.username||'';$('port').value=s.port||22;$('keyPath').value=s.keyPath||'';
+  $('host').value=s.host||'';$('username').value=s.username||'';$('port').value=s.port||22;$('keyPath').value=s.keyPath||'';$('rdpUsername').value=s.rdpUsername||'';$('rdpRemotePort').value=s.rdpRemotePort||3389;
   $('tokenNote').textContent=s.hasToken?'Er is al een code opgeslagen (versleuteld door Windows).':(s.encryptionAvailable?'De code wordt versleuteld door Windows opgeslagen.':'Versleutelde opslag is niet beschikbaar: de code geldt alleen tot je de app sluit.');
 })();
 $('pick').onclick=async()=>{const p=await window.setupApi.pickKey();if(p)$('keyPath').value=p};
 $('f').onsubmit=async e=>{
   e.preventDefault();showError('');$('go').disabled=true;$('go').textContent='Verbinden…';
-  try{await window.setupApi.save({host:$('host').value,username:$('username').value,port:$('port').value,keyPath:$('keyPath').value,passphrase:$('passphrase').value,token:$('token').value,clearFingerprint:$('clearFp').checked})}
+  try{await window.setupApi.save({host:$('host').value,username:$('username').value,port:$('port').value,keyPath:$('keyPath').value,passphrase:$('passphrase').value,token:$('token').value,rdpUsername:$('rdpUsername').value,rdpRemotePort:$('rdpRemotePort').value,clearFingerprint:$('clearFp').checked})}
   catch(err){showError(String(err.message||err).replace(/^Error invoking remote method '[^']+': (Error: )?/,''));$('go').disabled=false;$('go').textContent='Verbinden'}
 };
 </script></body></html>

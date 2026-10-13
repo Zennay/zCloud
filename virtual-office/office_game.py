@@ -241,6 +241,9 @@ def after_reply(core, chat, state, reply):
             else:
                 db.execute("UPDATE jobs SET summary_state='fallback' WHERE id=? AND summary_state='requested'",
                            (chat["ref"],))
+    elif kind == "review":
+        import office_experts  # lazy: office_experts imports office_features
+        office_experts.after_reply(core, chat, state, reply)
     elif kind == "deck":
         with core.connect() as db:
             try:

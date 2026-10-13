@@ -2,7 +2,7 @@
 // Pure settings helpers (no Electron imports) so they can be unit-tested in Node.
 const DEFAULTS = Object.freeze({
   host: '', port: 22, username: '', keyPath: '', hostFingerprint: '',
-  localPort: 38422, remotePort: 3422, whisperModel: 'Xenova/whisper-base', tokenEnc: '',
+  localPort: 38422, remotePort: 3422, rdpRemotePort: 3389, rdpUsername: '', whisperModel: 'Xenova/whisper-base', tokenEnc: '',
 });
 const MODEL_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const HOST_RE = /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$|^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -31,6 +31,8 @@ function validate(input, previous = {}) {
     port: toPort(input.port, 22, 'SSH-poort'),
     localPort: toPort(input.localPort, previous.localPort || DEFAULTS.localPort, 'Lokale poort', true),
     remotePort: toPort(input.remotePort, previous.remotePort || DEFAULTS.remotePort, 'Office-poort'),
+    rdpRemotePort: toPort(input.rdpRemotePort, previous.rdpRemotePort || DEFAULTS.rdpRemotePort, 'Bureaublad-poort'),
+    rdpUsername: (() => { const u = String(input.rdpUsername ?? previous.rdpUsername ?? '').trim(); if (!/^[A-Za-z0-9_.\\-]{0,64}$/.test(u)) throw new Error('Ongeldige gebruikersnaam voor het VPS-bureaublad'); return u; })(),
     hostFingerprint: hostChanged ? '' : (previous.hostFingerprint || ''),
   };
 }

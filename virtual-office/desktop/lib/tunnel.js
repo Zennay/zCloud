@@ -11,19 +11,19 @@ function fingerprint(hostKey) {
 
 /**
  * opts: {host, port, username, privateKey, passphrase, expectedFingerprint, confirmFingerprint(fp)->Promise<bool>,
- *        localPort, remoteHost, remotePort, onClose(reason), Client (injectable for tests)}
- * Resolves {port, fingerprint, close()}. Rejects with a Dutch Error message.
+ *        localPort, remoteHost, remotePort, extraForwards: [{name, remotePort, remoteHost?, localPort?}], onClose(reason), Client (injectable for tests)}
+ * Resolves {port, forwards: {name: localPort}, fingerprint, close()}. Rejects with a Dutch Error message.
  */
 function openTunnel(opts) {
   const {Client} = opts.Client ? {Client: opts.Client} : require('ssh2');
   const remoteHost = opts.remoteHost || '127.0.0.1', remotePort = opts.remotePort || 3422;
   return new Promise((resolve, reject) => {
     const conn = new Client();
-    let server = null, settled = false, seenFingerprint = '', closed = false;
-    const fail = err => { if (settled) return; settled = true; try { server?.close(); } catch {} try { conn.end(); } catch {} reject(err); };
+    const servers = []; let settled = false, seenFingerprint = '', closed = false;
+    const fail = err => { if (settled) return; settled = true; for (const sv of servers) { try { sv.close(); } catch {} } try { conn.end(); } catch {} reject(err); };
     const close = reason => {
       if (closed) return; closed = true;
-      try { server?.close(); } catch {}
+      for (const sv of servers) { try { sv.close(); } catch {} }
       try { conn.end(); } catch {}
       if (settled && opts.onClose) opts.onClose(reason || 'gesloten');
     };
@@ -40,24 +40,29 @@ function openTunnel(opts) {
       close('fout: ' + (err && err.message));
     });
     conn.on('close', () => close('verbinding verbroken'));
-    conn.on('ready', () => {
-      server = net.createServer(sock => {
-        conn.forwardOut('127.0.0.1', sock.remotePort || 0, remoteHost, remotePort, (err, stream) => {
+    conn.on('ready', async () => {
+      const makeServer = fw => net.createServer(sock => {
+        conn.forwardOut('127.0.0.1', sock.remotePort || 0, fw.remoteHost, fw.remotePort, (err, stream) => {
           if (err) { sock.destroy(); return; }
           sock.pipe(stream).pipe(sock);
           const end = () => { sock.destroy(); try { stream.close ? stream.close() : stream.end(); } catch {} };
           stream.on('close', end); sock.on('close', end); sock.on('error', end); stream.on('error', end);
         });
       });
-      server.on('error', err => {
-        if (!settled && opts.localPort && err.code === 'EADDRINUSE') return server.listen(0, '127.0.0.1');
-        fail(new Error('Lokale poort niet beschikbaar: ' + err.message));
-      });
-      server.listen(opts.localPort || 0, '127.0.0.1', () => {
+      const listen = (srv, port) => new Promise((ok, no) => { srv.once('error', no); srv.listen(port || 0, '127.0.0.1', () => { srv.removeListener('error', no); ok(srv.address().port); }); });
+      try {
+        const primary = makeServer({remoteHost, remotePort}); servers.push(primary);
+        let port;
+        try { port = await listen(primary, opts.localPort); } catch (err) { if (opts.localPort && err.code === 'EADDRINUSE') port = await listen(primary, 0); else throw err; }
+        const forwards = {};   // extra, named forwards (e.g. the VPS desktop over RDP), each on its own free local port
+        for (const fw of opts.extraForwards || []) {
+          const srv = makeServer({remoteHost: fw.remoteHost || '127.0.0.1', remotePort: fw.remotePort}); servers.push(srv);
+          forwards[fw.name] = await listen(srv, fw.localPort);
+        }
         if (settled) return;
         settled = true;
-        resolve({port: server.address().port, fingerprint: seenFingerprint, close});
-      });
+        resolve({port, forwards, fingerprint: seenFingerprint, close});
+      } catch (err) { fail(new Error('Lokale poort niet beschikbaar: ' + err.message)); }
     });
     try {
       conn.connect({

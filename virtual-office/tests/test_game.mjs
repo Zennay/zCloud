@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseIntent, normalize, Game, slideSpeech} from '../game.js';
+import {parseIntent, normalize, Game, slideSpeech, speakable, setRoster} from '../game.js';
 
 const waiting = ['maya'];
 test('normalize strips accents and punctuation', () => assert.equal(normalize('Oké, zég maar!'), 'oke zeg maar'));
@@ -163,4 +163,135 @@ test('nothing to say: honest answer instead of inventing news', async () => {
   const h = harness();
   await h.game.handleUtterance('Maya zeg maar');
   assert.match(h.log.find(l => l[0] === 'say')[2], /niets nieuws/);
+});
+
+const control = {targets: [
+  {id: 'haxlab', name: 'Haxlab', kind: 'project'}, {id: 'ftmo', name: 'FTMO', kind: 'project'}, {id: 'zcloud', name: 'zCloud', kind: 'project'},
+  {id: 'haxlab-1', name: 'haxlab-1', kind: 'worker', project: 'haxlab'}]};
+
+test('worker commands name a worker or project and become control actions', () => {
+  const a = parseIntent('Maya pauzeer Haxlab', {control});
+  assert.deepEqual([a.type, a.body], ['control_act', {action: 'worker', worker: 'haxlab', op: 'pause'}]);
+  assert.deepEqual(parseIntent('start FTMO weer', {control}).body, {action: 'worker', worker: 'ftmo', op: 'start'});
+  assert.deepEqual(parseIntent('duw haxlab 1', {control}).body, {action: 'worker', worker: 'haxlab-1', op: 'push'});
+  assert.deepEqual(parseIntent('zet FTMO op hoge prioriteit', {control}).body, {action: 'priority', project: 'ftmo', priority: 'high'});
+  assert.deepEqual(parseIntent('zet Haxlab op 2 workers', {control}).body, {action: 'worker_count', project: 'haxlab', count: 2});
+  assert.deepEqual(parseIntent('geef alle workers een duwtje', {control}).body, {action: 'force_push'});
+  assert.equal(parseIntent('hoe staat het met de workers', {control}).type, 'control_status');
+  assert.equal(parseIntent('pauzeer de koffie', {control}).type, 'unknown', 'unknown targets never turn into actions');
+});
+
+test('review and proposal requests, and yes/no only count while a question is open', () => {
+  assert.equal(parseIntent('Maya kijk eens naar de queue', {}).type, 'review');
+  assert.equal(parseIntent('Noah stuur de workers beter aan', {}).type, 'review');
+  assert.equal(parseIntent('welke voorstellen heb je', {}).type, 'proposals');
+  assert.equal(parseIntent('schrijf een voorstel voor de nieuwe landingspagina', {}).type, 'task');
+  const awaiting = {type: 'confirm'};
+  assert.equal(parseIntent('ja doe maar', {awaiting}).type, 'yes');
+  assert.equal(parseIntent('nee laat maar', {awaiting}).type, 'no');
+  assert.equal(parseIntent('stop', {awaiting}).type, 'no');
+  assert.equal(parseIntent('volgende', {awaiting: {type: 'proposal'}}).type, 'skip');
+  assert.notEqual(parseIntent('doe maar', {}).type, 'yes');
+});
+
+test('new experts can be addressed by name, including a slightly misheard one', () => {
+  setRoster([{id: 'maya', name: 'Maya'}, {id: 'noah', name: 'Noah'}, {id: 'lina', name: 'Lina'},
+             {id: 'ravi', name: 'Ravi', voice: {pitch: .9, gender: 'm'}}]);
+  assert.equal(parseIntent('Ravi hoe staat het met de cijfers', {}).employee, 'ravi');
+  assert.equal(parseIntent('Rafi hoe staat het met de cijfers', {}).employee, 'ravi');
+  assert.equal(parseIntent('Maya zeg maar', {}).employee, 'maya');
+  setRoster([{id: 'maya', name: 'Maya'}, {id: 'noah', name: 'Noah'}, {id: 'lina', name: 'Lina'}]);
+});
+
+test('speakable removes markdown, links and code, and shortens long answers', () => {
+  assert.equal(speakable('**Goed nieuws**: zie [de PR](https://x.io/1) of https://x.io/2'), 'Goed nieuws : zie de PR of een link');
+  assert.match(speakable('Eerste zin. '.repeat(80)), /De rest staat in het gesprek\.$/);
+  assert.ok(speakable('Eerste zin. '.repeat(80)).length < 620);
+  assert.equal(speakable('```js\nx()\n```'), 'een codevoorbeeld');
+});
+
+function controlHarness(extra = {}) {
+  const h = harness();
+  const calls = [];
+  h.game.api = async (path, body) => {
+    calls.push([path, body]);
+    if (path === '/api/control/state') return {online: true, projects: control.targets.filter(t => t.kind === 'project'), workers: [{worker: 'haxlab-1', project: 'haxlab', active: true, state: 'running'}, {worker: 'ftmo-1', project: 'ftmo', active: true, state: 'paused'}], queue: [{queue_id: 'a', status: 'queued'}]};
+    if (path === '/api/control/prepare') return {pending_id: 'p1', summary: 'Worker haxlab: pauzeren', risk: 'high'};
+    if (path === '/api/control/confirm') return {ok: true};
+    if (path === '/api/proposals?status=pending') return {proposals: extra.proposals || []};
+    if (/^\/api\/proposals\/.+\/(approve|reject)$/.test(path)) return {status: path.endsWith('approve') ? 'applied' : 'rejected'};
+    if (path.startsWith('/api/messages')) return {messages: extra.messages ? extra.messages() : []};
+    if (path === '/api/chat') return {acknowledgement: 'Bericht ontvangen.'};
+    if (path === '/api/experts/review') return {acknowledgement: 'Ik kijk even mee.'};
+    return extra.fallback ? extra.fallback(path, body) : {};
+  };
+  return {...h, calls, said: () => h.log.filter(l => l[0] === 'say').map(l => l[2])};
+}
+
+test('control command needs a spoken yes before anything changes', async () => {
+  const h = controlHarness();
+  await h.game.handleUtterance('Maya pauzeer Haxlab');
+  assert.deepEqual(h.said(), ['Worker haxlab: pauzeren. Zal ik dat doen?']);
+  assert.equal(h.calls.some(c => c[0] === '/api/control/confirm'), false);
+  await h.game.handleUtterance('ja doe maar');
+  assert.deepEqual(h.calls.find(c => c[0] === '/api/control/confirm'), ['/api/control/confirm', {pending_id: 'p1'}]);
+  assert.match(h.said().at(-1), /dashboard/);
+  assert.equal(h.game.awaiting, null);
+});
+
+test('"nee" cancels without touching zCloud', async () => {
+  const h = controlHarness();
+  await h.game.handleUtterance('pauzeer Haxlab'); await h.game.handleUtterance('nee');
+  assert.equal(h.calls.some(c => c[0] === '/api/control/confirm'), false);
+  assert.match(h.said().at(-1), /doe niets/);
+});
+
+test('an unanswered confirmation expires on the client too', async () => {
+  const h = controlHarness(); let now = 1e6; h.game.now = () => now;
+  await h.game.handleUtterance('pauzeer Haxlab');
+  now += 90000;
+  assert.equal(h.game.context().awaiting, null);
+  await h.game.handleUtterance('ja');
+  assert.equal(h.calls.some(c => c[0] === '/api/control/confirm'), false);
+});
+
+test('status is spoken from real zCloud numbers', async () => {
+  const h = controlHarness();
+  await h.game.handleUtterance('hoe staat het met de workers');
+  assert.equal(h.said()[0], '1 van de 2 workers draaien, ftmo-1 staat op pauze, er staan 1 taken in de queue.');
+});
+
+test('expert proposals: asks one by one, approve / reject / skip', async () => {
+  const proposals = [{id: 'x1', employee: 'maya', summary: 'Worker ftmo-1: starten', why: 'Er staat een P1-taak klaar'},
+                     {id: 'x2', employee: 'maya', summary: 'Taak laten vervallen: a', why: ''}, {id: 'x3', employee: 'maya', summary: 'Prioriteit op hoog', why: 'Deadline'}];
+  const h = controlHarness({proposals});
+  h.game.queue.maya = [{kind: 'review_ready', ref: 'r1', payload: {spoken: 'FTMO staat stil terwijl er werk klaarstaat.', proposals: 3}}]; h.game.waiting = ['maya'];
+  await h.game.handleUtterance('zeg maar');
+  assert.deepEqual(h.said().slice(0, 3), ['FTMO staat stil terwijl er werk klaarstaat.', 'Ik heb 3 voorstellen.', 'Worker ftmo-1: starten. Er staat een P1-taak klaar. Zal ik dat doen?']);
+  await h.game.handleUtterance('ja');
+  await h.game.handleUtterance('nee');
+  await h.game.handleUtterance('volgende');
+  const posts = h.calls.filter(c => c[0].startsWith('/api/proposals/')).map(c => c[0]);
+  assert.deepEqual(posts, ['/api/proposals/x1/approve', '/api/proposals/x2/reject']);
+  assert.equal(h.game.awaiting, null);
+  assert.deepEqual(h.log.filter(l => l[0] === 'home'), [['home', 'maya']], 'goes back to her desk when done');
+});
+
+test('chat answers are read out loud when they arrive, and follow-ups need no name', async () => {
+  let ready = false;
+  const h = controlHarness({messages: () => [{id: 5, role: 'user', content: 'x'}, ...(ready ? [{id: 6, role: 'assistant', content: '**Supa** staat goed. Zie https://x.io'}] : [])]});
+  h.game.chatPollMs = 0; h.game.wait = async () => { ready = true; };
+  await h.game.handleUtterance('Noah hoe staat het met Supa');
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(h.said(), ['Bericht ontvangen.', 'Supa staat goed. Zie een link']);
+  await h.game.handleUtterance('en wat is het grootste risico dan');
+  assert.deepEqual(h.calls.filter(c => c[0] === '/api/chat').map(c => c[1].employee), ['noah', 'noah']);
+});
+
+test('dashboard changes show up as events without anyone walking over', async () => {
+  const h = controlHarness(); const seen = [];
+  h.game.ui.status = t => seen.push(t); h.game.ui.controlChanged = () => seen.push('changed');
+  h.game.handleEvent({employee: '', kind: 'control_changed', ref: 's', payload: {source: 'dashboard', changes: ['Worker haxlab-1: running → paused']}});
+  assert.deepEqual(seen, ['Gewijzigd in het dashboard: Worker haxlab-1: running → paused', 'changed']);
+  assert.equal(h.log.filter(l => l[0] === 'call').length, 0);
 });
