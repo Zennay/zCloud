@@ -175,6 +175,70 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
             self.assertEqual(route.main([]), 2)
         self.assertIn("invalid_run_selection", output.getvalue())
 
+    def test_safe_idle_failure_identified_as_stage_not_runner_outage(self):
+        deploy = make_job(
+            status="completed", runner_id=21, runner_name="zcloud-vps-1",
+            conclusion="failure")
+        deploy["steps"] = [
+            {"name": "Check out current main candidate", "conclusion": "success"},
+            {"name": "Enter browser safe-idle for guarded promotion",
+             "conclusion": "failure"},
+            {"name": "Promote backend runtime core", "conclusion": "skipped"}]
+        data = route.classify_run(33, [deploy], NOW)
+        self.assertEqual(data["jobs"][0]["failure_phase"], "browser_safe_idle")
+        self.assertEqual(data["lanes"]["zcloud_vps"]["failure_phases"],
+                         {"browser_safe_idle": 1})
+        self.assertEqual(data["lanes"]["zcloud_vps"]["assigned_count"], 1)
+        self.assertFalse(data["production_deploy_verified"])
+
+    def test_distinct_promotion_and_self_heal_failures_are_not_hidden(self):
+        deploy = make_job(
+            status="completed", runner_id=21, runner_name="zcloud-vps-1",
+            conclusion="failure")
+        deploy["steps"] = [
+            {"name": "Promote backend runtime core", "conclusion": "failure"},
+            {"name": "Re-arm VPS-native self-heal after guarded deploy",
+             "conclusion": "failure"}]
+        data = route.classify_run(34, [deploy], NOW)
+        self.assertEqual(data["jobs"][0]["failure_phase"], "multiple_failure_phases")
+
+    def test_unknown_step_name_is_redacted_in_output(self):
+        secret = "untrusted-step-with-long-sensitive-payload"
+        deploy = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                          conclusion="failure")
+        deploy["steps"] = [{"name": secret, "conclusion": "failure"}]
+        data = route.classify_run(35, [deploy], NOW)
+        self.assertEqual(data["jobs"][0]["failure_phase"], "other_step")
+        self.assertNotIn(secret, str(data))
+
+    def test_failed_job_without_steps_never_becomes_green(self):
+        deploy = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                          conclusion="failure")
+        data = route.classify_run(36, [deploy], NOW)
+        self.assertEqual(data["jobs"][0]["failure_phase"], "step_evidence_missing")
+        self.assertFalse(data["production_deploy_verified"])
+
+    def test_broken_step_types_are_denied(self):
+        for steps in ({"name": "fake"}, [1], [{"conclusion": "failure"}],
+                      [{"name": "something", "conclusion": {"unexpected": True}}],
+                      [{"name": "x" * 201, "conclusion": "failure"}],
+                      [{"name": "x", "conclusion": "invented"}],
+                      [{"name": "x", "conclusion": "failure"}] * 151):
+            deploy = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                              conclusion="failure")
+            deploy["steps"] = steps
+            with self.subTest(steps=str(steps)[:60]):
+                with self.assertRaises(route.InvalidEvidence):
+                    route.classify_run(37, [deploy], NOW)
+
+    def test_successful_job_never_reports_failure_phase(self):
+        job = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                       conclusion="success")
+        job["steps"] = [{"name": "untrusted", "conclusion": "failure"}]
+        data = route.classify_run(38, [job], NOW)
+        self.assertIsNone(data["jobs"][0]["failure_phase"])
+        self.assertEqual(data["lanes"]["zcloud_vps"]["failure_phases"], {})
+
     def test_source_contains_no_write_methods_or_prod_authority(self):
         source = SOURCE.read_text(encoding="utf-8")
         self.assertNotIn('method="POST"', source)
