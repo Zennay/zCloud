@@ -76,6 +76,7 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertIs(result["authorized"], False)
         self.assertIs(result["mutations_performed"], False)
         self.assertEqual(fake.read_main_count, 2)
+        self.assertEqual(len(fake.calls), 3, "failed production must not fetch workflows")
         self.assertNotIn("html_url", json.dumps(result))
 
     def test_empty_status_and_prior_terminal_deploy_denies(self):
@@ -101,6 +102,7 @@ class GithubEvidenceTests(unittest.TestCase):
                              ("head_repository", {"id": 2, "full_name": "Zennay/zCloud"}),
                              ("path", ".github/workflows/untrusted.yml")):
             fake = FixtureGitHub()
+            fake.statuses = []
             fake.deploy[0][field] = value
             self.assertEqual(evidence.observe(fake)["decision"], "DENY")
 
@@ -125,14 +127,16 @@ class GithubEvidenceTests(unittest.TestCase):
 
     def test_multipage_workflow_query_proves_all_runs(self):
         fake = FixtureGitHub()
+        fake.statuses = []
         fake.regression = [raw_run(i + 1, "regression", event="push") for i in range(101)]
         snapshot = evidence.collect(fake)
         self.assertEqual(len(snapshot["regression"]["runs"]), 101)
         self.assertTrue(any("page=2" in path for path in fake.calls))
-        self.assertEqual(evidence.classify(snapshot)["reason"], "production_status_present")
+        self.assertEqual(evidence.classify(snapshot)["reason"], "terminal_deploy_missing_status")
 
     def test_workflow_second_page_missing_denies(self):
         fake = FixtureGitHub()
+        fake.statuses = []
         fake.regression = [raw_run(i + 1, "regression", event="push") for i in range(101)]
         page = f"/actions/workflows/{evidence.WORKFLOWS['regression']}/runs?head_sha={S}&branch=main&per_page=100&page=2"
         fake.responses[page] = {"total_count": 101, "workflow_runs": []}
@@ -140,6 +144,7 @@ class GithubEvidenceTests(unittest.TestCase):
 
     def test_workflow_total_count_drift_denies(self):
         fake = FixtureGitHub()
+        fake.statuses = []
         fake.regression = [raw_run(i + 1, "regression", event="push") for i in range(101)]
         page = f"/actions/workflows/{evidence.WORKFLOWS['regression']}/runs?head_sha={S}&branch=main&per_page=100&page=2"
         fake.responses[page] = {"total_count": 102, "workflow_runs": fake.regression[100:]}
@@ -147,12 +152,14 @@ class GithubEvidenceTests(unittest.TestCase):
 
     def test_deny_duplicate_run_id_across_pages(self):
         fake = FixtureGitHub()
+        fake.statuses = []
         fake.regression = [raw_run(i + 1, "regression", event="push") for i in range(101)]
         fake.regression[100]["id"] = fake.regression[0]["id"]
         self.assertEqual(evidence.observe(fake)["reason"], "workflow_duplicate_run_id")
 
     def test_max_page_limit_is_fail_closed(self):
         fake = FixtureGitHub()
+        fake.statuses = []
         fake.regression = [raw_run(i + 1, "regression", event="push") for i in range(1001)]
         self.assertEqual(evidence.observe(fake)["reason"], "unbounded_or_missing_workflow_page")
 
@@ -162,11 +169,22 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence.observe(fake)["reason"], "github_transport_unavailable")
 
     def test_accepted_evidence_is_sanitized(self):
-        snap = evidence.collect(FixtureGitHub())
+        fake = FixtureGitHub()
+        fake.statuses = []
+        snap = evidence.collect(fake)
         self.assertFalse(any("html_url" in json.dumps(snap) or
                              "Authorization" in json.dumps(snap) for _ in [None]))
         self.assertEqual(set(snap["deploy"]["runs"][0]), {
             "id", "run_attempt", "head_sha", "head_branch", "event", "status", "conclusion"})
+
+    def test_existing_failure_bypasses_unavailable_run_history(self):
+        fake = FixtureGitHub()
+        fake.fail_endpoint = (
+            f"/actions/workflows/{evidence.WORKFLOWS['deploy']}/runs?"
+            f"head_sha={S}&branch=main&per_page=100&page=1"
+        )
+        self.assertEqual(evidence.observe(fake)["decision"], "NOOP")
+        self.assertNotIn(fake.fail_endpoint, fake.calls)
 
     def test_network_observer_static_safe_policy(self):
         code = (ROOT / "scripts/zcloud_recovery_github_evidence_20261013.py").read_text()
