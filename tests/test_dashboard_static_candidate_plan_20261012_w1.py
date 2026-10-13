@@ -266,6 +266,15 @@ class StaticDashboardCandidateTests(unittest.TestCase):
                 with self.assertRaisesRegex(PlanError, reason):
                     snapshot(self.repo, head)
 
+    def test_snapshot_rejects_malformed_asset_url_as_policy_denial(self):
+        self.write("public/app.js", b"const app=1")
+        self.write("public/enhancements.css", b"body{}")
+        self.write("public/index.html",
+                   self.pinned_index(app="http://[invalid/app.js?v=r8"))
+        sha = self.commit("malformed external app URL")
+        with self.assertRaisesRegex(PlanError, "malformed_index_asset_reference"):
+            snapshot(self.repo, sha)
+
     def test_snapshot_denies_duplicate_html_attributes(self):
         self.write("public/app.js", b"const app=1")
         self.write("public/enhancements.css", b"body{}")
