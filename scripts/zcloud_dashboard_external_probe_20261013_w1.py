@@ -165,9 +165,45 @@ def run_probe(probe=probe_once, sleep=time.sleep, attempts=MAX_ATTEMPTS):
     )
 
 
+def operator_markdown(summary: ProbeSummary) -> str:
+    """Human-readable GitHub Actions summary; only fixed category names can appear."""
+    labels = {
+        "dns": "DNS / naamoplossing",
+        "connection": "Verbinding geweigerd of verbroken",
+        "timeout": "Time-out",
+        "tls": "TLS-verbinding",
+        "http_status": "HTTP-status niet 200",
+        "content_type": "Onverwacht antwoordtype",
+        "body_too_large": "Antwoord te groot",
+        "invalid_json": "Ongeldige JSON",
+        "invalid_schema": "API-antwoord heeft verkeerde structuur",
+        "transport_failure": "Onbekende transportfout",
+    }
+    is_healthy = summary.status == "healthy"
+    lines = [
+        "## zCloud · externe dashboardcontrole",
+        "",
+        f"**Status:** {'API bereikbaar' if is_healthy else 'API niet aantoonbaar bereikbaar'}",
+        f"**Controlepogingen:** {summary.attempts}",
+        f"**Hersteld na hercontrole:** {'ja' if summary.recovered_after_retry else 'nee'}",
+    ]
+    if summary.failure_counts:
+        lines.extend(["", "**Waargenomen storingen (aantallen):**"])
+        for category, count in sorted(summary.failure_counts.items()):
+            lines.append(f"- {labels[category]}: {count}")
+    lines.extend([
+        "",
+        "**Let op:** deze controle bewijst niet dat de volledige productie-deploy "
+        "gezond is of dat AI-workers tekst genereren.",
+        "**Herstel of herstart wordt nooit automatisch uitgevoerd.**",
+    ])
+    return "\\n".join(lines).replace("\\\\n", "\\n")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--attempts", type=int, default=MAX_ATTEMPTS)
+    parser.add_argument("--format", choices=("json", "markdown"), default="json")
     options = parser.parse_args(argv)
     try:
         summary = run_probe(attempts=options.attempts)
@@ -177,7 +213,8 @@ def main(argv=None):
             "mutations_performed": False, "probe_only": True,
         }, sort_keys=True))
         return 2
-    print(json.dumps(asdict(summary), sort_keys=True))
+    print(operator_markdown(summary) if options.format == "markdown"
+          else json.dumps(asdict(summary), sort_keys=True))
     return 0 if summary.status == "healthy" else 1
 
 
