@@ -89,6 +89,9 @@ def classify(evidence):
         return {"decision": decision, "reason": reason, "sha": sha, "authorized": False}
     except EvidenceError as exc:
         return {"decision": "DENY", "reason": str(exc), "sha": None, "authorized": False}
+    except (TypeError, ValueError):
+        # Lists/dicts supplied for scalar fields must never crash the verifier.
+        return {"decision": "DENY", "reason": "malformed_evidence_types", "sha": None, "authorized": False}
 
 
 def reserve_reference(db_path, decision, *, intent="automatic"):
