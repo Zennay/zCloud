@@ -241,7 +241,7 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
             # validate the event category so a malformed/terminal event with
             # an inherited true flag never becomes a green generation proof.
             last_event = row.get("last_event")
-            if last_event not in ("heartbeat", "generation-started"):
+            if last_event not in ("heartbeat", "generation-started", "generation-progress"):
                 state = "untrusted_generation_event"
             else:
                 state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
