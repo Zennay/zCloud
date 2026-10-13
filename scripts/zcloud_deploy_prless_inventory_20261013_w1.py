@@ -21,6 +21,7 @@ MAX_PAGES = 24
 MAX_ENTRIES = 2400
 MAX_PAGE_SIZE = 100
 MAX_OVERLAPS = 256
+MAX_BRANCH_COMPARE = 150
 
 
 class InventoryDenied(ValueError):
@@ -164,7 +165,8 @@ def _path_conflict(changed, owned):
             or owned.startswith(changed.rstrip("/") + "/"))
 
 
-def compare_owned_paths(fetch, snapshot, owned_paths):
+def compare_owned_paths(fetch, snapshot, owned_paths, *, batch_offset=0,
+                        batch_limit=None):
     """Examine exact immutable compare objects; report collisions, never admit.
 
     GitHub's compare API caps changed-file reporting at 300 files. Refuse
@@ -184,11 +186,23 @@ def compare_owned_paths(fetch, snapshot, owned_paths):
         raise InventoryDenied("owned_path_cap")
     owned = sorted(set(_path(p) for p in owned_paths))
     candidates = snapshot.get("pr_less")
-    if not isinstance(candidates, list) or len(candidates) > 150:
+    if not isinstance(candidates, list) or len(candidates) > MAX_ENTRIES:
         raise InventoryDenied("branch_compare_cap")
+    if type(batch_offset) is not int or batch_offset < 0:
+        raise InventoryDenied("invalid_batch_offset")
+    if batch_limit is None:
+        if batch_offset != 0 or len(candidates) > MAX_BRANCH_COMPARE:
+            raise InventoryDenied("branch_compare_cap")
+        selected = candidates
+    else:
+        if (type(batch_limit) is not int or not 1 <= batch_limit <= MAX_BRANCH_COMPARE
+                or batch_offset >= len(candidates)):
+            raise InventoryDenied("invalid_batch_window")
+        selected = candidates[batch_offset:batch_offset + batch_limit]
+    coverage_complete = len(selected) == len(candidates)
     collisions = set()
     checked = 0
-    for candidate in candidates:
+    for candidate in selected:
         if not isinstance(candidate, dict):
             raise InventoryDenied("malformed_candidate")
         _name(candidate.get("branch"))
@@ -252,6 +266,9 @@ def compare_owned_paths(fetch, snapshot, owned_paths):
         "inventory_complete": True,
         "paths_compared": True,
         "compared_branches": checked,
+        "coverage_complete": coverage_complete,
+        "uncompared_branches": len(candidates) - checked,
+        "batch_offset": batch_offset,
         "overlap_found": bool(collisions),
         "overlaps": [
             {"branch": branch, "changed_path": changed, "owned_path": owner}
@@ -354,13 +371,29 @@ def main(argv=None):
         if not argv or len(argv) > 401 or len(argv[1:]) % 2:
             raise InventoryDenied("expected_exact_main_sha_and_optional_owned_paths")
         path_args = argv[1:]
-        if any(path_args[i] != "--owned-path" for i in range(0, len(path_args), 2)):
-            raise InventoryDenied("invalid_owned_path_argument")
-        owned_paths = [path_args[i + 1] for i in range(0, len(path_args), 2)]
+        owned_paths, batch = [], {}
+        for i in range(0, len(path_args), 2):
+            key, value = path_args[i:i + 2]
+            if key == "--owned-path":
+                owned_paths.append(value)
+            elif key in ("--branch-offset", "--branch-limit"):
+                if key in batch or not re.fullmatch(r"(0|[1-9][0-9]{0,3})", value):
+                    raise InventoryDenied("invalid_batch_argument")
+                batch[key] = int(value)
+            else:
+                raise InventoryDenied("invalid_owned_path_argument")
+        if batch and (not owned_paths or set(batch) != {"--branch-offset", "--branch-limit"}):
+            raise InventoryDenied("incomplete_batch_arguments")
+        # Validate user arguments before making any network request.
+        for owned_path in owned_paths:
+            _path(owned_path)
         fetch = github_fetcher(os.environ.get("GITHUB_TOKEN", ""))
         evidence = collect(fetch, argv[0])
         if owned_paths:
-            evidence = compare_owned_paths(fetch, evidence, owned_paths)
+            evidence = compare_owned_paths(
+                fetch, evidence, owned_paths,
+                batch_offset=batch.get("--branch-offset", 0),
+                batch_limit=batch.get("--branch-limit"))
         print(json.dumps(evidence, sort_keys=True, separators=(",", ":")))
         return 0
     except InventoryDenied as error:
