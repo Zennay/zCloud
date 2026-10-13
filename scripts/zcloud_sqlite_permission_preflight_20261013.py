@@ -48,7 +48,7 @@ def inspect_path(path: Path, *, need_directory: bool = False) -> dict:
         record["open_error"] = errno.errorcode.get(exc.errno, type(exc).__name__)
     else:
         os.close(fd)
-        record["open_rw"] = True
+        record["open_read" if need_directory else "open_rw"] = True
     return record
 
 
@@ -71,7 +71,7 @@ def snapshot(db: Path) -> dict:
         failures.append("filesystem_unknown_or_readonly")
     for name in ("database", "directory"):
         entry = files[name]
-        if not entry.get("open_rw"):
+        if not entry.get("open_read" if name == "directory" else "open_rw"):
             failures.append(f"{name}_unwritable_or_missing")
     for name in ("wal", "shm", "journal"):
         entry = files[name]
