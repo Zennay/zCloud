@@ -222,5 +222,120 @@ class PaginationTests(unittest.TestCase):
         self.assertTrue(seen[0][1].startswith("https://api.github.com/repos/Zennay/zCloud/branches?"))
 
 
+class OverlapTests(unittest.TestCase):
+    def setUp(self):
+        # The second page contains the PR-less branch whose compare files
+        # may overlap, while 'main' is represented by a PR head.
+        self.snapshot = mod.collect(Fixture(), S)
+
+    def source(self, *, files=None, status="ahead", base=S, total=1, ahead=1,
+               changed_inventory=False):
+        source = Fixture(branches=[[branch("main", S)],
+                                   [branch("new", B if changed_inventory else A)]])
+        def fetch(kind, page):
+            if kind.startswith("compare:"):
+                self.assertEqual(kind, f"compare:{S}...{A}")
+                return {
+                    "base_commit": {"sha": base},
+                    "status": status,
+                    "total_commits": total, "ahead_by": ahead,
+                    "files": files if files is not None else [
+                        {"filename": "scripts/worker.py", "status": "modified"}
+                    ]
+                }, None
+            return source(kind, page)
+        return fetch
+
+    def test_later_page_overlap_denied_as_ownership_observation(self):
+        output = mod.compare_owned_paths(
+            self.source(), self.snapshot, ["scripts/"])
+        self.assertTrue(output["overlap_found"])
+        self.assertEqual(output["overlaps"], [
+            {"branch": "new", "changed_path": "scripts/worker.py",
+             "owned_path": "scripts/"}])
+        self.assertTrue(output["paths_compared"])
+        self.assertFalse(output["admission_authorized"])
+        self.assertFalse(output["deployment_authorized"])
+
+    def test_unrelated_path_is_no_overlap_observation_not_authorization(self):
+        output = mod.compare_owned_paths(
+            self.source(), self.snapshot, ["public/app.js"])
+        self.assertFalse(output["overlap_found"])
+        self.assertEqual(output["compared_branches"], 1)
+        self.assertFalse(output["admission_authorized"])
+
+    def test_renamed_previous_path_also_checked(self):
+        result = mod.compare_owned_paths(
+            self.source(files=[{"filename": "docs/new.md",
+                                "previous_filename": "public/old.js",
+                                "status": "renamed"}]),
+            self.snapshot, ["public/"])
+        self.assertTrue(result["overlap_found"])
+        self.assertEqual(result["overlaps"][0]["changed_path"], "public/old.js")
+
+    def test_missing_owned_paths_and_untrusted_inventory_deny(self):
+        with self.assertRaisesRegex(mod.InventoryDenied, "missing_owned_paths"):
+            mod.compare_owned_paths(self.source(), self.snapshot, [])
+        bad = dict(self.snapshot, admission_authorized=True)
+        with self.assertRaisesRegex(mod.InventoryDenied, "untrusted_inventory"):
+            mod.compare_owned_paths(self.source(), bad, ["scripts/"])
+
+    def test_invalid_or_traversal_file_path_denied(self):
+        for file in ("../secret", "/absolute/path", "a//b", "a\\b", "a\nb"):
+            with self.subTest(file=file):
+                with self.assertRaisesRegex(mod.InventoryDenied, "invalid_changed_path"):
+                    mod.compare_owned_paths(self.source(files=[{"filename": file}]),
+                                            self.snapshot, ["scripts/"])
+
+    def test_incomplete_truncated_or_malformed_compare_denied(self):
+        cases = [
+            ({"base": B}, "compare_base_mismatch"),
+            ({"total": 251}, "compare_commit_cap_or_invalid"),
+            ({"ahead": -1}, "compare_commit_cap_or_invalid"),
+            ({"status": "unknown"}, "invalid_compare_status"),
+            ({"files": [{"filename": f"f{i}"} for i in range(300)]},
+             "compare_files_incomplete"),
+            ({"files": [{"filename": "rename", "status": "renamed"}]},
+             "invalid_changed_path"),
+        ]
+        for kwargs, reason in cases:
+            with self.subTest(case=reason):
+                with self.assertRaisesRegex(mod.InventoryDenied, reason):
+                    mod.compare_owned_paths(self.source(**kwargs),
+                                            self.snapshot, ["scripts/"])
+
+    def test_post_compare_branch_head_race_denied(self):
+        with self.assertRaisesRegex(mod.InventoryDenied, "post_compare_inventory_drift"):
+            mod.compare_owned_paths(self.source(changed_inventory=True),
+                                    self.snapshot, ["scripts/"])
+
+    def test_transport_immutable_compare_never_uses_named_branch(self):
+        seen = []
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, n):
+                return b'{"files":[]}'
+        class Opener:
+            def open(self, req, timeout):
+                seen.append((req.get_method(), req.full_url))
+                return Response()
+        with patch.object(mod.urllib.request, "build_opener", return_value=Opener()):
+            payload, next_page = mod.github_fetcher("")(f"compare:{S}...{A}", 0)
+        self.assertEqual((payload, next_page), ({"files": []}, None))
+        self.assertEqual(seen, [("GET", f"https://api.github.com/repos/Zennay/zCloud/compare/{S}...{A}")])
+
+    def test_rejects_symbolic_or_spoofed_compare_refs(self):
+        for value in ("compare:main...branch", f"compare:{S}...main",
+                      f"compare:{S}...{A}/other"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(mod.InventoryDenied, "invalid_compare_identity"):
+                    mod.github_fetcher("")(value, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
