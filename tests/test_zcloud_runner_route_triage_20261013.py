@@ -1,4 +1,9 @@
+import contextlib
 import datetime as dt
+import io
+import json
+import os
+import tempfile
 import importlib.util
 from pathlib import Path
 import unittest
@@ -90,4 +95,44 @@ class TestRunnerRoute(unittest.TestCase):
             return Resp()
         with patch.object(t,'urlopen',side_effect=fake): t.api('/repos/Zennay/zCloud/actions/runners', 'x')
         self.assertEqual(calls,['GET'])
+class CliContract(unittest.TestCase):
+    def call_fixture(self, mutate=None):
+        now=dt.datetime.now(dt.timezone.utc)
+        snap=fixture()
+        snap['captured_at']=now.isoformat()
+        snap['queued_runs'][0]['created_at']=(now-dt.timedelta(minutes=8)).isoformat()
+        if mutate: mutate(snap)
+        with tempfile.TemporaryDirectory() as home:
+            path=Path(home)/'snapshot.json'
+            path.write_text(json.dumps(snap), encoding='utf-8')
+            output=io.StringIO()
+            with patch.object(t, 'api', side_effect=AssertionError('fixture invoked network')), contextlib.redirect_stdout(output):
+                rc=t.main(['--fixture',str(path)])
+            return rc, json.loads(output.getvalue())
+    def test_cli_stale_exit_1(self):
+        rc, result=self.call_fixture()
+        self.assertEqual(rc, 1)
+        self.assertFalse(result['queue_cancel_authorized'])
+    def test_cli_drained_exit_0(self):
+        rc, result=self.call_fixture(lambda s: s['queued_runs'].clear())
+        self.assertEqual(rc, 0)
+        self.assertEqual(result['classification'], 'no_stale_unassigned_jobs')
+    def test_cli_missing_inventory_exit_2(self):
+        rc, result=self.call_fixture(lambda s: s.pop('runners'))
+        self.assertEqual(rc, 2)
+        self.assertEqual(result['classification'], 'unknown_incomplete_evidence')
+    def test_cli_no_sensitive_payload_echo(self):
+        def insert(s):
+            s['queued_runs'][0]['name']='SECRET_TEST_RUN_NAME'
+            s['jobs_by_run']['123'][0]['name']='SECRET_TEST_JOB_NAME'
+        rc, result=self.call_fixture(insert)
+        self.assertEqual(rc,1)
+        self.assertNotIn('SECRET_TEST',json.dumps(result))
+    def test_cli_live_without_token_fail_closed(self):
+        output=io.StringIO()
+        with patch.dict(os.environ, {'GITHUB_TOKEN': ''}), contextlib.redirect_stdout(output):
+            rc=t.main(['--live'])
+        self.assertEqual(rc,2)
+        self.assertFalse(json.loads(output.getvalue())['deploy_authorized'])
+
 if __name__ == '__main__': unittest.main()
