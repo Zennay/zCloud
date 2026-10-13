@@ -1,4 +1,5 @@
 """Offline, deterministic denied-first tests for #1164 GitHub branch pagination."""
+import hashlib
 import importlib.util
 import io
 import json
@@ -23,7 +24,9 @@ def branch(name, sha=A):
 
 
 def pr(name, sha=A, repo="Zennay/zCloud"):
-    return {"head": {"ref": name, "sha": sha, "repo": {"full_name": repo}}}
+    stable = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "big")
+    return {"number": 1 + stable % 2147483647,
+            "head": {"ref": name, "sha": sha, "repo": {"full_name": repo}}}
 
 
 class Fixture:
@@ -130,6 +133,43 @@ class PaginationTests(unittest.TestCase):
             with self.subTest(branches=branches, pulls=pulls):
                 with self.assertRaises(mod.InventoryDenied):
                     mod.collect(Fixture(branches=branches, pulls=pulls), S)
+
+    def test_duplicate_pr_number_across_pages_denied(self):
+        same = pr("owned")
+        first = [same]
+        second = [dict(same)]
+        with self.assertRaisesRegex(mod.InventoryDenied, "duplicate_pr_page_entry"):
+            mod.collect(Fixture(branches=[[branch("main", S), branch("owned", A)]],
+                                        pulls=[first, second]), S)
+
+    def test_pr_number_churn_with_same_head_denied(self):
+        initial = pr("owned")
+        replacement = dict(initial, number=initial["number"] + 1)
+        base = Fixture(branches=[[branch("main", S), branch("owned", A)]],
+                       pulls=[[initial]])
+        def fetch(kind, page):
+            result = base(kind, page)
+            if kind == "pulls" and base.calls["pulls"] > 1:
+                return [replacement], None
+            return result
+        with self.assertRaisesRegex(mod.InventoryDenied, "pr_inventory_drift"):
+            mod.collect(fetch, S)
+
+    def test_invalid_numeric_pr_identity_denied(self):
+        for invalid in (None, False, "1", -1, 0, 2147483648):
+            with self.subTest(number=invalid):
+                row = pr("owned")
+                row["number"] = invalid
+                with self.assertRaisesRegex(mod.InventoryDenied, "invalid_pr_number"):
+                    mod.collect(Fixture(branches=[[branch("main", S)]],
+                                        pulls=[[row]]), S)
+
+    def test_foreign_pr_identity_payload_unhashable_denied(self):
+        row = pr("forked", repo="other/repo")
+        row["head"]["ref"] = {"nested": "unexpected"}
+        with self.assertRaisesRegex(mod.InventoryDenied, "invalid_branch_name"):
+            mod.collect(Fixture(branches=[[branch("main", S)]],
+                                        pulls=[[row]]), S)
 
     def test_branch_limit_and_page_limit_denied(self):
         with patch.object(mod, "MAX_ENTRIES", 1):
