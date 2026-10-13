@@ -47,6 +47,26 @@ def classify_github_payload(
         return Decision(False, "trigger_repository_mismatch")
     if payload.get("action") != "completed":
         return Decision(False, "source_action_not_completed")
+    # Real GitHub workflow_run payloads contain three separately identifiable
+    # repository objects. Names alone can be internally contradictory; check
+    # their exact positive integer IDs before trusting even observational
+    # provenance. An absent ID is not a substitute for an identity match.
+    repo_id = repository.get("id")
+    if type(repo_id) is not int or repo_id <= 0:
+        return Decision(False, "invalid_event_repository_id")
+    source = payload.get("workflow_run")
+    if type(source) is not dict:
+        return Decision(False, "source_not_object")
+    run_repo = source.get("repository")
+    if type(run_repo) is not dict or run_repo.get("full_name") != REPOSITORY:
+        return Decision(False, "untrusted_run_repository")
+    if type(run_repo.get("id")) is not int or run_repo["id"] != repo_id:
+        return Decision(False, "run_repository_id_mismatch")
+    head_repo = source.get("head_repository")
+    if type(head_repo) is not dict or head_repo.get("full_name") != REPOSITORY:
+        return Decision(False, "untrusted_source_repository")
+    if type(head_repo.get("id")) is not int or head_repo["id"] != repo_id:
+        return Decision(False, "head_repository_id_mismatch")
     return classify(
         {
             "repository": repository["full_name"],
