@@ -434,6 +434,39 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
                     self.assertEqual(result, 2)
                     self.assertEqual(value["error"], "deploy_job_metadata_mismatch")
 
+    def test_explicit_http_auth_and_missing_provenance_is_not_runner_offline(self):
+        import contextlib
+        import io
+        import json
+        import urllib.error
+        from unittest.mock import patch
+
+        class Opener:
+            def __init__(self, code):
+                self.code = code
+            def open(self, request, timeout):
+                raise urllib.error.HTTPError(
+                    request.full_url, self.code, "sensitive-server-message", {}, None)
+
+        expected = {401: "github_api_permission_or_limit",
+                    403: "github_api_permission_or_limit",
+                    404: "github_api_missing_or_inaccessible",
+                    429: "github_api_rate_limited",
+                    503: "github_api_unavailable"}
+        for status_code, reason in expected.items():
+            with self.subTest(status_code=status_code):
+                for selector in (["--run-id", "42"], ["--recent-deploy"]):
+                    output = io.StringIO()
+                    with (patch.dict("os.environ", {"GH_TOKEN": "synthetic"}),
+                          patch.object(route.urllib.request, "build_opener",
+                                       return_value=Opener(status_code)),
+                          contextlib.redirect_stdout(output)):
+                        self.assertEqual(route.main(selector), 2)
+                    result = json.loads(output.getvalue())
+                    self.assertEqual(result["error"], reason)
+                    self.assertFalse(result["authorizes_mutation"])
+                    self.assertNotIn("sensitive-server-message", output.getvalue())
+
     def test_latest_deploy_missing_token_denies_without_api(self):
         with self.assertRaises(route.InvalidEvidence):
             route.latest_main_deploy_ids("")

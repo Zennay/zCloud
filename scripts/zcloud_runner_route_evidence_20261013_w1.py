@@ -235,6 +235,17 @@ def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
             "lanes": results, "jobs": observed}
 
 
+def _github_api_http_error(exc: urllib.error.HTTPError) -> InvalidEvidence:
+    """An authorization/API failure is not evidence of an offline VPS runner."""
+    if exc.code in (401, 403):
+        return InvalidEvidence("github_api_permission_or_limit")
+    if exc.code == 404:
+        return InvalidEvidence("github_api_missing_or_inaccessible")
+    if exc.code == 429:
+        return InvalidEvidence("github_api_rate_limited")
+    return InvalidEvidence("github_api_unavailable")
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         raise InvalidEvidence("unexpected_redirect")
@@ -293,7 +304,9 @@ def fetch_jobs(run_id: int, token: str) -> list:
                 if response.headers.get_content_type() != "application/json":
                     raise InvalidEvidence("nonjson_api_reply")
                 raw = response.read(MAX_BYTES + 1)
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+        except urllib.error.HTTPError as exc:
+            raise _github_api_http_error(exc) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
             raise InvalidEvidence("github_api_unavailable") from exc
         payload = strict_json(raw)
         page_jobs = payload.get("jobs")
@@ -372,7 +385,9 @@ def latest_main_deploy_receipts(token: str, count: int = 2) -> list[tuple[int, s
             if response.headers.get_content_type() != "application/json":
                 raise InvalidEvidence("nonjson_api_reply")
             payload = strict_json(response.read(MAX_BYTES + 1))
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+    except urllib.error.HTTPError as exc:
+        raise _github_api_http_error(exc) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
         raise InvalidEvidence("github_api_unavailable") from exc
     runs = payload.get("workflow_runs")
     total = payload.get("total_count")
@@ -439,6 +454,8 @@ def main(argv: list[str] | None = None) -> int:
             "duplicate_job_id","invalid_run_id","missing_actions_token",
             "invalid_actions_token",
             "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
+            "github_api_permission_or_limit","github_api_missing_or_inaccessible",
+            "github_api_rate_limited",
             "malformed_pagination","unstable_pagination","incomplete_pagination",
             "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection",
             "invalid_step_evidence","untrusted_deploy_run","invalid_unicode",
