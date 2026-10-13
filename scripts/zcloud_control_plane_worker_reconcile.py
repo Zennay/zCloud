@@ -84,6 +84,12 @@ def _strict_json(raw: bytes):
         raise InvalidEvidence("malformed runner-live JSON") from exc
     if not isinstance(data, dict):
         raise InvalidEvidence("runner-live top-level must be an object")
+    # Escaped unpaired surrogate sequences are accepted by Python json.loads
+    # but are invalid Unicode scalar values and unsafe for other consumers.
+    try:
+        json.dumps(data, ensure_ascii=False).encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise InvalidEvidence("runner-live contains invalid Unicode surrogate") from exc
     return data
 
 
@@ -99,7 +105,9 @@ def read_live(fixture: Path | None = None) -> dict:
         return _strict_json(raw)
     request = urllib.request.Request(API, headers={"Accept": "application/json"},
                                      method="GET")
-    opener = urllib.request.build_opener(_NoRedirect)
+    # A globally configured HTTP_PROXY can otherwise intercept requests to
+    # 127.0.0.1, leaking the endpoint path and returning forged runner status.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
     with opener.open(request, timeout=5) as response:
         if response.status != 200 or response.headers.get_content_type() != "application/json":
             raise InvalidEvidence("runner-live must return HTTP 200 application/json")
@@ -346,6 +354,7 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
                 problems.append({"worker": f"global::slot{global_slot}",
                                  "code": "multiple_live_queue_claims",
                                  "level": "degraded"})
+    assigned_project_counts = Counter(row["project_id"] for row in roster["slots"])
     for row in roster["slots"]:
         key = (row["project_id"], row["worker_slot"])
         label = f"{key[0]}::w{key[1]}"
@@ -367,10 +376,20 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
             problems.append({"worker": label, "code": "allocation_without_project_target",
                              "level": "degraded"})
             continue
-        if project_target is not None and key[1] > project_target["worker_count"]:
-            problems.append({"worker": label, "code": "allocation_outside_worker_count",
-                             "level": "degraded"})
-            continue
+        if project_target is not None:
+            # server.py expands target count to max(configured count, number
+            # of queue-allocated project workers), but iterates ordinals 1..N.
+            # A high ordinal can therefore disappear only if above that
+            # effective count, not merely above the configured dashboard value.
+            projected_count = max(project_target["worker_count"],
+                                  assigned_project_counts[key[0]])
+            if key[1] > projected_count:
+                problems.append({"worker": label, "code": "allocation_outside_projected_worker_count",
+                                 "level": "degraded"})
+                continue
+            if key[1] > project_target["worker_count"]:
+                problems.append({"worker": label, "code": "worker_count_expanded_by_allocation",
+                                 "level": "attention"})
         if key not in targets:
             problems.append({"worker": label, "code": "allocation_without_target",
                              "level": "degraded"})
