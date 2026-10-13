@@ -4,6 +4,7 @@ No network access, runner mutation, SQLite or privileged recovery.
 """
 import importlib.util
 import io
+from email.message import Message
 import json
 import pathlib
 import socket
@@ -92,6 +93,63 @@ class DashboardProbeTests(unittest.TestCase):
     def test_requires_json_mime_type(self):
         self.assertEqual(probe.probe_once(Opener(Response(content_type="text/html"))), "content_type")
         self.assertEqual(probe.probe_once(Opener(Response(content_type="application/json-ish"))), "content_type")
+
+    def test_rejects_mismatched_and_malformed_content_length(self):
+        for length in ("0", "1", "999", "-1", "+3", "1, 2",
+                       "1e5", "１２", "1" * 100):
+            with self.subTest(length=length):
+                response = Response()
+                response.headers["Content-Length"] = length
+                expected = ("body_too_large" if length.isascii() and
+                            length.isdigit() and len(length) <= 12 and
+                            int(length) > probe.MAX_BYTES else "invalid_headers")
+                self.assertEqual(probe.probe_once(Opener(response)), expected)
+
+    def test_accepts_truthful_content_length_and_identity_encoding(self):
+        response = Response()
+        response.headers["Content-Length"] = str(len(response.raw))
+        response.headers["Content-Encoding"] = "identity"
+        self.assertEqual(probe.probe_once(Opener(response)), "healthy")
+
+    def test_rejects_encoded_payload_headers_without_decompression(self):
+        for value in ("gzip", "br", "chunked", "identity, gzip"):
+            with self.subTest(value=value):
+                response = Response()
+                response.headers["Content-Encoding"] = value
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+
+    def test_rejects_duplicate_critical_http_headers(self):
+        for header, value in (("Content-Length", str(len(VALID))),
+                              ("Content-Type", "application/json"),
+                              ("Content-Encoding", "identity")):
+            with self.subTest(header=header):
+                headers = Message()
+                headers.add_header("Content-Type", "application/json")
+                if header == "Content-Type":
+                    headers.add_header("Content-Type", "application/json")
+                elif header == "Content-Length":
+                    headers.add_header("Content-Length", value)
+                    headers.add_header("Content-Length", value)
+                else:
+                    headers.add_header("Content-Encoding", value)
+                    headers.add_header("Content-Encoding", value)
+                response = Response()
+                response.headers = headers
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+
+    def test_declared_oversize_rejected_without_reading_body(self):
+        response = Response()
+        response.headers["Content-Length"] = str(probe.MAX_BYTES + 1)
+        response.read = mock.Mock(side_effect=AssertionError("must not read"))
+        self.assertEqual(probe.probe_once(Opener(response)), "body_too_large")
+        response.read.assert_not_called()
+
+    def test_http_header_category_never_claims_healed_service(self):
+        summary = probe.run_probe(lambda: "invalid_headers", lambda _: None, attempts=1)
+        self.assertEqual(summary.status, "unhealthy")
+        self.assertFalse(summary.authorized)
+        self.assertIn("Tegenstrijdige HTTP-headers: 1", probe.operator_markdown(summary))
+        self.assertNotIn(probe.STATUS_URL, probe.operator_markdown(summary))
 
     def test_invalid_json_and_encoding(self):
         for raw in (b"{", b"\xff", b'{"time":NaN,"projects":[]}',
