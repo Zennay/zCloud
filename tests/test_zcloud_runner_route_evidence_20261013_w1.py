@@ -126,6 +126,55 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
             self.assertEqual(route.main(["--run-id", "1", "--run-id", "1"]), 2)
         self.assertIn("invalid_run_selection", out.getvalue())
 
+    def test_latest_deploy_run_snapshot_is_bounded_and_main_only(self):
+        import contextlib
+        import io
+        import json
+        from unittest.mock import patch
+        class Headers:
+            def get_content_type(self):
+                return "application/json"
+        class Response:
+            headers = Headers()
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, *args):
+                data = {"total_count": 3, "workflow_runs": [
+                    {"id": 111, "head_branch": "main", "name": "zCloud VPS deploy"},
+                    {"id": 999, "head_branch": "other", "name": "zCloud VPS deploy"},
+                    {"id": 222, "head_branch": "main", "name": "zCloud VPS deploy"}]}
+                return json.dumps(data).encode("utf-8")
+        class Opener:
+            def open(self, request, timeout):
+                self.url = request.full_url
+                self.timeout = timeout
+                return Response()
+        opener = Opener()
+        with patch.object(route.urllib.request, "build_opener", return_value=opener):
+            self.assertEqual(route.latest_main_deploy_ids("fake", 2), [111, 222])
+        self.assertTrue(opener.url.startswith("https://api.github.com/repos/Zennay/zCloud/"))
+        self.assertEqual(opener.timeout, 15)
+
+    def test_latest_deploy_missing_token_denies_without_api(self):
+        with self.assertRaises(route.InvalidEvidence):
+            route.latest_main_deploy_ids("")
+
+    def test_latest_deploy_count_bounds(self):
+        for count in (0, -1, 4, True):
+            with self.subTest(count=count):
+                with self.assertRaises(route.InvalidEvidence):
+                    route.latest_main_deploy_ids("fake", count)
+
+    def test_cli_no_selection_denied(self):
+        import contextlib
+        import io
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(route.main([]), 2)
+        self.assertIn("invalid_run_selection", output.getvalue())
+
     def test_source_contains_no_write_methods_or_prod_authority(self):
         source = SOURCE.read_text(encoding="utf-8")
         self.assertNotIn('method="POST"', source)
