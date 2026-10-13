@@ -305,6 +305,21 @@ def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> di
     }
 
 
+def observe(db: Path, fixture: Path | None = None) -> dict:
+    """Bracket the HTTP sample with coherent SQLite observations.
+
+    Concurrent allocation/command writes can otherwise make a worker look
+    "missing" even though it was legitimately reassigned between the reads.
+    In that case the result is unknown, never a spurious restart instruction.
+    """
+    before = read_roster(db)
+    live = read_live(fixture)
+    after = read_roster(db)
+    if before != after:
+        raise InvalidEvidence("scheduler changed during live worker observation")
+    return reconcile(after, live)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True,
@@ -313,7 +328,7 @@ def main(argv=None) -> int:
                         help="offline exact JSON fixture; never contacts API")
     args = parser.parse_args(argv)
     try:
-        report = reconcile(read_roster(args.db), read_live(args.runner_live_fixture))
+        report = observe(args.db, args.runner_live_fixture)
     except (InvalidEvidence, OSError, sqlite3.Error, ValueError) as exc:
         report = {"schema_version": 1, "diagnostic_only": True,
                   "authorizes_mutation": False, "state": "unknown",
