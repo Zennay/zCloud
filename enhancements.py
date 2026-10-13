@@ -30,6 +30,7 @@ PROJECT_UNITS = {
     "ulab": [],
     "zssh": ["zssh.service"],
     "lightup": [],
+    "mixlab": [],
 }
 _RESOURCE_PREV = {}
 _RESOURCE_HOST_PREV = None
