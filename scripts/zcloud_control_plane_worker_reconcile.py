@@ -14,6 +14,7 @@ import sys
 import urllib.parse
 import urllib.request
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 API = "http://127.0.0.1:8765/api/runner-live"
@@ -114,10 +115,19 @@ def read_roster(db: Path) -> dict:
             "SELECT project_id,worker_slot,desired_state FROM runner_workers "
             "ORDER BY project_id,worker_slot"
         )]
+        if not {"id", "project_id", "action", "status", "created_at"}.issubset(
+            _table_columns(conn, "runner_commands")
+        ):
+            raise InvalidEvidence("unsupported runner_commands schema")
+        pending = [dict(r) for r in conn.execute(
+            "SELECT project_id,action,created_at FROM runner_commands "
+            "WHERE status='pending' AND action IN ('start','push','force_start','new_chat') "
+            "ORDER BY id DESC LIMIT 1025"
+        )]
         conn.execute("ROLLBACK")
     finally:
         conn.close()
-    if len(slots) > MAX_SLOTS or len(targets) > 4096:
+    if len(slots) > MAX_SLOTS or len(targets) > 4096 or len(pending) > 1024:
         raise InvalidEvidence("roster exceeds diagnostic bounds")
     seen_slots, seen_keys = set(), set()
     for row in slots:
@@ -135,7 +145,16 @@ def read_roster(db: Path) -> dict:
         if not isinstance(row["desired_state"], str):
             raise InvalidEvidence("invalid desired worker state")
         target_map[key] = row["desired_state"]
-    return {"slots": slots, "targets": target_map}
+    for item in pending:
+        key = item["project_id"]
+        if not isinstance(key, str) or len(key) > 180 or "::w" not in key:
+            raise InvalidEvidence("invalid pending command worker key")
+        prefix, sep, suffix = key.rpartition("::w")
+        _project(prefix)
+        _positive_int(int(suffix) if suffix.isdigit() else None, "pending worker slot")
+        if not isinstance(item["created_at"], str):
+            raise InvalidEvidence("invalid pending command timestamp")
+    return {"slots": slots, "targets": target_map, "pending": pending}
 
 
 def _live_workers(payload):
@@ -172,11 +191,36 @@ def _live_workers(payload):
     return workers
 
 
-def reconcile(roster: dict, payload: dict) -> dict:
+def reconcile(roster: dict, payload: dict, *, now: datetime | None = None) -> dict:
     workers = _live_workers(payload)
     targets = roster["targets"]
     problems = []
     observed = Counter()
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise InvalidEvidence("naive reference clock")
+    pending_total = 0
+    stale_pending = 0
+    # Recent command intent is not proof of dispatch. Detect stuck pending work
+    # without ever returning command results, payloads or actor identifiers.
+    for cmd in roster.get("pending", []):
+        pending_total += 1
+        label = cmd["project_id"]
+        try:
+            when = datetime.fromisoformat(cmd["created_at"].replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                raise ValueError("naive command timestamp")
+            delta = (now - when.astimezone(timezone.utc)).total_seconds()
+            if delta < -30:
+                raise ValueError("future command timestamp")
+        except (TypeError, ValueError, OverflowError):
+            problems.append({"worker": label, "code": "pending_age_unverifiable",
+                             "level": "degraded"})
+            continue
+        if delta >= 120:
+            stale_pending += 1
+            problems.append({"worker": label, "code": "pending_dispatch_over_two_minutes",
+                             "level": "attention"})
     for row in roster["slots"]:
         key = (row["project_id"], row["worker_slot"])
         label = f"{key[0]}::w{key[1]}"
@@ -229,6 +273,8 @@ def reconcile(roster: dict, payload: dict) -> dict:
         "authorizes_mutation": False,
         "state": "degraded" if degraded else ("attention" if problems else "ok"),
         "allocated_count": len(roster["slots"]),
+        "pending_dispatch_count": pending_total,
+        "stale_pending_dispatch_count": stale_pending,
         "busy_count": observed["busy"],
         "recent_idle_count": observed["idle"],
         "problem_counts": dict(sorted(Counter(p["code"] for p in problems).items())),
