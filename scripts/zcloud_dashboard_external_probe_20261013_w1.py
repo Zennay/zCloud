@@ -193,7 +193,13 @@ def run_probe(probe=probe_once, sleep=time.sleep, attempts=MAX_ATTEMPTS):
         raise ValueError("attempt budget must be an integer from 1 to 6")
     failures = collections.Counter()
     for index in range(attempts):
-        category = probe()
+        try:
+            category = probe()
+        except Exception:
+            # An unexpected opener/test fixture failure is never a reason to
+            # print the exception (which may contain a URL or credentials).
+            # Preserve remaining retry budget without granting authority.
+            category = "transport_failure"
         if type(category) is not str or category not in CATEGORIES:
             category = "transport_failure"
         if category == "healthy":
