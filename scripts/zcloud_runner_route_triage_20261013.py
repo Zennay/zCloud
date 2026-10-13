@@ -10,11 +10,13 @@ import json
 import os
 import re
 import sys
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 REPO = 'Zennay/zCloud'
 MAX_BODY = 262144
 MAX_PAGES = 5
+# Hosted preflights may already be running while a downstream VPS job is queued.
+PENDING_RUN_STATES = ('queued', 'in_progress', 'waiting', 'pending', 'requested')
 
 class EvidenceError(Exception):
     pass
@@ -86,7 +88,7 @@ def classify(payload, now, stale_seconds=180):
     counters = {'offline': 0, 'busy': 0, 'label_or_access_gap': 0, 'group_access_unverified': 0, 'available_but_queued': 0}
     seen_runs = set()
     for run in runs:
-        if not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] <= 0 or run['id'] in seen_runs or run.get('status') != 'queued':
+        if not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] <= 0 or run['id'] in seen_runs or run.get('status') not in PENDING_RUN_STATES:
             raise EvidenceError('invalid_or_duplicate_run')
         rid = run['id']; seen_runs.add(rid)
         if str(rid) not in jobs_by_run: raise EvidenceError('incomplete_run_jobs')
@@ -145,7 +147,7 @@ def api(path, token):
         'User-Agent': 'zcloud-runner-route-triage/1',
         'X-GitHub-Api-Version': '2022-11-28'})
     try:
-        with build_opener(RefuseRedirect()).open(request, timeout=12) as response:
+        with build_opener(ProxyHandler({}), RefuseRedirect()).open(request, timeout=12) as response:
             if response.status != 200 or not response.headers.get('content-type', '').lower().startswith('application/json'):
                 raise EvidenceError('untrusted_api_response')
             data = response.read(MAX_BODY + 1)
@@ -173,7 +175,23 @@ def pages(path, field, token, limit=500):
 def live(token):
     if not token: raise EvidenceError('missing_github_token')
     runners = pages(f'/repos/{REPO}/actions/runners', 'runners', token)
-    runs = pages(f'/repos/{REPO}/actions/runs?status=queued', 'workflow_runs', token, 40)
+    # Do not only query queued workflow runs: a hosted preflight can make the
+    # run in_progress while the remaining self-hosted deploy is unassigned.
+    runs = []
+    seen = set()
+    for status in PENDING_RUN_STATES:
+        for run in pages(f'/repos/{REPO}/actions/runs?status={status}',
+                         'workflow_runs', token, 40):
+            if not isinstance(run, dict) or type(run.get('id')) is not int:
+                raise EvidenceError('invalid_run')
+            # A run may have moved states while sequential API calls were made.
+            # Reject a torn observation rather than claim reliable queue health.
+            if run['id'] in seen:
+                raise EvidenceError('run_state_race')
+            seen.add(run['id'])
+            runs.append(run)
+            if len(runs) > 40:
+                raise EvidenceError('incomplete_inventory')
     jobs = {}
     for run in runs:
         if not isinstance(run, dict) or type(run.get('id')) is not int:
