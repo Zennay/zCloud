@@ -1,0 +1,94 @@
+name: zCloud Force live drift provenance
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zcloud-force-live-drift-provenance.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-force-live-drift-provenance.yml
+permissions:
+  contents: read
+jobs:
+  hosted-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          workflow=Path('.github/workflows/zcloud-force-live-drift-provenance.yml').read_text()
+          assert 'runs-on: [self-hosted, zcloud, vps]' in workflow
+          assert "github.event_name == 'push'" in workflow
+          assert 'github.repository == \'Zennay/zCloud\'' in workflow
+          assert 'github.actor == \'Zennay\'' in workflow
+          assert 'sha256' in workflow
+          assert 'git show' in workflow
+          assert not any(x in workflow for x in ['sudo ', 'systemctl ', 'rm -', 'mv -', 'cp -'])
+          print('FORCE_DRIFT_PROOF_HOSTED_SAFE=1')
+          PY
+  probe:
+    needs: hosted-source
+    if: github.event_name == 'push' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main' && github.actor == 'Zennay'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 120
+          persist-credentials: false
+      - name: Read-only live source provenance and worker state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = 'vps-bb300bba'
+          test "$(id -un)" = 'ubuntu'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(timeout 20 git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          from pathlib import Path
+          from hashlib import sha256
+          import subprocess, json, urllib.request
+          root=Path('/home/ubuntu/zennay-cloud')
+          names=['server.py','public/app.js','public/index.html','public/enhancements.css',
+                 'public/zcloud-worker-v2-engine.js','public/zcloud-worker.user.js',
+                 'scripts/zcloud_worker_watchdog.py','firefox-extension/background.js']
+          report={'sha_bound':True,'mutation_authorized':False,'files':[]}
+          for name in names:
+              live=root/name
+              candidate=Path(name)
+              if not live.is_file() or not candidate.is_file():
+                  report['files'].append({'path':name,'class':'missing'});continue
+              live_sha=sha256(live.read_bytes()).hexdigest()
+              candidate_sha=sha256(candidate.read_bytes()).hexdigest()
+              classification='current-main' if live_sha==candidate_sha else 'unresolved-drift'
+              origin=''
+              if classification!='current-main':
+                  revisions=subprocess.run(['git','log','-60','--format=%H','--',name],
+                                         check=True,text=True,capture_output=True).stdout.splitlines()
+                  for ref in revisions:
+                      old=subprocess.run(['git','show',ref+':'+name],check=False,capture_output=True)
+                      if old.returncode==0 and sha256(old.stdout).hexdigest()==live_sha:
+                          classification='recorded-git-ancestor';origin=ref[:12];break
+              report['files'].append({'path':name,'class':classification,
+                  'live_sha256':live_sha,'candidate_sha256':candidate_sha,'origin':origin})
+          pointer=Path('/home/ubuntu/.local/state/zcloud/recovery/last-known-good.json')
+          if pointer.is_file():
+              try:report['lkg_snapshot']=str(json.loads(pointer.read_text()).get('snapshot_id',''))[:100]
+              except Exception:report['lkg_snapshot']='unreadable'
+          try:
+              with urllib.request.urlopen('http://127.0.0.1:8765/api/worker-debug',timeout=10) as r:
+                  data=json.load(r)
+              report['workers']=[{'global_slot':w.get('global_slot'),
+                                  'worker':w.get('worker'),
+                                  'verdict':w.get('verdict'),
+                                  'reason':str(w.get('reason') or '')[:100]}
+                                 for w in (data.get('workers') or [])][:16]
+          except Exception as error:
+              report['worker_probe_error']=type(error).__name__
+          print('FORCE_PROVENANCE_PROOF='+json.dumps(report,sort_keys=True))
+          PY
