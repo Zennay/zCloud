@@ -50,10 +50,10 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         missing = [audit.TimeoutFinding(path, "slow", None, "missing")]
         improved = [audit.TimeoutFinding(path, "slow", 31, "over_limit")]
         fixed = [audit.TimeoutFinding(path, "slow", 30, "bounded")]
-        self.assertEqual(worsened, audit.new_debt(base, worsened))
-        self.assertEqual(missing, audit.new_debt(base, missing))
-        self.assertEqual([], audit.new_debt(base, improved))
-        self.assertEqual([], audit.new_debt(base, fixed))
+        self.assertEqual(worsened, audit.new_debt(base, worsened, deny_worsening=True))
+        self.assertEqual(missing, audit.new_debt(base, missing, deny_worsening=True))
+        self.assertEqual([], audit.new_debt(base, improved, deny_worsening=True))
+        self.assertEqual([], audit.new_debt(base, fixed, deny_worsening=True))
 
     def test_new_dynamic_runner_creates_policy_debt(self):
         row = audit.TimeoutFinding(".github/workflows/new.yml", "probe", 5, "dynamic_runner_unknown")
