@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 SCHEMA_VERSION = "recent-branch-ownership-snapshot-v1"
 MAX_BRANCHES = 500
+MAX_BRANCH_PAGES = MAX_BRANCHES + 1
 MAX_OPEN_PRS = 500
 MAX_COMPARE_FILES = 300
 MAX_RECENT_COMPARE_BRANCHES = 100
@@ -168,7 +169,7 @@ def _branch_refs(
     # A non-advancing GitHub cursor can otherwise hold the entire worker
     # ownership preflight indefinitely, even when the branch count stays zero.
     while True:
-        if page_count >= MAX_BRANCHES + 1:
+        if page_count >= MAX_BRANCH_PAGES:
             raise CollectorError("branch_page_bound_exceeded")
         page_count += 1
         refs = _graphql_page(owner, name, cursor, runner)
