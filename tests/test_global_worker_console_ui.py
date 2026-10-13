@@ -118,7 +118,7 @@ vm.runInContext('DATA={dynamic_workers:{chatgpt_count:1,claude_count:0},projects
 const row = vm.runInContext('globalWorkerRows()', ctx);
 assert.equal((row.match(/class="global-worker-note"/g) || []).length, 1);
 assert.equal((row.match(/<summary>/g) || []).length, 1);
-assert.match(row, /Projectwissel aangevraagd/);
+assert.match(row, /Aanvraag ingediend/);
 assert.match(row, /very long scheduler text/);
 assert.doesNotMatch(row, /class="global-worker-hint"|class="global-worker-feedback"/);
 vm.runInContext('GLOBAL_WORKER_REQUEST_AT[1]=0;',ctx);
