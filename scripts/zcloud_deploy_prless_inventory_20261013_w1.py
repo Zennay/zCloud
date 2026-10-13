@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +23,7 @@ MAX_ENTRIES = 2400
 MAX_PAGE_SIZE = 100
 MAX_OVERLAPS = 256
 MAX_BRANCH_COMPARE = 150
+MAX_WALL_SECONDS = 180
 
 
 class InventoryDenied(ValueError):
@@ -313,8 +315,17 @@ class _DenyRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def github_fetcher(token):
-    """GET-only transport; strict response size, Link origin/path and JSON."""
+    """GET-only transport with a shared wall-clock budget for all pages."""
+    deadline = time.monotonic() + MAX_WALL_SECONDS
+
+    def remaining_seconds():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise InventoryDenied("inventory_wall_clock_budget_exceeded")
+        return min(12, left)
+
     def fetch(kind, page):
+        timeout = remaining_seconds()
         root = f"/repos/{OWNER}/{REPO}"
         if kind == "main" and page == 0:
             path = root + "/git/ref/heads/main"
@@ -336,7 +347,7 @@ def github_fetcher(token):
         request = urllib.request.Request(API + path, headers=headers,
                                          method="GET")
         try:
-            with urllib.request.build_opener(_DenyRedirect()).open(request, timeout=12) as response:
+            with urllib.request.build_opener(_DenyRedirect()).open(request, timeout=timeout) as response:
                 if response.status != 200:
                     raise InventoryDenied("github_response_failed")
                 raw = response.read(1024 * 1024 + 1)
@@ -349,6 +360,8 @@ def github_fetcher(token):
             payload = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             raise InventoryDenied("invalid_github_json") from None
+        # A last request that itself consumed the deadline is also rejected.
+        remaining_seconds()
         if kind.startswith("compare:"):
             # Compare's Link header indicates incomplete commit pagination;
             # GitHub only presents changed files on the first compare page.
