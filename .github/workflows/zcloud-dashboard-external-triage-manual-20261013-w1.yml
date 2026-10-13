@@ -23,4 +23,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A manual main dispatch can become stale while another worker commits.
+          # Deny any success claim unless the tested commit is still canonical main.
+          verify_main_head() {
+            local observed ref
+            [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "DASHBOARD_TRIAGE_INVALID_EVENT_SHA"
+              return 2
+            }
+            ref="$(GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)" || {
+              echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
+              return 2
+            }
+            [[ "$ref" == *
+\\t'refs/heads/main ]] || {
+              echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
+              return 2
+            }
+            observed="${ref%%
+\\t'*}"
+            [[ "$observed" == "$GITHUB_SHA" ]] || {
+              echo "DASHBOARD_TRIAGE_MAIN_CHANGED"
+              return 2
+            }
+          }
+          verify_main_head
           python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py --attempts 6 --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          verify_main_head
