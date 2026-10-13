@@ -34,6 +34,7 @@
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
+  let resetRoute=null;
   let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
   let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
   let chatAt=Number(sessionStorage.getItem("zcloud-v2-chat-at")||0);
@@ -122,6 +123,7 @@
     if(generating()||sending||awaiting)return false;
     const button=newChatButton();
     if(!button){await blocked("new-chat-button-missing");return false}
+    resetRoute=location.pathname;
     button.click(); // SAME browser tab; SPA route, not location.assign
     chatAt=Date.now();sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
     promptAt=0;next=true;everGenerating=false;baseline="";
@@ -235,6 +237,14 @@
       if(generating()){
         everGenerating=true;awaiting=false;
         await status("generation-progress");return;
+      }
+      if(resetRoute!==null){
+        if(failedConversation()||!visible(composer())||
+           (location.pathname===resetRoute&&/^\/c\//.test(resetRoute))){
+          await blocked("new-chat-transition-pending");return;
+        }
+        resetRoute=null;
+        chatAt=Date.now();sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
       }
       // A terminal conversation-load error is stronger evidence than the
       // pending generation timeout. It must be handled BEFORE the awaiting

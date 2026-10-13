@@ -11,7 +11,7 @@ retire() {
   if [[ "$scope" == system ]]; then manager=(sudo -n systemctl); fi
   local unit load active
   for unit in "$stem.timer" "$stem.service"; do
-    load="$("${manager[@]}" show "$unit" --property=LoadState --value)"
+    load="$("${manager[@]}" show "$unit" --property=LoadState --value)" || [[ "$load" == not-found ]]
     if [[ "$load" == not-found ]]; then continue; fi
     if [[ "$unit" == *.timer ]]; then
       "${manager[@]}" disable --now "$unit"

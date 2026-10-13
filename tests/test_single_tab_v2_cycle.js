@@ -11,7 +11,7 @@ const target={
  queue_item:{queue_id:"qid"},desired_state:"running",
  prompt:"Werk verder aan Supa. Kijk in Notion in welke fase het project zit, werk verder."
 };
-function harness({age=0,failure=false,high=true,initialAssistant="",initialAssistantCount=0}={}){
+function harness({age=0,failure=false,high=true,initialAssistant="",initialAssistantCount=0,pathname="/"}={}){
  let clock=Date.now();
  class Clock extends Date { static now(){return clock;} }
  const state=new Map();
@@ -47,7 +47,7 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  const url="https://chatgpt.com/?zcloud_worker="+encodeURIComponent(key);
  let check=null;
  const ctx=vm.createContext({
-  window:{},location:{hostname:"chatgpt.com",href:url,pathname:"/"},
+  window:{},location:{hostname:"chatgpt.com",href:url,pathname},
   sessionStorage:{getItem:k=>state.get(k)||null,setItem:(k,v)=>state.set(k,String(v))},
   document:doc,URL,Array,String,Number,Date:Clock,Map,Set,Promise,
   getComputedStyle:()=>({display:"block",visibility:"visible"}),
@@ -65,7 +65,7 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  });
  vm.runInContext(code,ctx,{timeout:1000});
  return {tick:async()=>{check();await wait(20)},sent,statuses,chatClicks,
-  advance:ms=>{clock+=ms},setGenerating:v=>generating=v,setAssistant:(v,n=1)=>{assistantText=v;assistantMessages=n;}};
+  setPath:p=>{ctx.location.pathname=p},advance:ms=>{clock+=ms},setGenerating:v=>generating=v,setAssistant:(v,n=1)=>{assistantText=v;assistantMessages=n;}};
 }
 (async()=>{
  const worker=harness();
@@ -94,6 +94,11 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  assert.equal(broken.sent.length,0,"recovery does not send while clicking New chat");
  const old=harness({age:3700000});await wait(40);
  assert.equal(old.chatClicks.length,1,"one hour of tab age triggers in-place new chat");
+ const transition=harness({age:3700000,pathname:"/c/old-chat"});await wait(40);
+ await transition.tick();
+ assert.equal(transition.sent.length,0,"do not dispatch into old chat before SPA navigation finishes");
+ transition.setPath("/");await transition.tick();
+ assert.equal(transition.sent.length,1,"resume only after new-chat navigation");
  const medium=harness({high:false});await wait(40);
  assert.equal(medium.sent.length,0,"never send without verified High");
  assert.ok(medium.statuses.some(x=>x.event==="thinking-high-unavailable"||x.reason==="high-not-verified"));
