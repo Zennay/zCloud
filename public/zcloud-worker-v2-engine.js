@@ -11,7 +11,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.0");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.1");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -45,11 +45,15 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.0",...extra
+      provider:"chatgpt",runnerVersion:"2.0.1",...extra
     })}catch(_){}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
   function high(){
+    // The live composer attribute is authoritative: a checked menu item
+    // elsewhere must never override an explicitly Medium/Low composer.
+    const triggers=[...document.querySelectorAll('button[data-codex-intelligence-trigger][data-selected-reasoning-effort]')].filter(visible);
+    if(triggers.length)return triggers.every(el=>el.getAttribute("data-selected-reasoning-effort")==="high");
     if([...document.querySelectorAll('[data-selected-reasoning-effort="high"]')].some(visible))return true;
     if([...document.querySelectorAll('button,[role="button"]')].some(el=>visible(el)&&/^(high|hoog) selector\b/i.test(label(el))))return true;
     return [...document.querySelectorAll('[role="menuitemradio"],[role="radio"],[role="option"]')]
@@ -58,31 +62,39 @@
   }
   async function ensureHigh(){
     if(high())return true;
-    const selectors=['button[data-codex-intelligence-trigger]',
+    const selectors=['button[data-codex-intelligence-trigger][data-composer-navigation-target="reasoning"]',
+      'button[data-codex-intelligence-trigger]',
       'button[aria-label="ChatGPT-model selecteren"]','button[aria-label="Select ChatGPT model"]',
       'button[data-testid="model-switcher-dropdown-button"]',
       'button[aria-label*="Thinking" i][aria-haspopup]'];
-    const picker=selectors.map(s=>document.querySelector(s)).find(visible);
+    // Responsive layouts can contain a hidden first match. Inspect all.
+    const picker=selectors.flatMap(s=>[...document.querySelectorAll(s),document.querySelector(s)]).find(visible);
     if(!picker){await status("thinking-high-unavailable",{reason:"selector-missing"});return false}
-    picker.click();await sleep(450);
-    if(high())return true;
-    let option=[...document.querySelectorAll('button,[role="menuitemradio"],[role="menuitem"],[role="option"]')]
-      .find(e=>visible(e)&&/^(high|hoog)(?: thinking)?$/i.test(label(e)));
-    if(!option){
-      const thinking=[...document.querySelectorAll('button,[role="menuitem"],[role="option"]')]
-        .find(e=>visible(e)&&/^(thinking|denkmodus)$/i.test(label(e)));
-      if(thinking){thinking.click();await sleep(350)}
-      option=[...document.querySelectorAll('button,[role="menuitemradio"],[role="menuitem"],[role="option"]')]
-        .find(e=>visible(e)&&/^(high|hoog)(?: thinking)?$/i.test(label(e)));
+    if(picker.getAttribute("aria-expanded")!=="true")picker.click();
+    const exactHigh=el=>{
+      const value=String(el.getAttribute("data-value")||"").trim();
+      const name=String(el.getAttribute("aria-label")||"").trim();
+      const text=String(el.innerText||el.textContent||"").trim().split(/\n/)[0].trim();
+      return /^(high|hoog)(?: thinking)?$/i.test(value||name||text);
+    };
+    let selected=false,openedThinking=false;
+    for(let n=0;n<20;n++){
+      await sleep(170);
+      if(high())return true;
+      const candidates=[...document.querySelectorAll('button,[role="menuitemradio"],[role="radio"],[role="menuitem"],[role="option"]')];
+      const option=candidates.find(el=>visible(el)&&exactHigh(el));
+      if(option&&!selected){option.click();selected=true;continue}
+      if(!option&&!openedThinking){
+        const thinking=candidates.find(el=>visible(el)&&/^(thinking|denkmodus)$/i.test(label(el)));
+        if(thinking){thinking.click();openedThinking=true}
+      }
     }
-    if(option)option.click();
-    for(let n=0;n<15;n++){await sleep(170);if(high())return true}
     await status("thinking-high-unavailable",{reason:"not-confirmed"});
     return false; // NEVER send in Instant/Medium.
   }
   function newChatButton(){
     return ['button[aria-label="Nieuwe chat"]','button[aria-label="New chat"]',
-      'button[data-testid="new-chat-button"]'].map(s=>document.querySelector(s)).find(visible)||null;
+      'button[data-testid="new-chat-button"]'].flatMap(s=>[...document.querySelectorAll(s),document.querySelector(s)]).find(visible)||null;
   }
   function failedConversation(){
     const t=String((document.querySelector("main")||document.body)?.innerText||"").toLowerCase();
@@ -130,6 +142,12 @@
     try{
       if(!(await ensureHigh())){await blocked("high-not-verified");return false}
       if(!(await fill(prompt))){await blocked("composer-missing");return false}
+      // Recheck after asynchronous UI work; settings/allocation can change.
+      if(!high()){await blocked("high-changed-before-send");return false}
+      const fresh=await api("/runner-targets");
+      if(!ready(fresh.projects?.[id])||fresh.projects[id].queue_item.queue_id!==target.queue_item.queue_id){
+        await blocked("assignment-changed-before-send");return false;
+      }
       const button=sendButton();
       if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
         await blocked("send-button-unavailable");return false;
@@ -217,7 +235,16 @@
           awaiting=false;everGenerating=false;next=true;
           await status("generation-finished");
         }else if(Date.now()-awaitingAt<120000){return}
-        else{await blocked("generation-unconfirmed-no-duplicate");return}
+        else if(Date.now()-awaitingAt<300000){await blocked("generation-unconfirmed-no-duplicate");return}
+        else{
+          const box=composer(),draft=String(box?.value||box?.innerText||box?.textContent||"").trim();
+          if(!visible(box)||(draft&&draft!==String(target.prompt||"").trim())){
+            await blocked("stalled-send-preserved-draft");return;
+          }
+          awaiting=false;everGenerating=false;
+          await newChat("generation-never-started-five-minutes");
+          return;
+        }
       }else if(everGenerating){
         everGenerating=false;next=true;await status("generation-finished");
       }

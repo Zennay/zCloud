@@ -12,6 +12,8 @@ const target={
  prompt:"Werk verder aan Supa. Kijk in Notion in welke fase het project zit, werk verder."
 };
 function harness({age=0,failure=false,high=true,initialAssistant="",initialAssistantCount=0}={}){
+ let clock=Date.now();
+ class Clock extends Date { static now(){return clock;} }
  const state=new Map();
  if(age)state.set("zcloud-v2-chat-at",String(Date.now()-age));
  const sent=[],statuses=[],chatClicks=[];
@@ -47,7 +49,7 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  const ctx=vm.createContext({
   window:{},location:{hostname:"chatgpt.com",href:url,pathname:"/"},
   sessionStorage:{getItem:k=>state.get(k)||null,setItem:(k,v)=>state.set(k,String(v))},
-  document:doc,URL,Array,String,Number,Date,Map,Set,Promise,
+  document:doc,URL,Array,String,Number,Date:Clock,Map,Set,Promise,
   getComputedStyle:()=>({display:"block",visibility:"visible"}),
   Event:class{constructor(type){this.type=type}},HTMLTextAreaElement:class{},
   HTMLInputElement:class{},
@@ -63,7 +65,7 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  });
  vm.runInContext(code,ctx,{timeout:1000});
  return {tick:async()=>{check();await wait(20)},sent,statuses,chatClicks,
-  setGenerating:v=>generating=v,setAssistant:(v,n=1)=>{assistantText=v;assistantMessages=n;}};
+  advance:ms=>{clock+=ms},setGenerating:v=>generating=v,setAssistant:(v,n=1)=>{assistantText=v;assistantMessages=n;}};
 }
 (async()=>{
  const worker=harness();
@@ -80,6 +82,13 @@ function harness({age=0,failure=false,high=true,initialAssistant="",initialAssis
  assert.equal(identical.sent.length,1,"unchanged older assistant node must not trigger a duplicate");
  identical.setAssistant("Unchanged answer text",2);await identical.tick();
  assert.equal(identical.sent.length,2,"a new assistant message completes generation even with unchanged previous reply text");
+ const stalled=harness();await wait(40);
+ stalled.advance(301000);await stalled.tick();
+ assert.equal(stalled.chatClicks.length,1,"five minutes without generation recovers in same tab");
+ assert.equal(stalled.sent.length,1,"no duplicate send during recovery");
+ const protectedWorker=harness();await wait(40);
+ protectedWorker.setGenerating(true);protectedWorker.advance(301000);await protectedWorker.tick();
+ assert.equal(protectedWorker.chatClicks.length,0,"long active generation is protected");
  const broken=harness({failure:true});await wait(40);
  assert.equal(broken.chatClicks.length,1,"failed conversation uses in-page New chat control");
  assert.equal(broken.sent.length,0,"recovery does not send while clicking New chat");
