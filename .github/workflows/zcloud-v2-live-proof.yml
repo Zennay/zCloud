@@ -1,69 +1,93 @@
 name: zCloud v2 verified live worker proof
+
+# Never read permanent VPS state from a PR or an automatic push.
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - .github/workflows/zcloud-v2-live-proof.yml
+      - scripts/zcloud_v2_live_proof_freshness_20261013_w1.py
+      - tests/test_zcloud_v2_live_proof_freshness_20261013_w1.py
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact current main SHA approved for this read-only proof"
+        required: true
+        type: string
+
 permissions:
   contents: read
+
+concurrency:
+  group: zcloud-v2-liveproof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR revision hosted without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable checkout and offline proof regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_v2_live_proof_freshness_20261013_w1
+          python3 -m py_compile scripts/zcloud_v2_live_proof_freshness_20261013_w1.py
+
   prove:
+    name: Manual current-main exact-SHA read-only VPS worker-v2 proof
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
-      - name: Verify active 30-second v2 workers, timers and Firefox without mutation
+      - name: Checkout immutable current-main revision without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Trust preflight before reading live worker/SQLite state
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Check live worker heartbeats on read-only SQLite and localhost
         shell: bash
         env:
           XDG_RUNTIME_DIR: /run/user/1000
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
-          test "$(hostname)" = vps-bb300bba
-          python3 - <<'PY'
-          import json,subprocess,urllib.request,re
-          from pathlib import Path
-          script=Path("/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js")
-          addon=Path("/home/ubuntu/snap/firefox/common/chatgpt-project-extension")
-          source=script.read_text(errors="replace") if script.is_file() else ""
-          print("V2_VM_SOURCE_PRESENT="+str("// @version      2.0.0" in source))
-          manifest=json.loads((addon/"manifest.json").read_text()) if (addon/"manifest.json").is_file() else {}
-          print("V2_MANIFEST_ON_DISK="+str("worker-controller-v2.js" in manifest.get("background",{}).get("scripts",[])))
-          cmd=subprocess.run(["ps","-eo","pid=,args="],capture_output=True,text=True,timeout=4).stdout
-          firefox=[m.group(1) for line in cmd.splitlines() if "/firefox" in line and "-start-debugger-server" in line if (m:=re.search(r"^\s*(\d+)",line))]
-          print("FIREFOX_MAIN_PROCESS_COUNT="+str(len(firefox)))
-          print("FIREFOX_MAIN_PID="+(firefox[0] if firefox else "none"))
-          for unit in ("chatgpt-runner-watchdog.timer","zcloud-watchdog.timer"):
-              p=subprocess.run(["systemctl","--user","is-active",unit],capture_output=True,text=True,timeout=4)
-              print("LEGACY_USER_TIMER_"+unit.replace(".","_").upper()+"="+p.stdout.strip())
-          for unit in ("zcloud-self-heal.timer","zcloud-firefox-supervisor.timer"):
-              p=subprocess.run(["systemctl","is-active",unit],capture_output=True,text=True,timeout=4)
-              print("SYSTEM_TIMER_"+unit.replace(".","_").upper()+"="+p.stdout.strip())
-          try:
-              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=8) as r:
-                  data=json.load(r)
-              workers=[w for p in (data.get("chatgpt_runners") or {}).values()
-                       for w in (p.get("workers") or []) if w.get("active")]
-              from collections import Counter
-              import sqlite3
-              db=sqlite3.connect("file:/home/ubuntu/zennay-cloud/history.db?mode=ro",uri=True,timeout=5)
-              with db:
-                  reasons=Counter()
-                  for w in workers:
-                      base=str(w.get("worker_id") or "").split("::w")[0]
-                      slot=int(w.get("worker_slot") or 1)
-                      row=db.execute(
-                        "SELECT reason FROM runner_events WHERE project_id=? AND worker_slot=? AND event='heartbeat' ORDER BY id DESC LIMIT 1",
-                        (base,slot)
-                      ).fetchone()
-                      reasons[str(row[0] if row else "missing")]+=1
-              db.close()
-              print("ACTIVE_WORKER_COUNT="+str(len(workers)))
-              print("WORKER_HEARTBEAT_REASONS="+json.dumps(dict(reasons)))
-              v2=reasons.get("worker-v2-check-30s",0)
-              print("ACTIVE_WORKERS_WITH_V2_HEARTBEAT="+str(v2))
-              print("ACTIVE_SCRIPT_V2_ALL_CONFIRMED="+str(bool(workers) and v2==len(workers)))
-          except Exception as e:
-              print("LIVE_WORKER_READ_FAILED="+type(e).__name__)
-          PY
-          echo 'READ_ONLY_PROOF_NO_TAB_OR_PROCESS_MUTATION=1'
+          python3 scripts/zcloud_v2_live_proof_freshness_20261013_w1.py
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          # Existing timer and process observations are read-only, names only.
+          for unit in chatgpt-runner-watchdog.timer zcloud-watchdog.timer; do
+            systemctl --user is-active "$unit" || true
+          done
+          for unit in zcloud-self-heal.timer zcloud-firefox-supervisor.timer; do
+            systemctl is-active "$unit" || true
+          done
+          ps -eo pid=,comm= | grep -Ei 'firefox|web-ext' | head -n 12 || true
+          echo 'LIVE_V2_PROOF_NO_BROWSER_QUEUE_SQLITE_OR_SERVICE_MUTATION=1'
