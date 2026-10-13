@@ -322,7 +322,7 @@ class OverlapTests(unittest.TestCase):
         for file in ("../secret", "/absolute/path", "a//b", "a\\b", "a\nb"):
             with self.subTest(file=file):
                 with self.assertRaisesRegex(mod.InventoryDenied, "invalid_changed_path"):
-                    mod.compare_owned_paths(self.source(files=[{"filename": file}]),
+                    mod.compare_owned_paths(self.source(files=[{"filename": file, "status": "modified"}]),
                                             self.snapshot, ["scripts/"])
 
     def test_incomplete_truncated_or_malformed_compare_denied(self):
@@ -341,6 +341,32 @@ class OverlapTests(unittest.TestCase):
                 with self.assertRaisesRegex(mod.InventoryDenied, reason):
                     mod.compare_owned_paths(self.source(**kwargs),
                                             self.snapshot, ["scripts/"])
+
+    def test_many_overlapping_paths_fail_closed_before_unbounded_evidence(self):
+        files = [
+            {"filename": f"src/nested/file-{i}.py", "status": "modified"}
+            for i in range(140)
+        ]
+        with self.assertRaisesRegex(mod.InventoryDenied, "overlap_evidence_cap"):
+            mod.compare_owned_paths(self.source(files=files), self.snapshot,
+                                    ["src/", "src/nested/"])
+
+    def test_unknown_or_missing_file_status_is_denied(self):
+        for status in (None, "moved", "", False, 42):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(mod.InventoryDenied, "unknown_compare_file_status"):
+                    mod.compare_owned_paths(
+                        self.source(files=[{"filename": "src/x.py", "status": status}]),
+                        self.snapshot, ["src/"])
+
+    def test_valid_removed_and_added_files_both_checked(self):
+        evidence = mod.compare_owned_paths(
+            self.source(files=[
+                {"filename": "src/old.py", "status": "removed"},
+                {"filename": "src/new.py", "status": "added"}
+            ]), self.snapshot, ["src/"])
+        self.assertEqual(len(evidence["overlaps"]), 2)
+        self.assertFalse(evidence["admission_authorized"])
 
     def test_post_compare_branch_head_race_denied(self):
         with self.assertRaisesRegex(mod.InventoryDenied, "post_compare_inventory_drift"):
