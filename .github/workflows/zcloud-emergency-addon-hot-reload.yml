@@ -1,43 +1,111 @@
 name: zCloud emergency addon-only tab preservation activation
+
+# Explicit owner authorization only; merging this source never reloads a live addon.
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - .github/workflows/zcloud-emergency-addon-hot-reload.yml
+      - scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
+      - tests/test_zcloud_emergency_addon_idle_guard_20261013_w1.py
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact 40-character current main commit approved for addon-only reload"
+        required: true
+        type: string
+
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-manual-emergency-addon-reload
+  cancel-in-progress: false
+
 jobs:
-  activate:
-    runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 4
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout untrusted candidate only on GitHub-hosted CI
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Reload ONLY verified addon in place, keep Firefox PID and tabs
+          ref: ${{ github.sha }}
+      - name: Check exact candidate and negative trust regression
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_emergency_addon_idle_guard_20261013_w1
+          python3 -m py_compile scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
+
+  activate:
+    name: Explicit approved current-main addon-only reload on permanent VPS
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable exact approved main revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Verify manually approved exact current main and permanent runner before live reads
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          current_main="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$GITHUB_SHA"
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Deny reload during generation or unverifiable worker status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
+          node --check firefox-extension/background.js
           source="firefox-extension/background.js"
           live="$HOME/snap/firefox/common/chatgpt-project-extension/background.js"
-          node --check "$source"
-          cmp "$source" "$live"
-          ! grep -q 'browser.tabs.create(' "$live"
-          ! grep -q 'browser.tabs.remove(' "$live"
+          test -f "$live"
+          cmp -- "$source" "$live"
+          # The live addon must already match reviewed canonical main source.
+          ! grep -Fq 'browser.tabs.create(' "$live"
+          ! grep -Fq 'browser.tabs.remove(' "$live"
+          echo "MATCHING_TRUSTED_ADDON_ALREADY_ON_DISK=1"
+
+      - name: Recheck exact main and idle workers, then reload addon without a Firefox restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          python3 scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
           main_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test -n "$main_pid"
           kill -0 "$main_pid"
           echo "FIREFOX_MAIN_PID_BEFORE=$main_pid"
-          # web-ext remote.reloadAddon acts on addon runtime only. It must not
-          # issue browser-window/tab close, Firefox restart, or URL navigation.
           node scripts/zcloud_reload_extension.mjs
-          sleep 5
+          sleep 3
           kill -0 "$main_pid"
           new_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test "$main_pid" = "$new_pid"
           echo "FIREFOX_MAIN_PID_AFTER=$new_pid"
-          echo "PATCHED_ADDON_ACTIVE_WITH_NO_FIREFOX_RESTART=1"
+          echo "NO_FIREFOX_RESTART_OR_TAB_TERMINATION_ISSUED=1"
