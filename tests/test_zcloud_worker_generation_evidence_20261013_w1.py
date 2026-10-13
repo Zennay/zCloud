@@ -323,6 +323,7 @@ class GenerationEvidenceTests(unittest.TestCase):
         before = targets(allocation())
         after = targets(allocation())
         after["global_allocation"]["workers"][0]["queue_id"] = "different"
+        after["projects"]["cloud::w1"]["queue_item"]["queue_id"] = "different"
         self.assertNotEqual(subject._allocation_fingerprint(before), subject._allocation_fingerprint(after))
 
     def test_allocation_fingerprint_rejects_duplicate_global_slots(self):
@@ -334,6 +335,7 @@ class GenerationEvidenceTests(unittest.TestCase):
         first = targets(allocation())
         second = targets(allocation())
         second["global_allocation"]["workers"][0]["queue_id"] = "reassigned"
+        second["projects"]["cloud::w1"]["queue_item"]["queue_id"] = "reassigned"
         with patch.object(subject, "_fetch", side_effect=[first, debug(row()), second]) as fetch:
             with self.assertRaisesRegex(subject.EvidenceDenied, "allocation_changed_during_observation"):
                 subject._live_snapshots()
@@ -354,6 +356,7 @@ class GenerationEvidenceTests(unittest.TestCase):
         first = targets(allocation())
         second = targets(allocation())
         second["global_allocation"]["workers"][0]["queue_id"] = "private-queue-identifier"
+        second["projects"]["cloud::w1"]["queue_item"]["queue_id"] = "private-queue-identifier"
         output = StringIO()
         with patch.object(subject, "_fetch", side_effect=[first, debug(row()), second]):
             with redirect_stdout(output):
