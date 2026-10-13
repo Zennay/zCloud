@@ -162,6 +162,16 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(result["state"], "degraded")
         self.assertEqual(result["problem_counts"]["pending_age_unverifiable"], 1)
 
+    def test_legacy_project_scoped_pending_command_is_not_a_worker_binding(self):
+        from datetime import datetime, timezone
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO runner_commands VALUES(1,'cloud','start','pending',?,?,?)",
+                         ("2026-10-12T17:00:00+00:00", "2026-10-12T17:00:00+00:00", "legacy"))
+        at = datetime(2026, 10, 13, 17, 0, tzinfo=timezone.utc)
+        result = module.reconcile(module.read_roster(self.db), live([worker()]), now=at)
+        self.assertEqual(result["pending_dispatch_count"], 0)
+        self.assertEqual(result["state"], "ok")
+
     def test_non_pending_completed_dispatch_is_not_stale(self):
         from datetime import datetime, timezone
         with sqlite3.connect(self.db) as conn:
