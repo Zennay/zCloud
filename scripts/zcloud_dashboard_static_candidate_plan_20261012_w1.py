@@ -453,14 +453,31 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 evidence = plan(args.root, args.baseline_sha, args.candidate_sha)
     except PlanError as exc:
-        print(json.dumps({
-            "schema": "zcloud-dashboard-git-snapshot-v1" if args.snapshot_sha is not None else "zcloud-dashboard-static-candidate-plan-v1",
+        if args.snapshot_sha is not None:
+            schema = "zcloud-dashboard-git-snapshot-v1"
+        elif args.audit_cache_pins:
+            schema = "zcloud-dashboard-cache-pin-audit-v1"
+        else:
+            schema = "zcloud-dashboard-static-candidate-plan-v1"
+        denied = {
+            "schema": schema,
             "static_diff_eligible": False,
             "runtime_bytes_observed": False,
+            "baseline_proven_deployed": False,
+            "production_status_proven": False,
+            "sqlite_ownership_proven": False,
+            "live_runtime_compatibility_proven": False,
             "release_authorized": False,
             "promotion_authorized": False,
             "reason": str(exc),
-        }, sort_keys=True))
+        }
+        if args.audit_cache_pins:
+            denied.update(
+                cache_pins_coherent=False,
+                structural_static_diff_not_evaluated=True,
+                source_bytes_only=True,
+            )
+        print(json.dumps(denied, sort_keys=True))
         return 2
     print(json.dumps(evidence, sort_keys=True))
     if args.audit_cache_pins and not evidence["cache_pins_coherent"]:
