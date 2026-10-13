@@ -43,6 +43,26 @@ The log classifier now rejects malformed unhashable drain states, nonfinite JSON
 
 The safe-idle parser reports the timestamped log marker age (`marker_age_seconds`) and `fresh_for_triage`, which is true only for receipts no more than 15 minutes old. **Even recent browser-reported status is not independently verified live worker state**: `independent_live_worker_state_verified=false`, `production_deploy_verified=false` and `authorizes_mutation=false` in every successful result. The historical October 13 blockers must not be used to interrupt currently running chats.
 
+## Operator triage without interrupting workers (13 October follow-up)
+
+This matrix separates failures that require different **existing owners**. Classifications below are observations only, not an instruction to rerun a failed deployment automatically.
+
+| Read-only observation | What it actually establishes | Safe next verification | Do not infer |
+| --- | --- | --- | --- |
+| `queued`, `runner_id=0`, `unassigned_count>0` | Job has entered the queue without a runner receipt | Compare exact job labels, repository entitlement and independently fresh runner listener status | That every named VPS is offline |
+| `waiting` / `pending` / `requested` | Prerequisite or approval gate has not produced a schedulable job yet | Check workflow dependency/approval/branch controls; preserve pending work | Runner outage or a queue-age SLA breach |
+| `completed` / `skipped`, no runner | Conditions intentionally did not dispatch a job; [real run 38473312856](https://github.com/Zennay/zCloud/actions/runs/38473312856) has **two** examples carrying VPS labels | Review the conditional workflow guards in source | Offline `zcloud-vps-1` |
+| Assigned to a noncanonical name under `zcloud,vps` labels | Some runner served those labels | Reconcile the explicit GitHub runner name and ID | Permanent VPS listener was verified |
+| Assigned to `zcloud-vps-1` but deploy `failure` | Runner route existed at that historical point | Inspect exact failed steps and owner-authorized safe-idle/health receipts | Production healthy |
+| Safe-idle blocker marker says `drain_command_status=completed` and `generating=true` | Control acknowledgement and browser-reported activity disagree | Serialized runtime owner investigates generation epoch and claim-bound progress (issues #1341/#1342) | Worker stopped, is frozen, or needs to be killed |
+| API 401/403 | Permission, token, API limit or policy problem may be hiding the evidence | Check `actions:read` entitlement and current API rate limit via authorized read-only channels | VPS is unavailable |
+| API 404 | Run/workflow may be inaccessible or missing | Verify canonical repository, run URL and access rights | An offline runner |
+| API 429 or 5xx | Rate limiting or transient GitHub failure | Bounded future GET-only retry via a separate approved operator path | Self-hosted runner fault |
+
+The CLI emits bounded `github_api_permission_or_limit`, `github_api_missing_or_inaccessible`, `github_api_rate_limited`, or `github_api_unavailable` errors without echoing credentials or HTTP response bodies. Invalid bearer tokens are rejected **before** an HTTP request and reported as `invalid_actions_token`, also without echoing the token.
+
+Only the serialized production owners (#580/PWQ-41 and #1089) may use separately verified deployment gates. The workflow owned by #1090 handles retry semantics; this evidence code neither retries nor writes. [#1135](https://github.com/Zennay/zCloud/issues/1135) still makes a generic pull request unsafe until privileged PR-trigger behavior is remediated.
+
 ## Critical interpretation limits
 
 - A browser-supplied `generating=true` heartbeat is **not independently observed generated text** and not proof that the tab is actually present. Separate [issue #1342](https://github.com/Zennay/zCloud/issues/1342) owns source/claim-bound progress evidence.
