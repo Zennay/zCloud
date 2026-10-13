@@ -187,9 +187,12 @@ class WorkflowTrustTests(unittest.TestCase):
         action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
         self.assertLess(previous, action)
         self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
-        self.assertNotIn("swapoff", self.reclaim)
-        self.assertNotIn("systemctl restart", self.reclaim)
-        self.assertNotIn("pkill ", self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
 
     def test_mutex_is_only_in_privileged_job(self):
         self.assertIn("group: zcloud-production-deploy", self.reclaim)
