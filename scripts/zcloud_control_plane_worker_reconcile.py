@@ -19,6 +19,7 @@ from pathlib import Path
 
 API = "http://127.0.0.1:8765/api/runner-live"
 MAX_RESPONSE_BYTES = 256 * 1024
+MAX_JSON_DEPTH = 64
 MAX_SLOTS = 128
 
 
@@ -39,8 +40,35 @@ def _strict_json(raw: bytes):
     if len(raw) > MAX_RESPONSE_BYTES:
         raise InvalidEvidence("oversized runner-live evidence")
     try:
-        data = json.loads(raw.decode("utf-8", errors="strict"),
-                          object_pairs_hook=_unique_pairs,
+        decoded = raw.decode("utf-8", errors="strict")
+        # Reject pathological nesting BEFORE json.loads. Python's effective
+        # recursion limit differs between runners, so relying on its parser
+        # exception is neither deterministic nor safe. Brackets within JSON
+        # string literals (including escaped quotes) never count as nesting.
+        depth = 0
+        in_string = False
+        escaped = False
+        for char in decoded:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char in "[{":
+                depth += 1
+                if depth > MAX_JSON_DEPTH:
+                    raise InvalidEvidence("runner-live JSON nesting exceeds limit")
+            elif char in "]}":
+                depth -= 1
+                if depth < 0:
+                    raise InvalidEvidence("invalid runner-live JSON delimiters")
+        if depth != 0 or in_string:
+            raise InvalidEvidence("incomplete runner-live JSON")
+        data = json.loads(decoded, object_pairs_hook=_unique_pairs,
                           parse_constant=lambda _: (_ for _ in ()).throw(
                               InvalidEvidence("non-finite JSON value")))
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
