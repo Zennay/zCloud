@@ -112,6 +112,21 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         self.assertTrue(proof["all_allocated_chatgpt_generating"])
         self.assertFalse(proof["all_allocated_chatgpt_progressing"])
 
+    def test_progress_superseded_by_timer_heartbeat_is_conservatively_unproven(self):
+        """Document current backend last-event-only evidence limitation."""
+        chatgpt, _ = self.allocated_keys()
+        for worker in chatgpt:
+            self.emit(worker, event="generation-progress", generating=True,
+                      reason="response-text-changed")
+        self.assertTrue(self.report()["all_allocated_chatgpt_progressing"])
+        self.emit(chatgpt[0], event="heartbeat", generating=True,
+                  reason="timer-heartbeat-following-progress")
+        proof = self.report()
+        self.assertTrue(proof["all_allocated_chatgpt_generating"])
+        self.assertFalse(proof["all_allocated_chatgpt_progressing"])
+        by_worker = {row["worker"]: row for row in proof["workers"]}
+        self.assertFalse(by_worker[chatgpt[0]]["progress_evidence"])
+
     def test_actual_server_paused_worker_cannot_be_green_after_heartbeat(self):
         chatgpt, _ = self.allocated_keys()
         for key in chatgpt:
