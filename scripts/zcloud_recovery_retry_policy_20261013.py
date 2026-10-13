@@ -72,10 +72,15 @@ def classify(evidence):
         values = status.get("statuses")
         require(isinstance(values, list), "invalid_status_array")
         require(all(isinstance(x, dict) and isinstance(x.get("context"), str) and isinstance(x.get("state"), str) for x in values), "invalid_status_entry")
-        deploy, regression = runs(evidence, "deploy", sha), runs(evidence, "regression", sha)
+        require(all(x["state"] in {"pending", "success", "failure", "error"}
+                    for x in values), "invalid_production_state")
+        # Once exact-SHA production status exists, unrelated deploy-run pages
+        # are not necessary to refuse a redispatch. This is a NOOP, never green.
         if any(x["context"] == "zcloud/vps-production" for x in values):
-            decision, reason = "NOOP", "production_status_present"
-        elif any(x["status"] in ACTIVE for x in deploy):
+            return {"decision": "NOOP", "reason": "production_status_present",
+                    "sha": sha, "authorized": False}
+        deploy, regression = runs(evidence, "deploy", sha), runs(evidence, "regression", sha)
+        if any(x["status"] in ACTIVE for x in deploy):
             decision, reason = "WAIT", "deploy_active"
         elif deploy:
             decision, reason = "DENY", "terminal_deploy_missing_status"
