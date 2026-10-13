@@ -28,7 +28,7 @@ jobs:
           assert 'github.actor == \'Zennay\'' in workflow
           assert 'sha256' in workflow
           assert 'git show' in workflow
-          assert not any(x in workflow.split('      - name: Read-only live source provenance and worker state',1)[1] for x in ['sudo ', 'systemctl ', 'rm -', 'mv -', 'cp -'])
+          assert not any(x in workflow.rsplit('      - name: Read-only live source provenance and worker state',1)[1] for x in ['sudo ', 'systemctl ', 'rm -', 'mv -', 'cp -'])
           print('FORCE_DRIFT_PROOF_HOSTED_SAFE=1')
           PY
   probe:
