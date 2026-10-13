@@ -183,13 +183,7 @@
         }
         let probe = null;
         try {
-          const [result] = await browser.tabs.executeScript(tabId, {code:
-            '(() => { const e=document.documentElement; const b=document.querySelector(\' +
-            '\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\' +
-            '\'); const d=document.querySelector(\' +
-            '\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\' +
-            '\'); return {version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"", owner:e?.getAttribute("data-zcloud-v2-owner")||"",lastPoll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),generating:!!b,draft:!!String(d?.value||d?.innerText||d?.textContent||"").trim()}; })()'
-          });
+          const [result] = await browser.tabs.executeScript(tabId, {code:"(() => { const e=document.documentElement; const b=document.querySelector('button[data-testid=\"stop-button\"],button[aria-label=\"Stop generating\"],button[aria-label=\"Stop response\"]'); const d=document.querySelector('#prompt-textarea,[contenteditable=\"true\"][role=\"textbox\"],textarea'); return {version:e?.getAttribute(\"data-zcloud-violentmonkey-ready\")||\"\",owner:e?.getAttribute(\"data-zcloud-v2-owner\")||\"\",lastPoll:Number(e?.getAttribute(\"data-zcloud-v2-last-poll\")||0),generating:!!b,draft:!!String(d?.value||d?.innerText||d?.textContent||\"\").trim()}; })()"});
           probe = result;
         } catch (_) { /* A loading/unresponsive tab is not proven idle. */ }
         if (!probe || probe.version !== "2.0.0" || probe.owner !== key ||
