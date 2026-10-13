@@ -85,6 +85,23 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         for key in claude:
             self.assertEqual("other_provider", observed[key])
 
+    def test_actual_server_paused_worker_cannot_be_green_after_heartbeat(self):
+        chatgpt, _ = self.allocated_keys()
+        for key in chatgpt:
+            self.emit(key, generating=True, reason="violentmonkey-primary-runner")
+        self.assertTrue(self.report()["all_allocated_chatgpt_generating"])
+        project, slot = chatgpt[0].rsplit("::w", 1)
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE runner_workers SET desired_state='paused' "
+                "WHERE project_id=? AND worker_slot=?",
+                (project, int(slot)),
+            )
+        proof = self.report()
+        self.assertFalse(proof["all_allocated_chatgpt_generating"])
+        states = {row["worker"]: row["state"] for row in proof["workers"]}
+        self.assertEqual("inactive_target", states[chatgpt[0]])
+
     def test_prompt_sent_after_generating_does_not_stay_green(self):
         chatgpt, _ = self.allocated_keys()
         for key in chatgpt:
