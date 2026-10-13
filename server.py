@@ -4371,7 +4371,7 @@ class Handler(BaseHTTPRequestHandler):
                                     c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
                                     c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
                             ts=now()
-                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
+                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',(project_id,action,'pending',ts,ts,'force-new-tab' if force_start else None))
                             command_id=cur.lastrowid
                 if rate_limited:
                     return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
@@ -4674,13 +4674,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception: command_limit=100
             with connect() as c:
                 rows=c.execute(
-                    "SELECT id,project_id,action,created_at FROM ("
-                    "SELECT id,project_id,action,created_at FROM runner_commands "
+                    "SELECT id,project_id,action,created_at,result FROM ("
+                    "SELECT id,project_id,action,created_at,result FROM runner_commands "
                     "WHERE status='pending' ORDER BY id DESC LIMIT ?"
                     ") ORDER BY id",
                     (command_limit,),
                 ).fetchall()
-            return self.reply({'commands':[dict(r) for r in rows]})
+            return self.reply({'commands':[{'id':r['id'],'project_id':r['project_id'], 'action':r['action'], 'created_at':r['created_at'], 'force':r['result']=='force-new-tab'} for r in rows]})
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
             if data is None:return self.reply({'error':'Monitor start op'},503)
