@@ -193,6 +193,9 @@ def compare_owned_paths(fetch, snapshot, owned_paths):
         base = payload.get("base_commit")
         if not isinstance(base, dict) or _sha(base.get("sha")) != main_sha:
             raise InventoryDenied("compare_base_mismatch")
+        head = payload.get("head_commit")
+        if not isinstance(head, dict) or _sha(head.get("sha")) != target_sha:
+            raise InventoryDenied("compare_head_mismatch")
         commits = payload.get("total_commits")
         ahead = payload.get("ahead_by")
         if (type(commits) is not int or not 0 <= commits <= 250
@@ -200,6 +203,15 @@ def compare_owned_paths(fetch, snapshot, owned_paths):
             raise InventoryDenied("compare_commit_cap_or_invalid")
         if payload.get("status") not in ("ahead", "behind", "diverged", "identical"):
             raise InventoryDenied("invalid_compare_status")
+        # GitHub compare can paginate the commit history independently of files.
+        # A first-page-only response cannot attest a complete source diff.
+        listed_commits = payload.get("commits")
+        if (not isinstance(listed_commits, list)
+                or len(listed_commits) != commits
+                or any(not isinstance(item, dict)
+                       or not SHA.fullmatch(str(item.get("sha") or ""))
+                       for item in listed_commits)):
+            raise InventoryDenied("compare_commit_history_incomplete")
         files = payload.get("files")
         if not isinstance(files, list) or len(files) >= 300:
             raise InventoryDenied("compare_files_incomplete")
@@ -280,6 +292,11 @@ def github_fetcher(token):
         except (ValueError, UnicodeDecodeError):
             raise InventoryDenied("invalid_github_json") from None
         if kind.startswith("compare:"):
+            # Compare's Link header indicates incomplete commit pagination;
+            # GitHub only presents changed files on the first compare page.
+            # This consumer deliberately refuses partial compares.
+            if link.strip():
+                raise InventoryDenied("paginated_compare_incomplete")
             return payload, None
         if kind == "main":
             if not isinstance(payload, dict) or not isinstance(payload.get("object"), dict):
