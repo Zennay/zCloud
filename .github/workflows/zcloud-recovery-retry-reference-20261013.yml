@@ -12,6 +12,8 @@ on:
       - 'tests/test_zcloud_recovery_github_evidence_20261013.py'
       - 'scripts/zcloud_recovery_git_ref_ledger_20261013.py'
       - 'tests/test_zcloud_recovery_git_ref_ledger_20261013.py'
+      - 'scripts/zcloud_recovery_tag_ruleset_preflight_20261013.py'
+      - 'tests/test_zcloud_recovery_tag_ruleset_preflight_20261013.py'
       - 'docs/deploy-ops-recovery-readonly-source-20261013.md'
 
 permissions:
@@ -30,7 +32,8 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_retry_policy_20261013.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_github_evidence_20261013.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_git_ref_ledger_20261013.py' -v
-      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py scripts/zcloud_recovery_github_evidence_20261013.py scripts/zcloud_recovery_git_ref_ledger_20261013.py
+      - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_tag_ruleset_preflight_20261013.py' -v
+      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py scripts/zcloud_recovery_github_evidence_20261013.py scripts/zcloud_recovery_git_ref_ledger_20261013.py scripts/zcloud_recovery_tag_ruleset_preflight_20261013.py
 
   github-observe-readonly:
     runs-on: ubuntu-latest
@@ -54,6 +57,30 @@ jobs:
           assert result["mutations_performed"] is False
           if result["decision"] == "DENY":
               raise SystemExit(2)
+          PY
+
+  tag-ruleset-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Assess canonical GitHub tag rulesets without writes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          sys.path.insert(0, "scripts")
+          from zcloud_recovery_tag_ruleset_preflight_20261013 import observe
+          result = observe()
+          print(json.dumps(result, sort_keys=True))
+          assert result["authorized"] is False
+          assert result["dispatch_allowed"] is False
+          assert result["effective_protection_verified"] is False
+          assert result["mutations_performed"] is False
           PY
 
   full-regression-hosted:
