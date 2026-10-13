@@ -31,8 +31,9 @@ class DashboardStartForceRegressionTests(unittest.TestCase):
         self.assertIn('data-runner-force-start="', app)
         self.assertIn(">Force start</button>", app)
         self.assertIn("async function forceStartProject(projectId,button)", app)
-        self.assertIn("const workers=[...new Set((runner.workers||[]).map(w=>String(w.worker_id||'').trim()).filter(Boolean))];", app)
-        self.assertIn("JSON.stringify({project_id:workerId,action:'start',force:true})", app)
+        self.assertIn("JSON.stringify({project_id:projectId,action:'start',force:true})", app)
+        self.assertNotIn("JSON.stringify({project_id:workerId,action:'start',force:true})", app)
+        self.assertIn("button.textContent='Force requested'", app)
         self.assertIn("forceStartAction.dataset.runnerForceStart", app)
 
     def test_backend_force_start_bypasses_start_dedupe_and_cooldown(self):
