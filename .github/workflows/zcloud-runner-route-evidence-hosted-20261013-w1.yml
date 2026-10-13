@@ -68,11 +68,30 @@ jobs:
           python3 - <<'PY'
           import json
           data = json.load(open("drain-receipt.json", encoding="utf-8"))
+          assert data["failure_category"] == "safe_idle_timeout_marker"
           assert data["only_acknowledged_draining_generation"] is True
           assert data["authorizes_mutation"] is False
           assert data["proves_process_stuck"] is False
           assert data["production_deploy_verified"] is False
           print("Safe-idle drain classification: PASS (observational only)")
+          PY
+      - name: Classify historical SQLite read-only error without opening the database
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | python3 scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py > sqlite-receipt.json
+          print("2026-10-13T18:10:48.9881315Z ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: attempt to write a readonly database")
+          PY
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("sqlite-receipt.json").read_text(encoding="utf-8"))
+          assert result["failure_category"] == "sqlite_readonly_error_marker"
+          assert result["blocker_count"] is None
+          assert result["classes"] is None
+          assert result["independent_live_worker_state_verified"] is False
+          assert result["authorizes_mutation"] is False
+          assert result["production_deploy_verified"] is False
+          print("SQLite versus generation-timeout proof: PASS (historical log label only)")
           PY
       - name: Read historical real runner-route receipts without changing jobs
         env:
@@ -81,12 +100,12 @@ jobs:
           set -euo pipefail
           python3 scripts/zcloud_runner_route_evidence_20261013_w1.py \
             --run-id 38417582567 --run-id 38417793892 --run-id 38417002886 \
-            --run-id 38473312856 > route-receipt.json
+            --run-id 38473312856 --run-id 38444598342 > route-receipt.json
           python3 - <<'PY'
           import json
           data = json.load(open("route-receipt.json", encoding="utf-8"))
           assert data["authorizes_mutation"] is False
-          assert len(data["runs"]) == 4
+          assert len(data["runs"]) == 5
           by_id = {item["run_id"]: item for item in data["runs"]}
           # Past assigned jobs prove the canonical runner route worked at the
           # recorded timestamps, not that production deployment succeeded.
@@ -105,6 +124,11 @@ jobs:
           assert skipped["not_dispatched_count"] == 2
           assert skipped["unassigned_count"] == 0
           assert skipped["canonical_vps_assigned_count"] == 0
+          # This DIFFERENT safe-idle failure came from a SQLite read-only
+          # exception, not the later active-generation timeout.
+          readonly = by_id[38444598342]["lanes"]["zcloud_vps"]
+          assert readonly["assigned_count"] >= 1
+          assert readonly["failed_jobs"] >= 1
           print("Historical runner route evidence: PASS; no release authority")
           PY
       - name: Sample the latest two canonical main deploy routes (non-authorizing)
@@ -140,8 +164,12 @@ jobs:
 
           current = json.loads(Path("current-route-receipt.json").read_text(encoding="utf-8"))
           drain = json.loads(Path("drain-receipt.json").read_text(encoding="utf-8"))
+          sqlite = json.loads(Path("sqlite-receipt.json").read_text(encoding="utf-8"))
           assert current["authorizes_mutation"] is False
           assert drain["authorizes_mutation"] is False
+          assert sqlite["authorizes_mutation"] is False
+          assert sqlite["failure_category"] == "sqlite_readonly_error_marker"
+          assert drain["failure_category"] == "safe_idle_timeout_marker"
           assert all(r["production_deploy_verified"] is False for r in current["runs"])
           lines = [
               "## zCloud deploy-ops (observation, not release)",
@@ -175,7 +203,9 @@ jobs:
               )
               assert len(fields) == len(lines[4].strip("|").split("|"))
               lines.append("| " + " | ".join(str(value) for value in fields) + " |")
-          lines.extend(["", "Safety: source validated, production still unverified.",
+          lines.extend(["", "Safe-idle includes distinct SQLite permission and active-generation timeout failure markers.",
+                        "A historic SQLite error does not prove current filesystem permissions.",
+                        "Safety: source validated, production still unverified.",
                         "Browser heartbeats and synthetic log fixtures do not prove real text progress."])
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")
@@ -189,5 +219,6 @@ jobs:
             route-receipt.json
             current-route-receipt.json
             drain-receipt.json
+            sqlite-receipt.json
           if-no-files-found: error
           retention-days: 3

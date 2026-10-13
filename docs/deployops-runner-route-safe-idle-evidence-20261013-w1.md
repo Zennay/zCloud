@@ -10,6 +10,7 @@
 - [Deploy 38471675524](https://github.com/Zennay/zCloud/actions/runs/38471675524) separately reached `zcloud-vps-1`, then timed out at safe-idle with workers including Cloud/FTMO reporting generation. **Do not force-stop these workers to make the deploy green.**
 - [FuckBall audit 38417002886](https://github.com/Zennay/zCloud/actions/runs/38417002886) used a different `ftmo-research` label and was unassigned at inspection. Do not misattribute it to the already scheduled `zcloud,vps` lane.
 - [VPS lane probe 38473312856](https://github.com/Zennay/zCloud/actions/runs/38473312856) contains **two real skipped jobs** with `self-hosted,zcloud,vps` labels and no runner assignment. These were *not dispatched*. They must **not** be counted as queued offline VPS jobs. Waiting/approval/pending jobs are also not yet runner-eligible and are counted separately from truly queued jobs.
+- [Earlier guarded deploy 38444598342](https://github.com/Zennay/zCloud/actions/runs/38444598342) also reached a VPS runner, but its live log reports `ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: attempt to write a readonly database` at 18:10 UTC. **This is a distinct SQLite write-denial failure**, not the later three-workers-after-completed-drain timeout. [PR #1338](https://github.com/Zennay/zCloud/pull/1338) already owns the isolated database-permission preflight; its later success is point-in-time evidence, not a current guarantee or retroactive cause fix. No duplicate SQLite runtime work belongs here.
 - [Safe-idle retry 38473312992](https://github.com/Zennay/zCloud/actions/runs/38473312992) failed when GitHub CLI refused terminal escape sequences from a job-log API response. Live retry workflow is already owned by [PR #1090](https://github.com/Zennay/zCloud/pull/1090); this evidence lane does not edit it.
 - **Cross-run exact marker comparison**: read-only GitHub job log inspection found one timestamped `ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED` marker in *each* failed main deploy (#38470693004 and #38471675524). Both had exactly **3/3** blockers reporting `draining` + `drain_command_status=completed` + `generating=true` + latest event `heartbeat`. This is not independent proof of real text changes or a frozen browser. No raw worker identities, chat links or log bodies were published.
 
@@ -30,6 +31,8 @@ This prints allowlisted stage categories only. GitHub sometimes omits `steps` fo
 # Inspect only your already retrieved, access-controlled job log.
 python3 scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py < local-job-log.txt
 ```
+
+The same read-only tool also recognizes the **exact, timestamped SQLite read-only error marker** from earlier deploy #38444598342. In that case it returns `failure_category=sqlite_readonly_error_marker`, `blocker_count=null`, and `classes=null`, because the log contains **no worker-population evidence**. The worker timeout marker instead yields `failure_category=safe_idle_timeout_marker` with bounded anonymized blocker counts. If both distinct markers occur in a supplied log, it **rejects the ambiguous receipt** rather than guessing the cause. Both remain non-authorizing historical observations.
 
 The log may itself contain secrets, so do **not** attach or publish raw logs publicly. The tool does not download or retain them, and should not be integrated into privileged workflows as a decision-maker.
 
