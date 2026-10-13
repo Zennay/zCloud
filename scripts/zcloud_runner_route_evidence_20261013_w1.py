@@ -238,9 +238,18 @@ def _verified_job_provenance(job: dict, requested_run_id: int) -> str:
     if type(sha) is not str or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
         raise InvalidEvidence("untrusted_job_provenance")
     name = job.get("workflow_name")
-    if type(name) is not str or not 0 < len(name) <= 180:
+    attempt = job.get("run_attempt")
+    job_id = job.get("id")
+    if (type(name) is not str or not 0 < len(name) <= 180
+            or type(attempt) is not int or attempt < 1
+            or type(job_id) is not int or job_id < 1):
         raise InvalidEvidence("untrusted_job_provenance")
-    return sha
+    if (job.get("run_url") != f"{API}/{requested_run_id}"
+            or job.get("url") != f"https://api.github.com/repos/{REPO}/actions/jobs/{job_id}"
+            or job.get("html_url") !=
+            f"https://github.com/{REPO}/actions/runs/{requested_run_id}/job/{job_id}"):
+        raise InvalidEvidence("untrusted_job_provenance")
+    return (sha, attempt)
 
 
 def fetch_jobs(run_id: int, token: str) -> list:
@@ -251,6 +260,7 @@ def fetch_jobs(run_id: int, token: str) -> list:
     count = None
     run_head_sha = None
     run_workflow_name = None
+    run_attempt = None
     for page in range(1, MAX_PAGES + 1):
         req = urllib.request.Request(
             f"{API}/{run_id}/jobs?filter=latest&per_page=100&page={page}",
@@ -275,13 +285,16 @@ def fetch_jobs(run_id: int, token: str) -> list:
         if total != count or len(page_jobs) > 100:
             raise InvalidEvidence("unstable_pagination")
         for job in page_jobs:
-            sha = _verified_job_provenance(job, run_id)
+            sha, attempt = _verified_job_provenance(job, run_id)
             if run_head_sha is not None and sha != run_head_sha:
                 raise InvalidEvidence("mixed_run_head_sha")
             if run_workflow_name is not None and job["workflow_name"] != run_workflow_name:
                 raise InvalidEvidence("mixed_run_workflow_name")
+            if run_attempt is not None and attempt != run_attempt:
+                raise InvalidEvidence("mixed_run_attempts")
             run_head_sha = sha
             run_workflow_name = job["workflow_name"]
+            run_attempt = attempt
         jobs.extend(page_jobs)
         if len(jobs) == count:
             return jobs
@@ -388,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
             "invalid_step_evidence","untrusted_deploy_run","invalid_unicode",
             "json_structure_limit","untrusted_job_provenance",
             "cross_run_job_evidence","mixed_run_head_sha",
-            "mixed_run_workflow_name"} else "unavailable"
+            "mixed_run_workflow_name","mixed_run_attempts"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
