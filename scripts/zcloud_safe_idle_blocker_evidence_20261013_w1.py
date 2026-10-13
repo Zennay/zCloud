@@ -20,6 +20,11 @@ LOG_LINE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) " +
     re.escape(MARKER) + r"(\[[^\r\n]*\])$", re.MULTILINE
 )
+SQLITE_READONLY_MARKER = "ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: attempt to write a readonly database"
+SQLITE_READONLY_LINE = re.compile(
+    r"^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z) " +
+    re.escape(SQLITE_READONLY_MARKER) + r"$", re.MULTILINE
+)
 _ALLOWED_EVENT = {"heartbeat", "generation-progress", "generation-started",
                   "generation-completed", "blocked", "ready", "idle"}
 
@@ -82,9 +87,11 @@ def classify(text: str, now: datetime | None = None) -> dict:
     if type(text) is not str or len(text.encode("utf-8", errors="replace")) > MAX_LOG_BYTES:
         raise UntrustedLog("invalid_log_size")
     matches = LOG_LINE.findall(text)
-    if len(matches) != 1:
+    readonly = SQLITE_READONLY_LINE.findall(text)
+    if len(matches) + len(readonly) != 1:
+        # Mixed cause markers are ambiguous: never pick one opportunistically.
         raise UntrustedLog("ambiguous_or_missing_safe_idle_marker")
-    stamp, payload = matches[0]
+    stamp, payload = matches[0] if matches else (readonly[0], None)
     try:
         event_time = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
     except ValueError as exc:
@@ -98,6 +105,25 @@ def classify(text: str, now: datetime | None = None) -> dict:
     marker_age_seconds = max(0, int(elapsed))
     # Historic browser reports must not be mistaken for live worker state.
     fresh_for_triage = marker_age_seconds <= 900
+    if readonly:
+        # A SQLite exception is NOT a browser generation timeout. No worker
+        # population is observed, so blocker_count must remain unknown.
+        return {
+            "schema": "zcloud-safe-idle-blocker-evidence-v1",
+            "source": "untrusted_operator_supplied_log",
+            "failure_category": "sqlite_readonly_error_marker",
+            "blocker_count": None,
+            "marker_age_seconds": marker_age_seconds,
+            "fresh_for_triage": bool(fresh_for_triage),
+            "independent_live_worker_state_verified": False,
+            "classes": None,
+            "only_acknowledged_draining_generation": False,
+            "proves_browser_text_progress": False,
+            "proves_process_stuck": False,
+            "production_deploy_verified": False,
+            "authorizes_worker_interrupt": False,
+            "authorizes_mutation": False,
+        }
     if len(payload.encode("utf-8")) > MAX_MARKER_BYTES:
         raise UntrustedLog("oversized_marker")
     rows = _validated_marker_payload(payload)
@@ -146,6 +172,7 @@ def classify(text: str, now: datetime | None = None) -> dict:
     return {
         "schema": "zcloud-safe-idle-blocker-evidence-v1",
         "source": "untrusted_operator_supplied_log",
+        "failure_category": "safe_idle_timeout_marker",
         "blocker_count": len(rows),
         "marker_age_seconds": marker_age_seconds,
         "fresh_for_triage": bool(fresh_for_triage),

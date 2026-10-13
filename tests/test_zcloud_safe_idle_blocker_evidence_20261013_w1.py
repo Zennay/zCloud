@@ -32,6 +32,30 @@ def log(*rows):
 
 
 class SafeIdleEvidenceTests(unittest.TestCase):
+    def test_real_sqlite_readonly_marker_not_conflated_with_generating_timeout(self):
+        raw = ("2026-10-13T18:10:48.9881315Z " + evidence.SQLITE_READONLY_MARKER
+               + "\\n")
+        at = datetime(2026, 10, 13, 18, 11, tzinfo=timezone.utc)
+        record = evidence.classify(raw, now=at)
+        self.assertEqual(record["failure_category"], "sqlite_readonly_error_marker")
+        self.assertIsNone(record["blocker_count"])
+        self.assertIsNone(record["classes"])
+        self.assertFalse(record["only_acknowledged_draining_generation"])
+        self.assertFalse(record["independent_live_worker_state_verified"])
+        self.assertFalse(record["authorizes_mutation"])
+
+    def test_mixed_sqlite_and_generation_markers_are_ambiguous(self):
+        raw = ("2026-10-13T18:10:48.9881315Z " + evidence.SQLITE_READONLY_MARKER
+               + "\\n" + log(row()))
+        with self.assertRaisesRegex(evidence.UntrustedLog,
+                                    "ambiguous_or_missing_safe_idle_marker"):
+            evidence.classify(raw)
+
+    def test_sqlite_marker_future_timestamp_rejected(self):
+        raw = "2099-10-13T18:10:48Z " + evidence.SQLITE_READONLY_MARKER + "\\n"
+        with self.assertRaisesRegex(evidence.UntrustedLog, "future_log_timestamp"):
+            evidence.classify(raw)
+
     def test_unhashable_drain_and_desired_states_are_safely_denied(self):
         for value in ({}, [], {"fake": "completed"}, True, 2):
             for attribute, reason in (("desired_state", "invalid_desired_state"),
