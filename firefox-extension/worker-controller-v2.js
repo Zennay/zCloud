@@ -150,6 +150,28 @@
         throw new Error("invalid-target-payload");
       const tabs = await recoverOwnership();
       const desired = new Map(Object.values(payload.projects).filter(assigned).map(t => [t.project_id,t]));
+      // Queue leases may disappear during a browser crash or scheduler
+      // handover, even though the worker still exists in the user's saved
+      // configuration. Recover only exact, previously seen worker identities.
+      // Never invent a project for an empty slot or exceed the ChatGPT pool
+      // limit. An unclaimed worker remains idle until a valid lease returns.
+      const restorableWithoutLease = new Set();
+      const poolSize = Number(payload.dynamic_workers?.chatgpt_count);
+      if (Number.isInteger(poolSize) && poolSize > 0) {
+        for (const key of knownWorkers) {
+          if (desired.size >= poolSize) break;
+          if (desired.has(key)) continue;
+          const target = payload.projects[key];
+          if (!target || String(target.project_id) !== key ||
+              target.provider !== "chatgpt" ||
+              target.desired_state !== "running" ||
+              !/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key) ||
+              Number(target.worker_slot) < 1 ||
+              Number(target.worker_slot) > Number(target.worker_count)) continue;
+          desired.set(key, target);
+          restorableWithoutLease.add(key);
+        }
+      }
       const windowId = await chooseWindow(tabs);
       // The authenticated local backend is the authority for active worker
       // identities. A restored personal/expert ChatGPT tab must not block
@@ -163,7 +185,8 @@
         candidateRemovals.delete(key);
         // Paused workers don't generate and must NOT be recreated. Existing
         // paused tabs remain untouched if Firefox happened to restore them.
-        if (target.desired_state === "paused" || target.active !== true) continue;
+        if (target.desired_state === "paused" || target.desired_state === "draining" ||
+            (target.active !== true && !restorableWithoutLease.has(key))) continue;
         // Wait for two valid backend snapshots to allow Firefox sessionstore
         // to finish restoring tabs. Then create exactly the missing slot.
         // The v2 in-page runner alone decides whether a prompt is permitted.
