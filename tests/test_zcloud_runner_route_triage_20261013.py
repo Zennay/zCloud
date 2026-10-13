@@ -186,6 +186,28 @@ class TestRunnerRoute(unittest.TestCase):
     def test_missing_runner(self):
         x=fixture(); del x['runners']
         with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_jobs_only_roster_is_unverified_and_no_false_offline_claim(self):
+        x=fixture()
+        x['runners']=[]
+        x['runner_inventory_unverified']=True
+        result=self.classify(x)
+        self.assertFalse(result['runner_inventory_verified'])
+        self.assertEqual(result['stale_unassigned_jobs'], 1)
+        self.assertEqual(result['classification'], 'labels_or_access_unproven')
+        self.assertFalse(result['recovery_authorized'])
+
+    def test_jobs_only_contradictory_nonempty_roster_denied(self):
+        x=fixture()
+        x['runner_inventory_unverified']=True
+        with self.assertRaisesRegex(t.EvidenceError,'contradictory_runner_inventory_mode'):
+            self.classify(x)
+
+    def test_jobs_only_invalid_tristate_flag_denied(self):
+        x=fixture()
+        x['runner_inventory_unverified']='false'
+        with self.assertRaisesRegex(t.EvidenceError,'contradictory_runner_inventory_mode'):
+            self.classify(x)
+
     def test_stale_queued_run_without_jobs_is_not_green(self):
         x=fixture()
         x['jobs_by_run']['123']=[]
