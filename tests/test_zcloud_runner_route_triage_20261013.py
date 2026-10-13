@@ -38,6 +38,32 @@ class TestRunnerRoute(unittest.TestCase):
         result=self.classify(x)
         self.assertEqual(result['classification'], 'labels_or_access_unproven')
         self.assertEqual(result['by_cause']['group_access_unverified'], 1)
+    def test_real_github_zero_and_empty_group_sentinel_is_unassigned(self):
+        x = fixture()
+        job = x['jobs_by_run']['123'][0]
+        job['runner_group_id'] = 0
+        job['runner_group_name'] = ''
+        result = self.classify(x)
+        self.assertEqual(result['classification'], 'route_available_but_queued')
+        self.assertEqual(result['stale_unassigned_jobs'], 1)
+        self.assertEqual(result['by_cause']['group_access_unverified'], 0)
+        self.assertEqual(result['stale_label_profiles']['zcloud_vps'], 1)
+
+    def test_zero_group_with_positive_group_name_not_assumed_eligible(self):
+        x = fixture()
+        job = x['jobs_by_run']['123'][0]
+        job['runner_group_id'] = 0
+        job['runner_group_name'] = 'Private-Runners'
+        result = self.classify(x)
+        self.assertEqual(result['by_cause']['group_access_unverified'], 1)
+        self.assertFalse(result['recovery_authorized'])
+
+    def test_negative_group_id_is_invalid(self):
+        x = fixture()
+        x['jobs_by_run']['123'][0]['runner_group_id'] = -1
+        with self.assertRaises(t.EvidenceError):
+            self.classify(x)
+
     def test_invalid_group_id(self):
         x=fixture(); x['jobs_by_run']['123'][0]['runner_group_id']=True
         with self.assertRaises(t.EvidenceError): self.classify(x)
