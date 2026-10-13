@@ -28,7 +28,7 @@ assert.ok(source.includes("await browser.tabs.update(reservedId, {url:String(url
 assert.ok(!/browser\.tabs\.update\([^\n]*active:\s*true/.test(source),
  "extension must never activate any existing tab");
 
-const events=[],tabs=[],tags=new Map(),calls=[];
+const events=[],tabs=[],tags=new Map(),calls=[],busyTabs=new Set();
 let nextId=20,snapshot={},v2VersionConfirmed=true,poolSize=4,auditMode="project",pendingCommands=[];
 const row=(id,slot)=>({project_id:id,active:true,assignment_ready:true,
  desired_state:"running",global_worker_count:4,global_worker_slot:slot,
@@ -57,7 +57,7 @@ const browser={
     if(opts?.code?.includes("data-zcloud-violentmonkey-ready"))return [{
       version:v2VersionConfirmed?"2.0.1":"1.3.18",
       owner:tags.get(tabId+"|zcloud-v2-worker-key")||tags.get(tabId+"|zcloud-worker-id")||"",
-      lastPoll:Date.now(),poll:Date.now(),generating:false,draft:false
+      lastPoll:Date.now(),poll:Date.now(),busy:busyTabs.has(tabId)?"true":"false",generating:busyTabs.has(tabId),draft:false
     }];
     return [true];
   },
@@ -158,10 +158,11 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  assert.equal(capacity.length,1,"Save 2 to 3 opens exactly one background capacity tab");
  assert.equal(tags.get(capacity[0].id+"|zcloud-v2-pool-reserve"),"3");
  assert.ok(tabs.some(t=>t.id===2),"Save never adopts personal expert tab");
- // Forceer a different project: the backend replaces the allocation for
- // provider slot 2. Rebind its existing, idle worker tab; do not open a
- // duplicate or steal focus. Then wake ONLY the exact new worker.
+ // Forceer a different project: the backend replaces provider slot 2.
+ // The old idle worker tab is retired; a NEW owned tab is created for the
+ // freshly assigned project. No personal/expert tab can be touched.
  const previous=ownershipSnapshot().tabs.find(([k])=>k==="ftmo::w1")[1];
+ const beforeSwitchCreates=calls.filter(x=>x.type==="create").length;
  snapshot={
    "supa::w1":row("supa::w1",1),
    "ftmo::w1":{...row("ftmo::w1",2),active:false,assignment_ready:false,
@@ -169,18 +170,55 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
    "lightup::w1":{...row("lightup::w1",2),provider:"chatgpt"}
  };
  await pump();await pump();
- if(ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")?.[1]!==previous)
-   console.log("rebind-diagnostic",JSON.stringify({events:events.slice(-12),calls:calls.slice(-8),tabs:ownershipSnapshot().tabs}));
- assert.equal(ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")[1],previous,
-   "Force project switch reuses the released worker slot");
- assert.ok(!ownershipSnapshot().tabs.some(([k])=>k==="ftmo::w1"),"retired project identity released");
- assert.equal(calls.filter(c=>c.type==="update").length,1,"only one exact safe idle rebind");
- pendingCommands=[{id:101,project_id:"lightup",action:"start"}];
+ const rebound=ownershipSnapshot().tabs.find(([k])=>k==="lightup::w1")?.[1];
+ assert.ok(rebound&&rebound!==previous,
+   "project switch creates a distinct freshly tagged worker tab");
+ assert.equal(tags.get(rebound+"|zcloud-v2-worker-key"),"lightup::w1",
+   "new worker tab has exactly its assigned identity");
+ assert.equal(calls.filter(x=>x.type==="create").length,beforeSwitchCreates+1,
+   "one new tab for the new project allocation");
+ assert.equal(calls.filter(x=>x.type==="update").length,0,
+   "project switch never redirects or steals a prior conversation");
+ assert.ok(!ownershipSnapshot().tabs.some(([k])=>k==="ftmo::w1"),
+   "retired project releases previous owner");
+ pendingCommands=[{id:101,project_id:"lightup",action:"start",force:false}];
  await ctx.commandProbe();
- assert.deepEqual(calls.filter(c=>c.type==="wake").map(c=>c.id),[previous],
-   "Force wakes only the freshly assigned project worker");
+ assert.deepEqual(calls.filter(c=>c.type==="wake").map(c=>c.id),[rebound],
+   "Start wakes the correct fresh worker tab");
  pendingCommands=[];await ctx.commandProbe();
- assert.equal(calls.filter(c=>c.type==="wake").length,1,"completed command never retriggers");
- assert.ok(tabs.some(t=>t.id===2),"expert tab survives project switching");
- console.log("single-tab-worker-v2: Save 2->3, Force project rebind + prompt wake, expert isolation PASS");
+ // Explicit Force must replace an idle worker tab even for the SAME worker ID.
+ // The new tab is ticketed; old tab never receives a second Force prompt.
+ const createsBeforeForce=calls.filter(x=>x.type==="create").length;
+ pendingCommands=[{id:102,project_id:"lightup",action:"start",force:true}];
+ await ctx.commandProbe();
+ const forced=tabs.find(t=>t.url.includes("zcloud_force_command=102"))?.id;
+ assert.ok(forced&&forced!==rebound,"Force replaces same-ID worker with a new tab");
+ assert.equal(calls.filter(x=>x.type==="create").length,createsBeforeForce+1);
+ assert.ok(!tabs.some(t=>t.id===rebound),"verified idle old worker tab is retired");
+ assert.ok(tabs.find(t=>t.id===forced)?.url.includes("zcloud_force_command=102"),
+   "new tab carries the exact explicit Force ticket");
+ assert.equal(tags.get(forced+"|zcloud-v2-worker-key"),"lightup::w1");
+ const createsAfterForce=calls.filter(x=>x.type==="create").length;
+ await ctx.commandProbe();
+ assert.equal(calls.filter(x=>x.type==="create").length,createsAfterForce,
+   "same pending Force command never creates another tab");
+ pendingCommands=[];
+ await ctx.commandProbe();
+ // Busy worker may NOT be interrupted; retry after it is independently idle.
+ busyTabs.add(forced);
+ pendingCommands=[{id:103,project_id:"lightup",action:"start",force:true}];
+ await ctx.commandProbe();
+ assert.equal(calls.filter(x=>x.type==="create").length,createsAfterForce,
+   "Force never interrupts a generating worker");
+ assert.ok(tabs.some(t=>t.id===forced),"busy generation is preserved");
+ busyTabs.delete(forced);
+ await ctx.commandProbe();
+ assert.equal(calls.filter(x=>x.type==="create").length,createsAfterForce+1,
+   "once idle the pending Force creates its new dedicated tab");
+ assert.ok(tabs.some(t=>t.id===2),"expert tab survives every Force");
+ assert.ok(engine.includes('String(command.id)!==forceTicket'),
+   "old userscript must refuse a Force ticket belonging to the replacement");
+ assert.ok(engine.includes('data-zcloud-v2-busy'),
+   "busy DOM handshake blocks unsafe forced replacement");
+ console.log("single-tab-worker-v2: Save, new Force tab, exact owner/ticket, dedupe, busy safety PASS");
 })().catch(e=>{console.error(e);process.exitCode=1});
