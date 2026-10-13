@@ -220,6 +220,39 @@ class TestRunnerRoute(unittest.TestCase):
     def test_redirect_denied_before_follow(self):
         with self.assertRaises(t.EvidenceError):
             t.RefuseRedirect().redirect_request(None, None, 302, 'moved', {}, 'https://example.invalid/')
+    def test_pagination_rejects_missing_total_count(self):
+        with patch.object(t, 'api', return_value={'runners': []}):
+            with self.assertRaises(t.EvidenceError):
+                t.pages('/repos/Zennay/zCloud/actions/runners', 'runners', 'test')
+
+    def test_pagination_rejects_bool_total_count(self):
+        with patch.object(t, 'api', return_value={'total_count': True, 'runners': []}):
+            with self.assertRaises(t.EvidenceError):
+                t.pages('/repos/Zennay/zCloud/actions/runners', 'runners', 'test')
+
+    def test_pagination_rejects_understated_total_count(self):
+        with patch.object(t, 'api', return_value={'total_count': 0, 'runners': [{'id': 1}]}):
+            with self.assertRaises(t.EvidenceError):
+                t.pages('/repos/Zennay/zCloud/actions/runners', 'runners', 'test')
+
+    def test_pagination_rejects_midstream_count_change(self):
+        pages = iter([
+            {'total_count': 101, 'runners': [{'id': i} for i in range(100)]},
+            {'total_count': 102, 'runners': [{'id': 100}, {'id': 101}]},
+        ])
+        with patch.object(t, 'api', side_effect=lambda *a: next(pages)):
+            with self.assertRaisesRegex(t.EvidenceError, 'pagination_race'):
+                t.pages('/repos/Zennay/zCloud/actions/runners', 'runners', 'test')
+
+    def test_pagination_completes_multiple_pages_with_exact_total(self):
+        pages = iter([
+            {'total_count': 101, 'runners': [{'id': i} for i in range(100)]},
+            {'total_count': 101, 'runners': [{'id': 100}]},
+        ])
+        with patch.object(t, 'api', side_effect=lambda *a: next(pages)):
+            self.assertEqual(
+                len(t.pages('/repos/Zennay/zCloud/actions/runners', 'runners', 'test')), 101)
+
     def test_api_get_only(self):
         calls=[]
         def fake(req, timeout):
