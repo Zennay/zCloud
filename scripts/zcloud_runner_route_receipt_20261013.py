@@ -34,6 +34,28 @@ SAFE_UNKNOWN_REASONS = {
 }
 
 
+# Explicitly whitelisted source-code constants; raw exception content never
+# crosses into logs. This pinpoints where a live Actions read was inconclusive.
+SAFE_PROBE_CODES = frozenset((
+    'api_unavailable_or_permission_denied', 'contradictory_runner_inventory_mode',
+    'deep_json', 'duplicate_json_key', 'forbidden_endpoint', 'future_run_clock',
+    'github_api_redirect_denied', 'incomplete_inventory', 'incomplete_run_jobs',
+    'invalid_api_response', 'invalid_job_queue_clock', 'invalid_json',
+    'invalid_json_string', 'invalid_label', 'invalid_live_mode',
+    'invalid_or_duplicate_job', 'invalid_or_duplicate_run',
+    'invalid_or_duplicate_runner', 'invalid_or_unbounded_total_count',
+    'invalid_run', 'invalid_runner', 'invalid_runner_assignment',
+    'invalid_runner_group', 'invalid_timestamp', 'missing_github_token',
+    'missing_jobs', 'naive_timestamp', 'nonfinite_json',
+    'observation_too_slow', 'oversized_api_page', 'oversized_fixture',
+    'oversized_response', 'pagination_cap_reached',
+    'pagination_count_conflict', 'pagination_race', 'repository_mismatch',
+    'run_state_race', 'runner_roster_changed_during_observation',
+    'stale_or_future_snapshot', 'unknown_runner_state',
+    'untrusted_api_response', 'missing_api_page', 'missing_labels',
+    'missing_run_jobs',
+))
+
 def checked_count(value):
     if type(value) is not int or not 0 <= value <= 500:
         raise EvidenceError('invalid_count')
@@ -75,13 +97,16 @@ def receipt(blob, exit_code):
     profiles = {k: checked_count(v) for k, v in profiles.items()}
     if sum(profiles.values()) != count:
         raise EvidenceError('contradictory_label_profile_count')
+    raw_reason = obj.get('reason')
+    probe_error_code = (raw_reason if exit_code == 2 and
+                        isinstance(raw_reason, str) and raw_reason in SAFE_PROBE_CODES
+                        else 'none')
     if exit_code != 2:
         incompleteness_cause = 'none'
     elif gaps:
         incompleteness_cause = 'historical_queued_run_without_jobs'
     else:
-        incompleteness_cause = SAFE_UNKNOWN_REASONS.get(obj.get('reason')
-                                                        if isinstance(obj.get('reason'), str) else None,
+        incompleteness_cause = SAFE_UNKNOWN_REASONS.get(probe_error_code,
                                                         'unclassified_missing_evidence')
     return {
         'evidence': 'github_actions_get_only',
@@ -90,6 +115,7 @@ def receipt(blob, exit_code):
         'stale_unassigned_jobs': count,
         'unknown_stale_queued_runs': gaps,
         'incompleteness_cause': incompleteness_cause,
+        'probe_error_code': probe_error_code,
         'stale_label_profiles': profiles,
         'runner_inventory_verified': False,
         'mutation_authorized': False,
