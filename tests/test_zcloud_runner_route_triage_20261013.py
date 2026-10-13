@@ -186,6 +186,26 @@ class TestRunnerRoute(unittest.TestCase):
     def test_missing_runner(self):
         x=fixture(); del x['runners']
         with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_stale_label_profiles_zcloud_vps(self):
+        result = self.classify(fixture())
+        self.assertEqual(result['stale_label_profiles'],
+                         {'ftmo_research': 0, 'zcloud_vps': 1, 'other': 0})
+
+    def test_stale_label_profiles_ftmo(self):
+        x = fixture(names=('self-hosted','ftmo-research'))
+        x['jobs_by_run']['123'][0]['labels'] = ['self-hosted','ftmo-research']
+        result = self.classify(x)
+        self.assertEqual(result['stale_label_profiles'],
+                         {'ftmo_research': 1, 'zcloud_vps': 0, 'other': 0})
+        self.assertFalse(result['recovery_authorized'])
+
+    def test_stale_label_profiles_other_without_echo(self):
+        x = fixture()
+        x['jobs_by_run']['123'][0]['labels'] = ['self-hosted','classified-label']
+        result = self.classify(x)
+        self.assertEqual(result['stale_label_profiles']['other'], 1)
+        self.assertNotIn('classified-label', json.dumps(result))
+
     def test_jobs_only_roster_is_unverified_and_no_false_offline_claim(self):
         x=fixture()
         x['runners']=[]
