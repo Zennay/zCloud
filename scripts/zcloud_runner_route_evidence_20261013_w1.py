@@ -296,6 +296,11 @@ def fetch_jobs(run_id: int, token: str) -> list:
             run_workflow_name = job["workflow_name"]
             run_attempt = attempt
         jobs.extend(page_jobs)
+        # Reject duplicate-offset pages even before the caller classifies a run.
+        job_ids = [job.get("id") for job in jobs]
+        if (any(type(job_id) is not int or job_id < 1 for job_id in job_ids)
+                or len(set(job_ids)) != len(job_ids)):
+            raise InvalidEvidence("duplicate_job_id")
         if len(jobs) == count:
             return jobs
         if len(jobs) > count or not page_jobs:
