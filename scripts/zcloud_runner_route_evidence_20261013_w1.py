@@ -64,6 +64,47 @@ def _age(timestamp: object, now: datetime) -> int:
     return max(0, int(seconds))
 
 
+# Only fixed categories leave this diagnostic; GitHub step titles remain private.
+FAILED_STEP_CATEGORIES = {
+    "Enter browser safe-idle for guarded promotion": "browser_safe_idle",
+    "Promote backend runtime core": "runtime_promotion",
+    "Re-arm VPS-native self-heal after guarded deploy": "self_heal_rearm",
+    "Mark production deploy pending": "production_status",
+    "Resolve latest green main revision": "regression_provenance",
+    "Reconfirm green main before VPS writes": "regression_provenance",
+    "Enforce permanent zCloud VPS runner identity": "runner_identity",
+}
+
+
+def _failure_phase(job: dict) -> str | None:
+    """Explain terminal failure from job steps; never expose arbitrary step names."""
+    if job.get("conclusion") != "failure":
+        return None
+    steps = job.get("steps")
+    if steps is None:
+        return "step_evidence_missing"
+    if type(steps) is not list or len(steps) > 150:
+        raise InvalidEvidence("invalid_step_evidence")
+    failures = []
+    for step in steps:
+        if type(step) is not dict or type(step.get("name")) is not str:
+            raise InvalidEvidence("invalid_step_evidence")
+        if len(step["name"]) > 200:
+            raise InvalidEvidence("invalid_step_evidence")
+        c = step.get("conclusion")
+        if c is not None and (type(c) is not str or c not in
+                              {"success", "failure", "skipped", "cancelled", "timed_out",
+                               "neutral", "action_required"}):
+            raise InvalidEvidence("invalid_step_evidence")
+        if c == "failure":
+            failures.append(FAILED_STEP_CATEGORIES.get(step["name"], "other_step"))
+    if len(failures) == 0:
+        return "no_failed_step_observed"
+    if len(set(failures)) > 1:
+        return "multiple_failure_phases"
+    return failures[0]
+
+
 def classify_job(job: dict, now: datetime) -> dict:
     if type(job) is not dict or type(job.get("id")) is not int or job["id"] <= 0:
         raise InvalidEvidence("invalid_job_identity")
@@ -107,7 +148,7 @@ def classify_job(job: dict, now: datetime) -> dict:
     return {"job_id": job["id"], "lane": lane, "status": status, "route": route,
             "queue_age_seconds": age if route == "unassigned" else None,
             "runner_id": runner_id if route == "runner_assigned" else None,
-            "conclusion": conclusion}
+            "conclusion": conclusion, "failure_phase": _failure_phase(job)}
 
 
 def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
@@ -132,6 +173,11 @@ def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
                 (j["queue_age_seconds"] for j in relevant if j["queue_age_seconds"] is not None),
                 default=None),
             "failed_jobs": sum(j["conclusion"] == "failure" for j in relevant),
+            "failure_phases": {
+                phase: sum(j["failure_phase"] == phase for j in relevant)
+                for phase in sorted(set(j["failure_phase"] for j in relevant)
+                                    - {None})
+            },
         }
     return {"schema": "zcloud-runner-route-evidence-v1",
             "run_id": run_id, "authorizes_mutation": False,
@@ -252,7 +298,8 @@ def main(argv: list[str] | None = None) -> int:
             "duplicate_job_id","invalid_run_id","missing_actions_token",
             "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
             "malformed_pagination","unstable_pagination","incomplete_pagination",
-            "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection"} else "unavailable"
+            "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection",
+            "invalid_step_evidence"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
