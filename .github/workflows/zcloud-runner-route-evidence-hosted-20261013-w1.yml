@@ -38,6 +38,21 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -v
+      - name: Cross-language hosted smoke (shell, Node, Firefox contracts)
+        run: |
+          set -euo pipefail
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node --check public/zcloud-worker.user.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
       - name: Validate synthetic completed-drain log receipt without touching workers
         run: |
           set -euo pipefail
