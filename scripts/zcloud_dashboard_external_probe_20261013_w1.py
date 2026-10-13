@@ -29,6 +29,7 @@ RETRY_DELAY_SECONDS = 5
 TIMEOUT_SECONDS = 12
 CATEGORIES = frozenset({
     "healthy", "dns", "connection", "timeout", "tls", "http_status",
+    "http_redirect", "http_client_error", "http_server_error",
     "content_type", "body_too_large", "invalid_json", "invalid_schema",
     "transport_failure", "stale_timestamp", "future_timestamp", "invalid_headers",
 })
@@ -101,6 +102,19 @@ def _validate_payload(raw, *, now=None):
     return "healthy"
 
 
+def _http_status_category(status):
+    """Coarse, privacy-safe status group; never record error URLs or bodies."""
+    if type(status) is not int:
+        return "http_status"
+    if 300 <= status < 400:
+        return "http_redirect"
+    if 400 <= status < 500:
+        return "http_client_error"
+    if 500 <= status < 600:
+        return "http_server_error"
+    return "http_status"
+
+
 def _exception_category(exc):
     """Sanitize transport faults even if their cause chain is cyclic or corrupt."""
     visited = set()
@@ -108,7 +122,7 @@ def _exception_category(exc):
     # through untrusted .reason indefinitely and NEVER stringify exceptions.
     for _ in range(8):
         if isinstance(exc, urllib.error.HTTPError):
-            return "http_status"
+            return _http_status_category(exc.code)
         if isinstance(exc, (TimeoutError, socket.timeout)):
             return "timeout"
         if isinstance(exc, ssl.SSLError):
@@ -143,8 +157,8 @@ def probe_once(opener=None):
     )
     try:
         with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
-            if response.status != 200:
-                return "http_status"
+            if type(response.status) is not int or response.status != 200:
+                return _http_status_category(response.status)
             headers = response.headers
             # HTTPMessage.get_all exposes duplicate / conflicting header lines.
             # A dictionary test fixture cannot contain duplicate physical lines.
@@ -227,6 +241,9 @@ def operator_markdown(summary: ProbeSummary) -> str:
         "timeout": "Time-out",
         "tls": "TLS-verbinding",
         "http_status": "HTTP-status niet 200",
+        "http_redirect": "Onverwachte HTTP-doorverwijzing",
+        "http_client_error": "HTTP-aanvraag geweigerd (4xx)",
+        "http_server_error": "HTTP-serverfout (5xx)",
         "invalid_headers": "Tegenstrijdige HTTP-headers",
         "content_type": "Onverwacht antwoordtype",
         "body_too_large": "Antwoord te groot",
