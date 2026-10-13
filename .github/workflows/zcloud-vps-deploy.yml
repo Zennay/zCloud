@@ -619,8 +619,14 @@ jobs:
           set -euo pipefail
           root="/home/ubuntu/zennay-cloud"
           pointer="$HOME/.local/state/zcloud/recovery/last-known-good.json"
-          expected_live_sha="160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
-          expected_lkg="20261002T105256Z-a57439eb"
+          # Exact live source observed in the read-only canonical-main
+          # provenance proof run 38443536258 (2026-10-13 18:03 UTC).
+          # Restrict manual drift adoption to this known byte sequence AND the
+          # still-current LKG snapshot; any new drift fails closed.
+          known_pairs=(
+            "160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f:20261002T105256Z-a57439eb"
+            "cc54280fe8d34385a8498c4043578daaf6d81e3714bd09b39b729be0769a114e:20261009T163321Z-a57439eb"
+          )
           live_sha="$(sha256sum "$root/server.py" | awk '{print $1}')"
           current_lkg="$(python3 - "$pointer" <<'PY'
           import json
@@ -630,8 +636,13 @@ jobs:
           PY
           )"
 
-          if [[ "$live_sha" == "$expected_live_sha" && "$current_lkg" == "$expected_lkg" ]]; then
+          allowed=false
+          for pin in "${known_pairs[@]}"; do
+            if [[ "$live_sha:$current_lkg" == "$pin" ]]; then allowed=true; break; fi
+          done
+          if [[ "$allowed" == true ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "live_sha=$live_sha" >> "$GITHUB_OUTPUT"
             echo "KNOWN_LIVE_SERVER_RECONCILE=authorized live_sha=$live_sha lkg=$current_lkg"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -647,7 +658,7 @@ jobs:
           if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]; then
             reconcile_args+=(
               --reconcile-known-live-sha
-              "server.py=160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
+              "server.py=${{ steps.server_drift_reconcile.outputs.live_sha }}"
             )
           fi
           python3 scripts/zcloud_transactional_promote.py \
