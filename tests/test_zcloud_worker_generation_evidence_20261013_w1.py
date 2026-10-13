@@ -86,7 +86,8 @@ class GenerationEvidenceTests(unittest.TestCase):
         self.assertFalse(report["tab_presence_verified"])
         self.assertFalse(report["generation_directly_verified"])
         self.assertEqual([{"worker": "cloud::w1", "state": "generating_observed",
-                           "generation_evidence": True, "progress_evidence": False}], report["workers"])
+                           "generation_evidence": True, "progress_evidence": False,
+                           "progress_state": "heartbeat_only"}], report["workers"])
 
     def test_heartbeat_generating_is_not_evidence_of_new_answer_text(self):
         report = self.classify(require_progress=True)
@@ -124,6 +125,26 @@ class GenerationEvidenceTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     subject.EvidenceDenied, "invalid_progress_policy"):
                 self.classify(require_progress=invalid)
+
+    def test_progress_diagnostic_states_cover_text_change_and_heartbeat(self):
+        for event, age, expected in [
+            ("heartbeat", 2, "heartbeat_only"),
+            ("generation-started", 2, "generation_started_no_text"),
+            ("generation-progress", 2, "recent_text_change"),
+            ("generation-progress", 46, "progress_stale"),
+            ("generation-finished", 2, "not_generating"),
+        ]:
+            with self.subTest(event=event, age=age):
+                verdict = "generating" if event != "generation-finished" else "waiting"
+                result = self.classify(d=debug(row(verdict=verdict, last_event=event, last_event_age_s=age)))
+                self.assertEqual(expected, result["workers"][0]["progress_state"])
+                self.assertEqual({expected: 1}, result["progress_counts"])
+
+    def test_progress_counts_include_other_provider_but_not_in_chatgpt_green(self):
+        t=targets(allocation(), allocation("haxlab::w2", "claude"))
+        result=self.classify(t=t,d=debug(row(last_event="generation-progress")))
+        self.assertTrue(result["all_allocated_chatgpt_progressing"])
+        self.assertEqual({"recent_text_change": 1, "not_applicable": 1}, result["progress_counts"])
 
     def test_prompt_sent_is_not_generation(self):
         result = self.classify(d=debug(row(verdict="prompt-sent")))
