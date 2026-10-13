@@ -169,10 +169,15 @@ def runs_snapshot(kind: str, sha: str, get=github_get) -> dict:
 
 def collect(get=github_get):
     start = read_main_sha(get)
+    status = status_snapshot(start, get)
     snap = {"schema": SCHEMA, "repository": REPO, "main_sha": start,
-            "production_status": status_snapshot(start, get),
-            "deploy": runs_snapshot("deploy", start, get),
-            "regression": runs_snapshot("regression", start, get)}
+            "production_status": status}
+    # Observed production failure already prohibits redispatch. Do not require
+    # costly/possibly paginated workflow-history reads merely to say NOOP.
+    if not any(item["context"] == "zcloud/vps-production"
+               for item in status["statuses"]):
+        snap["deploy"] = runs_snapshot("deploy", start, get)
+        snap["regression"] = runs_snapshot("regression", start, get)
     require(read_main_sha(get) == start, "main_changed_during_snapshot")
     return snap
 
