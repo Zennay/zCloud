@@ -40,3 +40,30 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_deploy_workflow_run_origin_offline_20261012_w1.py' -v
           python3 -m py_compile scripts/zcloud_deploy_workflow_run_origin_offline_20261012_w1.py
           echo "DEPLOY_WORKFLOW_RUN_ORIGIN_OFFLINE_GREEN=1"
+
+      - name: Deny the actual hosted GitHub event as a mutation authority
+        shell: bash
+        env:
+          OBSERVED_EVENT_NAME: ${{ github.event_name }}
+          OBSERVED_EVENT_PATH: ${{ github.event_path }}
+          OBSERVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from scripts.zcloud_deploy_workflow_run_origin_offline_20261012_w1 import classify_github_payload
+
+          with open(os.environ["OBSERVED_EVENT_PATH"], encoding="utf-8") as source:
+              payload = json.load(source)
+          decision = classify_github_payload(
+              payload, event_name=os.environ["OBSERVED_EVENT_NAME"],
+              canonical_main_sha=os.environ["OBSERVED_HEAD_SHA"],
+          )
+          assert os.environ["OBSERVED_EVENT_NAME"] in {"pull_request", "workflow_dispatch"}
+          assert not decision.trusted_origin_observed
+          assert not any((
+              decision.actions_cancel_authorized, decision.runner_restart_authorized,
+              decision.worker_push_authorized, decision.deploy_authorized,
+          ))
+          print(f"REAL_GITHUB_TRIGGER_DENIED={decision.reason}")
+          PY
