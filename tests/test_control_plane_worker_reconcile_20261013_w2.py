@@ -457,6 +457,16 @@ class ReconcileTests(unittest.TestCase):
         raw = json.dumps(value).encode("utf-8")
         self.assertEqual(module._strict_json(raw), value)
 
+    def test_exponent_overflow_cannot_bypass_nonfinite_json_denial(self):
+        with self.assertRaisesRegex(module.InvalidEvidence, "non-finite JSON number"):
+            module._strict_json(b'{"chatgpt_runners":{},"foo":1e999}')
+        with self.assertRaisesRegex(module.InvalidEvidence, "non-finite JSON number"):
+            module._strict_json(b'{"chatgpt_runners":{},"foo":-1e999}')
+
+    def test_normal_finite_fraction_still_accepted(self):
+        payload = module._strict_json(b'{"chatgpt_runners":{},"foo":1.25e-2}')
+        self.assertEqual(payload["foo"], 0.0125)
+
     def test_oversize_json_rejected(self):
         with self.assertRaises(module.InvalidEvidence):
             module._strict_json(b'{' + b' ' * module.MAX_RESPONSE_BYTES + b'}')
