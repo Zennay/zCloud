@@ -137,6 +137,12 @@ def collect(fetch, expected_main_sha):
     }
 
 
+class _DenyRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward an authenticated GitHub read to another origin.
+        raise InventoryDenied("redirect_denied")
+
+
 def github_fetcher(token):
     """GET-only transport; strict response size, Link origin/path and JSON."""
     def fetch(kind, page):
@@ -156,7 +162,7 @@ def github_fetcher(token):
         request = urllib.request.Request(API + path, headers=headers,
                                          method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=12) as response:
+            with urllib.request.build_opener(_DenyRedirect()).open(request, timeout=12) as response:
                 if response.status != 200:
                     raise InventoryDenied("github_response_failed")
                 raw = response.read(1024 * 1024 + 1)
