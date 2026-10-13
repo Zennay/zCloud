@@ -86,6 +86,8 @@ def github_get(path: str):
     try:
         return json.loads(raw.decode("utf-8"), object_pairs_hook=distinct_pairs,
                           parse_constant=lambda _: (_ for _ in ()).throw(SourceDenied("nonfinite_json")))
+    except SourceDenied:
+        raise
     except (ValueError, UnicodeError, RecursionError):
         raise SourceDenied("invalid_json") from None
 
