@@ -126,8 +126,11 @@ def _pr_identity(entries):
         number = row.get("number")
         if type(number) is not int or not 1 <= number <= 2147483647:
             raise InventoryDenied("invalid_pr_number")
-        identities.append((number, head["repo"].get("full_name"),
-                           head.get("ref"), head.get("sha")))
+        repo_name = head["repo"].get("full_name")
+        if not isinstance(repo_name, str) or not 1 <= len(repo_name) <= 250:
+            raise InventoryDenied("invalid_pr_identity")
+        identities.append((number, repo_name,
+                           _name(head.get("ref")), _sha(head.get("sha"))))
     if len(identities) != len(set(identities)):
         raise InventoryDenied("duplicate_pr_page_entry")
     return sorted(identities)
