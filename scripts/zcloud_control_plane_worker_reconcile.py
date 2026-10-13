@@ -98,6 +98,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise InvalidEvidence("runner-live redirected")
 
 
+def _fresh_server_time(payload: dict) -> None:
+    # The real runner-live route emits now() in UTC. A cached/replayed response
+    # may claim state=live and age_seconds=10 indefinitely if this provenance is
+    # not checked against the same host's clock. Offline fixture mode remains
+    # intentionally exempt because it never establishes live provenance.
+    stamp = payload.get("time")
+    if not isinstance(stamp, str) or not stamp or len(stamp) > 64:
+        raise InvalidEvidence("runner-live server time missing or invalid")
+    try:
+        when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if when.tzinfo is None:
+            raise ValueError("naive server time")
+        delta = (datetime.now(timezone.utc) - when.astimezone(timezone.utc)).total_seconds()
+        if not (-30 <= delta <= 30):
+            raise ValueError("stale or future server snapshot")
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise InvalidEvidence("runner-live server time unverified") from exc
+
+
 def read_live(fixture: Path | None = None) -> dict:
     if fixture is not None:
         with fixture.open("rb") as stream:
@@ -111,7 +130,9 @@ def read_live(fixture: Path | None = None) -> dict:
     with opener.open(request, timeout=5) as response:
         if response.status != 200 or response.headers.get_content_type() != "application/json":
             raise InvalidEvidence("runner-live must return HTTP 200 application/json")
-        return _strict_json(response.read(MAX_RESPONSE_BYTES + 1))
+        payload = _strict_json(response.read(MAX_RESPONSE_BYTES + 1))
+    _fresh_server_time(payload)
+    return payload
 
 
 def _positive_int(value, label):
