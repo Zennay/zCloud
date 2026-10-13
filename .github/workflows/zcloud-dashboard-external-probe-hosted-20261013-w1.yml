@@ -7,6 +7,7 @@ on:
       - 'scripts/zcloud_dashboard_external_probe_20261013_w1.py'
       - 'tests/test_zcloud_dashboard_external_probe_20261013_w1.py'
       - '.github/workflows/zcloud-dashboard-external-probe-hosted-20261013-w1.yml'
+      - '.github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml'
   workflow_dispatch:
 
 permissions:
