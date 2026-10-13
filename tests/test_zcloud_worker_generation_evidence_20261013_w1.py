@@ -178,23 +178,16 @@ class GenerationEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             first, second = Path(directory)/"targets.json", Path(directory)/"debug.json"
             first.write_text(json.dumps(targets(allocation())), encoding="utf-8")
-            second.write_text(json.dumps(debug(row())), encoding="utf-8")
+            second.write_text(json.dumps(debug(row(), at=datetime.now(timezone.utc))), encoding="utf-8")
             output = StringIO()
-            with patch.object(subject, "classify", wraps=subject.classify):
-                with patch.object(subject, "datetime") as mock_dt:
-                    mock_dt.now.return_value = NOW
-                    mock_dt.fromisoformat.side_effect = datetime.fromisoformat
-                    with redirect_stdout(output):
-                        result = subject.main(["--targets-file", str(first), "--debug-file", str(second)])
+            with redirect_stdout(output):
+                result = subject.main(["--targets-file", str(first), "--debug-file", str(second)])
             self.assertEqual(0, result, output.getvalue())
             parsed = json.loads(output.getvalue())
             self.assertTrue(parsed["all_allocated_chatgpt_generating"])
-            second.write_text(json.dumps(debug(row(verdict="prompt-sent"))), encoding="utf-8")
-            with patch.object(subject, "datetime") as mock_dt:
-                mock_dt.now.return_value = NOW
-                mock_dt.fromisoformat.side_effect = datetime.fromisoformat
-                with redirect_stdout(StringIO()):
-                    self.assertEqual(1, subject.main(["--targets-file", str(first), "--debug-file", str(second)]))
+            second.write_text(json.dumps(debug(row(verdict="prompt-sent"), at=datetime.now(timezone.utc))), encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(1, subject.main(["--targets-file", str(first), "--debug-file", str(second)]))
 
     def test_symlink_fixture_denied_before_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -222,7 +215,7 @@ class GenerationEvidenceTests(unittest.TestCase):
             def __exit__(self, *args):
                 return False
         seen=[]
-        def fake_open(request, timeout):
+        def fake_open(_opener, request, timeout):
             seen.append((request.full_url, request.get_method(), timeout))
             return FakeResponse(b'{"global_allocation":{"workers":[]}}')
         with patch.object(subject.urllib.request.OpenerDirector, "open", fake_open):
