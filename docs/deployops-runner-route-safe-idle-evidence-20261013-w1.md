@@ -61,6 +61,8 @@ This matrix separates failures that require different **existing owners**. Class
 
 The CLI emits bounded `github_api_permission_or_limit`, `github_api_missing_or_inaccessible`, `github_api_rate_limited`, or `github_api_unavailable` errors without echoing credentials or HTTP response bodies. Invalid bearer tokens are rejected **before** an HTTP request and reported as `invalid_actions_token`, also without echoing the token.
 
+The JSON receipts distinguish `failed_jobs` (explicit GitHub failure) from `non_successful_terminal_count` (also cancelled, timed out, neutral, action required, stale and startup failure). A `skipped` job is excluded from non-successful deployment counts but cannot claim an assigned runner: such contradictory metadata is rejected. This avoids incorrectly treating cancelled or timed-out executions as green without declaring every skipped workflow unhealthy.
+
 Only the serialized production owners (#580/PWQ-41 and #1089) may use separately verified deployment gates. The workflow owned by #1090 handles retry semantics; this evidence code neither retries nor writes. [#1135](https://github.com/Zennay/zCloud/issues/1135) still makes a generic pull request unsafe until privileged PR-trigger behavior is remediated.
 
 ## Critical interpretation limits

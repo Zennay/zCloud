@@ -64,6 +64,32 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(data["lanes"]["zcloud_vps"]["unproven_runner_count"], 1)
         self.assertFalse(data["production_deploy_verified"])
 
+    def test_skipped_job_cannot_claim_a_running_vps(self):
+        record = make_job(status="completed", conclusion="skipped",
+                          runner_id=21, runner_name="zcloud-vps-1")
+        with self.assertRaisesRegex(route.InvalidEvidence, "skipped_job_claims_runner"):
+            route.classify_job(record, NOW)
+
+    def test_terminal_non_success_is_not_hidden_by_failure_only_metric(self):
+        inputs = [
+            make_job(job_id=1, status="completed", conclusion="cancelled"),
+            make_job(job_id=2, status="completed", conclusion="timed_out"),
+            make_job(job_id=3, status="completed", conclusion="skipped"),
+            make_job(job_id=4, status="completed", conclusion="success",
+                     runner_id=21, runner_name="zcloud-vps-1"),
+        ]
+        lane = route.classify_run(19, inputs, NOW)["lanes"]["zcloud_vps"]
+        self.assertEqual(lane["failed_jobs"], 0)
+        self.assertEqual(lane["non_successful_terminal_count"], 2)
+        self.assertEqual(lane["not_dispatched_count"], 1)
+
+    def test_arbitrary_terminal_conclusions_fail_closed(self):
+        for bad in ("passed", "unknown", {}, [], True, 0):
+            with self.subTest(conclusion=bad):
+                record = make_job(status="completed", conclusion=bad)
+                with self.assertRaisesRegex(route.InvalidEvidence, "invalid_conclusion"):
+                    route.classify_job(record, NOW)
+
     def test_unhashable_status_evidence_fails_closed(self):
         for bad in ([], {}, {"value": "completed"}, True, 1, None):
             with self.subTest(value=bad):

@@ -148,8 +148,8 @@ jobs:
               "",
               "No VPS workers, services or databases were changed by this check.",
               "",
-              "| Main deployment | VPS runner assigned | Canonical zcloud-vps-1 | Unexpected target | Queued, no runner | Waiting / approval | Skipped | Unknown identity | Failed job | Known failure class |",
-              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+              "| Main deployment | VPS runner assigned | Canonical zcloud-vps-1 | Unexpected target | Queued, no runner | Waiting / approval | Skipped | Unknown identity | Failed job | Any non-success terminal | Known failure class |",
+              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
           ]
           allowed = {
               "browser_safe_idle", "runtime_promotion", "self_heal_rearm",
@@ -170,6 +170,7 @@ jobs:
                   lane["not_dispatched_count"],
                   lane["unproven_runner_count"],
                   lane["failed_jobs"],
+                  lane["non_successful_terminal_count"],
                   ", ".join(keys) or "none reported",
               )
               assert len(fields) == len(lines[4].strip("|").split("|"))

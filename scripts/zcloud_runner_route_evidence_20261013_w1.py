@@ -25,6 +25,8 @@ API = f"https://api.github.com/repos/{REPO}/actions/runs"
 MAX_PAGES = 10
 MAX_BYTES = 1024 * 1024
 ALLOWED_STATUS = {"queued", "in_progress", "completed", "waiting", "pending", "requested"}
+ALLOWED_CONCLUSIONS = {"success", "failure", "neutral", "cancelled", "skipped",
+                       "timed_out", "action_required", "startup_failure", "stale"}
 LANES = {"zcloud_vps": {"self-hosted", "zcloud", "vps"},
          "ftmo_research": {"self-hosted", "ftmo-research"}}
 
@@ -162,8 +164,11 @@ def classify_job(job: dict, now: datetime) -> dict:
         raise InvalidEvidence("partial_runner_identity")
     age = _age(job.get("created_at"), now)
     conclusion = job.get("conclusion")
-    if conclusion is not None and (not isinstance(conclusion, str) or len(conclusion) > 32):
+    if conclusion is not None and (
+            type(conclusion) is not str or conclusion not in ALLOWED_CONCLUSIONS):
         raise InvalidEvidence("invalid_conclusion")
+    if conclusion == "skipped" and runner_id > 0:
+        raise InvalidEvidence("skipped_job_claims_runner")
     if status == "completed" and conclusion is None:
         raise InvalidEvidence("completed_without_conclusion")
     if status != "completed" and conclusion is not None:
@@ -223,6 +228,9 @@ def classify_run(run_id: int, jobs: list, now: datetime | None = None) -> dict:
                 (j["queue_age_seconds"] for j in relevant if j["queue_age_seconds"] is not None),
                 default=None),
             "failed_jobs": sum(j["conclusion"] == "failure" for j in relevant),
+            "non_successful_terminal_count": sum(
+                j["status"] == "completed" and
+                j["conclusion"] not in {"success", "skipped"} for j in relevant),
             "failure_phases": {
                 phase: sum(j["failure_phase"] == phase for j in relevant)
                 for phase in sorted(set(j["failure_phase"] for j in relevant)
@@ -449,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
             "nonobject_json","invalid_job_timestamp","timezone_missing",
             "future_job_timestamp","invalid_job_identity","invalid_job_status",
             "invalid_job_labels","mixed_runner_lane","invalid_runner_identity",
+            "skipped_job_claims_runner",
             "partial_runner_identity","invalid_conclusion","completed_without_conclusion",
             "nonterminal_with_conclusion","inconsistent_runner_state","missing_jobs",
             "duplicate_job_id","invalid_run_id","missing_actions_token",
