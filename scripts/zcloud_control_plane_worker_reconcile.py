@@ -126,7 +126,7 @@ def read_live(fixture: Path | None = None) -> dict:
                                      method="GET")
     # A globally configured HTTP_PROXY can otherwise intercept requests to
     # 127.0.0.1, leaking the endpoint path and returning forged runner status.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     with opener.open(request, timeout=5) as response:
         if response.status != 200 or response.headers.get_content_type() != "application/json":
             raise InvalidEvidence("runner-live must return HTTP 200 application/json")
