@@ -4,7 +4,7 @@ Scope: isolated reference for [issue #1216](https://github.com/Zennay/zCloud/iss
 
 ## Actual GitHub evidence (13 October 2026)
 
-Canonical REST combined status for `main@375ef9902aaf65076d7e659e753b774b96c19f91`: exact status SHA, `total_count=1`, `zcloud/vps-production=failure`, status ID `56253791511` (created `18:11:01Z`). This is an **existing FAILED production context**, not a missing status. Correct automatic result: `NOOP` — never repeat scheduled regression as an undocumented failed-deploy retry.
+Canonical REST combined status for `main@375ef9902aaf65076d7e659e753b774b96c19f91`: exact status SHA, `total_count=1`, `zcloud/vps-production=failure`, status ID `56253791511` (created `18:11:01Z`). This is an **existing FAILED production context**, not a missing status. Correct automatic result: `NOOP` with **`production_state=failure`** — never repeat scheduled regression as an undocumented failed-deploy retry. **NOOP is not a healthy deployment or green release.** Conflicting current production contexts fail closed rather than choosing a green status.
 
 ## Implemented reference
 
