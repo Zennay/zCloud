@@ -7,6 +7,10 @@ import io
 import json
 import pathlib
 import socket
+import os
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ssl
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -234,6 +238,96 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertNotIn("method=\"POST\"", source)
         self.assertNotIn("subprocess", source)
         self.assertNotIn("systemctl", source)
+
+@contextmanager
+def temporary_dashboard_http(*, code=200, payload=None, media_type="application/json",
+                             redirect=False):
+    """Actual ephemeral loopback HTTP transport; never the production VPS."""
+    calls = []
+    if payload is None:
+        payload = json.dumps({
+            "time": datetime.now(timezone.utc).isoformat(),
+            "projects": [],
+        }).encode("utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            calls.append(("GET", self.path))
+            if redirect:
+                self.send_response(302)
+                self.send_header("Location", "/redirect-target-not-allowed")
+                self.end_headers()
+                return
+            self.send_response(code)
+            self.send_header("Content-Type", media_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            try:
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def do_POST(self):
+            calls.append(("POST", self.path))
+            self.send_error(405)
+
+        def log_message(self, *args):
+            # Do not print raw URLs, requests, or bodies in public CI.
+            pass
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        address = "http://127.0.0.1:%d/api/status" % httpd.server_port
+        yield address, calls
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
+        httpd.server_close()
+
+
+class DashboardProbeRealHttpTests(unittest.TestCase):
+    def _run(self, expected, **options):
+        with temporary_dashboard_http(**options) as (url, calls):
+            with mock.patch.object(probe, "STATUS_URL", url):
+                # Inherited proxies must NEVER intercept even the local test server.
+                with mock.patch.dict(os.environ, {
+                    "http_proxy": "http://127.0.0.1:1",
+                    "HTTP_PROXY": "http://127.0.0.1:1",
+                    "ALL_PROXY": "http://127.0.0.1:1",
+                    "no_proxy": "",
+                    "NO_PROXY": "",
+                }):
+                    observed = probe.probe_once()
+            self.assertEqual(observed, expected)
+            self.assertEqual(calls, [("GET", "/api/status")])
+
+    def test_actual_http_success_without_proxy_or_post(self):
+        self._run("healthy")
+
+    def test_actual_http_503_denied(self):
+        self._run("http_status", code=503)
+
+    def test_actual_http_redirect_is_never_followed(self):
+        self._run("http_status", redirect=True)
+
+    def test_actual_http_wrong_media_type(self):
+        self._run("content_type", media_type="text/html")
+
+    def test_actual_http_oversize_stream_is_rejected(self):
+        self._run("body_too_large", payload=b"A" * (probe.MAX_BYTES + 1024))
+
+    def test_actual_http_bad_json(self):
+        self._run("invalid_json", payload=b'{"time":')
+
+    def test_actual_http_bad_schema(self):
+        self._run("invalid_schema", payload=b'{"time":"2026-10-13T22:50:00Z"}')
+
+    def test_actual_http_expired_snapshot_denied(self):
+        stamp = (datetime.now(timezone.utc) - timedelta(seconds=240)).isoformat()
+        raw = json.dumps({"time": stamp, "projects": []}).encode("utf-8")
+        self._run("stale_timestamp", payload=raw)
 
 
 if __name__ == "__main__":
