@@ -649,7 +649,7 @@
           code:'(() => {const e=document.documentElement;const b=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\');return {owner:e?.getAttribute("data-zcloud-v2-owner")||"",version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"",poll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),busy:e?.getAttribute("data-zcloud-v2-busy"),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(b?.value||b?.innerText||b?.textContent||"").trim()};})()'
         });
       } catch (_) { return null; }
-      if (!state || state.owner !== key || !/^2\\.0\\.[012]$/.test(state.version) ||
+      if (!state || state.owner !== key || !/^2\.0\.[012]$/.test(state.version) ||
           state.busy !== "false" || state.generating !== false ||
           state.draft !== false || !Number.isFinite(state.poll) ||
           state.poll <= 0 || Date.now()-state.poll < 0 ||
