@@ -1,5 +1,8 @@
 """Realistic GitHub REST payload adapter regression; all fixtures are offline."""
 import importlib.util
+import os
+import urllib.error
+from unittest.mock import patch
 import json
 import re
 import sys
@@ -203,6 +206,79 @@ class GithubEvidenceTests(unittest.TestCase):
         self.assertNotIn("workflow_dispatch:", workflow)
         self.assertNotIn("systemctl", workflow)
         self.assertNotIn("POST", workflow)
+
+    def _mock_http(self, payload=b'{"sha":"a"}', *, mime="application/json",
+                   response_url=None, error=None):
+        """Return a context manager patching only the in-process HTTP opener."""
+        url = evidence.BASE + "/commits/main"
+
+        class Response:
+            status = 200
+            headers = {"Content-Type": mime}
+
+            def geturl(self):
+                return response_url or url
+
+            def read(self, _limit):
+                return payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        class Opener:
+            def open(self, request, timeout):
+                assert request.get_method() == "GET"
+                assert request.full_url == url
+                assert timeout <= 12
+                if error is not None:
+                    raise error
+                return Response()
+
+        return patch.object(evidence.urllib.request, "build_opener",
+                            return_value=Opener())
+
+    def test_transport_only_issues_https_get_without_logging_token(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "sensitive-test-token"}):
+            with self._mock_http(b'{"sha":"abc"}'):
+                result = evidence.github_get("/commits/main")
+        self.assertEqual(result["sha"], "abc")
+        self.assertNotIn("token", json.dumps(result))
+
+    def test_transport_rejects_redirect_and_wrong_content_type(self):
+        with self._mock_http(response_url="https://evil.example/commits"):
+            with self.assertRaisesRegex(evidence.SourceDenied, "unexpected_api_response"):
+                evidence.github_get("/commits/main")
+        with self._mock_http(mime="text/html"):
+            with self.assertRaisesRegex(evidence.SourceDenied, "unexpected_content_type"):
+                evidence.github_get("/commits/main")
+        with self.assertRaisesRegex(evidence.SourceDenied, "redirect_denied"):
+            evidence.DenyRedirects().redirect_request(None, None, 302, "", {},
+                                                       "https://evil.example")
+
+    def test_transport_rejects_duplicate_keys_nonfinite_and_oversize(self):
+        for body, reason in (
+            (b'{"a":1,"a":2}', "duplicate_json_key"),
+            (b'{"a":NaN}', "nonfinite_json"),
+            (b"x" * (evidence.MAX_BYTES + 1), "response_too_large"),
+        ):
+            with self._mock_http(body):
+                with self.assertRaisesRegex(evidence.SourceDenied, reason):
+                    evidence.github_get("/commits/main")
+
+    def test_transport_error_is_redacted(self):
+        with self._mock_http(error=urllib.error.URLError("Bearer secret-body")):
+            with self.assertRaises(evidence.SourceDenied) as captured:
+                evidence.github_get("/commits/main")
+        self.assertEqual(str(captured.exception), "github_transport_unavailable")
+        self.assertNotIn("secret-body", str(captured.exception))
+
+    def test_transport_rejects_external_or_ambiguous_relative_paths(self):
+        for path in ("//evil.example/", "https://evil.example/", "noslash"):
+            with self.assertRaisesRegex(evidence.SourceDenied, "invalid_api_path"):
+                evidence.github_get(path)
 
     def test_network_observer_static_safe_policy(self):
         code = (ROOT / "scripts/zcloud_recovery_github_evidence_20261013.py").read_text()
