@@ -200,7 +200,10 @@
   async function commands(){
     let result;try{result=await api("/runner-commands")}catch(_){return}
     const incoming=(result.commands||[]).filter(c=>c&&Number(c.id||0)>lastCommand&&
-      (c.project_id===id||(c.project_id===target?.base_project_id&&Number(target?.worker_slot||1)===1)));
+      (c.project_id===id||(c.project_id===target?.base_project_id&&
+       (c.global_worker_slot?
+        Number(c.global_worker_slot)===Number(target?.global_worker_slot||0):
+        Number(target?.worker_slot||1)===1))));
     for(const command of incoming){
       const action=String(command.action||"");
       if(!["start","push","new_chat"].includes(action))continue;
