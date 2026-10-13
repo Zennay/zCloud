@@ -72,6 +72,27 @@ class ReconcileTests(unittest.TestCase):
         result = self.diagnose(live([worker(active=False)]))
         self.assertEqual(result["state"], "degraded")
 
+    def test_active_configured_worker_can_still_be_offline(self):
+        result = self.diagnose(live([worker(state="offline", age_seconds=999999)]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problems"][0]["code"], "worker_not_live")
+        self.assertEqual(result["recent_idle_count"], 0)
+
+    def test_stale_worker_is_not_reported_healthy(self):
+        result = self.diagnose(live([worker(state="stale", age_seconds=200)]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problems"][0]["code"], "worker_not_live")
+
+    def test_missing_heartbeat_age_is_unknown(self):
+        result = self.diagnose(live([worker(age_seconds=None)]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problems"][0]["code"], "worker_activity_unknown")
+
+    def test_starting_worker_is_attention_not_verified_idle(self):
+        result = self.diagnose(live([worker(state="starting", age_seconds=None)]))
+        self.assertEqual(result["state"], "attention")
+        self.assertEqual(result["problems"][0]["code"], "worker_not_ready")
+
     def test_missing_boolean_activity_is_unknown(self):
         item = worker()
         item.pop("sending")
