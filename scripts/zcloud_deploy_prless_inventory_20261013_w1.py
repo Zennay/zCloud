@@ -210,7 +210,9 @@ def compare_owned_paths(fetch, snapshot, owned_paths):
                 or len(listed_commits) != commits
                 or any(not isinstance(item, dict)
                        or not SHA.fullmatch(str(item.get("sha") or ""))
-                       for item in listed_commits)):
+                       for item in listed_commits)
+                or len({item["sha"] for item in listed_commits}) != len(listed_commits)
+                or (listed_commits and listed_commits[-1]["sha"] != target_sha)):
             raise InventoryDenied("compare_commit_history_incomplete")
         files = payload.get("files")
         if not isinstance(files, list) or len(files) >= 300:
