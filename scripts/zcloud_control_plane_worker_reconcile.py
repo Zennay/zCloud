@@ -201,8 +201,22 @@ def reconcile(roster: dict, payload: dict) -> dict:
         if worker["generating"] or worker["sending"]:
             observed["busy"] += 1
             continue
+        # "active" is configured allocation, NOT evidence of a connected tab.
+        # The server can report active=True together with state="offline".
+        live_state = worker.get("state")
+        if live_state in ("offline", "stale", "stalled", "disconnected"):
+            problems.append({"worker": label, "code": "worker_not_live",
+                             "level": "degraded"})
+            continue
+        if live_state in ("starting", "draining", "paused"):
+            problems.append({"worker": label, "code": "worker_not_ready",
+                             "level": "attention"})
+            continue
         age = worker.get("age_seconds")
-        if type(age) in (int, float) and 0 <= age <= 86400 and age > 300:
+        if type(age) not in (int, float) or not (0 <= age <= 86400):
+            problems.append({"worker": label, "code": "worker_activity_unknown",
+                             "level": "degraded"})
+        elif age > 300:
             problems.append({"worker": label, "code": "idle_over_five_minutes",
                              "level": "attention"})
         else:
