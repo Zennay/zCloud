@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Offline denial/positive routing matrix; no API credentials or permanent runner."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import importlib.util
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "scripts/zcloud_runner_route_evidence_20261013_w1.py"
+spec = importlib.util.spec_from_file_location("route", SOURCE)
+route = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(route)
+NOW = datetime(2026, 10, 13, 21, 50, tzinfo=timezone.utc)
+
+
+def make_job(*, job_id=12, labels=None, status="queued", runner_id=0,
+             runner_name="", conclusion=None, created_at="2026-10-13T21:40:00Z"):
+    if labels is None:
+        labels = ["self-hosted", "zcloud", "vps"]
+    return {"id": job_id, "labels": labels, "status": status,
+            "runner_id": runner_id, "runner_name": runner_name,
+            "conclusion": conclusion, "created_at": created_at}
+
+
+class RunnerRouteEvidenceTests(unittest.TestCase):
+    def test_unassigned_queue_is_not_false_green(self):
+        data = route.classify_run(1, [make_job()], NOW)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["unassigned_count"], 1)
+        self.assertEqual(data["jobs"][0]["queue_age_seconds"], 600)
+        self.assertFalse(data["production_deploy_verified"])
+        self.assertFalse(data["authorizes_mutation"])
+
+    def test_completed_failed_deploy_is_assigned_but_not_prod_green(self):
+        x = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                     conclusion="failure")
+        data = route.classify_run(2, [x], NOW)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["assigned_count"], 1)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["failed_jobs"], 1)
+        self.assertFalse(data["production_deploy_verified"])
+
+    def test_cpu_snapshot_proves_runner_route(self):
+        x = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                     conclusion="success")
+        data = route.classify_run(3, [x], NOW)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["assigned_count"], 1)
+        self.assertFalse(data["production_deploy_verified"])
+
+    def test_different_ftmo_lane_must_not_close_zcloud_route(self):
+        x = make_job(labels=["self-hosted", "ftmo-research"])
+        data = route.classify_run(4, [x], NOW)
+        self.assertEqual(data["lanes"]["ftmo_research"]["unassigned_count"], 1)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["job_count"], 0)
+
+    def test_hosted_runner_does_not_establish_self_hosted_proof(self):
+        x = make_job(labels=["ubuntu-latest"], status="completed",
+                     runner_id=999, runner_name="GitHub Actions 999", conclusion="success")
+        data = route.classify_run(5, [x], NOW)
+        self.assertEqual(data["lanes"]["zcloud_vps"]["assigned_count"], 0)
+
+    def test_mixed_lanes_denied(self):
+        x = make_job(labels=["self-hosted", "ftmo-research", "zcloud", "vps"])
+        with self.assertRaises(route.InvalidEvidence):
+            route.classify_run(6, [x], NOW)
+
+    def test_missing_or_partial_identity_denied(self):
+        for overrides in ({"runner_id": 21, "runner_name": ""},
+                          {"runner_id": 0, "runner_name": "zcloud-vps-1"},
+                          {"runner_id": True},
+                          {"job_id": True},
+                          {"status": "unlisted"}):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(route.InvalidEvidence):
+                    route.classify_run(7, [make_job(**overrides)], NOW)
+
+    def test_future_time_spoof_denied(self):
+        with self.assertRaises(route.InvalidEvidence):
+            route.classify_run(8, [make_job(created_at="2026-10-14T20:00:00Z")], NOW)
+
+    def test_unzoned_time_denied(self):
+        with self.assertRaises(route.InvalidEvidence):
+            route.classify_run(9, [make_job(created_at="2026-10-13T21:39:00")], NOW)
+
+    def test_malformed_conclusion_denied(self):
+        for x in (make_job(status="completed", conclusion=None),
+                  make_job(status="queued", conclusion="success")):
+            with self.assertRaises(route.InvalidEvidence):
+                route.classify_run(10, [x], NOW)
+
+    def test_duplicate_job_ids_denied(self):
+        with self.assertRaises(route.InvalidEvidence):
+            route.classify_run(11, [make_job(), make_job()], NOW)
+
+    def test_empty_batch_denied(self):
+        with self.assertRaises(route.InvalidEvidence):
+            route.classify_run(12, [], NOW)
+
+    def test_duplicate_json_and_nonfinite_denied(self):
+        for raw in (b'{"a":1,"a":2}', b'{"x":NaN}',
+                    b'{"a":{"b":3,"b":4}}', b'{"a":1' ):
+            with self.subTest(raw=raw):
+                with self.assertRaises(route.InvalidEvidence):
+                    route.strict_json(raw)
+
+    def test_json_size_bound(self):
+        with self.assertRaises(route.InvalidEvidence):
+            route.strict_json(b"x" * (route.MAX_BYTES + 1))
+
+    def test_cli_fails_closed_without_token(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+        out = io.StringIO()
+        with patch.dict("os.environ", {"GH_TOKEN": ""}), contextlib.redirect_stdout(out):
+            rc = route.main(["--run-id", "999"])
+        self.assertEqual(rc, 2)
+        self.assertIn('"authorizes_mutation": false', out.getvalue())
+        self.assertNotIn("http", out.getvalue())
+
+    def test_cli_rejects_duplicate_run_selection_without_api(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(route.main(["--run-id", "1", "--run-id", "1"]), 2)
+        self.assertIn("invalid_run_selection", out.getvalue())
+
+    def test_source_contains_no_write_methods_or_prod_authority(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn('method="POST"', source)
+        self.assertNotIn("subprocess", source)
+        self.assertNotIn("/cancel", source)
+        self.assertNotIn("/dispatches", source)
+        self.assertIn('"authorizes_mutation": False', source)
+
+
+if __name__ == "__main__":
+    unittest.main()
