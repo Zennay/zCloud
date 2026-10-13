@@ -65,6 +65,12 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "GET")
         self.assertEqual(request.full_url, probe.STATUS_URL)
         self.assertEqual(timeout, probe.TIMEOUT_SECONDS)
+        # A healthy verdict must not rely on an intermediary's old status.
+        self.assertIn("no-cache", request.get_header("Cache-control").lower())
+        self.assertIn("no-store", request.get_header("Cache-control").lower())
+        self.assertEqual(request.get_header("Pragma"), "no-cache")
+        self.assertIsNone(request.get_header("Authorization"))
+        self.assertEqual(request.get_method(), "GET")
 
     def test_retry_recovers_without_authorizing_restart(self):
         statuses = iter(["connection", "timeout", "healthy"])
