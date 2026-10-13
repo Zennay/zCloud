@@ -432,7 +432,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.sha || github.sha", hosted)
         self.assertIn("persist-credentials: false", hosted)
         manual = self._workflow_shell()
-        self.assertIn("timeout -k 2s 12s gh api --method GET repos/Zennay/zCloud/git/ref/heads/main --jq '.object.sha'", manual)
+        self.assertIn("GH_HOST=github.com GH_PROMPT_DISABLED=1 timeout -k 2s 12s gh api --method GET repos/Zennay/zCloud/git/ref/heads/main --jq '.object.sha'", manual)
         workflow = (MODULE.parents[1] / ".github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml").read_text()
         self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
         self.assertNotIn("git ls-remote", manual)
