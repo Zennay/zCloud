@@ -201,8 +201,8 @@ class GenerationEvidenceTests(unittest.TestCase):
 
     def test_decoded_unpaired_surrogates_fail_closed_at_all_depths(self):
         cases = [
-            b'{"x":"\\\\ud800"}', b'{"x":"\\\\udc00"}',
-            b'{"\\\\ud800":"val"}', b'{"nested":[{"key":"\\\\udfff"}]}',
+            b'{"x":"\\ud800"}', b'{"x":"\\udc00"}',
+            b'{"\\ud800":"val"}', b'{"nested":[{"key":"\\udfff"}]}',
         ]
         for raw in cases:
             with self.subTest(raw=raw):
@@ -210,7 +210,7 @@ class GenerationEvidenceTests(unittest.TestCase):
                     subject._load(raw)
 
     def test_valid_surrogate_pair_and_utf8_emoji_accepted(self):
-        self.assertEqual(subject._load(b'{"x":"\\\\ud83d\\\\ude80"}')["x"], "\uD83D\uDE80".encode("utf-16", "surrogatepass").decode("utf-16"))
+        self.assertEqual(subject._load(b'{"x":"\\ud83d\\ude80"}')["x"], "🚀")
         self.assertEqual(subject._load(json.dumps({"x": "🚀"}, ensure_ascii=False).encode())["x"], "🚀")
 
     def test_nonfinite_json_constants_and_overflow_denied(self):
