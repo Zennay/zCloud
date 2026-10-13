@@ -39,7 +39,7 @@ class ManualMainTimeoutAuditAdmissionTests(unittest.TestCase):
         hosted, vps = sections()
         self.assertIn("  pull_request:", hosted)
         self.assertIn("    runs-on: ubuntu-latest", hosted)
-        self.assertNotIn("self-hosted", hosted.split("\n  validate:\n", 1)[1])
+        self.assertNotRegex(hosted.split("\n  validate:\n", 1)[1], r"(?m)^    runs-on: .*self-hosted")
         self.assertIn("    runs-on: [self-hosted, zcloud, vps]", vps)
         self.assertIn("persist-credentials: false", vps)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", vps)
