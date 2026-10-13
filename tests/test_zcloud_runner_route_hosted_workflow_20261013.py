@@ -19,7 +19,10 @@ def screen(text):
         if trigger in header: raise ValueError('privileged_trigger')
     if re.search(r'(?m)^\s*(?:actions|administration|contents):\s*write\b', header):
         raise ValueError('write_permissions')
-    if '\npermissions:\n  contents: read\n' not in header:
+    if '\npermissions:\n  contents: read\n  actions: read\n' not in header:
+        raise ValueError('nonminimal_permissions')
+    permission_section = header.split('\npermissions:\n', 1)[1].split('\n\n', 1)[0]
+    if permission_section != '  contents: read\n  actions: read':
         raise ValueError('nonminimal_permissions')
     rows = [line.strip() for line in jobs.splitlines()]
     runs_on = [line for line in rows if line.startswith('runs-on:')]
@@ -35,6 +38,12 @@ def screen(text):
         raise ValueError('validation_missing')
     if 'python3 -m unittest discover -v' not in jobs:
         raise ValueError('full_regression_missing')
+    if 'python3 scripts/zcloud_runner_route_triage_20261013.py --jobs-only' not in jobs:
+        raise ValueError('nonmutating_queue_probe_missing')
+    if 'python3 scripts/zcloud_runner_route_receipt_20261013.py' not in jobs:
+        raise ValueError('queue_receipt_guard_missing')
+    if 'GITHUB_TOKEN: ${{ github.token }}' not in jobs or 'secrets.' in jobs:
+        raise ValueError('unexpected_token_source')
     if re.search(r'(?mi)^\s*(?:sudo\b|systemctl\b|curl\b.*-X\s*POST|gh\s+(?:api|workflow|run)\b)', jobs):
         raise ValueError('mutating_step')
     return True
@@ -68,6 +77,24 @@ class HostedOnlyWorkflow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'full_regression_missing'):
             screen(self.content.replace('python3 -m unittest discover -v',
                                         'python3 -m unittest discover -s tests -p narrow_suite.py -v', 1))
+
+    def test_live_runner_registry_mode_not_allowed_in_ci(self):
+        with self.assertRaisesRegex(ValueError, 'nonmutating_queue_probe_missing'):
+            screen(self.content.replace(' --jobs-only', ' --live', 1))
+
+    def test_receipt_sanitizer_required(self):
+        with self.assertRaisesRegex(ValueError, 'queue_receipt_guard_missing'):
+            screen(self.content.replace('python3 scripts/zcloud_runner_route_receipt_20261013.py',
+                                        'echo unsafe-unfiltered-raw-queue-output', 1))
+
+    def test_runner_admin_secrets_forbidden(self):
+        with self.assertRaisesRegex(ValueError, 'unexpected_token_source'):
+            screen(self.content.replace('GITHUB_TOKEN: ${{ github.token }}',
+                                        'GITHUB_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}', 1))
+
+    def test_extra_permission_denied(self):
+        with self.assertRaisesRegex(ValueError, 'nonminimal_permissions'):
+            screen(self.content.replace('  actions: read', '  actions: read\n  deployments: read', 1))
 
     def test_missing_ci_execution_denied(self):
         with self.assertRaisesRegex(ValueError, 'validation_missing'):
