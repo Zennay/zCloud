@@ -17,7 +17,10 @@ Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/135
 | Hersteld na hercontrole | Tijdelijk transportprobleem gevolgd door een goed antwoord. |
 | Verbinding geweigerd/verbroken | TCP-transportfout; geen bewijs dat de runner kapot is. |
 | DNS, TLS of time-out | Externe verbinding kon niet binnen budget worden geverifieerd. |
-| HTTP-status niet 200 | Serverstatus/redirect geweigerd; nooit responsebody of geheimen loggen. |
+| Onverwachte HTTP-doorverwijzing (3xx) | Niet volgen: kan naar onbedoelde hosts of inlogpagina's verwijzen. |
+| HTTP-aanvraag geweigerd (4xx) | Clientzijde, bv. autorisatie/rate-limit; geen VPS-herstart afleiden. |
+| HTTP-serverfout (5xx) | Backend geeft foutstatus; vereist onafhankelijke service-evidence. |
+| HTTP-status niet 200 (overig) | Ook onbekende/niet-standaard statussen zijn nooit een gezonde API; geen responsebody of secrets loggen. |
 | Onverwacht antwoordtype of te groot | Ongeldige API-representatie; fail closed. |
 | Tegenstrijdige HTTP-headers | Dubbele content headers, opgegeven lengte die niet klopt, ongeldige lengte of ongewenste content-encoding. Ook met HTTP 200 geen geldige status. |
 | Ongeldige JSON of schema | Body onbruikbaar, of vereiste velden ontbreken. |
