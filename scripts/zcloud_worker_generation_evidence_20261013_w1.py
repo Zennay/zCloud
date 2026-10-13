@@ -144,6 +144,12 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         project, slot = key.rsplit("::w", 1)
         if item.get("project_id") != project or type(item.get("worker_slot")) is not int or item["worker_slot"] != int(slot):
             raise EvidenceDenied("allocation_identity_mismatch")
+        global_slot = item.get("global_worker_slot")
+        if type(global_slot) is not int or not 1 <= global_slot <= MAX_WORKERS:
+            raise EvidenceDenied("invalid_allocated_global_slot")
+        queue_id = item.get("queue_id")
+        if not isinstance(queue_id, str) or not queue_id or len(queue_id) > 160:
+            raise EvidenceDenied("invalid_allocated_queue")
         provider = item.get("provider", "chatgpt")
         if provider not in ("chatgpt", "claude"):
             raise EvidenceDenied("unknown_provider")
@@ -156,6 +162,11 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
             continue
         if row.get("project") != project or type(row.get("slot")) is not int or row["slot"] != int(slot):
             raise EvidenceDenied("debug_identity_mismatch")
+        # Prevent a successful generation heartbeat for a previous queue owner
+        # being promoted as evidence for a freshly reassigned slot.
+        if (type(row.get("global_slot")) is not int or row["global_slot"] != global_slot
+                or row.get("queue_id") != queue_id or row.get("provider") != provider):
+            raise EvidenceDenied("allocation_debug_binding_mismatch")
         verdict = row.get("verdict")
         if not isinstance(verdict, str) or verdict not in VERDICTS:
             raise EvidenceDenied("unknown_worker_verdict")
