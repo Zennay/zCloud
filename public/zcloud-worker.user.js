@@ -235,6 +235,7 @@
         });
       }
       if(generating()){
+        observedGenerating=true;
         everGenerating=true;awaiting=false;
         await status("generation-progress");return;
       }
@@ -291,6 +292,50 @@
   document.documentElement?.addEventListener?.("zcloud-v2-wake", () => {
     if (!inflight) poll();
   });
+  // Background tabs should continue within seconds after completion,
+  // not wait for the next 30-second heartbeat. This is local DOM observation,
+  // not an extra per-worker API polling loop.
+  const FINISH_SETTLE_MS = 1800;
+  let finishTimer = null, observedGenerating = false;
+  function scheduleFinishedResponseCheck() {
+    if (finishTimer !== null) clearTimeout(finishTimer);
+    finishTimer = setTimeout(() => {
+      finishTimer = null;
+      if (generating() || sending || (!awaiting && !everGenerating)) return;
+      if (inflight) { scheduleFinishedResponseCheck(); return; }
+      // poll() refreshes allocation; send() verifies High and exact lease.
+      poll();
+    }, FINISH_SETTLE_MS);
+  }
+  function generationDomChanged() {
+    if (!awaiting && !everGenerating) {
+      observedGenerating = false;
+      return;
+    }
+    if (generating()) {
+      observedGenerating = true;
+      if (awaiting) { awaiting = false; everGenerating = true; }
+      if (finishTimer !== null) { clearTimeout(finishTimer); finishTimer = null; }
+      return;
+    }
+    if (observedGenerating) {
+      observedGenerating = false;
+      scheduleFinishedResponseCheck();
+    } else if (awaiting &&
+        (assistantCount() > baselineAssistantCount ||
+         (reply() && reply() !== baseline))) {
+      // A very fast response can elude the stop-button observer.
+      // Require fresh assistant content and the same settling window.
+      scheduleFinishedResponseCheck();
+    }
+  }
+  if (typeof MutationObserver === "function" && document.documentElement) {
+    const generationObserver = new MutationObserver(generationDomChanged);
+    generationObserver.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["data-testid", "aria-label"]
+    });
+  }
   poll();setInterval(poll,POLL_MS);
 })();
 
