@@ -40,7 +40,7 @@ def _no_constant(_):
     raise UntrustedLog("nonfinite_json")
 
 
-def classify(text: str) -> dict:
+def classify(text: str, now: datetime | None = None) -> dict:
     if type(text) is not str or len(text.encode("utf-8", errors="replace")) > MAX_LOG_BYTES:
         raise UntrustedLog("invalid_log_size")
     matches = LOG_LINE.findall(text)
@@ -51,8 +51,15 @@ def classify(text: str) -> dict:
         event_time = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
     except ValueError as exc:
         raise UntrustedLog("invalid_log_timestamp") from exc
-    if (event_time - datetime.now(timezone.utc)).total_seconds() > 5:
+    now = datetime.now(timezone.utc) if now is None else now
+    if type(now) is not datetime or now.tzinfo is None:
+        raise UntrustedLog("invalid_observation_clock")
+    elapsed = (now - event_time).total_seconds()
+    if elapsed < -5:
         raise UntrustedLog("future_log_timestamp")
+    marker_age_seconds = max(0, int(elapsed))
+    # Historic browser reports must not be mistaken for live worker state.
+    fresh_for_triage = marker_age_seconds <= 900
     if len(payload.encode("utf-8")) > MAX_MARKER_BYTES:
         raise UntrustedLog("oversized_marker")
     try:
@@ -104,6 +111,9 @@ def classify(text: str) -> dict:
         "schema": "zcloud-safe-idle-blocker-evidence-v1",
         "source": "untrusted_operator_supplied_log",
         "blocker_count": len(rows),
+        "marker_age_seconds": marker_age_seconds,
+        "fresh_for_triage": bool(fresh_for_triage),
+        "independent_live_worker_state_verified": False,
         "classes": categories,
         "only_acknowledged_draining_generation": (
             categories["generating_after_acknowledged_drain"] == len(rows)
@@ -133,7 +143,8 @@ def main() -> int:
             "invalid_or_duplicate_worker_identity", "ambiguous_generation_flags",
             "idle_worker_claimed_as_blocker", "invalid_desired_state",
             "invalid_drain_status", "invalid_event_age", "unknown_event_type",
-            "invalid_command_id", "invalid_log_timestamp", "future_log_timestamp"
+            "invalid_command_id", "invalid_log_timestamp", "future_log_timestamp",
+            "invalid_observation_clock"
         } else "invalid_log"
         print(json.dumps({"schema": "zcloud-safe-idle-blocker-evidence-v1",
                           "error": public, "authorizes_mutation": False,
