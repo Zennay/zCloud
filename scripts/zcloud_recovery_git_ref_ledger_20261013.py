@@ -67,6 +67,9 @@ def reservation_plan(evidence: dict[str, Any]) -> dict[str, Any]:
         "requires_owner_provenance": True,
         "requires_exact_main_recheck_before_claim": True,
         "requires_exact_main_recheck_after_claim": True,
+        "requires_protected_tag_namespace": True,
+        "requires_durable_owner_review": True,
+        "requires_no_tag_deletion_or_rewrite": True,
     }
 
 
