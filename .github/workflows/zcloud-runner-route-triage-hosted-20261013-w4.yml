@@ -8,12 +8,15 @@ on:
       - scripts/zcloud_runner_route_triage_20261013.py
       - tests/test_zcloud_runner_route_triage_20261013.py
       - tests/test_zcloud_runner_route_hosted_workflow_20261013.py
+      - tests/test_zcloud_runner_route_receipt_20261013.py
+      - scripts/zcloud_runner_route_receipt_20261013.py
       - tests/test_zcloud_runner_route_http_20261013.py
       - docs/deploy-ops-runner-route-triage-20261013-w4.md
       - .github/workflows/zcloud-runner-route-triage-hosted-20261013-w4.yml
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   offline-regression:
@@ -28,8 +31,22 @@ jobs:
       - name: Validate syntax and isolated deny-first tests
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/zcloud_runner_route_triage_20261013.py tests/test_zcloud_runner_route_triage_20261013.py tests/test_zcloud_runner_route_hosted_workflow_20261013.py
+          python3 -m py_compile scripts/zcloud_runner_route_triage_20261013.py scripts/zcloud_runner_route_receipt_20261013.py tests/test_zcloud_runner_route_triage_20261013.py tests/test_zcloud_runner_route_hosted_workflow_20261013.py tests/test_zcloud_runner_route_receipt_20261013.py
           python3 -m unittest discover -s tests -p 'test_zcloud_runner_route*_20261013.py' -v
+      - name: Observe zCloud queue by GitHub GET only (not deploy admission)
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          python3 scripts/zcloud_runner_route_triage_20261013.py --jobs-only > "$RUNNER_TEMP/zcloud-route-observation.json"
+          probe_rc=$?
+          set -e
+          if [ "$probe_rc" -gt 2 ]; then
+            echo 'unexpected read-only queue probe failure'
+            exit 1
+          fi
+          python3 scripts/zcloud_runner_route_receipt_20261013.py "$RUNNER_TEMP/zcloud-route-observation.json" "$probe_rc"
       - name: Run full zCloud Python regression on hosted runner
         run: |
           set -euo pipefail
