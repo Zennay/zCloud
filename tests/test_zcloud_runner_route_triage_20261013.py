@@ -317,6 +317,29 @@ class TestRunnerRoute(unittest.TestCase):
     def test_redirect_denied_before_follow(self):
         with self.assertRaises(t.EvidenceError):
             t.RefuseRedirect().redirect_request(None, None, 302, 'moved', {}, 'https://example.invalid/')
+    def test_pagination_transient_incomplete_inventory_retried_once(self):
+        calls = []
+        def fake(path, token):
+            calls.append(path)
+            if len(calls) == 1:
+                return {'total_count': 1, 'runners': []}
+            return {'total_count': 1, 'runners': [{'id':21}]}
+        with patch.object(t, 'api', side_effect=fake):
+            result = t.pages('/repos/Zennay/zCloud/actions/runners','runners','token')
+        self.assertEqual(result, [{'id':21}])
+        self.assertEqual(len(calls),2)
+        self.assertEqual(calls[0], calls[1])
+
+    def test_pagination_permanent_incomplete_inventory_still_denied(self):
+        calls = []
+        def fake(path, token):
+            calls.append(path)
+            return {'total_count': 1, 'runners': []}
+        with patch.object(t, 'api', side_effect=fake):
+            with self.assertRaisesRegex(t.EvidenceError, 'incomplete_inventory'):
+                t.pages('/repos/Zennay/zCloud/actions/runners','runners','token')
+        self.assertEqual(len(calls),2)
+
     def test_pagination_rejects_missing_total_count(self):
         with patch.object(t, 'api', return_value={'runners': []}):
             with self.assertRaises(t.EvidenceError):
