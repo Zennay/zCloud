@@ -8,16 +8,15 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: zcloud-p0-one-shot-worker-v2-activation
+  group: zcloud-p0-one-shot-worker-v2-activation-alternate
   cancel-in-progress: false
 jobs:
   activate:
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
           persist-credentials: false
       - name: Verify one-tab engine from current main and activate without browser restart
         shell: bash
@@ -28,12 +27,15 @@ jobs:
           set -euo pipefail
           test "$(hostname)" = vps-bb300bba
           test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           node --check firefox-extension/worker-controller-v2.js
           node --check public/zcloud-worker.user.js
           node tests/test_single_tab_v2_crash_recovery.js
           node tests/test_single_tab_v2_auto_heal.js
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_v2_workmode_high_controls.js
           node tests/test_single_tab_v2_cycle.js
           root="/home/ubuntu/zennay-cloud"
           addon="$HOME/snap/firefox/common/chatgpt-project-extension"
@@ -69,18 +71,7 @@ jobs:
           done
           echo "VM_V2_SOURCE_INSTALLED=1"
           echo "ADDON_V2_FILES_INSTALLED=1"
-          # Retire ONLY competing old worker health timers; leave the
-          # independent Firefox crash supervisor and API service running.
-          if systemctl --user disable --now chatgpt-runner-watchdog.timer; then
-            echo "LEGACY_CHATGPT_WATCHDOG_OFF=1"
-          fi
-          if systemctl --user disable --now zcloud-watchdog.timer; then
-            echo "LEGACY_ZCLOUD_WATCHDOG_OFF=1"
-          fi
-          if sudo -n systemctl disable --now zcloud-self-heal.timer; then
-            echo "LEGACY_SELF_HEAL_OFF=1"
-          fi
-          echo "CRASH_SUPERVISOR=$(systemctl is-active zcloud-firefox-supervisor.timer || true)"
+          bash scripts/zcloud_retire_legacy_worker_services.sh
           # Addon-only reload never stops or restarts the Firefox process.
           # V2 controller explicitly preserves preexisting unverified VM tabs.
           node scripts/zcloud_reload_extension.mjs
