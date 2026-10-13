@@ -79,6 +79,12 @@ class SafeIdleEvidenceTests(unittest.TestCase):
         with self.assertRaises(evidence.UntrustedLog):
             evidence.classify("not a safe idle trace")
 
+    def test_future_timestamp_receipt_is_not_trusted(self):
+        raw = ("2099-10-13T21:48:06.0879606Z " + evidence.MARKER
+               + json.dumps([row()]) + "\n")
+        with self.assertRaisesRegex(evidence.UntrustedLog, "future_log_timestamp"):
+            evidence.classify(raw)
+
     def test_double_receipt_denied_even_when_both_valid(self):
         with self.assertRaises(evidence.UntrustedLog):
             evidence.classify(log(row()) + log(row("ftmo::w1")))
