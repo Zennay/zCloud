@@ -37,8 +37,8 @@ deployment or force-start approval.
 - A localhost-only HTTP GET (or supplied fixture) loads at most 256 KiB of
   `/api/runner-live` JSON. Parsing explicitly bounds nesting to 64 levels
   before Python JSON decoding (escaped quotes/brackets remain legal). Redirects,
-  duplicate JSON keys, missing identities, non-boolean activity flags and
-  inconsistent/missing schemas fail closed.
+  duplicate JSON keys, exponent-overflow/non-finite numbers, missing identities,
+  non-boolean activity flags and inconsistent/missing schemas fail closed.
 - `active_worker_not_observed`: selected worker not in the observed roster.
   **Does not prove a Firefox tab is missing.** Check browser tabs and the
   extension-to-worker binding before creating a new tab.
