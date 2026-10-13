@@ -1,0 +1,24 @@
+name: zCloud recovery retry offline reference validation
+
+on:
+  push:
+    branches:
+      - feat/deployops-retry-ledger-reference-20261013-w1
+    paths:
+      - '.github/workflows/zcloud-recovery-retry-reference-20261013.yml'
+      - 'scripts/zcloud_recovery_retry_policy_20261013.py'
+      - 'tests/test_zcloud_recovery_retry_policy_20261013.py'
+
+permissions:
+  contents: read
+
+jobs:
+  reference-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_zcloud_recovery_retry_policy_20261013.py' -v
+      - run: python3 -m py_compile scripts/zcloud_recovery_retry_policy_20261013.py
