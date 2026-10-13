@@ -7,19 +7,70 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
-# Share the normal production deploy lock: static writes must not race a full promotion.
-concurrency:
-  group: zcloud-production-deploy
-  cancel-in-progress: false
-
+# Hosted priority admission stays outside the production mutex.
 jobs:
+  prioritize-static-ui:
+    if: github.repository == 'Zennay/zCloud' && github.actor == 'Zennay' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify UI bytes and retire only never-started obsolete releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for entry in \
+            public/app.js:7b76909580fe0451e75b75c3da720257d567a77d \
+            public/enhancements.css:fc5e4453352aaedba16baa079350f912fda60958 \
+            public/index.html:1a76a2f97d4e56b6fea7db73cd5f5f1d2f901b2d; do
+            p="${entry%%:*}"
+            sha="${entry##*:}"
+            test "$(gh api "repos/$repo/contents/$p?ref=main" --jq .sha)" = "$sha"
+          done
+          echo "UI_PRIORITY_PINNED_ASSETS_VERIFIED=1"
+          for spec in \
+            "38322783586|zCloud UI-only guarded publish 2026-10-13|d5e5a9725769d7fe1eb8975ea79b86cf25a2b8f7" \
+            "38323365975|zCloud VPS deploy|14778743e2ed5ed34b6b66a7405593e6c914d74d" \
+            "38323685510|zCloud UI-only guarded publish 2026-10-13|26c8fc11773ecbe49dc023fe8026aaa319be6f56"; do
+            IFS='|' read -r id expected_name expected_sha <<< "$spec"
+            run="$(gh api "repos/$repo/actions/runs/$id")"
+            status="$(jq -r '.status' <<<"$run")"
+            name="$(jq -r '.name' <<<"$run")"
+            head_sha="$(jq -r '.head_sha' <<<"$run")"
+            test "$name" = "$expected_name" && test "$head_sha" = "$expected_sha" || {
+              echo "PRIORITY_SKIP_UNEXPECTED=$id"
+              continue
+            }
+            case "$status" in queued|pending|waiting|requested) ;; *)
+              echo "PRIORITY_SKIP_STARTED_OR_TERMINAL=$id status=$status"
+              continue
+            esac
+            jobs="$(gh api "repos/$repo/actions/runs/$id/jobs?per_page=100")"
+            if jq -e '[.jobs[] | select(.status == "in_progress" or (.status == "completed" and (.name != "preflight" or .conclusion != "success")))] | length > 0' <<<"$jobs" >/dev/null; then
+              echo "PRIORITY_SKIP_ACTIVE_OR_UNKNOWN_WORK=$id"
+              continue
+            fi
+            gh api -X POST "repos/$repo/actions/runs/$id/cancel" >/dev/null || {
+              echo "PRIORITY_CANCEL_REFUSED=$id"
+              continue
+            }
+            echo "PRIORITY_CANCELLED_NEVER_STARTED=$id"
+          done
+
   publish-dashboard-ui:
+    needs: prioritize-static-ui
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     if: >-
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
       github.ref == 'refs/heads/main' &&
-      github.event.head_commit.message == 'deploy(ui): publish verified cockpit from main'
+      github.event.head_commit.message == 'deploy(ui): prioritize safe static cockpit release'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     steps:
@@ -40,9 +91,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           # Publish ONLY the audited static assets already on the current main.
           # Never source privileged deploy commands from an unmerged branch.
-          current="$(git ls-remote origin refs/heads/main | cut -f1)"
-          test -n "$current" && test "$current" = "$GITHUB_SHA"
-          echo "TRUSTED_EXACT_MAIN=$current"
+          git fetch --no-tags --depth=96 origin main
+          current="$(git rev-parse FETCH_HEAD)"
+          git merge-base --is-ancestor "$GITHUB_SHA" "$current"
+          for path in public/app.js public/enhancements.css public/index.html; do
+            test "$(git rev-parse "HEAD:$path")" = "$(git rev-parse "$current:$path")"
+          done
+          echo "TRUSTED_MAIN_ASSETS=$current"
           # Require the same UI asset bytes that passed GitHub-hosted checks.
           for path in public/app.js public/enhancements.css public/index.html; do
             git diff --quiet ffacf70e5dd958f9d8a0ff85c6d0d44fbb0b6a19 HEAD -- "$path"
@@ -52,7 +107,9 @@ jobs:
           grep -Fq '.worker-cockpit' public/enhancements.css
           grep -Fq '/app.js?v=r8' public/index.html
           grep -Fq '/enhancements.css?v=r5' public/index.html
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          for path in public/app.js public/enhancements.css public/index.html; do
+            test "$(git rev-parse "HEAD:$path")" = "$(git rev-parse "$current:$path")"
+          done
           echo "UI_PUBLISH_SOURCE_VERIFIED sha=$GITHUB_SHA"
 
       - name: Back up, atomically publish static UI, verify live and rollback on failure

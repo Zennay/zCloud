@@ -395,7 +395,14 @@ function globalWorkerRows(){
     const chatId=workerId?((DATA?.chatgpt_runners||{})[assigned]?.workers||[]).find(x=>x.worker_id===workerId)?.conversation_id:'';
     const chatUrl=chatId?(provider==='Claude'?'https://claude.ai/chat/':'https://chatgpt.com/c/')+encodeURIComponent(chatId):'';
     const disabled=(allowed,reason)=>allowed?'':' disabled';
-    const help=switching?'Projectwissel aangevraagd via Play/Force; wordt actief zodra de scheduler dit slot toewijst.':'';
+    // Only one compact status notice per worker. Keep the full explanation in
+    // a native disclosure, so long scheduler responses cannot resize controls.
+    const noteLabel=pending
+      ?(waiting?'Projectwissel aangevraagd · wacht op scheduler':pending.startsWith('Project priority requested')?'Nog niet toegewezen. Probeer Play opnieuw.':pending)
+      :(switching?'Projectkeuze nog niet actief':'');
+    const noteDetail=pending
+      ?(waiting?'De projectwissel is aangevraagd. Hij wordt actief zodra de scheduler dit slot toewijst. '+pending:pending.startsWith('Project priority requested')?'De aanvraag is nog niet toegewezen. Je kunt opnieuw op Play drukken. '+pending:pending)
+      :(switching?'Druk op Play of Force om het gekozen project aan te vragen. Een lopende taak wordt niet onderbroken.':'');
     return '<article class="global-worker-row" data-global-slot="'+slot+'">'
       +'<div class="global-worker-identity"><span class="global-worker-index">'+String(slot).padStart(2,'0')+'</span><div><strong>Worker '+slot+'</strong><small>'+esc(provider)+'</small></div></div>'
       +'<div class="global-worker-state '+(w?verdictClass(w.verdict):'idle')+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
@@ -406,8 +413,7 @@ function globalWorkerRows(){
       +'<button type="button" class="worker-icon-action worker-force" data-global-worker-force="'+slot+'" aria-label="Forceer worker '+slot+'" title="Forceer opnieuw starten"'+disabled(canForce,'Worker is bezig of status ontbreekt')+'>'+workerControlIcon('force')+'</button>'
       +'</div>'
       +(chatUrl?'<a class="global-worker-chat" target="_blank" rel="noopener noreferrer" href="'+esc(chatUrl)+'" aria-label="Open de chat van worker '+slot+'">↗ Chat</a>':'')
-      +(help?'<p class="global-worker-hint">'+esc(help)+'</p>':'')
-      +(pending?'<p class="global-worker-feedback" role="status">'+esc(waiting?pending:pending.startsWith('Project priority requested')?'Nog niet toegewezen. Je kunt opnieuw op Play drukken.':pending)+'</p>':'')
+      +(noteLabel?'<details class="global-worker-note"><summary><span class="global-worker-note-icon" aria-hidden="true">i</span><span class="global-worker-note-label" role="status">'+esc(noteLabel)+'</span></summary><p class="global-worker-note-detail">'+esc(noteDetail)+'</p></details>':'')
       +'</article>';
   }).join('')+'</div>';
 }

@@ -1,0 +1,64 @@
+name: zCloud safe VPS memory reclaim 2026-10-13
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-safe-memory-reclaim-20261013.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: zcloud-safe-memory-reclaim-20261013
+  cancel-in-progress: false
+jobs:
+  reclaim:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Reclaim clean Linux page cache without touching active processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "=== HOST AND BEFORE ==="
+          date -u +'%Y-%m-%d %H:%M:%S UTC'
+          free -m
+          awk '/^(MemTotal|MemFree|MemAvailable|Cached|Buffers|SReclaimable|SwapTotal|SwapFree|Dirty|Writeback):/{print}' /proc/meminfo
+          echo "=== MEMORY PRESSURE ==="
+          cat /proc/pressure/memory || true
+          echo "=== TOP RESIDENT PROCESSES ==="
+          ps -eo pid,user,rss,comm --sort=-rss | head -n 18 || true
+          echo "=== LIVE FIREFOX BEFORE ==="
+          ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print "FIREFOX_PARENT_PID=" $1}'
+          if [[ "$(id -u)" != "0" ]] && ! sudo -n true; then
+            echo "SAFE_RECLAIM_SKIPPED=noninteractive_sudo_unavailable"
+            exit 0
+          fi
+          before_available="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          before_free="$(awk '/^MemFree:/ {print $2}' /proc/meminfo)"
+          before_swap="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+          before_cached="$(awk '/^Cached:/ {print $2}' /proc/meminfo)"
+          # Only clean file-backed page cache; never swapoff, never kill/restart
+          # any browser, desktop session, database, user process or worker.
+          # Without sync, dirty write caches stay safely intact.
+          if [[ "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" -lt 524288 ]]; then
+            echo "SAFE_RECLAIM_SKIPPED=system_under_512MiB_available"
+          else
+            sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'
+            echo "SAFE_RECLAIM_CLEAN_PAGECACHE=1"
+          fi
+          sleep 3
+          echo "=== AFTER ==="
+          free -m
+          awk '/^(MemTotal|MemFree|MemAvailable|Cached|Buffers|SReclaimable|SwapTotal|SwapFree|Dirty|Writeback):/{print}' /proc/meminfo
+          after_available="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          after_free="$(awk '/^MemFree:/ {print $2}' /proc/meminfo)"
+          after_swap="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+          after_cached="$(awk '/^Cached:/ {print $2}' /proc/meminfo)"
+          echo "MEMFREE_DELTA_MIB=$(( (after_free-before_free)/1024 ))"
+          echo "MEMAVAILABLE_DELTA_MIB=$(( (after_available-before_available)/1024 ))"
+          echo "CACHED_DELTA_MIB=$(( (after_cached-before_cached)/1024 ))"
+          echo "SWAPFREE_DELTA_MIB=$(( (after_swap-before_swap)/1024 ))"
+          echo "=== LIVE FIREFOX AFTER ==="
+          ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print "FIREFOX_PARENT_PID=" $1}'
+          echo "ACTIVE_SERVICES_UNTOUCHED=1"
