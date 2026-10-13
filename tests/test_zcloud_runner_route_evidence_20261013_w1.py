@@ -24,6 +24,18 @@ def make_job(*, job_id=12, labels=None, status="queued", runner_id=0,
             "conclusion": conclusion, "created_at": created_at}
 
 
+def make_deploy_run(run_id=111, created="2026-10-13T21:35:00Z"):
+    repo = {"id": route.CANONICAL_REPOSITORY_ID, "full_name": route.REPO}
+    return {
+        "id": run_id, "name": "zCloud VPS deploy", "head_branch": "main",
+        "head_repository": dict(repo), "repository": dict(repo),
+        "workflow_id": route.CANONICAL_DEPLOY_WORKFLOW_ID,
+        "path": route.CANONICAL_DEPLOY_WORKFLOW_PATH,
+        "event": "workflow_run", "run_attempt": 1,
+        "head_sha": "a" * 40, "created_at": created,
+    }
+
+
 class RunnerRouteEvidenceTests(unittest.TestCase):
     def test_unassigned_queue_is_not_false_green(self):
         data = route.classify_run(1, [make_job()], NOW)
@@ -142,9 +154,9 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
                 return False
             def read(self, *args):
                 data = {"total_count": 3, "workflow_runs": [
-                    {"id": 111, "head_branch": "main", "name": "zCloud VPS deploy"},
-                    {"id": 999, "head_branch": "other", "name": "zCloud VPS deploy"},
-                    {"id": 222, "head_branch": "main", "name": "zCloud VPS deploy"}]}
+                    make_deploy_run(111, created="2026-10-13T21:35:00Z"),
+                    make_deploy_run(999, created="2026-10-13T21:30:00Z"),
+                    make_deploy_run(222, created="2026-10-13T21:40:00Z")]}
                 return json.dumps(data).encode("utf-8")
         class Opener:
             def open(self, request, timeout):
@@ -153,9 +165,40 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
                 return Response()
         opener = Opener()
         with patch.object(route.urllib.request, "build_opener", return_value=opener):
-            self.assertEqual(route.latest_main_deploy_ids("fake", 2), [111, 222])
+            self.assertEqual(route.latest_main_deploy_ids("fake", 2), [222, 111])
         self.assertTrue(opener.url.startswith("https://api.github.com/repos/Zennay/zCloud/"))
         self.assertEqual(opener.timeout, 15)
+
+    def test_canonical_deployment_source_identity_matrix(self):
+        from copy import deepcopy
+        baseline = make_deploy_run()
+        bad = [
+            {"workflow_id": 1}, {"workflow_id": True},
+            {"event": "pull_request"}, {"path": ".github/workflows/evil.yml"},
+            {"head_branch": "feat/other"}, {"name": "Other workflow"},
+            {"head_sha": "a" * 39}, {"head_sha": 2},
+            {"id": True}, {"run_attempt": True}, {"run_attempt": 0},
+            {"created_at": "2026-10-14T22:00:00Z"},
+            {"created_at": "2026-10-13T21:35:00"},
+            {"head_repository": {"id": 42, "full_name": route.REPO}},
+            {"repository": {"id": route.CANONICAL_REPOSITORY_ID,
+                            "full_name": "attacker/clone"}},
+            {"repository": {}}, {"head_repository": None},
+        ]
+        for changed in bad:
+            with self.subTest(changed=changed):
+                value = deepcopy(baseline)
+                value.update(changed)
+                with self.assertRaises(route.InvalidEvidence):
+                    route._verified_main_deploy_run(value, NOW)
+        self.assertEqual(route._verified_main_deploy_run(baseline, NOW),
+                         ("2026-10-13T21:35:00Z", 111))
+
+    def test_real_deployment_provenance_matches_canonical_numeric_identity(self):
+        self.assertEqual(route.CANONICAL_REPOSITORY_ID, 1389227570)
+        self.assertEqual(route.CANONICAL_DEPLOY_WORKFLOW_ID, 369569470)
+        self.assertEqual(route.CANONICAL_DEPLOY_WORKFLOW_PATH,
+                         ".github/workflows/zcloud-vps-deploy.yml")
 
     def test_latest_deploy_missing_token_denies_without_api(self):
         with self.assertRaises(route.InvalidEvidence):
