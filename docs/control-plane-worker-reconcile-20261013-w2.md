@@ -53,6 +53,11 @@ deployment or force-start approval.
 - `multiple_live_queue_claims`: more than one current claimed/running/
   verifying queue item occupies a global worker slot. No task IDs or titles
   are included in output.
+- `live_queue_claim_without_global_slot`: a current claimed/running/
+  verifying task points at a global slot absent from `ai_global_slots`.
+  This is a strong lead when queue work is claimed but no worker starts,
+  but may be an ordinary scheduler transition; classify as attention only.
+  More than one current claim on that orphan slot is a degraded collision.
 - `allocation_without_live_queue_claim`: queue claim absent or expired for
   a persisted global slot. This is **attention**, not definitive failure;
   bootstrap/manual worker slots can temporarily have no queue claim.
