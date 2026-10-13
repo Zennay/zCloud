@@ -304,6 +304,78 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, "invalid_commit_sha"):
             snapshot(self.repo, "deadbeef")
 
+    def test_snapshot_refuses_inert_template_and_noscript_references(self):
+        cases = (
+            (b'<template><script src="/app.js?v=r8"></script></template>'
+             b'<link rel="stylesheet" href="/enhancements.css?v=r5">',
+             "inactive_index_asset_reference"),
+            (b'<script src="/app.js?v=r8"></script>'
+             b'<noscript><link rel="stylesheet" href="/enhancements.css?v=r5"></noscript>',
+             "inactive_index_asset_reference"),
+        )
+        self.write("public/app.js", b"console.log('active')")
+        self.write("public/enhancements.css", b"body{}")
+        for i, (html, reason) in enumerate(cases):
+            with self.subTest(i=i):
+                self.write("public/index.html", html)
+                head = self.commit(f"inert fixture {i}")
+                with self.assertRaisesRegex(PlanError, reason):
+                    snapshot(self.repo, head)
+
+    def test_snapshot_refuses_non_executable_app_script_tags(self):
+        cases = (
+            '<script src="/app.js?v=r8" type="application/json"></script>',
+            '<script src="/app.js?v=r8" nomodule></script>',
+            '<script src="/app.js?v=r8" type="importmap"></script>',
+        )
+        self.write("public/app.js", b"console.log('active')")
+        self.write("public/enhancements.css", b"body{}")
+        for i, tag in enumerate(cases):
+            with self.subTest(i=i):
+                self.write("public/index.html",
+                           (tag + '<link rel="stylesheet" href="/enhancements.css?v=r5">').encode())
+                head = self.commit(f"inert script type {i}")
+                with self.assertRaisesRegex(PlanError, "inactive_index_asset_reference"):
+                    snapshot(self.repo, head)
+
+    def test_snapshot_refuses_inactive_stylesheets(self):
+        cases = (
+            '<link rel="stylesheet" href="/enhancements.css?v=r5" media="print">',
+            '<link rel="stylesheet" href="/enhancements.css?v=r5" disabled>',
+            '<link rel="alternate stylesheet" href="/enhancements.css?v=r5">',
+        )
+        self.write("public/app.js", b"console.log('active')")
+        self.write("public/enhancements.css", b"body{}")
+        for i, tag in enumerate(cases):
+            with self.subTest(i=i):
+                self.write("public/index.html",
+                           (tag + '<script src="/app.js?v=r8"></script>').encode())
+                head = self.commit(f"inactive CSS {i}")
+                with self.assertRaisesRegex(PlanError, "inactive_index_asset_reference"):
+                    snapshot(self.repo, head)
+
+    def test_snapshot_refuses_unclosed_inert_template(self):
+        self.write("public/app.js", b"console.log('active')")
+        self.write("public/enhancements.css", b"body{}")
+        self.write("public/index.html",
+                   b'<template><script src="/app.js?v=r8"></script>'
+                   b'<link rel="stylesheet" href="/enhancements.css?v=r5">')
+        head = self.commit("unterminated template")
+        with self.assertRaisesRegex(PlanError, "malformed_inert_index_structure"):
+            snapshot(self.repo, head)
+
+    def test_snapshot_accepts_active_module_script_and_screen_stylesheet(self):
+        self.write("public/app.js", b"export const active=1")
+        self.write("public/enhancements.css", b"body{color:white}")
+        self.write("public/index.html",
+                   b'<script type="module" src="/app.js?v=v11"></script>'
+                   b'<link rel="stylesheet" media="screen" href="/enhancements.css?v=dark-7">')
+        head = self.commit("active modern assets")
+        evidence = snapshot(self.repo, head)
+        self.assertEqual(evidence["index_asset_versions"],
+                         {"app.js": "v11", "enhancements.css": "dark-7"})
+        self.assertFalse(evidence["release_authorized"])
+
     def build_cache_baseline(self):
         self.write("public/index.html", self.pinned_index())
         self.write("public/app.js", b"const first=1;\n")
