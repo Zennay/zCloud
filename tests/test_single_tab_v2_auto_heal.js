@@ -119,6 +119,7 @@ const settle=async()=>new Promise(r=>setTimeout(r,20));
   // A generating worker, and then a worker with an unsent draft, must not reload.
   const state=live.get(2);
   clock+=660_000;state.lastPoll=clock-600_000;state.generating=true;
+  live.get(4).lastPoll=clock; // the healthy background worker keeps polling
   await ctx.tick();await ctx.tick();
   assert.equal(actions.filter(a=>a.action==="reload").length,1);
   state.generating=false;state.draft=true;
