@@ -178,7 +178,7 @@ class RealHttpTests(unittest.TestCase):
 
     def test_real_http_inventory_more_than_40_denied(self):
         self.mode='too_many_runs'
-        with self.assertRaisesRegex(route.EvidenceError,'incomplete_inventory'):
+        with self.assertRaisesRegex(route.EvidenceError,'invalid_or_unbounded_total_count'):
             self.live()
 
     def test_real_http_cli_output_redacted_and_not_authorizing(self):
