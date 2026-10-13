@@ -447,6 +447,74 @@ class OverlapTests(unittest.TestCase):
                     mod.github_fetcher("")(value, 0)
 
 
+class BatchOverlapTests(unittest.TestCase):
+    def test_large_inventory_can_be_examined_in_disjoint_denied_batches(self):
+        rows = [branch("main", S)] + [
+            branch(f"lane-{i:03d}", A) for i in range(180)
+        ]
+        pages = [rows[i:i + 100] for i in range(0, len(rows), 100)]
+        initial = mod.collect(Fixture(branches=pages, pulls=[[]]), S)
+        self.assertEqual(len(initial["pr_less"]), 180)
+        fixture = Fixture(branches=pages, pulls=[[]])
+        compared = []
+        def fetch(kind, page):
+            if kind.startswith("compare:"):
+                compared.append(kind)
+                return {"base_commit": {"sha": S}, "head_commit": {"sha": A},
+                        "commits": [{"sha": A}], "status": "ahead",
+                        "total_commits": 1, "ahead_by": 1,
+                        "files": [{"filename": "public/index.html", "status": "modified"}]}, None
+            return fixture(kind, page)
+        with self.assertRaisesRegex(mod.InventoryDenied, "branch_compare_cap"):
+            mod.compare_owned_paths(fetch, initial, ["public/"])
+        self.assertEqual(compared, [], "over-cap unbatched path must not fetch compares")
+        first = mod.compare_owned_paths(fetch, initial, ["public/"],
+                                        batch_offset=0, batch_limit=80)
+        self.assertFalse(first["coverage_complete"])
+        self.assertEqual(first["uncompared_branches"], 100)
+        self.assertEqual(first["compared_branches"], 80)
+        self.assertTrue(first["overlap_found"])
+        self.assertFalse(first["admission_authorized"])
+        last = mod.compare_owned_paths(fetch, initial, ["public/"],
+                                       batch_offset=80, batch_limit=100)
+        self.assertFalse(last["coverage_complete"])
+        self.assertEqual(last["compared_branches"], 100)
+        self.assertEqual(last["uncompared_branches"], 80)
+        self.assertFalse(last["deployment_authorized"])
+        self.assertEqual(len(compared), 180)
+
+    def test_invalid_batch_ranges_deny_without_compare_requests(self):
+        snap = mod.collect(Fixture(), S)
+        for options in ({"batch_offset": -1, "batch_limit": 1},
+                        {"batch_offset": True, "batch_limit": 1},
+                        {"batch_offset": 1, "batch_limit": 1},
+                        {"batch_offset": 0, "batch_limit": 0},
+                        {"batch_offset": 0, "batch_limit": 151},
+                        {"batch_offset": 1},
+                        {"batch_offset": 0, "batch_limit": False}):
+            with self.subTest(options=options):
+                with self.assertRaises(mod.InventoryDenied):
+                    mod.compare_owned_paths(
+                        lambda *_: (_ for _ in ()).throw(AssertionError("unexpected fetch")),
+                        snap, ["public/"], **options)
+
+    def test_single_branch_batch_is_complete_but_still_not_approved(self):
+        snap = mod.collect(Fixture(), S)
+        fixture = Fixture()
+        def fetch(kind, page):
+            if kind.startswith("compare:"):
+                return {"base_commit": {"sha": S}, "head_commit": {"sha": A},
+                        "commits": [{"sha": A}], "status": "ahead",
+                        "total_commits": 1, "ahead_by": 1,
+                        "files": []}, None
+            return fixture(kind, page)
+        result = mod.compare_owned_paths(fetch, snap, ["public/"],
+                                         batch_offset=0, batch_limit=1)
+        self.assertTrue(result["coverage_complete"])
+        self.assertEqual(result["uncompared_branches"], 0)
+        self.assertFalse(result["admission_authorized"])
+
+
 class CLIOverlapTests(unittest.TestCase):
     def _fixture(self, kind, page):
         if kind.startswith("compare:"):
@@ -475,6 +543,41 @@ class CLIOverlapTests(unittest.TestCase):
         self.assertTrue(data["overlap_found"])
         self.assertFalse(data["admission_authorized"])
         self.assertFalse(data["deployment_authorized"])
+
+    def test_cli_accepts_explicit_bounded_batch_options(self):
+        base = Fixture()
+        def fetch(kind, page):
+            if kind.startswith("compare:"):
+                return {"base_commit": {"sha": S}, "head_commit": {"sha": A},
+                        "commits": [{"sha": A}], "status": "ahead",
+                        "total_commits": 1, "ahead_by": 1, "files": []}, None
+            return base(kind, page)
+        with patch.object(mod, "github_fetcher", return_value=fetch):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                result = mod.main([S, "--owned-path", "public/",
+                                   "--branch-offset", "0", "--branch-limit", "1"])
+        self.assertEqual(result, 0)
+        content = json.loads(output.getvalue())
+        self.assertTrue(content["coverage_complete"])
+        self.assertEqual(content["batch_offset"], 0)
+        self.assertFalse(content["admission_authorized"])
+
+    def test_invalid_batch_cli_flags_deny_before_network(self):
+        invalid_args = [
+            [S, "--owned-path", "public/", "--branch-offset", "0"],
+            [S, "--branch-offset", "0", "--branch-limit", "1"],
+            [S, "--owned-path", "public/", "--branch-offset", "01", "--branch-limit", "1"],
+            [S, "--owned-path", "public/", "--branch-offset", "-1", "--branch-limit", "1"],
+            [S, "--owned-path", "../escape", "--branch-offset", "0", "--branch-limit", "1"],
+            [S, "--owned-path", "public/", "--branch-limit", "1",
+             "--branch-limit", "2", "--branch-offset", "0"]
+        ]
+        with patch.object(mod, "github_fetcher", side_effect=AssertionError("network invoked")):
+            for args in invalid_args:
+                with self.subTest(args=args):
+                    with patch("sys.stdout", new_callable=io.StringIO) as output:
+                        self.assertEqual(mod.main(args), 2)
+                    self.assertFalse(json.loads(output.getvalue())["deployment_authorized"])
 
     def test_cli_rejects_extra_undefined_arguments_without_network(self):
         with patch.object(mod, "github_fetcher", side_effect=AssertionError("network invoked")):
