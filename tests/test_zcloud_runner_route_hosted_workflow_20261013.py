@@ -42,6 +42,8 @@ def screen(text):
         raise ValueError('nonmutating_queue_probe_missing')
     if 'python3 scripts/zcloud_runner_route_receipt_20261013.py' not in jobs:
         raise ValueError('queue_receipt_guard_missing')
+    if 'set +e\n          python3 scripts/zcloud_runner_route_triage_20261013.py --jobs-only' not in jobs or 'probe_rc=$?\n          set -euo pipefail' not in jobs:
+        raise ValueError('queue_probe_expected_exit_handling_missing')
     if 'GITHUB_TOKEN: ${{ github.token }}' not in jobs or 'secrets.' in jobs:
         raise ValueError('unexpected_token_source')
     if re.search(r'(?mi)^\s*(?:sudo\b|systemctl\b|curl\b.*-X\s*POST|gh\s+(?:api|workflow|run)\b)', jobs):
@@ -86,6 +88,10 @@ class HostedOnlyWorkflow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'queue_receipt_guard_missing'):
             screen(self.content.replace('python3 scripts/zcloud_runner_route_receipt_20261013.py',
                                         'echo unsafe-unfiltered-raw-queue-output', 1))
+
+    def test_bash_errexit_cannot_hide_incomplete_live_witness(self):
+        with self.assertRaisesRegex(ValueError, 'queue_probe_expected_exit_handling_missing'):
+            screen(self.content.replace('set +e', 'set -e', 1))
 
     def test_runner_admin_secrets_forbidden(self):
         with self.assertRaisesRegex(ValueError, 'unexpected_token_source'):
