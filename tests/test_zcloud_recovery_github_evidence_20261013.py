@@ -109,6 +109,7 @@ class GithubEvidenceTests(unittest.TestCase):
     def test_reject_run_sha_or_branch_mismatch(self):
         for field, value in (("head_sha", T), ("head_branch", "feature")):
             fake = FixtureGitHub()
+            fake.statuses = []
             fake.deploy[0][field] = value
             self.assertEqual(evidence.observe(fake)["decision"], "DENY")
 
