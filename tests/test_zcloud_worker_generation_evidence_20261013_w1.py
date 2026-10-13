@@ -111,9 +111,11 @@ class GenerationEvidenceTests(unittest.TestCase):
                 self.assertFalse(finding["all_allocated_chatgpt_generating"])
                 self.assertEqual("untrusted_generation_event", finding["workers"][0]["state"])
 
-    def test_generation_started_event_valid_with_fresh_flag(self):
-        report = self.classify(d=debug(row(last_event="generation-started")))
-        self.assertTrue(report["all_allocated_chatgpt_generating"])
+    def test_nonterminal_browser_event_types_valid_with_fresh_flag(self):
+        for event in ("heartbeat", "generation-started", "generation-progress"):
+            with self.subTest(event=event):
+                report = self.classify(d=debug(row(last_event=event)))
+                self.assertTrue(report["all_allocated_chatgpt_generating"])
 
     def test_extreme_json_nesting_denied_without_traceback(self):
         depth = 1200
