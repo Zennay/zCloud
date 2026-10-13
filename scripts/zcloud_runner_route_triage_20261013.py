@@ -10,7 +10,7 @@ import json
 import os
 import re
 import sys
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO = 'Zennay/zCloud'
 MAX_BODY = 262144
@@ -133,6 +133,10 @@ def classify(payload, now, stale_seconds=180):
             'recovery_authorized': False, 'queue_cancel_authorized': False,
             'deploy_authorized': False, 'generation_verified': False}
 
+class RefuseRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise EvidenceError('github_api_redirect_denied')
+
 def api(path, token):
     if not path.startswith('/repos/Zennay/zCloud/actions/'):
         raise EvidenceError('forbidden_endpoint')
@@ -141,7 +145,7 @@ def api(path, token):
         'User-Agent': 'zcloud-runner-route-triage/1',
         'X-GitHub-Api-Version': '2022-11-28'})
     try:
-        with urlopen(request, timeout=12) as response:
+        with build_opener(RefuseRedirect()).open(request, timeout=12) as response:
             if response.status != 200 or not response.headers.get('content-type', '').lower().startswith('application/json'):
                 raise EvidenceError('untrusted_api_response')
             data = response.read(MAX_BODY + 1)
