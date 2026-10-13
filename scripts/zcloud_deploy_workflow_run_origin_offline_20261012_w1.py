@@ -11,6 +11,8 @@ import re
 from typing import Any
 
 REPOSITORY = "Zennay/zCloud"
+# Immutable numeric repo identity verified through GitHub REST /repos/Zennay/zCloud.
+REPOSITORY_ID = 1389227570
 UPSTREAM_WORKFLOW = "zCloud regression smoke"
 UPSTREAM_WORKFLOW_ID = 367943538
 UPSTREAM_PATH = ".github/workflows/zcloud-regression-smoke.yml"
@@ -54,6 +56,8 @@ def classify_github_payload(
     repo_id = repository.get("id")
     if type(repo_id) is not int or repo_id <= 0:
         return Decision(False, "invalid_event_repository_id")
+    if repo_id != REPOSITORY_ID:
+        return Decision(False, "event_repository_id_mismatch")
     source = payload.get("workflow_run")
     if type(source) is not dict:
         return Decision(False, "source_not_object")
