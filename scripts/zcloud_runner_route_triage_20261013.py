@@ -11,6 +11,7 @@ import math
 import os
 import re
 import sys
+import time
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 REPO = 'Zennay/zCloud'
@@ -182,9 +183,26 @@ def pages(path, field, token, limit=500):
             return found
     raise EvidenceError('pagination_cap_reached')
 
+def runner_signature(runners):
+    # Only identity and routing metadata. Never return runner names/URLs/tokens.
+    snapshot = []
+    seen = set()
+    for runner in array(runners, 'runners'):
+        if (not isinstance(runner, dict) or type(runner.get('id')) is not int
+                or runner['id'] <= 0 or runner['id'] in seen
+                or runner.get('status') not in ('online', 'offline')
+                or type(runner.get('busy')) is not bool):
+            raise EvidenceError('invalid_runner')
+        seen.add(runner['id'])
+        snapshot.append((runner['id'], runner['status'], runner['busy'],
+                         tuple(sorted(labels(runner.get('labels'))))))
+    return tuple(sorted(snapshot))
+
 def live(token):
     if not token: raise EvidenceError('missing_github_token')
+    started = time.monotonic()
     runners = pages(f'/repos/{REPO}/actions/runners', 'runners', token)
+    initial_runners = runner_signature(runners)
     # Do not only query queued workflow runs: a hosted preflight can make the
     # run in_progress while the remaining self-hosted deploy is unassigned.
     runs = []
@@ -209,8 +227,14 @@ def live(token):
         if not isinstance(run, dict) or type(run.get('id')) is not int:
             raise EvidenceError('invalid_run')
         jobs[str(run['id'])] = pages(f'/repos/{REPO}/actions/runs/{run["id"]}/jobs?filter=latest', 'jobs', token)
+    current_runners = pages(f'/repos/{REPO}/actions/runners', 'runners', token)
+    if runner_signature(current_runners) != initial_runners:
+        raise EvidenceError('runner_roster_changed_during_observation')
+    # A stale, non-atomic sequence of API reads cannot verify an idle route.
+    if not 0 <= time.monotonic() - started <= 45:
+        raise EvidenceError('observation_too_slow')
     return {'repository': REPO, 'captured_at': datetime.now(timezone.utc).isoformat(),
-            'runners': runners, 'queued_runs': runs, 'jobs_by_run': jobs}
+            'runners': current_runners, 'queued_runs': runs, 'jobs_by_run': jobs}
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
