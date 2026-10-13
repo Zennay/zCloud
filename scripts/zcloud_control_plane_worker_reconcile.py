@@ -43,7 +43,7 @@ def _strict_json(raw: bytes):
                           object_pairs_hook=_unique_pairs,
                           parse_constant=lambda _: (_ for _ in ()).throw(
                               InvalidEvidence("non-finite JSON value")))
-    except (UnicodeError, json.JSONDecodeError) as exc:
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise InvalidEvidence("malformed runner-live JSON") from exc
     if not isinstance(data, dict):
         raise InvalidEvidence("runner-live top-level must be an object")
@@ -178,9 +178,7 @@ def _live_workers(payload):
                 raise InvalidEvidence("invalid live worker identity")
             # Never allow a claimed worker_slot to relabel a *different* worker.
             # Identity mismatch previously made cloud::w2 masquerade as cloud::w1.
-            if name == project_id:
-                canonical_slot = 1
-            elif name.startswith(project_id + "::w"):
+            if name.startswith(project_id + "::w"):
                 digits = name[len(project_id) + 3:]
                 if not digits.isascii() or not digits.isdecimal():
                     raise InvalidEvidence("invalid worker identity suffix")
