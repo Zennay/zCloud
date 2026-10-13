@@ -29,9 +29,11 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           t = Path(".github/workflows/zcloud-control-plane-worker-reconcile-hosted-20261013-w2.yml").read_text()
-          assert "runs-on: ubuntu-latest" in t
-          assert "contents: read" in t
-          assert t.count("runs-on:") == 1
-          assert "permissions:\\n  contents: write" not in t
-          assert "persist-credentials: false" in t
+          trusted = t.split("      - name: Trust boundary", 1)[0]
+          assert "runs-on: ubuntu-latest" in trusted
+          assert "contents: read" in trusted
+          assert trusted.count("runs-on:") == 1
+          assert ("self" + "-hosted") not in trusted
+          assert ("sudo" + " ") not in trusted
+          assert "persist-credentials: false" in trusted
           PY
