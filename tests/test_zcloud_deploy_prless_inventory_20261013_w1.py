@@ -237,6 +237,8 @@ class OverlapTests(unittest.TestCase):
                 self.assertEqual(kind, f"compare:{S}...{A}")
                 return {
                     "base_commit": {"sha": base},
+                    "head_commit": {"sha": A},
+                    "commits": [{"sha": A}] * total if 0 <= total <= 250 else [],
                     "status": status,
                     "total_commits": total, "ahead_by": ahead,
                     "files": files if files is not None else [
@@ -329,6 +331,52 @@ class OverlapTests(unittest.TestCase):
         self.assertEqual((payload, next_page), ({"files": []}, None))
         self.assertEqual(seen, [("GET", f"https://api.github.com/repos/Zennay/zCloud/compare/{S}...{A}")])
 
+
+    def test_compare_wrong_head_or_missing_head_rejected(self):
+        correct = self.source()
+        for bad in ({"sha": B}, {}, None):
+            with self.subTest(head=bad):
+                def fetch(kind, page):
+                    payload, next_page = correct(kind, page)
+                    if kind.startswith("compare:"):
+                        payload["head_commit"] = bad
+                    return payload, next_page
+                with self.assertRaises(mod.InventoryDenied):
+                    mod.compare_owned_paths(fetch, self.snapshot, ["scripts/"])
+
+    def test_compare_partial_or_spoofed_commit_history_rejected(self):
+        correct = self.source()
+        for bogus in ([], [{"sha": B}], [{"sha": "invalid"}], None,
+                      [{"sha": A}, {"sha": A}]):
+            with self.subTest(commits=bogus):
+                def fetch(kind, page):
+                    payload, next_page = correct(kind, page)
+                    if kind.startswith("compare:"):
+                        payload["commits"] = bogus
+                    return payload, next_page
+                with self.assertRaisesRegex(mod.InventoryDenied, "compare_commit_history_incomplete"):
+                    mod.compare_owned_paths(fetch, self.snapshot, ["scripts/"])
+
+    def test_compare_link_pagination_denied_without_second_get(self):
+        class Response:
+            status = 200
+            headers = {"Link": '<https://api.github.com/repos/Zennay/zCloud/compare/a...b?page=2>; rel="next"'}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, n):
+                return b'{"files":[]}'
+        calls = []
+        class Opener:
+            def open(self, request, timeout):
+                calls.append(request.full_url)
+                return Response()
+        with patch.object(mod.urllib.request, "build_opener", return_value=Opener()):
+            with self.assertRaisesRegex(mod.InventoryDenied, "paginated_compare_incomplete"):
+                mod.github_fetcher("")(f"compare:{S}...{A}", 0)
+        self.assertEqual(len(calls), 1)
+
     def test_rejects_symbolic_or_spoofed_compare_refs(self):
         for value in ("compare:main...branch", f"compare:{S}...main",
                       f"compare:{S}...{A}/other"):
@@ -340,7 +388,8 @@ class OverlapTests(unittest.TestCase):
 class CLIOverlapTests(unittest.TestCase):
     def _fixture(self, kind, page):
         if kind.startswith("compare:"):
-            return {"base_commit": {"sha": S}, "status": "ahead",
+            return {"base_commit": {"sha": S}, "head_commit": {"sha": A},
+                    "commits": [{"sha": A}], "status": "ahead",
                     "total_commits": 1, "ahead_by": 1,
                     "files": [{"filename": "public/app.js", "status": "modified"}]}, None
         return Fixture()(kind, page)
@@ -350,7 +399,8 @@ class CLIOverlapTests(unittest.TestCase):
         base = Fixture()
         def fetch(kind, page):
             if kind.startswith("compare:"):
-                return {"base_commit": {"sha": S}, "status": "ahead",
+                return {"base_commit": {"sha": S}, "head_commit": {"sha": A},
+                        "commits": [{"sha": A}], "status": "ahead",
                         "total_commits": 1, "ahead_by": 1,
                         "files": [{"filename": "public/app.js", "status": "modified"}]}, None
             return base(kind, page)
