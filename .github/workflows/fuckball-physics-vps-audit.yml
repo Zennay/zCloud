@@ -1,0 +1,53 @@
+name: Audit live Fuckball physics without mutation
+
+on:
+  push:
+    branches: [diagnostic/fuckball-physics-vps-20261013]
+    paths: ['.github/workflows/fuckball-physics-vps-audit.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Snapshot current live physics and Git recovery evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/fuckball-vps-evidence"
+          mkdir -p "$out"
+          if [ ! -d /opt/fuckball/.git ]; then
+            echo "No /opt/fuckball git checkout found" | tee "$out/missing-checkout.txt"
+            exit 0
+          fi
+          cd /opt/fuckball
+          echo "Captured at: $(date -u +%FT%TZ)" | tee "$out/metadata.txt"
+          echo "HEAD: $(git rev-parse HEAD)" | tee -a "$out/metadata.txt"
+          git status --short --untracked-files=normal > "$out/status.txt"
+          git log -8 --oneline > "$out/history.txt"
+          git reflog --all -35 --date=iso > "$out/reflog.txt" || true
+          git stash list > "$out/stashes.txt" || true
+          git fsck --no-reflogs --unreachable > "$out/unreachable-objects.txt" 2>&1 || true
+          git diff -- shared/physics.js shared/prediction.js shared/bot.js public/index.html > "$out/uncommitted-gameplay.patch"
+          for path in shared/physics.js shared/prediction.js shared/bot.js public/index.html; do
+            if [ -f "$path" ]; then
+              mkdir -p "$out/$(dirname "$path")"
+              cp "$path" "$out/$path"
+              sha256sum "$path" >> "$out/hashes.txt"
+            fi
+          done
+          curl -fsS --max-time 4 http://127.0.0.1:3417/health > "$out/health.json" || true
+          echo "Current VPS HEAD: $(git rev-parse --short HEAD)"
+          echo "Uncommitted gameplay patch bytes: $(wc -c < "$out/uncommitted-gameplay.patch")"
+          echo "Unreachable Git objects: $(wc -l < "$out/unreachable-objects.txt")"
+          echo "Captured read-only evidence; no deployment, git reset or service restart."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuckball-physics-live-source-and-recovery
+          path: ${{ runner.temp }}/fuckball-vps-evidence
+          retention-days: 14
+          if-no-files-found: warn
