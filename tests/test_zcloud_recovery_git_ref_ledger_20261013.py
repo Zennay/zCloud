@@ -106,6 +106,9 @@ class GitRefReservationTests(unittest.TestCase):
         self.assertEqual(p1["method"], "POST")
         self.assertEqual(p1["repository_id"], 1389227570)
         self.assertEqual(p1["payload"], {"ref": p1["ref"], "sha": S})
+        self.assertIs(p1["requires_protected_tag_namespace"], True)
+        self.assertIs(p1["requires_no_tag_deletion_or_rewrite"], True)
+        self.assertIs(p1["requires_durable_owner_review"], True)
 
     def test_fresh_main_uses_different_key(self):
         self.assertNotEqual(self.plan(S)["ref"], self.plan(T)["ref"])
