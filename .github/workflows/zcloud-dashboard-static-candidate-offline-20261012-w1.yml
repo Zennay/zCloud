@@ -26,7 +26,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           clean: true
           persist-credentials: false
-          fetch-depth: 96
+          # The immutable historical audit baseline may be >96 commits behind.
+          # Full history on GitHub-hosted checkout only; no runner/VPS writes.
+          fetch-depth: 0
       - name: Prove immutable candidate identity
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
