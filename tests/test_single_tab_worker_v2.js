@@ -33,6 +33,7 @@ const row=(id,slot)=>({project_id:id,active:true,assignment_ready:true,
  queue_item:{queue_id:"q"+slot},prompt:"Werk verder aan Supa. Kijk in Notion voor de taak."});
 const noop=()=>{};
 const browser={
+ storage:{local:{get:async()=>({}),set:async()=>{}}},
  sessions:{
   getTabValue:async(id,key)=>tags.get(id+"|"+key)||null,
   setTabValue:async(id,key,value)=>{tags.set(id+"|"+key,value)}
