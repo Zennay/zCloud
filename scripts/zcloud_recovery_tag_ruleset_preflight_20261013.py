@@ -54,23 +54,23 @@ def exact_protection(detail):
     if type(bypass) is not list or bypass:
         return False
     conditions = detail.get("conditions")
-    if not isinstance(conditions, dict):
+    if not isinstance(conditions, dict) or set(conditions) != {"ref_name"}:
         return False
     names = conditions.get("ref_name")
-    if not isinstance(names, dict):
+    if not isinstance(names, dict) or set(names) != {"include", "exclude"}:
         return False
     includes, excludes = names.get("include"), names.get("exclude")
     if includes != [PREFIX_PATTERN] or excludes != []:
         return False
     rules = detail.get("rules")
-    if not isinstance(rules, list) or len(rules) < 2 or len(rules) > 32:
+    if not isinstance(rules, list) or len(rules) != 2:
         return False
     names = set()
     for rule in rules:
         if not isinstance(rule, dict) or type(rule.get("type")) is not str:
             return False
         names.add(rule["type"])
-    return ALLOWED_RULE_TYPES.issubset(names)
+    return names == ALLOWED_RULE_TYPES
 
 
 def screen_snapshot(*, repo_id, before_sha, after_sha, listing_complete, summaries, details):
@@ -105,7 +105,10 @@ def screen_snapshot(*, repo_id, before_sha, after_sha, listing_complete, summari
             return result("detail_summary_mismatch", sha=before_sha)
         if summary.get("source_type") not in {"Repository", "Organization"}:
             return result("invalid_ruleset_source", sha=before_sha)
-        if summary["source_type"] == "Repository" and summary.get("source") != "Zennay/zCloud":
+        if (summary["source_type"] == "Repository"
+                and summary.get("source") != "Zennay/zCloud") or (
+                summary["source_type"] == "Organization"
+                and summary.get("source") != "Zennay"):
             return result("untrusted_ruleset_source", sha=before_sha)
     if any(exact_protection(details[i]) for i in ids):
         return result("candidate_ruleset_syntax_only", match=True, sha=before_sha)
