@@ -130,9 +130,18 @@ def _target_binding(targets, key, item):
     if queue_id is not None and queue_id != item["queue_id"]:
         raise EvidenceDenied("target_queue_claim_mismatch")
     claimed_at = queue.get("claimed_at") if isinstance(queue, dict) else None
+    expires_at = queue.get("claim_expires") if isinstance(queue, dict) else None
     if ready:
+        if (queue.get("project_id") != project
+                or type(queue.get("worker_slot")) is not int
+                or queue["worker_slot"] != item["global_worker_slot"]
+                or queue.get("status") not in ("claimed", "running", "verifying")
+                or queue.get("eligible") is not True):
+            raise EvidenceDenied("target_queue_not_eligible")
         _instant(claimed_at)
-    return (active, ready, desired, queue_id, claimed_at)
+        if expires_at is not None:
+            _instant(expires_at)
+    return (active, ready, desired, queue_id, claimed_at, expires_at)
 
 
 def _allocation_fingerprint(targets):
@@ -258,7 +267,7 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
         provider = item.get("provider", "chatgpt")
         if provider not in ("chatgpt", "claude"):
             raise EvidenceDenied("unknown_provider")
-        target_active, assignment_ready, desired_state, _, claimed_at = _target_binding(targets, key, item)
+        target_active, assignment_ready, desired_state, _, claimed_at, expires_at = _target_binding(targets, key, item)
         if provider == "claude":
             findings.append({"worker": key, "state": "other_provider", "generation_evidence": False})
             continue
@@ -295,14 +304,17 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
                 claim_time = _instant(claimed_at)
                 if claim_time > timestamp + timedelta(seconds=10):
                     raise EvidenceDenied("future_target_claim")
-                # The backend rounds age to whole seconds. Its reconstructed
+                if expires_at is not None and _instant(expires_at) <= now.astimezone(timezone.utc):
+                    state = "expired_queue_claim"
+                else:
+                    # The backend rounds age to whole seconds. Its reconstructed
                 # event time is an optimistic upper bound (up to ~1s too new);
                 # reject when even that estimate predates the current claim.
-                event_upper_bound = timestamp - timedelta(seconds=telemetry_age)
-                if event_upper_bound < claim_time:
-                    state = "generation_predates_claim"
-                else:
-                    state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
+                    event_upper_bound = timestamp - timedelta(seconds=telemetry_age)
+                    if event_upper_bound < claim_time:
+                        state = "generation_predates_claim"
+                    else:
+                        state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
         elif verdict == "prompt-sent":
             _age(row.get("last_prompt_age_s"))
             state = "prompt_sent_without_generation"
