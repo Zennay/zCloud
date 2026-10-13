@@ -33,6 +33,10 @@ jobs:
           python3 -m py_compile scripts/zcloud_runner_route_evidence_20261013_w1.py scripts/zcloud_safe_idle_blocker_evidence_20261013_w1.py
           python3 -m unittest discover -s tests -p 'test_zcloud_runner_route_evidence_20261013_w1.py' -v
           python3 -m unittest discover -s tests -p 'test_zcloud_safe_idle_blocker_evidence_20261013_w1.py' -v
+      - name: Run complete zCloud Python regression on GitHub-hosted VM
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
       - name: Validate synthetic completed-drain log receipt without touching workers
         run: |
           set -euo pipefail
