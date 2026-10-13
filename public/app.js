@@ -383,7 +383,7 @@ function globalWorkerRows(){
     const choice=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:assigned;
     const options=(DATA?.projects||[]).map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
     const pending=GLOBAL_WORKER_REQUEST_RESULTS[slot]||'';
-    const waiting=pending.startsWith('Project priority requested')&&Date.now()-Number(GLOBAL_WORKER_REQUEST_AT[slot]||0)<WORKER_REQUEST_RETRY_MS;
+    const waiting=(pending.startsWith('Project priority requested')||pending.startsWith('Force voor worker'))&&Date.now()-Number(GLOBAL_WORKER_REQUEST_AT[slot]||0)<WORKER_REQUEST_RETRY_MS;
     const verdict=verified?(w?(VERDICT_LABEL[w.verdict]||w.verdict):'Beschikbaar'):'Status niet geverifieerd';
     const workerId=verified?String(w?.worker||''):'';
     const paused=w?.desired_state==='paused';
@@ -391,14 +391,14 @@ function globalWorkerRows(){
     const switching=Boolean(choice&&choice!==assigned);
     const canPlay=verified&&!waiting&&((switching&&!busySlot)||(!switching&&workerId&&paused)||(!workerId&&Boolean(choice)));
     const canPause=verified&&Boolean(workerId)&&!paused;
-    const canForce=verified&&!waiting&&!busySlot&&(Boolean(workerId)||Boolean(choice));
+    const canForce=verified&&!busySlot&&(Boolean(workerId)||Boolean(choice));
     const chatId=workerId?((DATA?.chatgpt_runners||{})[assigned]?.workers||[]).find(x=>x.worker_id===workerId)?.conversation_id:'';
     const chatUrl=chatId?(provider==='Claude'?'https://claude.ai/chat/':'https://chatgpt.com/c/')+encodeURIComponent(chatId):'';
     const disabled=(allowed,reason)=>allowed?'':' disabled';
     // Only one compact status notice per worker. Keep the full explanation in
     // a native disclosure, so long scheduler responses cannot resize controls.
     const noteLabel=pending
-      ?(waiting?'Projectwissel aangevraagd · wacht op scheduler':pending.startsWith('Project priority requested')?'Nog niet toegewezen. Probeer Play opnieuw.':pending)
+      ?(waiting?'Aanvraag ingediend · wacht op werkertoewijzing':pending.startsWith('Project priority requested')?'Nog niet toegewezen. Probeer Play opnieuw.':pending)
       :(switching?'Projectkeuze nog niet actief':'');
     const noteDetail=pending
       ?(waiting?'De projectwissel is aangevraagd. Hij wordt actief zodra de scheduler dit slot toewijst. '+pending:pending.startsWith('Project priority requested')?'De aanvraag is nog niet toegewezen. Je kunt opnieuw op Play drukken. '+pending:pending)
@@ -435,7 +435,7 @@ async function forceGlobalWorker(slot,button){
   if(!WORKER_DEBUG||WORKER_DEBUG_ERROR){window.alert('Live workerstatus ontbreekt.');return}
   if(observed&&['generating','prompt-sent'].includes(observed.verdict)){window.alert('Deze worker is nog bezig.');return}
   if(selected&&selected!==observed?.project){await requestGlobalWorkerProject(slot,button,true);return}
-  if(observed?.worker){await controlWorker(observed.worker,'start',button,true);return}
+  if(observed?.worker){await controlWorker(observed.worker,'start',button,true,slot);return}
   if(selected){await requestGlobalWorkerProject(slot,button,true);return}
   window.alert('Kies eerst een project.');
 }
@@ -462,11 +462,11 @@ async function requestGlobalWorkerProject(slot,button,force=false){
   }
   const old=button.innerHTML;button.disabled=true;button.setAttribute('aria-busy','true');
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:target,action:'start',force}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:target,action:'start',force,global_worker_slot:slot}),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(result.error||'Could not request project');
     // This API requests project admission; the scheduler can still select another slot.
-    GLOBAL_WORKER_REQUEST_RESULTS[slot]='Project priority requested. Waiting for queue allocation; no immediate slot switch is guaranteed.';
+    GLOBAL_WORKER_REQUEST_RESULTS[slot]=force?'Force voor worker '+slot+' aangevraagd. Wacht op een veilige taaktoewijzing en nieuwe tab.':'Project priority requested. Waiting for queue allocation; no immediate slot switch is guaranteed.';
     GLOBAL_WORKER_REQUEST_AT[slot]=Date.now();
     GLOBAL_WORKER_PROJECT_REQUESTS[slot]=target;
     setTimeout(()=>refresh(true),650);render();
@@ -501,11 +501,11 @@ function workerDetailPanel(p){
   }).join('');
   return `<div class="panel worker-panel"><div class="panel-header"><div><h2>ChatGPT workers</h2><div class="panel-subtitle">${activeCount} of ${desiredCount} active · technical details only when needed</div></div><span class="count">${activeCount}/${desiredCount}</span></div><div class="worker-list">${cards}</div></div>`;
 }
-async function controlWorker(workerId,action,button,force=false){
+async function controlWorker(workerId,action,button,force=false,globalSlot=null){
   const previous=button.innerHTML,iconOnly=button.classList?.contains('worker-icon-action');
   button.disabled=true;button.setAttribute('aria-busy','true');if(!iconOnly)button.textContent='Working…';
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:workerId,action,force}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:workerId,action,force,global_worker_slot:globalSlot}),signal:AbortSignal.timeout(10000)});
     const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Workeraction failed');
     if(!iconOnly)button.textContent=action==='drain'?'Finishing task':action==='pause'?'Paused':action==='start'?'Resume':'Push started';setTimeout(()=>refresh(true),650);
   }catch(error){if(!iconOnly)button.textContent='Failed';window.alert(error.message||String(error))}
