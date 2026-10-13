@@ -23,8 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A manual main dispatch can become stale while another worker commits.
-          # Deny any success claim unless the tested commit is still canonical main.
+          # Reject a manual main dispatch whose pinned SHA is no longer current.
           verify_main_head() {
             local observed ref
             [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -35,13 +34,11 @@ jobs:
               echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
               return 2
             }
-            [[ "$ref" == *
-\\t'refs/heads/main ]] || {
+            [[ "$ref" =~ ^[0-9a-f]{40}[[:space:]]refs/heads/main$ ]] || {
               echo "DASHBOARD_TRIAGE_MAIN_UNVERIFIABLE"
               return 2
             }
-            observed="${ref%%
-\\t'*}"
+            observed="$(printf '%s' "$ref" | cut -c1-40)"
             [[ "$observed" == "$GITHUB_SHA" ]] || {
               echo "DASHBOARD_TRIAGE_MAIN_CHANGED"
               return 2
