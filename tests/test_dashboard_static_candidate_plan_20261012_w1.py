@@ -169,15 +169,29 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(expected, observed)
 
+    def pinned_index(self, app="/app.js?v=r8", css="/enhancements.css?v=r5"):
+        return (
+            '<!doctype html><html><head>'
+            '<link rel="stylesheet" href="' + css + '">'
+            '<script src="' + app + '" defer></script>'
+            '</head><body></body></html>'
+        ).encode("utf-8")
+
     def write_snapshot_bundle(self):
         self.write("public/app.js", b"'use strict'; const cockpit=1;\n")
         self.write("public/enhancements.css", b".worker-cockpit{display:grid}\n")
+        self.write("public/index.html", self.pinned_index())
         return self.commit("static cockpit bundle")
 
     def test_git_snapshot_has_exact_asset_sha256_and_no_authority(self):
         sha = self.write_snapshot_bundle()
         inventory = snapshot(self.repo, sha)
         self.assertEqual(inventory["schema"], "zcloud-dashboard-git-snapshot-v1")
+        self.assertTrue(inventory["index_references_pinned"])
+        self.assertEqual(
+            inventory["index_asset_versions"],
+            {"app.js": "r8", "enhancements.css": "r5"},
+        )
         self.assertEqual(inventory["source_revision_sha"], sha)
         self.assertEqual(
             [r["path"] for r in inventory["assets"]],
@@ -188,7 +202,7 @@ class StaticDashboardCandidateTests(unittest.TestCase):
             sum(item["bytes"] for item in inventory["assets"]),
         )
         expected = {
-            "public/index.html": b"<!doctype html><title>Before</title>",
+            "public/index.html": self.pinned_index(),
             "public/app.js": b"'use strict'; const cockpit=1;\n",
             "public/enhancements.css": b".worker-cockpit{display:grid}\n",
         }
@@ -230,6 +244,47 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         sha = self.commit("NUL css")
         with self.assertRaisesRegex(PlanError, "untrusted_static_asset_bytes"):
             snapshot(self.repo, sha)
+
+    def test_snapshot_rejects_missing_unpinned_or_ambiguous_ui_links(self):
+        cases = (
+            (b"<html></html>", "missing_index_asset_reference"),
+            (self.pinned_index(app="/app.js"), "untrusted_index_asset_reference"),
+            (self.pinned_index(css="/enhancements.css"), "untrusted_index_asset_reference"),
+            (self.pinned_index(app="/app.js?v=r8&x=1"), "untrusted_index_asset_reference"),
+            (self.pinned_index(app="https://cdn.example.invalid/app.js?v=r8"), "untrusted_index_asset_reference"),
+            (self.pinned_index(css="../enhancements.css?v=r5"), "untrusted_index_asset_reference"),
+            (self.pinned_index(app="/app.js?v=r8") + b'<script src="/app.js?v=r9"></script>',
+             "ambiguous_index_asset_reference"),
+            (self.pinned_index(css="/style.css"), "missing_index_asset_reference"),
+        )
+        self.write("public/app.js", b"const app = 1;\n")
+        self.write("public/enhancements.css", b"body{margin:0}")
+        for i, (html, reason) in enumerate(cases):
+            with self.subTest(case=i):
+                self.write("public/index.html", html)
+                head = self.commit(f"bad pin {i}")
+                with self.assertRaisesRegex(PlanError, reason):
+                    snapshot(self.repo, head)
+
+    def test_snapshot_denies_duplicate_html_attributes(self):
+        self.write("public/app.js", b"const app=1")
+        self.write("public/enhancements.css", b"body{}")
+        self.write("public/index.html", b'<link rel="stylesheet" href="/enhancements.css?v=r5">'
+                   b'<script src="/app.js?v=r8" src="/app.js?v=r9"></script>')
+        head = self.commit("duplicated script src")
+        with self.assertRaisesRegex(PlanError, "duplicate_index_attribute"):
+            snapshot(self.repo, head)
+
+    def test_snapshot_allows_new_valid_asset_versions_without_hardcoding(self):
+        self.write("public/app.js", b"const app=1")
+        self.write("public/enhancements.css", b"body{}")
+        self.write("public/index.html", self.pinned_index(app="/app.js?v=build-17",
+                                                          css="/enhancements.css?v=v6"))
+        head = self.commit("cache bump")
+        evidence = snapshot(self.repo, head)
+        self.assertEqual(evidence["index_asset_versions"],
+                         {"app.js": "build-17", "enhancements.css": "v6"})
+        self.assertFalse(evidence["promotion_authorized"])
 
     def test_snapshot_rejects_stale_or_invalid_git_ref(self):
         head = self.write_snapshot_bundle()
