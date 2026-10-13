@@ -113,5 +113,27 @@ jobs:
               )
           except OSError:
               result["sslip_public_dns_valid"] = False
+          code, listener_output = run_status(["sudo", "-n", "ss", "-lntpH"], timeout=5)
+          listeners = []
+          if code == 0:
+              for line in listener_output.splitlines():
+                  fields = line.split()
+                  if len(fields) < 4 or not fields[3].endswith(":443"):
+                      continue
+                  address = fields[3].rsplit(":", 1)[0]
+                  bind = ("all_interfaces" if address in ("0.0.0.0", "[::]", "*") else
+                          "loopback" if address in ("127.0.0.1", "[::1]") else "specific_address")
+                  process = "unidentified"
+                  for candidate in ("docker-proxy", "nginx", "caddy", "haproxy", "traefik",
+                                    "python3", "node", "stunnel", "cloudflared", "envoy"):
+                      if ('"' + candidate + '"') in line:
+                          process = candidate
+                          break
+                  listeners.append({"bind": bind, "process": process})
+          result["listener_443"] = listeners
+          result["haproxy_service"] = service("haproxy.service")
+          result["traefik_service"] = service("traefik.service")
+          result["cloudflared_service"] = service("cloudflared.service")
+          result["zssh_service"] = service("zssh.service")
           print("ZBROWSE_DIAGNOSTIC=" + json.dumps(result, sort_keys=True, separators=(",", ":")))
           PY
