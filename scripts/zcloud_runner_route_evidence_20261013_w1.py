@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 import re
 import sys
@@ -43,13 +44,36 @@ def strict_json(data: bytes) -> dict:
         return out
     def bad_constant(_):
         raise InvalidEvidence("nonfinite_json")
+    def finite_float(raw):
+        num = float(raw)
+        if not math.isfinite(num):
+            raise InvalidEvidence("nonfinite_json")
+        return num
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs,
-                           parse_constant=bad_constant)
-    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+                           parse_constant=bad_constant, parse_float=finite_float)
+    except (UnicodeError, json.JSONDecodeError, RecursionError, OverflowError) as exc:
         raise InvalidEvidence("invalid_json") from exc
     if type(value) is not dict:
         raise InvalidEvidence("nonobject_json")
+    remaining = [100000]
+    def check(node, depth=0):
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > 48:
+            raise InvalidEvidence("json_structure_limit")
+        if type(node) is str:
+            if any(0xd800 <= ord(char) <= 0xdfff for char in node):
+                raise InvalidEvidence("invalid_unicode")
+        elif type(node) is dict:
+            for key, child in node.items():
+                check(key, depth + 1)
+                check(child, depth + 1)
+        elif type(node) is list:
+            for child in node:
+                check(child, depth + 1)
+        elif type(node) is float and not math.isfinite(node):
+            raise InvalidEvidence("nonfinite_json")
+    check(value)
     return value
 
 
@@ -328,7 +352,8 @@ def main(argv: list[str] | None = None) -> int:
             "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
             "malformed_pagination","unstable_pagination","incomplete_pagination",
             "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection",
-            "invalid_step_evidence","untrusted_deploy_run"} else "unavailable"
+            "invalid_step_evidence","untrusted_deploy_run","invalid_unicode",
+            "json_structure_limit"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
