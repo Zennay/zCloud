@@ -337,5 +337,42 @@ class OverlapTests(unittest.TestCase):
                     mod.github_fetcher("")(value, 0)
 
 
+class CLIOverlapTests(unittest.TestCase):
+    def _fixture(self, kind, page):
+        if kind.startswith("compare:"):
+            return {"base_commit": {"sha": S}, "status": "ahead",
+                    "total_commits": 1, "ahead_by": 1,
+                    "files": [{"filename": "public/app.js", "status": "modified"}]}, None
+        return Fixture()(kind, page)
+
+    def test_cli_can_diagnose_immutable_paths_without_ever_authorizing(self):
+        # One shared fixture across all listing calls; separate compare response.
+        base = Fixture()
+        def fetch(kind, page):
+            if kind.startswith("compare:"):
+                return {"base_commit": {"sha": S}, "status": "ahead",
+                        "total_commits": 1, "ahead_by": 1,
+                        "files": [{"filename": "public/app.js", "status": "modified"}]}, None
+            return base(kind, page)
+        with patch.object(mod, "github_fetcher", return_value=fetch):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                code = mod.main([S, "--owned-path", "public/"])
+        self.assertEqual(code, 0)
+        data = json.loads(output.getvalue())
+        self.assertTrue(data["paths_compared"])
+        self.assertTrue(data["overlap_found"])
+        self.assertFalse(data["admission_authorized"])
+        self.assertFalse(data["deployment_authorized"])
+
+    def test_cli_rejects_extra_undefined_arguments_without_network(self):
+        with patch.object(mod, "github_fetcher", side_effect=AssertionError("network invoked")):
+            for args in ([], [S, "--owned-path"], [S, "--invalid", "docs/"],
+                         [S, "--owned-path", "docs/", "orphan"]):
+                with self.subTest(args=args):
+                    with patch("sys.stdout", new_callable=io.StringIO) as output:
+                        self.assertEqual(mod.main(args), 2)
+                    self.assertFalse(json.loads(output.getvalue())["admission_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()
