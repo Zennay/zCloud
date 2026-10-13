@@ -1,0 +1,26 @@
+name: zCloud external dashboard triage (manual, hosted, read-only)
+
+# This observer is not a replacement for privileged recovery or deployment.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    # Do not let a fork, non-owner actor or feature branch probe production.
+    if: github.repository == 'Zennay/zCloud' && github.actor == 'Zennay' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout immutable canonical main commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Classify externally observed dashboard API health
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py --attempts 6
