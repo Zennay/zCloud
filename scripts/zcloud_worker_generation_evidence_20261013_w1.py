@@ -308,8 +308,8 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
                     state = "expired_queue_claim"
                 else:
                     # The backend rounds age to whole seconds. Its reconstructed
-                # event time is an optimistic upper bound (up to ~1s too new);
-                # reject when even that estimate predates the current claim.
+                    # event time is an optimistic upper bound (up to ~1s too new);
+                    # reject when even that estimate predates the current claim.
                     event_upper_bound = timestamp - timedelta(seconds=telemetry_age)
                     if event_upper_bound < claim_time:
                         state = "generation_predates_claim"
