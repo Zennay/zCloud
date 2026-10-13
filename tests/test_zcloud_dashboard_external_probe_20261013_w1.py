@@ -468,6 +468,19 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
                                   output=body, probe_rc=1, published=True)
         self.assertIn("niet aantoonbaar", observed)
 
+    def test_global_timeout_replaces_partial_sensitive_output(self):
+        observed = self._simulate(["a" * 40, "a" * 40], 124,
+                                  output="SECRET_PARTIAL_RESPONSE_OR_URL",
+                                  probe_rc=124, published=True)
+        self.assertIn("totale tijdslimiet overschreden", observed)
+        self.assertNotIn("SECRET_PARTIAL", observed)
+        self.assertIn("API niet aantoonbaar bereikbaar", observed)
+
+    def test_global_timeout_after_main_change_is_suppressed(self):
+        self._simulate(["a" * 40, "b" * 40], 2,
+                       output="SECRET_PARTIAL_RESPONSE_OR_URL",
+                       probe_rc=124, published=False)
+
     def test_oversized_summary_is_rejected(self):
         body = ("## zCloud · externe dashboardcontrole\n"
                 "**Status:** API bereikbaar\n" + "x" * 2200)
