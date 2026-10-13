@@ -115,6 +115,28 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
                 with self.assertRaises(route.InvalidEvidence):
                     route.strict_json(raw)
 
+    def test_nonfinite_overflow_and_unicode_surrogate_denied(self):
+        examples = [
+            b'{"x":1e999}', b'{"x":-1e999}',
+            b'{"nested":{"x":"\\ud800"}}',
+            b'{"\\udfff":"bad"}',
+            b'{"safe":["ok", "\\udbff"]}',
+        ]
+        for raw in examples:
+            with self.subTest(raw=raw):
+                with self.assertRaises(route.InvalidEvidence):
+                    route.strict_json(raw)
+
+    def test_nested_structure_depth_denied(self):
+        payload = b'{"item":' + b'[' * 55 + b'0' + b']' * 55 + b'}'
+        with self.assertRaisesRegex(route.InvalidEvidence, "json_structure_limit"):
+            route.strict_json(payload)
+
+    def test_valid_unicode_and_finite_values_accepted(self):
+        data = route.strict_json('{"x":"café","scores":[0.3,1e-3]}'.encode("utf-8"))
+        self.assertEqual(data["x"], "café")
+        self.assertEqual(data["scores"], [0.3, 0.001])
+
     def test_json_size_bound(self):
         with self.assertRaises(route.InvalidEvidence):
             route.strict_json(b"x" * (route.MAX_BYTES + 1))
