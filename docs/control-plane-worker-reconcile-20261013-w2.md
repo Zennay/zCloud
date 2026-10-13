@@ -40,8 +40,11 @@ deployment or force-start approval.
 - A localhost-only HTTP GET (or supplied fixture) loads at most 256 KiB of
   `/api/runner-live` JSON. Parsing explicitly bounds nesting to 64 levels
   before Python JSON decoding (escaped quotes/brackets remain legal). Redirects,
-  duplicate JSON keys, exponent-overflow/non-finite numbers, missing identities,
-  non-boolean activity flags and inconsistent/missing schemas fail closed.
+  duplicate JSON keys, exponent-overflow/non-finite numbers, unpaired Unicode
+  surrogate escapes, missing identities, non-boolean activity flags and
+  inconsistent/missing schemas fail closed. The urllib opener explicitly disables
+  process-environment HTTP proxies so local runner status cannot be relayed to
+  an unintended external HTTP_PROXY endpoint.
 - `active_worker_not_observed`: selected worker not in the observed roster.
   **Does not prove a Firefox tab is missing.** Check browser tabs and the
   extension-to-worker binding before creating a new tab.
@@ -70,11 +73,17 @@ deployment or force-start approval.
   bootstrap/manual worker slots can temporarily have no queue claim.
 - `queue_claim_deadline_unverifiable`: malformed/naive claim expiry is
   degraded, not silently treated as an active claim.
-- `allocation_without_project_target` / `allocation_outside_worker_count`:
-  a global scheduler slot is selected for a missing project or an impossible
-  per-project worker index (e.g. `cloud::w2` while target worker_count=1).
-  The real runtime target projector may omit this slot; do **not** interpret
-  the absence as proof of a missing Firefox tab.
+- `allocation_without_project_target` / `allocation_outside_projected_worker_count`:
+  a global scheduler slot is selected for a missing project or local ordinal
+  outside the runtime projector's effective per-project count. The runtime
+  expands the configured count to the **number of allocated project workers**,
+  but iterates worker ordinals `1..effective_count`. For example, the only
+  allocation being `cloud::w2` with count 1 still disappears, whereas both
+  `w1` and `w2` allocated with configured count 1 are projected correctly.
+  Do **not** interpret the omission as proof of a missing Firefox tab.
+- `worker_count_expanded_by_allocation`: scheduler allocations require the
+  runtime to project more workers than the configured dashboard count. This is
+  **attention only**, not an incorrect/missing worker or restart permission.
 - `worker_not_live`: selected worker is reported offline or stale even if
   its configured `active=true` flag says it is allocated. A `generating=true`
   flag **cannot** override a stale/offline classification.
@@ -95,6 +104,18 @@ deployment or force-start approval.
 Output deliberately omits `conversation_id`, prompts, SQLite metadata,
 claim keys, raw command/error bodies and raw HTTP responses. When API, schema
 or SQLite evidence is incomplete, the command returns `state=unknown`.
+
+## GET read-only storage boundary
+
+The tool uses SQLite `mode=ro` and `PRAGMA query_only` and only performs a
+localhost `GET /api/runner-live` outside offline-fixture mode. On current
+`server.py`, this specific route passes `reconcile=False` to the worker
+projection; **not every other GET endpoint is read-only** (tracked by
+[issue #1341](https://github.com/Zennay/zCloud/issues/1341)). This tool
+does not query `/api/runner-targets` or `/api/worker-debug`. Static code
+review does not replace an exact-head temporary SQLite or permanent-VPS
+write-denial proof; neither this diagnostic nor success status can authorize
+DB/service/browser mutation.
 
 ## Known boundary and handoff
 
