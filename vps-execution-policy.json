@@ -24,7 +24,8 @@
     "ulab",
     "zssh",
     "lightup",
-    "zguard"
+    "zguard",
+    "mixlab"
   ],
   "capabilities": [
     "local-shell",
