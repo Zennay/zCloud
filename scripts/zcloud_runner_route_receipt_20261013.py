@@ -17,6 +17,21 @@ SAFE_CLASSES = {
     2: {'unknown_incomplete_evidence'},
 }
 DENIED = ('recovery_authorized', 'queue_cancel_authorized', 'deploy_authorized')
+# Only fixed generic codes survive to the hosted log. Never print raw errors,
+# GitHub job titles, repository-private runner labels, URLs, or authorization.
+SAFE_UNKNOWN_REASONS = {
+    'api_unavailable_or_permission_denied': 'api_access_or_network',
+    'run_state_race': 'changing_workflow_state',
+    'runner_roster_changed_during_observation': 'changing_runner_roster',
+    'incomplete_inventory': 'incomplete_pagination',
+    'invalid_or_unbounded_total_count': 'incomplete_pagination',
+    'pagination_race': 'incomplete_pagination',
+    'pagination_count_conflict': 'incomplete_pagination',
+    'pagination_cap_reached': 'incomplete_pagination',
+    'observation_too_slow': 'observation_expired',
+    'untrusted_api_response': 'unexpected_api_response',
+    'invalid_api_response': 'unexpected_api_response',
+}
 
 
 def checked_count(value):
@@ -60,12 +75,21 @@ def receipt(blob, exit_code):
     profiles = {k: checked_count(v) for k, v in profiles.items()}
     if sum(profiles.values()) != count:
         raise EvidenceError('contradictory_label_profile_count')
+    if exit_code != 2:
+        incompleteness_cause = 'none'
+    elif gaps:
+        incompleteness_cause = 'historical_queued_run_without_jobs'
+    else:
+        incompleteness_cause = SAFE_UNKNOWN_REASONS.get(obj.get('reason')
+                                                        if isinstance(obj.get('reason'), str) else None,
+                                                        'unclassified_missing_evidence')
     return {
         'evidence': 'github_actions_get_only',
         'classification': obj['classification'],
         'probe_exit': exit_code,
         'stale_unassigned_jobs': count,
         'unknown_stale_queued_runs': gaps,
+        'incompleteness_cause': incompleteness_cause,
         'stale_label_profiles': profiles,
         'runner_inventory_verified': False,
         'mutation_authorized': False,
