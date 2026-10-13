@@ -594,9 +594,7 @@ class HostedProofWorkflowTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/zcloud-deploy-prless-inventory-hosted-20261013-w1.yml').read_text()
         event_sha = 'github.event.pull_request.head.sha || github.sha'
         self.assertGreaterEqual(workflow.count(event_sha), 2)
-        self.assertNotIn('ref: 
-    unittest.main()
- + '{' + '{ github.sha }}', workflow)
+        self.assertNotIn('ref: ' + chr(36) + '{{ github.sha }}', workflow)
         self.assertIn('EXPECTED_HEAD_SHA:', workflow)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"', workflow)
         self.assertIn('runs-on: ubuntu-latest', workflow)
