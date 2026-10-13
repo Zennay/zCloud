@@ -32,8 +32,11 @@ deployment or force-start approval.
   It does not initialize, delete, vacuum, migrate, checkpoint, commit or claim.
   The API GET is **bracketed by two coherent SQLite read snapshots**; if the
   roster, command set, or queue claim ownership changes mid-request, the report
-  becomes `unknown`
-  instead of falsely reporting a missing tab during normal reassignment.
+  becomes `unknown` instead of falsely reporting a missing tab during normal
+  reassignment. Snapshot equality also includes internal slot `assigned_at`,
+  private queue `queue_id`/`updated_at`, and pending-command sequence watermarks
+  to expose an A→B→A reassignment during the HTTP observation. These internal
+  identity/watermark fields are **never emitted in the diagnostic JSON**.
 - A localhost-only HTTP GET (or supplied fixture) loads at most 256 KiB of
   `/api/runner-live` JSON. Parsing explicitly bounds nesting to 64 levels
   before Python JSON decoding (escaped quotes/brackets remain legal). Redirects,
