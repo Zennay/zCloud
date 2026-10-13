@@ -38,8 +38,14 @@ deployment or force-start approval.
   trigger a retry.
 - `allocation_without_target` / `allocated_but_not_runnable`: control-plane
   consistency issues that require ownership-aware operator review.
+- `worker_not_live`: selected worker is reported offline, stale or stalled,
+  even if its configured `active=true` flag says it is allocated.
 - `idle_over_five_minutes`: **attention only**. An idle worker may be awaiting
   its next task or still legitimately active elsewhere. No automatic force.
+- `pending_dispatch_over_two_minutes`: a start/push/force/new-chat command
+  remains `pending` past 120 seconds; output counts commands but never prints
+  command results or actors. `pending_age_unverifiable` denies invalid/future
+  timestamps instead of treating them as recently healthy.
 - Busy generation or sending takes priority over idle-age observations.
 
 Output deliberately omits `conversation_id`, prompts, SQLite metadata,
