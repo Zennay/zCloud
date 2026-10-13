@@ -4,6 +4,7 @@ on:
     paths:
       - "scripts/zcloud_worker_generation_evidence_20261013_w1.py"
       - "tests/test_zcloud_worker_generation_evidence_20261013_w1.py"
+      - "ops/zssh-runner-recipes/zcloud-generation-check.py"
       - ".github/workflows/zcloud-worker-generation-evidence-hosted-20261013-w1.yml"
   workflow_dispatch:
 
@@ -29,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/zcloud_worker_generation_evidence_20261013_w1.py tests/test_zcloud_worker_generation_evidence_20261013_w1.py
+          python3 -m py_compile scripts/zcloud_worker_generation_evidence_20261013_w1.py tests/test_zcloud_worker_generation_evidence_20261013_w1.py ops/zssh-runner-recipes/zcloud-generation-check.py
           python3 -m unittest -v tests.test_zcloud_worker_generation_evidence_20261013_w1
       - name: Record non-production proof boundary
         run: |
