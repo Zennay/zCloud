@@ -162,6 +162,22 @@ class DashboardProbeTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
                 self.assertEqual(probe.probe_once(Opener(error=error)), category)
 
+    def test_nested_and_cyclic_urllib_errors_are_privacy_safe(self):
+        cyclic = urllib.error.URLError("secret upstream URL")
+        cyclic.reason = cyclic
+        self.assertEqual(probe._exception_category(cyclic), "transport_failure")
+        self.assertEqual(probe.probe_once(Opener(error=cyclic)), "transport_failure")
+        nested = TimeoutError("do not log internal URI")
+        for _ in range(10):
+            nested = urllib.error.URLError(nested)
+        self.assertEqual(probe._exception_category(nested), "transport_failure")
+        summary = probe.run_probe(lambda: probe._exception_category(cyclic),
+                                  lambda _: None, attempts=1)
+        serialized = json.dumps(probe.asdict(summary))
+        self.assertNotIn("secret", serialized)
+        self.assertNotIn("URL", serialized)
+        self.assertFalse(summary.authorized)
+
     def test_unhashable_and_nonstring_probe_categories_fail_closed(self):
         for invalid in ([], {}, None, True, 4.2):
             with self.subTest(invalid=type(invalid).__name__):
