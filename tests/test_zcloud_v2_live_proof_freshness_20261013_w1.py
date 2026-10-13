@@ -1,6 +1,8 @@
 """Synthetic negative contract for trusted, fresh, read-only V2 live proof."""
 from datetime import datetime, timedelta, timezone
 from email.message import Message
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -201,6 +203,35 @@ class LiveProofTests(unittest.TestCase):
             self.assertEqual(rows[WORKER][1], "legacy")
             with self.assertRaises(m.ProofDenied):
                 m.verify_receipts((WORKER,), rows, NOW)
+
+    def test_cli_denies_unavailable_live_evidence_without_leaking_worker_ids(self):
+        captured = io.StringIO()
+        with patch.object(m, "live_status", side_effect=m.ProofDenied("secret sensitive status")), \
+             redirect_stdout(captured):
+            exit_code = m.main()
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(payload["status"], "deny")
+        self.assertEqual(payload["reason_class"], "ProofDenied")
+        self.assertFalse(payload["mutation_performed"])
+        self.assertFalse(payload["production_admission_authorized"])
+        self.assertNotIn("secret", captured.getvalue())
+
+    def test_cli_does_not_grant_release_authority_even_when_evidence_valid(self):
+        captured = io.StringIO()
+        now = datetime.now(timezone.utc).isoformat()
+        with patch.object(m, "live_status", return_value=(WORKER,)), \
+             patch.object(m, "latest_sqlite_receipts",
+                          return_value={WORKER: (now, m.REASON, 0, 0)}), \
+             redirect_stdout(captured):
+            exit_code = m.main()
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["active_workers"], 1)
+        self.assertFalse(payload["production_admission_authorized"])
+        self.assertFalse(payload["mutation_performed"])
+        self.assertNotIn("zcloud-vps-1::w1", captured.getvalue())
 
     def test_sqlite_missing_and_symlink_denied(self):
         with tempfile.TemporaryDirectory() as d:
