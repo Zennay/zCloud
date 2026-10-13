@@ -53,3 +53,27 @@ A jobs-only CLI exit `0` or `1` means the inspected queue snapshot had no unprov
 The receipt includes a fixed `stale_label_profiles` histogram: `ftmo_research`, `zcloud_vps`, `other`. No arbitrary runner label, workflow name, job name, GitHub token or raw API reason is emitted. `runner_inventory_verified=false` in this mode. A contradictory sum of histogram counts and `stale_unassigned_jobs` is rejected. The safe `probe_error_code` is emitted only for a fixed code from the source; all other reason contents are suppressed. The `incompleteness_cause` is descriptive, never deployment authority.
 
 Initial hosted [#38462101734](https://github.com/Zennay/zCloud/actions/runs/38462101734) ran a real read-only witness successfully but returned `unknown_incomplete_evidence` without confirmed job counts. Later runs add a controlled error-code field to disambiguate API permission/network failure, cross-query races and other invalid evidence. Consult **that run's exact SHA and final status** before comparing observations. A source CI `SUCCESS` cannot be interpreted as healthy `ftmo-research` runners or ChatGPT generation.
+
+
+## Real live witness result after schema correction
+
+[Hosted Actions run #38463248750](https://github.com/Zennay/zCloud/actions/runs/38463248750) on exact SHA `1ca261a4b81c23451069b6ca3c68e5df6cf641aa` completed **SUCCESS**: **122/122 targeted** and **810/810 full Python tests**. The actual `--jobs-only` GET step safely printed:
+
+```json
+{
+  "classification": "unknown_incomplete_evidence",
+  "probe_exit": 2,
+  "incompleteness_cause": "historical_queued_run_without_jobs",
+  "probe_error_code": "none",
+  "stale_unassigned_jobs": 7,
+  "unknown_stale_queued_runs": 6,
+  "stale_label_profiles": {"ftmo_research": 7, "zcloud_vps": 0, "other": 0},
+  "runner_inventory_verified": false,
+  "mutation_authorized": false,
+  "production_status_verified": false
+}
+```
+
+This proves that the **read-only GitHub Actions pipeline counted seven currently stale unassigned `ftmo-research` jobs**, not a successful dispatch. Six stale run records across the pending states lacked complete job evidence at that snapshot; earlier independently inspected `queued` status included five historical 7 October `workflow_run` records with zero jobs. The totals are not necessarily comparable across asynchronous GitHub snapshots. The classifier is deliberately **unknown**, and no production action is allowed. Compare labels against current zCloud repository runner-group registration and access through an authorized operator; do not infer the `zcloud/vps` runner is offline.
+
+Subsequent code hardened the specific `incomplete_inventory` pagination race with **one** bounded GET-only retry. It still fails closed if the next response has inconsistent counts, and remains subject to the 45-second evidence window. Consult exact-head hosted CI of that later revision; the proven seven-job baseline above predates the retry.
