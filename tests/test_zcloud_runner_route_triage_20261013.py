@@ -41,6 +41,40 @@ class TestRunnerRoute(unittest.TestCase):
     def test_invalid_group_id(self):
         x=fixture(); x['jobs_by_run']['123'][0]['runner_group_id']=True
         with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_runner_read_bracket_detects_busy_transition(self):
+        calls=[]
+        def fake(path,field,token,limit=500):
+            if field == 'runners':
+                calls.append('runners')
+                return fixture(busy=(len(calls)>1))['runners']
+            return []
+        with patch.object(t,'pages',side_effect=fake):
+            with self.assertRaises(t.EvidenceError): t.live('token')
+        self.assertEqual(len(calls),2)
+    def test_runner_read_bracket_detects_runner_label_change(self):
+        calls=[]
+        def fake(path,field,token,limit=500):
+            if field == 'runners':
+                calls.append('runners')
+                return fixture(names=('self-hosted','zcloud','vps') if len(calls)==1 else ('self-hosted','other'))['runners']
+            return []
+        with patch.object(t,'pages',side_effect=fake):
+            with self.assertRaises(t.EvidenceError): t.live('token')
+    def test_runner_read_bracket_two_matching_reads(self):
+        calls=[]
+        def fake(path,field,token,limit=500):
+            if field == 'runners': calls.append('runners'); return fixture()['runners']
+            return []
+        with patch.object(t,'pages',side_effect=fake):
+            result=t.live('token')
+        self.assertEqual(result['runners'],fixture()['runners'])
+        self.assertEqual(calls,['runners','runners'])
+    def test_slow_observation_denied(self):
+        monotonic=[0,100]
+        def fake(path,field,token,limit=500):
+            return fixture()['runners'] if field=='runners' else []
+        with patch.object(t,'pages',side_effect=fake), patch.object(t.time,'monotonic',side_effect=monotonic):
+            with self.assertRaises(t.EvidenceError): t.live('token')
     def test_duplicate_run_across_status_queries_fails_closed(self):
         shared={'id': 123, 'status':'queued', 'created_at': (NOW-dt.timedelta(minutes=10)).isoformat()}
         def fake(path, field, token, limit=500):
