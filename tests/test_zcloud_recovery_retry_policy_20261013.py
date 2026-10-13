@@ -45,7 +45,26 @@ class RetryPolicyTests(unittest.TestCase):
         for state in ("success", "failure", "pending", "error"):
             obj = evidence()
             obj["production_status"]["statuses"] = [dict(context="zcloud/vps-production", state=state)]
-            self.check(obj, "NOOP", "production_status_present")
+            observed = self.check(obj, "NOOP", "production_status_present")
+            self.assertEqual(observed["production_state"], state)
+
+    def test_conflicting_production_states_never_appear_green(self):
+        obj = evidence()
+        obj["production_status"]["statuses"] = [
+            {"context": "zcloud/vps-production", "state": "failure"},
+            {"context": "zcloud/vps-production", "state": "success"},
+        ]
+        self.check(obj, "DENY", "conflicting_production_status")
+
+    def test_noop_on_failed_state_without_run_history(self):
+        obj = evidence()
+        del obj["deploy"]
+        del obj["regression"]
+        obj["production_status"]["statuses"] = [
+            {"context": "zcloud/vps-production", "state": "failure"}
+        ]
+        observed = self.check(obj, "NOOP", "production_status_present")
+        self.assertEqual(observed["production_state"], "failure")
 
     def test_green_is_not_release_authority(self):
         self.check(evidence(), "READY_FOR_EXCLUSIVE_RESERVATION", "candidate_only")
