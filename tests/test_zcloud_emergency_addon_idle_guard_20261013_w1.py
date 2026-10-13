@@ -116,6 +116,72 @@ class IdleDecisionTests(unittest.TestCase):
         self.assertLessEqual(guard.MAX_RESPONSE_BYTES, 65536)
 
 
+class SnapshotTransportTests(unittest.TestCase):
+    """Exercise actual HTTP payload validation with a fake local-only opener."""
+
+    @staticmethod
+    def opener(body, status=200, mime="application/json"):
+        from email.message import Message
+
+        class Response:
+            def __init__(self):
+                self.status = status
+                self.headers = Message()
+                self.headers["Content-Type"] = mime
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self, count):
+                return body[:count]
+
+        class Opener:
+            def open(self, request, timeout):
+                assert request.full_url == guard.URL
+                assert timeout == 5
+                return Response()
+
+        return Opener()
+
+    def test_valid_json_observation_over_local_transport(self):
+        content = json.dumps(ready()).encode()
+        self.assertEqual(
+            guard.read_snapshot(self.opener(content)), ("zcloud-vps-1::w1",)
+        )
+
+    def test_http_error_and_untrusted_mime_are_denied(self):
+        good = json.dumps(ready()).encode()
+        for status, mime in ((403, "application/json"), (503, "application/json"),
+                             (200, "text/html"), (200, "text/plain")):
+            with self.subTest(status=status, mime=mime):
+                with self.assertRaises(guard.AdmissionDenied):
+                    guard.read_snapshot(self.opener(good, status, mime))
+
+    def test_oversized_malformed_and_duplicate_json_response_denied(self):
+        for body in (
+            b"x" * (guard.MAX_RESPONSE_BYTES + 1),
+            b"{invalid json",
+            b'{"chatgpt_runners": {}, "chatgpt_runners": {}}',
+            b'{"chatgpt_runners": "\xff"}',
+        ):
+            with self.subTest(length=len(body)):
+                with self.assertRaises((guard.AdmissionDenied, ValueError, UnicodeError)):
+                    guard.read_snapshot(self.opener(body))
+
+    def test_missing_busy_and_corrupt_http_payloads_denied(self):
+        for sample in (
+            {},
+            {"chatgpt_runners": {}},
+            {"chatgpt_runners": {"zcloud": {"workers": [{"active": True}]}}},
+        ):
+            body = json.dumps(sample).encode()
+            with self.assertRaises(guard.AdmissionDenied):
+                guard.read_snapshot(self.opener(body))
+
+
 class WorkflowTrustTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
