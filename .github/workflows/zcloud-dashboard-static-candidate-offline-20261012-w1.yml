@@ -26,6 +26,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           clean: true
           persist-credentials: false
+          fetch-depth: 96
       - name: Prove immutable candidate identity
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
@@ -49,3 +50,45 @@ jobs:
           python3 scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py \
             --root . --snapshot-sha "$EXPECTED_SHA"
           echo "DASHBOARD_SOURCE_SNAPSHOT_ONLY=1"
+
+      - name: Read-only cache drift audit against pinned historical main (never release)
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          KNOWN_BASELINE_SHA: 3f71c1be1fbe9a2fe8780ce33c377c42136371b5
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          argv = [
+              sys.executable,
+              "scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py",
+              "--root", ".",
+              "--baseline-sha", os.environ["KNOWN_BASELINE_SHA"],
+              "--candidate-sha", os.environ["EXPECTED_HEAD_SHA"],
+              "--audit-cache-pins",
+          ]
+          result = subprocess.run(argv, capture_output=True, text=True, timeout=35)
+          try:
+              body = json.loads(result.stdout)
+          except (ValueError, TypeError) as exc:
+              raise SystemExit("cache-audit invalid evidence JSON") from exc
+          assert body["schema"] == "zcloud-dashboard-cache-pin-audit-v1", body
+          assert body["baseline_sha"] == os.environ["KNOWN_BASELINE_SHA"]
+          assert body["candidate_sha"] == os.environ["EXPECTED_HEAD_SHA"]
+          assert body["static_diff_eligible"] is False
+          assert body["structural_static_diff_not_evaluated"] is True
+          assert body["release_authorized"] is False
+          assert body["promotion_authorized"] is False
+          assert body["runtime_bytes_observed"] is False
+          assert result.returncode == (0 if body["cache_pins_coherent"] else 2)
+          print(json.dumps(body, sort_keys=True))
+          if not body["cache_pins_coherent"]:
+              print("::warning::CACHE_PIN_SOURCE_MISMATCH=1 (no deploy authority)")
+          else:
+              print("CACHE_PIN_SOURCE_COHERENCE_OBSERVED=1 (no deploy authority)")
+          PY
