@@ -194,6 +194,7 @@ def observe(get=github_get):
 
 
 if __name__ == "__main__":
-    print(json.dumps(observe(), separators=(",", ":"), sort_keys=True))
-    # Positive code only if evidence explicitly says NOOP or WAIT.
-    raise SystemExit(0 if observe is None else 0)  # observation never grants write authority
+    result = observe()
+    print(json.dumps(result, separators=(",", ":"), sort_keys=True))
+    # "READY" means a candidate for independent serialized review, not permission.
+    raise SystemExit(0 if result["decision"] in {"NOOP", "WAIT"} else 2)
