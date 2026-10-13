@@ -10,6 +10,7 @@
   const TICK_MS = 30000;
   const STALE_POLL_MS = 4 * 60 * 1000;
   const RELOAD_COOLDOWN_MS = 10 * 60 * 1000;
+  const MISSING_TAB_RECHECK_MS = 2000;
   const ownership = new Map(); // worker key -> tab ID (same tab across chats)
   const candidateRemovals = new Map();
   const closeCooldown = new Map();
@@ -17,6 +18,7 @@
   const reloadCooldown = new Map();
   let workerWindow = null;
   let busy = false;
+  let quickRecheckTimer = null;
   let lastSnapshot = null;
   let knownWorkers = new Set();
   let knownLoaded = false;
@@ -187,10 +189,23 @@
       // identities. A restored personal/expert ChatGPT tab must not block
       // creation of an unrelated, missing worker tab. Conversely, we NEVER
       // adopt an untagged ChatGPT tab by its position or conversation URL.
-      for (const key of desired.keys()) {
+      let missingRunningTab = false;
+      for (const [key, target] of desired) {
         if (ownership.has(key)) { recoveryObservations.delete(key); continue; }
         recoveryObservations.set(key, (recoveryObservations.get(key) || 0) + 1);
+        if (target.desired_state !== "paused" && target.desired_state !== "draining" &&
+            (target.active === true || restorableWithoutLease.has(key)))
+          missingRunningTab = true;
       }
+      // Two backend observations protect against session-restore races, but a
+      // missing identity must not wait for the 30-second normal poll (or for
+      // the user to manually create a tab bearing that identity).
+      if (missingRunningTab && quickRecheckTimer === null &&
+          typeof setTimeout === "function")
+        quickRecheckTimer = setTimeout(() => {
+          quickRecheckTimer = null;
+          reconcile();
+        }, MISSING_TAB_RECHECK_MS);
       for (const [key, target] of desired) {
         candidateRemovals.delete(key);
         // Paused workers don't generate and must NOT be recreated. Existing
