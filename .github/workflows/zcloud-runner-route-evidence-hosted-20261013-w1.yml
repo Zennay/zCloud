@@ -51,3 +51,22 @@ jobs:
           assert by_id[38417002886]["lanes"]["ftmo_research"]["job_count"] >= 1
           print("Historical runner route evidence: PASS; no release authority")
           PY
+      - name: Sample the latest two canonical main deploy routes (non-authorizing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_runner_route_evidence_20261013_w1.py --recent-deploy > current-route-receipt.json
+          python3 - <<'PY'
+          import json
+          data = json.load(open("current-route-receipt.json", encoding="utf-8"))
+          assert data["authorizes_mutation"] is False
+          assert len(data["runs"]) == 2
+          assert all(item["production_deploy_verified"] is False for item in data["runs"])
+          print("Current main deploy runner route: sampled (not production approval)")
+          for item in data["runs"]:
+              lane = item["lanes"]["zcloud_vps"]
+              print("run=%d assigned=%d unassigned=%d failed=%d" %
+                    (item["run_id"], lane["assigned_count"],
+                     lane["unassigned_count"], lane["failed_jobs"]))
+          PY
