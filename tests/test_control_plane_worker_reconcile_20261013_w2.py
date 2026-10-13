@@ -225,6 +225,15 @@ class ReconcileTests(unittest.TestCase):
         with self.assertRaisesRegex(module.InvalidEvidence, "disagree"):
             self.diagnose(live([worker(worker_id="cloud::w1", worker_slot=2)]))
 
+    def test_project_only_alias_cannot_impersonate_canonical_worker_slot(self):
+        with self.assertRaisesRegex(module.InvalidEvidence, "unmatchable"):
+            self.diagnose(live([worker(worker_id="cloud", worker_slot=1)]))
+
+    def test_extremely_nested_live_json_fails_closed(self):
+        raw = b'{"chatgpt_runners":' + b'[' * 1600 + b'0' + b']' * 1600 + b'}'
+        with self.assertRaises(module.InvalidEvidence):
+            module._strict_json(raw)
+
     def test_noncanonical_worker_identity_rejected(self):
         with self.assertRaisesRegex(module.InvalidEvidence, "noncanonical"):
             self.diagnose(live([worker(worker_id="cloud::w01")]))
