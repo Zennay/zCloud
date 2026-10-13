@@ -9,6 +9,7 @@ on:
       - firefox-extension/worker-controller-v2.js
       - firefox-extension/manifest.json
       - tests/test_single_tab_v2_crash_recovery.js
+      - tests/test_single_tab_v2_auto_heal.js
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
       - tests/test_single_tab_v2_cycle.js
@@ -47,6 +48,7 @@ jobs:
           node --check public/zcloud-worker-v2-engine.js
           node --check public/zcloud-worker.user.js
           node tests/test_single_tab_v2_crash_recovery.js
+          node tests/test_single_tab_v2_auto_heal.js
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
           node tests/test_single_tab_v2_cycle.js
