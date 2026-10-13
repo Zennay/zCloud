@@ -23,8 +23,10 @@ assert.ok(!/location\.(assign|replace)\s*\(|window\.open\s*\(/.test(engine),
  "DOM worker must not navigate to or create a new window");
 assert.ok(!/browser\.windows\.(create|update|remove)\s*\(/.test(source),
  "extension must not create, activate or remove a Firefox window");
-assert.ok(!/browser\.tabs\.update\s*\(/.test(source),
- "extension must never activate or navigate an existing tab");
+assert.ok(source.includes("await browser.tabs.update(reservedId, {url:String(url), active:false})"),
+ "only idle, marked saved-pool capacity may be navigated into its worker assignment");
+assert.ok(!/browser\.tabs\.update\([^\n]*active:\s*true/.test(source),
+ "extension must never activate any existing tab");
 
 const events=[],tabs=[],tags=new Map(),calls=[];
 let nextId=20,snapshot={},v2VersionConfirmed=true,poolSize=4,auditMode="project";
@@ -63,7 +65,7 @@ tabs.push({id:2,windowId:1,url:"https://chatgpt.com/c/bbbbbbbb-bbbb-bbbb-bbbb-bb
 tags.set("1|zcloud-worker-id","supa::w1"); // migrate historical session ownership
 const ctx=vm.createContext({
  console:{log:(...xs)=>events.push(xs)},browser,Map,Set,Date,URL,Number,String,Object,
- setInterval:cb=>{ctx.timer=cb},fetch:async url=>{
+ setInterval:(cb,ms)=>{if(ms===30000)ctx.timer=cb;else if(ms===5000)ctx.saveProbe=cb;else if(ms===2500)ctx.commandProbe=cb},fetch:async url=>{
    if(url.includes("config-audit")){
      if(url.includes("runner.dynamic_worker_settings"))return {ok:true,json:async()=>({items:
        auditMode==="global"?[{config_key:"runner.dynamic_worker_settings",target:"portfolio",
