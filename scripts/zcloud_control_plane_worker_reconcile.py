@@ -516,6 +516,13 @@ def main(argv=None) -> int:
         report = {"schema_version": 1, "diagnostic_only": True,
                   "authorizes_mutation": False, "state": "unknown",
                   "error_code": type(exc).__name__}
+    # Offline fixture mode can be internally consistent while proving nothing
+    # about the currently running Firefox/browser. Machine-readable provenance
+    # must survive success as well as every fail-closed error path.
+    report["evidence_mode"] = (
+        "offline_fixture" if args.runner_live_fixture is not None else "loopback_http"
+    )
+    report["browser_generation_verified"] = False
     print(json.dumps(report, sort_keys=True, ensure_ascii=True))
     return 0 if report["state"] == "ok" else 2
 
