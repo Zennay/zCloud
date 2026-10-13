@@ -9,7 +9,8 @@ const userScript = fs.readFileSync(path.join(__dirname, "../public/zcloud-worker
 const engine = fs.readFileSync(path.join(__dirname, "../public/zcloud-worker-v2-engine.js"), "utf8");
 assert.match(engine, /data-zcloud-v2-last-poll/);
 assert.ok(userScript.includes(engine.trim()), "installed VM script must contain the same liveness monitor");
-assert.ok(!source.includes("browser.tabs.update("), "never steal focus or navigate a worker tab");
+assert.ok(source.includes("await browser.tabs.update(reservedId, {url:String(url), active:false})"), "only an exact tagged, idle capacity tab may be converted to its assigned worker");
+assert.ok(!/browser\.tabs\.update\([^\n]*active:\s*true/.test(source), "never activate an existing tab");
 assert.ok(!source.includes("browser.windows.create("), "never create a second Firefox window");
 
 let clock=1_900_000_000_000, nextTab=20, network=true;
@@ -79,7 +80,7 @@ const browser={
 };
 const ctx=vm.createContext({
   browser,Date:FakeDate,URL,Map,Set,Number,String,Object,Promise,
-  console:{log:()=>{}},setInterval:cb=>{ctx.tick=cb},
+  console:{log:()=>{}},setInterval:(cb,ms)=>{if(ms===30000)ctx.tick=cb;else if(ms===5000)ctx.saveProbe=cb;else if(ms===2500)ctx.commandProbe=cb},
   fetch:async url=>{
     if(!network)throw Error("offline");
     if(url.includes("config-audit"))return {ok:true,json:async()=>({items:[]})};
