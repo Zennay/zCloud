@@ -139,6 +139,14 @@ class PaginationTests(unittest.TestCase):
             with self.assertRaisesRegex(mod.InventoryDenied, "page_cap"):
                 mod.collect(Fixture(), S)
 
+    def test_full_page_without_next_cursor_never_claims_completeness(self):
+        full = [branch("main", S)] + [branch(f"branch-{i}", A) for i in range(99)]
+        with self.assertRaisesRegex(mod.InventoryDenied, "full_page_without_cursor"):
+            mod.collect(Fixture(branches=[full], pulls=[[]]), S)
+        with self.assertRaisesRegex(mod.InventoryDenied, "full_page_without_cursor"):
+            mod.collect(Fixture(branches=[[branch("main", S)]],
+                                        pulls=[[pr(f"owned-{i}", A) for i in range(100)]]), S)
+
     def test_malformed_sha_and_names_denied(self):
         cases = [
             ([[branch("main", S), branch("../../secret")]], [[]]),
