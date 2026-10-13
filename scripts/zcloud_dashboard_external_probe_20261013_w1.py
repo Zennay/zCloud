@@ -197,7 +197,7 @@ def operator_markdown(summary: ProbeSummary) -> str:
         "gezond is of dat AI-workers tekst genereren.",
         "**Herstel of herstart wordt nooit automatisch uitgevoerd.**",
     ])
-    return "\\n".join(lines).replace("\\\\n", "\\n")
+    return chr(10).join(lines)
 
 
 def main(argv=None):
