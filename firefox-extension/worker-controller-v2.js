@@ -280,16 +280,27 @@
       const restorableWithoutLease = new Set();
       const poolSize = Number(payload.dynamic_workers?.chatgpt_count);
       if (Number.isInteger(poolSize) && poolSize > 0) {
+        const currentlyAllocatedSlots = new Set([...desired.values()].map(t =>
+          Number(t.provider_worker_slot ?? t.global_worker_slot))
+          .filter(n => Number.isInteger(n) && n >= 1 && n <= poolSize));
         for (const key of knownWorkers) {
           if (desired.size >= poolSize) break;
           if (desired.has(key)) continue;
           const target = payload.projects[key];
+          const workerSlot=Number(target?.worker_slot);
+          const workerCount=Number(target?.worker_count);
+          const previousSlot=lastChatGPTProviderSlot.get(key);
+          // Once a different project owns this physical provider slot, it
+          // is NOT an interrupted browser session to resurrect. Free it for
+          // immediate safe idle-tab reuse (Force project switch).
+          if (Number.isInteger(previousSlot) &&
+              currentlyAllocatedSlots.has(previousSlot)) continue;
           if (!target || String(target.project_id) !== key ||
               target.provider !== "chatgpt" ||
               target.desired_state !== "running" ||
               !/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key) ||
-              Number(target.worker_slot) < 1 ||
-              Number(target.worker_slot) > Number(target.worker_count)) continue;
+              !Number.isInteger(workerSlot) || !Number.isInteger(workerCount) ||
+              workerSlot < 1 || workerSlot > workerCount) continue;
           desired.set(key, target);
           restorableWithoutLease.add(key);
         }
