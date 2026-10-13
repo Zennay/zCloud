@@ -194,11 +194,13 @@ class WorkflowTrustTests(unittest.TestCase):
 
     def test_no_direct_browser_restart(self):
         action = self.job(self.source, "activate")
+        # Negative grep checks are safe; forbidden API text is expected there.
+        executed = "\n".join(
+            line for line in action.splitlines()
+            if not line.lstrip().startswith("! grep -Fq")
+        )
         for unsafe in ("systemctl restart", "pkill", "kill -9", "tabs.remove(", "browser.tabs.create("):
-            if unsafe.startswith("browser."):
-                # Rejected grep patterns intentionally mention old APIs.
-                continue
-            self.assertNotIn(unsafe, action)
+            self.assertNotIn(unsafe, executed)
         self.assertIn("cancel-in-progress: false", self.source)
         self.assertIn("permissions:\n  contents: read", self.source)
 
