@@ -433,6 +433,27 @@ class StaticDashboardCandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, "baseline_index_asset_reference_untrusted"):
             verify_cache_bust(self.repo, missing_refs, head)
 
+    def test_cache_contract_refuses_oversized_baseline_before_blob_read(self):
+        self.write("public/app.js", b"const first=1")
+        self.write("public/enhancements.css", b".first{}")
+        # Historical baselines must be bounded *before* cat-file blob reads.
+        self.write("public/index.html", b" " * (3 * 1024 * 1024 + 1))
+        base = self.commit("oversized historical index")
+        self.write("public/index.html", self.pinned_index())
+        head = self.commit("new bounded index")
+        with self.assertRaisesRegex(PlanError, "baseline_index_asset_reference_untrusted"):
+            verify_cache_bust(self.repo, base, head)
+
+    def test_cache_contract_rejects_historical_index_nul(self):
+        self.write("public/app.js", b"const first=1")
+        self.write("public/enhancements.css", b".first{}")
+        self.write("public/index.html", self.pinned_index() + b"\x00hidden")
+        base = self.commit("invalid historical index")
+        self.write("public/index.html", self.pinned_index())
+        head = self.commit("clean index")
+        with self.assertRaisesRegex(PlanError, "baseline_index_asset_reference_untrusted"):
+            verify_cache_bust(self.repo, base, head)
+
     def test_cache_contract_missing_baseline_asset_denied(self):
         self.write("public/index.html", self.pinned_index())
         base = self.commit("baseline mentions absent JS")
