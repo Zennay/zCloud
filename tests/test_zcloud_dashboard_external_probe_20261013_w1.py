@@ -338,7 +338,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
 
     def _workflow_shell(self):
         path = MODULE.parents[1] / ".github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml"
-        body = path.read_text(encoding="utf-8").split("        run: |\\n", 1)[1]
+        body = path.read_text(encoding="utf-8").split("        run: |\n", 1)[1]
         return textwrap.dedent(body)
 
     def _simulate(self, refs, expected_rc):
@@ -354,16 +354,16 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             root = pathlib.Path(tmp)
             shim = root / "git"
             shim.write_text(
-                "#!/usr/bin/env python3\\n"
-                "import os, pathlib, sys\\n"
-                "expected=['ls-remote','--exit-code','https://github.com/Zennay/zCloud.git','refs/heads/main']\\n"
-                "if sys.argv[1:] != expected: sys.exit(87)\\n"
-                "count=pathlib.Path(os.environ['FAKE_GIT_COUNT'])\\n"
-                "n=int(count.read_text()) if count.exists() else 0\\n"
-                "count.write_text(str(n+1))\\n"
-                "refs=os.environ['FAKE_GIT_REFS'].split(',')\\n"
-                "if n>=len(refs) or refs[n]=='ERROR': sys.exit(88)\\n"
-                "print(refs[n]+'\\trefs/heads/main')\\n",
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, sys\n"
+                "expected=['ls-remote','--exit-code','https://github.com/Zennay/zCloud.git','refs/heads/main']\n"
+                "if sys.argv[1:] != expected: sys.exit(87)\n"
+                "count=pathlib.Path(os.environ['FAKE_GIT_COUNT'])\n"
+                "n=int(count.read_text()) if count.exists() else 0\n"
+                "count.write_text(str(n+1))\n"
+                "refs=os.environ['FAKE_GIT_REFS'].split(',')\n"
+                "if n>=len(refs) or refs[n]=='ERROR': sys.exit(88)\n"
+                "print(refs[n]+'\trefs/heads/main')\n",
                 encoding="utf-8",
             )
             shim.chmod(0o755)
