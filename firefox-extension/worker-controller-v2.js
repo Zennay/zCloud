@@ -630,6 +630,9 @@
     const previous = ownership.get(key);
     const existing = previous == null ? null :
       await browser.tabs.get(previous).catch(() => null);
+    // A Force command is one-shot even if the new tab navigates to /c/... .
+    // Its URL ticket is no longer visible after ChatGPT's SPA transition.
+    if (existing && forceTabAt.get(commandKey) === previous) return previous;
     if (existing) {
       try {
         const current = new URL(existing.url);
