@@ -40,6 +40,35 @@ class TestRunnerRoute(unittest.TestCase):
     def test_invalid_group_id(self):
         x=fixture(); x['jobs_by_run']['123'][0]['runner_group_id']=True
         with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_in_progress_workflow_with_queued_deploy_job(self):
+        x=fixture()
+        x['queued_runs'][0]['status']='in_progress'
+        result=self.classify(x)
+        self.assertEqual(result['stale_unassigned_jobs'], 1)
+        self.assertEqual(result['classification'], 'route_available_but_queued')
+    def test_waiting_workflow_with_queued_job(self):
+        x=fixture()
+        x['queued_runs'][0]['status']='waiting'
+        self.assertEqual(self.classify(x)['stale_unassigned_jobs'], 1)
+    def test_unexpected_completed_workflow_denied(self):
+        x=fixture()
+        x['queued_runs'][0]['status']='completed'
+        with self.assertRaises(t.EvidenceError): self.classify(x)
+    def test_live_gathers_in_progress_as_well_as_queued(self):
+        calls=[]
+        def fake(path, field, token, limit=500):
+            calls.append((path,field))
+            if field == 'runners': return fixture()['runners']
+            if field == 'workflow_runs':
+                status=path.split('status=')[1]
+                return [{'id': 100 + len(calls), 'status': status,
+                         'created_at': (NOW-dt.timedelta(minutes=10)).isoformat()}]
+            return [{'id': len(calls)+200, 'status': 'queued', 'labels': ['self-hosted'], 'runner_id': 0}]
+        with patch.object(t, 'pages', side_effect=fake):
+            snap=t.live('token')
+        self.assertIn('status=in_progress', ' '.join(path for path,_ in calls))
+        self.assertIn('status=queued', ' '.join(path for path,_ in calls))
+        self.assertEqual(len(snap['queued_runs']), len([x for x in calls if x[1]=='workflow_runs']))
     def test_future_run_clock(self):
         x=fixture(); x['queued_runs'][0]['created_at']=(NOW+dt.timedelta(hours=1)).isoformat()
         with self.assertRaises(t.EvidenceError): self.classify(x)
