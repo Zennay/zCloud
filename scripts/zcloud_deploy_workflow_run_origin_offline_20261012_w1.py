@@ -27,6 +27,36 @@ class Decision:
     deploy_authorized: bool = False
 
 
+def classify_github_payload(
+    payload: Any, *, event_name: Any, canonical_main_sha: Any
+) -> Decision:
+    """Evaluate an actual GitHub workflow_run webhook payload, offline.
+
+    GitHub supplies the event name out-of-band (for example
+    GITHUB_EVENT_NAME); the JSON payload has a repository *object* and
+    action=completed. This adapter retains that distinction rather than
+    accepting an untrusted nested string pretending to be the event name.
+    Its output is strictly observational, never an execution grant.
+    """
+    if type(payload) is not dict:
+        return Decision(False, "event_not_object")
+    if event_name != "workflow_run":
+        return Decision(False, "event_not_workflow_run")
+    repository = payload.get("repository")
+    if type(repository) is not dict or repository.get("full_name") != REPOSITORY:
+        return Decision(False, "trigger_repository_mismatch")
+    if payload.get("action") != "completed":
+        return Decision(False, "source_action_not_completed")
+    return classify(
+        {
+            "repository": repository["full_name"],
+            "event_name": event_name,
+            "workflow_run": payload.get("workflow_run"),
+        },
+        canonical_main_sha=canonical_main_sha,
+    )
+
+
 def classify(event: Any, *, canonical_main_sha: Any) -> Decision:
     def deny(reason: str) -> Decision:
         return Decision(False, reason)
