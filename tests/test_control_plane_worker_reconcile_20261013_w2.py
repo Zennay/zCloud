@@ -272,6 +272,24 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(result["problem_counts"]["multiple_live_queue_claims"], 1)
         self.assertNotIn("private-second", json.dumps(result))
 
+    def test_claimed_task_without_any_allocated_worker_is_attention(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM ai_global_slots")
+        result = module.reconcile(module.read_roster(self.db), live([]))
+        self.assertEqual(result["state"], "attention")
+        self.assertEqual(result["allocated_count"], 0)
+        self.assertEqual(result["problem_counts"]["live_queue_claim_without_global_slot"], 1)
+        self.assertFalse(result["authorizes_mutation"])
+
+    def test_unallocated_double_claim_is_degraded_without_leaking_queue_ids(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM ai_global_slots")
+            conn.execute("INSERT INTO portfolio_queue VALUES('sensitive-queue-id','supa',1,'claimed',NULL,'2026-10-13')")
+        result = module.reconcile(module.read_roster(self.db), live([]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["multiple_live_queue_claims"], 1)
+        self.assertNotIn("sensitive-queue-id", json.dumps(result))
+
     def test_missing_queue_claim_cannot_certify_worker_is_ready(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute("DELETE FROM portfolio_queue")
