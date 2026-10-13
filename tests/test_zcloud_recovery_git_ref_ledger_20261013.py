@@ -170,7 +170,13 @@ class GitRefReservationTests(unittest.TestCase):
             ("repository_id", True), ("method", "PATCH"),
             ("path", "/repos/Zennay/zCloud/git/ref/tags/stale"),
             ("payload", {"ref": p["ref"], "sha": T}),
-            ("authorized", True), ("dispatch_allowed", True)
+            ("authorized", True), ("dispatch_allowed", True),
+            ("requires_owner_provenance", False),
+            ("requires_exact_main_recheck_before_claim", False),
+            ("requires_exact_main_recheck_after_claim", False),
+            ("requires_protected_tag_namespace", False),
+            ("requires_durable_owner_review", False),
+            ("requires_no_tag_deletion_or_rewrite", False)
         ]
         for name, value in modifications:
             modified = {**p, name: value}
