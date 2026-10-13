@@ -372,8 +372,8 @@ class ReconcileTests(unittest.TestCase):
             module._strict_json(raw)
 
     def test_quoted_brackets_and_escaped_quotes_do_not_increment_nesting(self):
-        value = {"chatgpt_runners": {}, "untrusted_ignored_metadata":
-                 "[(]} brackets \\" quote { } and backslash \\\\ inside strings"}
+        tricky = "[(]} brackets " + chr(92) + chr(34) + " quote { } and backslash " + chr(92)
+        value = {"chatgpt_runners": {}, "untrusted_ignored_metadata": tricky}
         raw = json.dumps(value).encode("utf-8")
         self.assertEqual(module._strict_json(raw), value)
 
