@@ -61,6 +61,27 @@ class TestReceipt(unittest.TestCase):
         self.assertEqual(x['unknown_stale_queued_runs'], 0)
         self.assertFalse(x['runner_inventory_verified'])
 
+    def test_incomplete_api_access_reason_safely_published(self):
+        x = {'classification': 'unknown_incomplete_evidence',
+             'reason': 'api_unavailable_or_permission_denied',
+             'recovery_authorized': False, 'queue_cancel_authorized': False,
+             'deploy_authorized': False}
+        out = self.parse(x, 2)
+        self.assertEqual(out['incompleteness_cause'], 'api_access_or_network')
+        self.assertEqual(out['stale_unassigned_jobs'], 0)
+
+    def test_incomplete_partial_queue_reason_safely_published(self):
+        out = self.parse(item(), 2)
+        self.assertEqual(out['incompleteness_cause'], 'historical_queued_run_without_jobs')
+
+    def test_unknown_reason_string_not_leaked(self):
+        x = item()
+        x['reason'] = 'SECRET_TEST_TOKEN from unexpected HTTP body'
+        x['unknown_stale_queued_runs'] = 0
+        out = self.parse(x, 2)
+        self.assertEqual(out['incompleteness_cause'], 'unclassified_missing_evidence')
+        self.assertNotIn('SECRET_TEST', json.dumps(out))
+
     def test_denies_mutation_authority(self):
         for k in r.DENIED:
             x = item()
