@@ -328,7 +328,7 @@
             const [state]=await browser.tabs.executeScript(tabId,{
               code:'(() => { const e=document.documentElement; const box=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\'); return {owner:e?.getAttribute("data-zcloud-v2-owner")||"",version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"",lastPoll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(box?.value||box?.innerText||box?.textContent||"").trim()}; })()'
             });
-            idle=state?.owner===key && /^2\\.0\\.[01]$/.test(state.version) &&
+            idle=state?.owner===key && /^2\.0\.[01]$/.test(state.version) &&
               state.generating===false && state.draft===false &&
               Number.isFinite(state.lastPoll) && state.lastPoll>0 &&
               Date.now()-state.lastPoll>=0 && Date.now()-state.lastPoll<120000;
