@@ -10,13 +10,15 @@
 - [Deploy 38471675524](https://github.com/Zennay/zCloud/actions/runs/38471675524) separately reached `zcloud-vps-1`, then timed out at safe-idle with workers including Cloud/FTMO reporting generation. **Do not force-stop these workers to make the deploy green.**
 - [FuckBall audit 38417002886](https://github.com/Zennay/zCloud/actions/runs/38417002886) used a different `ftmo-research` label and was unassigned at inspection. Do not misattribute it to the already scheduled `zcloud,vps` lane.
 - [Safe-idle retry 38473312992](https://github.com/Zennay/zCloud/actions/runs/38473312992) failed when GitHub CLI refused terminal escape sequences from a job-log API response. Live retry workflow is already owned by [PR #1090](https://github.com/Zennay/zCloud/pull/1090); this evidence lane does not edit it.
+- **Cross-run exact marker comparison**: read-only GitHub job log inspection found one timestamped `ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED` marker in *each* failed main deploy (#38470693004 and #38471675524). Both had exactly **3/3** blockers reporting `draining` + `drain_command_status=completed` + `generating=true` + latest event `heartbeat`. This is not independent proof of real text changes or a frozen browser. No raw worker identities, chat links or log bodies were published.
 
 ## Read-only classification, not recovery
 
 `scripts/zcloud_runner_route_evidence_20261013_w1.py` reads the canonical `Zennay/zCloud` GitHub Actions jobs API using `GH_TOKEN` with read permission. `--recent-deploy` additionally selects the latest **verified** canonical workflow (`workflow_id=369569470`, repo numeric ID `1389227570`, `event=workflow_run`, exact path/main), then resolves each job. The output distinguishes **unassigned**, **assigned but failing**, **completed successfully**, and **unknown step evidence**. A runner assigned at 21:39 does not prove it is available now.
 
 ```bash
-GH_TOKEN=<read-only GitHub token> python3 scripts/zcloud_runner_route_evidence_20261013_w1.py --recent-deploy
+# Use an already configured, read-only Actions token in your environment.
+GH_TOKEN="$MY_READ_ONLY_GITHUB_TOKEN" python3 scripts/zcloud_runner_route_evidence_20261013_w1.py --recent-deploy
 ```
 
 This prints allowlisted stage categories only. GitHub sometimes omits `steps` for recently failed jobs. In that case the tool returns `step_evidence_missing`, not an inferred stage. It must never claim success on a missing or contradictory step history.
