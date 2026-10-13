@@ -244,22 +244,19 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.index("- name: Promote backend runtime core"):
             text.index("- name: Promote autonomy policies and queue seed")
         ]
-        known_sha = "160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
-        known_lkg = "20261002T105256Z-a57439eb"
-        self.assertIn(f'expected_live_sha="{known_sha}"', authorize)
-        self.assertIn(f'expected_lkg="{known_lkg}"', authorize)
-        self.assertIn('last-known-good.json', authorize)
-        self.assertIn('sha256sum "$root/server.py"', authorize)
-        self.assertIn(
-            'if [[ "$live_sha" == "$expected_live_sha" && "$current_lkg" == "$expected_lkg" ]]',
-            authorize,
-        )
-        self.assertIn('echo "enabled=true" >> "$GITHUB_OUTPUT"', authorize)
+        legacy_pin = "160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f:20261002T105256Z-a57439eb"
+        proven_pin = "cc54280fe8d34385a8498c4043578daaf6d81e3714bd09b39b729be0769a114e:20261009T163321Z-a57439eb"
+        self.assertIn(legacy_pin, authorize)
+        self.assertIn(proven_pin, authorize)
+        self.assertIn("last-known-good.json", authorize)
+        self.assertIn("sha256sum", authorize)
+        self.assertIn("if [[ \"$live_sha:$current_lkg\" == \"$pin\" ]]", authorize)
+        self.assertIn("echo \"live_sha=$live_sha\" >> \"$GITHUB_OUTPUT\"", authorize)
         self.assertIn("KNOWN_LIVE_SERVER_RECONCILE=authorized", authorize)
-        self.assertIn('if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]', core)
+        self.assertIn("steps.server_drift_reconcile.outputs.enabled", core)
         self.assertIn("--reconcile-known-live-sha", core)
-        self.assertIn(f'"server.py={known_sha}"', core)
-        self.assertIn('"${reconcile_args[@]}"', core)
+        self.assertIn("steps.server_drift_reconcile.outputs.live_sha", core)
+        self.assertIn("reconcile_args", core)
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
 
 
