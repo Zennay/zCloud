@@ -33,3 +33,17 @@ rsync -a --delete --exclude='*.bak-*' "$SOURCE/" "$RUNTIME/"
 # those files is essential for reopening the original worker tabs and their
 # browser.sessions worker-id bindings after a restart.
 rm -f "$PROFILE/lock" "$PROFILE/.parentlock" "$PROFILE/parent.lock"
+
+# Apply conservative, reversible worker-profile memory caps on the NEXT launch.
+# This script never restarts Firefox or unloads an active/background worker tab.
+# Standalone Firefox users may opt in by running the tuner on a *stopped* profile.
+if [[ "${ZCLOUD_FIREFOX_MEMORY_CAPS:-1}" == "1" ]]; then
+    TUNER="${ZCLOUD_FIREFOX_MEMORY_CAPS_SCRIPT:-/home/ubuntu/zennay-cloud/scripts/zcloud_firefox_memory_caps.py}"
+    if [[ -f "$TUNER" ]]; then
+        if ! python3 "$TUNER" --profile "$PROFILE"; then
+            echo "warning: Firefox memory caps not applied; preserving worker startup" >&2
+        fi
+    else
+        echo "warning: Firefox memory cap installer not deployed: $TUNER" >&2
+    fi
+fi
