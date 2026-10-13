@@ -220,6 +220,23 @@ class RealHttpTests(unittest.TestCase):
         self.assertFalse(result['queue_cancel_authorized'])
         self.assertNotIn('PRIVATE_SENTINEL_TOKEN',out.getvalue())
 
+    def test_real_http_mixed_jobs_only_cli_retains_counts_but_denies(self):
+        self.mode='mixed_zero_job'
+        out=io.StringIO()
+        with patch.dict(os.environ, {'GITHUB_TOKEN':'PRIVATE_SENTINEL_TOKEN'}):
+            with contextlib.redirect_stdout(out):
+                rc=route.main(['--jobs-only'])
+        result=json.loads(out.getvalue())
+        self.assertEqual(rc,2)
+        self.assertEqual(result['classification'],'unknown_incomplete_evidence')
+        self.assertEqual(result['stale_unassigned_jobs'],1)
+        self.assertEqual(result['unknown_stale_queued_runs'],1)
+        self.assertFalse(result['runner_inventory_verified'])
+        self.assertFalse(result['recovery_authorized'])
+        self.assertFalse(result['deploy_authorized'])
+        self.assertNotIn('PRIVATE_SENTINEL_TOKEN',out.getvalue())
+        self.assertFalse(any('/actions/runners' in c[1] for c in self.calls))
+
     def test_real_http_job_permission_denial_is_unknown(self):
         self.mode='jobs_forbidden'
         with self.assertRaisesRegex(route.EvidenceError,'api_unavailable'):
