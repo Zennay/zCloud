@@ -1,0 +1,190 @@
+"""Offline functional tests for the standalone read-only worker reconciler."""
+import importlib.util
+import json
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "scripts" / "zcloud_control_plane_worker_reconcile.py"
+spec = importlib.util.spec_from_file_location("zcloud_worker_reconcile", SOURCE)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+def live(items=None):
+    return {"chatgpt_runners": {
+        "cloud": {"workers": list(items or [])}
+    }}
+
+
+def worker(**updates):
+    item = {"worker_id": "cloud::w1", "active": True,
+            "generating": False, "sending": False, "age_seconds": 20}
+    item.update(updates)
+    return item
+
+
+class ReconcileTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "history.db"
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("CREATE TABLE ai_global_slots(slot INTEGER,project_id TEXT,worker_slot INTEGER)")
+            conn.execute("CREATE TABLE runner_workers(project_id TEXT,worker_slot INTEGER,desired_state TEXT,conversation_id TEXT)")
+            conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'active','private-conversation')")
+        self.roster = module.read_roster(self.db)
+
+    def diagnose(self, payload=None):
+        return module.reconcile(self.roster, payload if payload is not None else live([worker()]))
+
+    def test_healthy_assigned_idle(self):
+        result = self.diagnose()
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["allocated_count"], 1)
+        self.assertEqual(result["recent_idle_count"], 1)
+        self.assertFalse(result["authorizes_mutation"])
+        self.assertNotIn("private-conversation", json.dumps(result))
+
+    def test_actively_generating_is_not_stalled(self):
+        result = self.diagnose(live([worker(generating=True, age_seconds=600)]))
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["busy_count"], 1)
+
+    def test_idle_older_than_five_minutes_is_attention_not_permission(self):
+        result = self.diagnose(live([worker(age_seconds=301)]))
+        self.assertEqual(result["state"], "attention")
+        self.assertEqual(result["problems"][0]["code"], "idle_over_five_minutes")
+        self.assertFalse(result["authorizes_mutation"])
+
+    def test_missing_observation_is_not_assumed_missing_tab(self):
+        result = self.diagnose(live([]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problems"][0]["code"], "active_worker_not_observed")
+        self.assertIn("do not prove missing tabs", result["limitations"][0])
+
+    def test_explicitly_inactive_worker_is_unobserved(self):
+        result = self.diagnose(live([worker(active=False)]))
+        self.assertEqual(result["state"], "degraded")
+
+    def test_missing_boolean_activity_is_unknown(self):
+        item = worker()
+        item.pop("sending")
+        result = self.diagnose(live([item]))
+        self.assertEqual(result["problems"][0]["code"], "worker_activity_unknown")
+
+    def test_paused_target_does_not_prompt(self):
+        self.roster["targets"][("cloud", 1)] = "paused"
+        result = self.diagnose()
+        self.assertEqual(result["problems"][0]["code"], "allocated_but_not_runnable")
+
+    def test_orphan_allocation(self):
+        self.roster["targets"].clear()
+        result = self.diagnose()
+        self.assertEqual(result["problems"][0]["code"], "allocation_without_target")
+
+    def test_multiple_independent_slots(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2)")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'active','redacted')")
+        roster = module.read_roster(self.db)
+        report = module.reconcile(roster, live([
+            worker(), {"worker_id": "cloud::w2", "active": True,
+                       "generating": True, "sending": False}
+        ]))
+        self.assertEqual(report["allocated_count"], 2)
+        self.assertEqual(report["busy_count"], 1)
+
+    def test_unallocated_live_worker_never_implies_scheduler_permission(self):
+        report = self.diagnose(live([worker(),
+            {"worker_id": "cloud::w2", "active": True, "generating": True, "sending": False}
+        ]))
+        self.assertFalse(report["authorizes_mutation"])
+        self.assertEqual(report["allocated_count"], 1)
+
+    def test_duplicate_live_worker_rejected(self):
+        with self.assertRaises(module.InvalidEvidence):
+            self.diagnose(live([worker(), worker()]))
+
+    def test_non_boolean_flags_rejected(self):
+        with self.assertRaises(module.InvalidEvidence):
+            self.diagnose(live([worker(generating="false")]))
+
+    def test_duplicate_global_allocation_rejected(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',1)")
+        with self.assertRaises(module.InvalidEvidence):
+            module.read_roster(self.db)
+
+    def test_bool_or_zero_slot_rejected(self):
+        self.assertRaises(module.InvalidEvidence, module._positive_int, True, "slot")
+        self.assertRaises(module.InvalidEvidence, module._positive_int, 0, "slot")
+
+    def test_schema_missing_fails_closed(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DROP TABLE runner_workers")
+        with self.assertRaises(module.InvalidEvidence):
+            module.read_roster(self.db)
+
+    def test_symlink_database_denied(self):
+        alias = Path(self.tmp.name) / "alias.db"
+        alias.symlink_to(self.db)
+        with self.assertRaises(module.InvalidEvidence):
+            module.read_roster(alias)
+
+    def test_empty_roster_is_valid_with_empty_runner_collection(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM ai_global_slots")
+        result = module.reconcile(module.read_roster(self.db), live([]))
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["allocated_count"], 0)
+
+    def test_duplicate_json_keys_rejected(self):
+        with self.assertRaises(module.InvalidEvidence):
+            module._strict_json(b'{"chatgpt_runners":{},"chatgpt_runners":{}}')
+
+    def test_nonfinite_json_rejected(self):
+        with self.assertRaises(module.InvalidEvidence):
+            module._strict_json(b'{"chatgpt_runners":NaN}')
+
+    def test_oversize_json_rejected(self):
+        with self.assertRaises(module.InvalidEvidence):
+            module._strict_json(b'{' + b' ' * module.MAX_RESPONSE_BYTES + b'}')
+
+    def test_fixture_cli_is_readonly_and_machine_readable(self):
+        fixture = Path(self.tmp.name) / "live.json"
+        fixture.write_text(json.dumps(live([worker()])), encoding="utf-8")
+        before = self.db.read_bytes()
+        result = subprocess.run(
+            [sys.executable, str(SOURCE), "--db", str(self.db),
+             "--runner-live-fixture", str(fixture)],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["state"], "ok")
+        self.assertEqual(before, self.db.read_bytes())
+        with sqlite3.connect(self.db) as conn:
+            stored = conn.execute("SELECT conversation_id FROM runner_workers").fetchone()[0]
+        self.assertEqual(stored, "private-conversation")
+        self.assertNotIn("private-conversation", result.stdout)
+
+    def test_invalid_fixture_cli_fails_closed_with_no_private_data(self):
+        fixture = Path(self.tmp.name) / "bad.json"
+        fixture.write_bytes(b'{"chatgpt_runners":{},"chatgpt_runners":{}}')
+        result = subprocess.run(
+            [sys.executable, str(SOURCE), "--db", str(self.db),
+             "--runner-live-fixture", str(fixture)],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["state"], "unknown")
+        self.assertNotIn("private-conversation", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
