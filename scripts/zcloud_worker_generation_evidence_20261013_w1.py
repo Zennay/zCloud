@@ -48,7 +48,7 @@ def _load(raw):
                              parse_constant=lambda _: (_ for _ in ()).throw(EvidenceDenied("nonfinite_json")))
     except EvidenceDenied:
         raise
-    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+    except (UnicodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise EvidenceDenied("malformed_json") from exc
     if not isinstance(payload, dict):
         raise EvidenceDenied("invalid_top_level")
@@ -237,7 +237,14 @@ def classify(targets, debug, *, at=None, max_age_seconds=120):
             raise EvidenceDenied("unknown_worker_verdict")
         if verdict == "generating":
             telemetry_age = _age(row.get("last_event_age_s"))
-            state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
+            # Backend's verdict depends on a fresh generating flag; also
+            # validate the event category so a malformed/terminal event with
+            # an inherited true flag never becomes a green generation proof.
+            last_event = row.get("last_event")
+            if last_event not in ("heartbeat", "generation-started"):
+                state = "untrusted_generation_event"
+            else:
+                state = "generating_observed" if telemetry_age <= max_age_seconds else "stale_generation_telemetry"
         elif verdict == "prompt-sent":
             _age(row.get("last_prompt_age_s"))
             state = "prompt_sent_without_generation"
