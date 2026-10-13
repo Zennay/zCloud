@@ -554,7 +554,9 @@
           await note("worker-tab-removed",key,explicitlyReduced?"verified-project-count-decrease":"verified-provider-pool-decrease");
         }
       }
-      lastSnapshot = {at:Date.now(),workers:[...desired.keys()],tabs:[...ownership],reserves:[...reserves]};
+      lastSnapshot = {at:Date.now(),workers:[...desired.keys()],tabs:[...ownership],reserves:[...reserves],
+        slots:[...desired.values()].map(t=>[String(t.project_id),
+          Number(t.global_worker_slot||0)])};
     } catch (error) {
       await note("worker-reconcile-failed",null,String(error));
       // API failure never authorizes tab deletion or another browser window.
@@ -704,8 +706,16 @@
         const id = Number(cmd.id);
         if (Date.now() < (commandWakeAt.get(id) || 0)) continue;
         const projectId = String(cmd.project_id || "");
-        const key = ownership.has(projectId) ? projectId :
-          active.includes(projectId+"::w1") ? projectId+"::w1" : "";
+        // Forceer is tied to the EXACT global slot clicked in zCloud.
+        // Never wake a different LightUp worker because w1 happens to be
+        // running in another tab. No allocated slot means no browser mutation.
+        const wantedSlot=Number(cmd.global_worker_slot||0);
+        const slotEntry=wantedSlot?
+          (lastSnapshot?.slots||[]).find(([worker,slot])=>
+            slot===wantedSlot && (worker===projectId || worker.startsWith(projectId+"::w"))) : null;
+        const key=wantedSlot ? (slotEntry?.[0]||"") :
+          (ownership.has(projectId) ? projectId :
+           active.includes(projectId+"::w1") ? projectId+"::w1" : "");
         if (!key) continue;
         // Force requests demand a NEW tab, not a recycled project tab.
         // The command ID travels in the URL and the in-page runner checks it
