@@ -58,6 +58,9 @@ class GitRefReservationTests(unittest.TestCase):
         self.assertIs(outcome["authorized"], False)
         self.assertIs(outcome["dispatch_allowed"], False)
         self.assertTrue(outcome["do_not_retry_automatically"])
+        self.assertIs(outcome["local_mutations_performed"], False)
+        self.assertEqual(outcome["external_ref_creation_observed"],
+                         outcome["reservation_state"] == "RESERVATION_RECORDED")
         return outcome
 
     def test_actual_failed_production_status_cannot_create_ref_plan(self):
@@ -135,7 +138,8 @@ class GitRefReservationTests(unittest.TestCase):
         plan = self.plan()
         out = self.classify(plan, 201, created(plan), "RESERVATION_RECORDED")
         self.assertEqual(out["reason"], "exact_ref_created")
-        self.assertIs(out["mutations_performed"], False)  # classifier never writes
+        self.assertIs(out["local_mutations_performed"], False)
+        self.assertIs(out["external_ref_creation_observed"], True)
 
     def test_201_malformed_or_mismatched_response_denied(self):
         plan = self.plan()
@@ -190,6 +194,7 @@ class GitRefReservationTests(unittest.TestCase):
         self.assertEqual(observed["reservation_state"], "EXISTING_RESERVATION")
         self.assertIs(observed["dispatch_allowed"], False)
         self.assertTrue(observed["do_not_retry_automatically"])
+        self.assertIs(observed["external_ref_creation_observed"], False)
 
     def test_missing_or_altered_ref_never_allows_retry(self):
         p = self.plan()
