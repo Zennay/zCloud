@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 from pathlib import Path
 
@@ -17,7 +18,7 @@ spec.loader.exec_module(module)
 
 
 def live(items=None):
-    return {"chatgpt_runners": {
+    return {"time": datetime.now(timezone.utc).isoformat(), "chatgpt_runners": {
         "cloud": {"workers": list(items or [])}
     }}
 
@@ -622,6 +623,39 @@ class ReconcileTests(unittest.TestCase):
                 result = module.read_live()
         self.assertIn("chatgpt_runners", result)
         self.assertEqual(recorded, [("GET", "/api/runner-live")])
+
+    def test_real_localhost_replayed_snapshot_denied(self):
+        snapshot = live([worker()])
+        snapshot["time"] = (datetime.now(timezone.utc) - timedelta(minutes=8)).isoformat()
+        url, recorded = self._serve_live_response(body=json.dumps(snapshot).encode())
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "server time unverified"):
+                module.read_live()
+        self.assertEqual(recorded, [("GET", "/api/runner-live")])
+
+    def test_real_localhost_future_snapshot_denied(self):
+        snapshot = live([worker()])
+        snapshot["time"] = (datetime.now(timezone.utc) + timedelta(minutes=8)).isoformat()
+        url, _recorded = self._serve_live_response(body=json.dumps(snapshot).encode())
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "server time unverified"):
+                module.read_live()
+
+    def test_real_localhost_missing_server_timestamp_denied(self):
+        snapshot = live([worker()])
+        snapshot.pop("time")
+        url, _recorded = self._serve_live_response(body=json.dumps(snapshot).encode())
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "server time missing"):
+                module.read_live()
+
+    def test_real_localhost_naive_server_timestamp_denied(self):
+        snapshot = live([worker()])
+        snapshot["time"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        url, _recorded = self._serve_live_response(body=json.dumps(snapshot).encode())
+        with mock.patch.object(module, "API", url):
+            with self.assertRaisesRegex(module.InvalidEvidence, "server time unverified"):
+                module.read_live()
 
     def test_real_localhost_http_redirect_is_denied(self):
         url, recorded = self._serve_live_response(status=302,
