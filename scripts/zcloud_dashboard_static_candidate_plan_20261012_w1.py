@@ -68,7 +68,8 @@ def blob_at(root: Path, sha: str, path: str) -> str | None:
     return require_sha(blob)
 
 
-def plan(root: Path, baseline: str, candidate: str) -> dict:
+def validate_commit_pair(root: Path, baseline: str, candidate: str) -> tuple[str, str]:
+    """Pin two real related Git commits without trusting a live deploy state."""
     baseline = require_sha(baseline)
     candidate = require_sha(candidate)
     if baseline == candidate:
@@ -86,7 +87,11 @@ def plan(root: Path, baseline: str, candidate: str) -> dict:
         )
     except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
         raise PlanError("baseline_not_ancestor") from None
+    return baseline, candidate
 
+
+def plan(root: Path, baseline: str, candidate: str) -> dict:
+    baseline, candidate = validate_commit_pair(root, baseline, candidate)
     raw = git(root, "diff", "--name-status", "--no-renames", "-z",
               baseline, candidate, "--")
     fields = raw.split(b"\0")
@@ -325,14 +330,8 @@ def snapshot(root: Path, revision: str) -> dict:
 
 
 
-def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
-    """Optional strict Git-only cache revision check for proposed UI updates.
-
-    A structural static diff does NOT imply browser refresh correctness. A changed
-    app.js or enhancements.css must have an *independently different* referenced
-    version in index.html. Historical Git is NOT attested deployed/live.
-    """
-    proposal = plan(root, baseline, candidate)
+def _cache_version_evidence(root: Path, baseline: str, candidate: str) -> tuple[dict, dict, dict]:
+    """Read bounded baseline blobs and complete candidate bundle from Git only."""
     after = snapshot(root, candidate)
     before_index = blob_at(root, baseline, "public/index.html")
     if before_index is None:
@@ -348,18 +347,23 @@ def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
     except (PlanError, ValueError, UnicodeError):
         raise PlanError("baseline_index_asset_reference_untrusted") from None
 
+    before_assets = {}
     for name in ("app.js", "enhancements.css"):
-        path = "public/" + name
-        identity = blob_at(root, baseline, path)
+        identity = blob_at(root, baseline, "public/" + name)
         if identity is None:
             raise PlanError("baseline_dashboard_asset_missing")
+        before_assets[name] = identity
+    return after, before_versions, before_assets
 
+
+def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
+    """Optional strict *static-only* Git cache-version admission, never deploy."""
+    proposal = plan(root, baseline, candidate)
+    after, before_versions, _ = _cache_version_evidence(root, baseline, candidate)
     changed = {item["path"] for item in proposal["assets"]}
     for name in ("app.js", "enhancements.css"):
-        if ("public/" + name) in changed:
-            if before_versions[name] == after["index_asset_versions"][name]:
-                raise PlanError("cache_revision_not_bumped")
-
+        if "public/" + name in changed and before_versions[name] == after["index_asset_versions"][name]:
+            raise PlanError("cache_revision_not_bumped")
     return {
         **proposal,
         "cache_bust_checked": True,
@@ -372,6 +376,53 @@ def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
     }
 
 
+def audit_cache_pins(root: Path, baseline: str, candidate: str) -> dict:
+    """Audit cache pins across *mixed* source changes without accepting a release.
+
+    This read-only observation intentionally DOES NOT inspect or admit a mixed
+    production diff. It cannot establish a safe deploy, publisher lease or
+    browser cache behaviour. False coherence is a failure, never a permission.
+    """
+    baseline, candidate = validate_commit_pair(root, baseline, candidate)
+    after, before_versions, old_blobs = _cache_version_evidence(root, baseline, candidate)
+    after_assets = {item["path"]: item for item in after["assets"]}
+    assessments = []
+    for name in ("app.js", "enhancements.css"):
+        path = "public/" + name
+        new_blob = after_assets[path]["git_blob_sha"]
+        changed = old_blobs[name] != new_blob
+        bumped = before_versions[name] != after["index_asset_versions"][name]
+        assessments.append({
+            "path": path,
+            "blob_changed": changed,
+            "version_changed": bumped,
+            "baseline_version": before_versions[name],
+            "candidate_version": after["index_asset_versions"][name],
+            "baseline_git_blob_sha": old_blobs[name],
+            "candidate_git_blob_sha": new_blob,
+            "cache_pin_coherent": not changed or bumped,
+        })
+    good = all(item["cache_pin_coherent"] for item in assessments)
+    return {
+        "schema": "zcloud-dashboard-cache-pin-audit-v1",
+        "baseline_sha": baseline,
+        "candidate_sha": candidate,
+        "cache_pins_coherent": good,
+        "reason": "cache_pin_versions_consistent" if good else "changed_asset_pin_unchanged",
+        "source_bytes_only": True,
+        "structural_static_diff_not_evaluated": True,
+        "static_diff_eligible": False,
+        "runtime_bytes_observed": False,
+        "baseline_proven_deployed": False,
+        "production_status_proven": False,
+        "sqlite_ownership_proven": False,
+        "live_runtime_compatibility_proven": False,
+        "release_authorized": False,
+        "promotion_authorized": False,
+        "assets": assessments,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -380,10 +431,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot-sha")
     parser.add_argument("--check-cache-bust", action="store_true",
                         help="Require changed JS/CSS to bump index.html cache versions; no deploy")
+    parser.add_argument("--audit-cache-pins", action="store_true",
+                        help="Audit Git asset revisions even across mixed commits; never promote")
     args = parser.parse_args(argv)
     try:
+        if args.check_cache_bust and args.audit_cache_pins:
+            raise PlanError("incompatible_modes")
         if args.snapshot_sha is not None:
-            if args.check_cache_bust:
+            if args.check_cache_bust or args.audit_cache_pins:
                 raise PlanError("incompatible_modes")
             if args.baseline_sha is not None or args.candidate_sha is not None:
                 raise PlanError("incompatible_modes")
@@ -391,7 +446,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if args.baseline_sha is None or args.candidate_sha is None:
                 raise PlanError("baseline_and_candidate_required")
-            if args.check_cache_bust:
+            if args.audit_cache_pins:
+                evidence = audit_cache_pins(args.root, args.baseline_sha, args.candidate_sha)
+            elif args.check_cache_bust:
                 evidence = verify_cache_bust(args.root, args.baseline_sha, args.candidate_sha)
             else:
                 evidence = plan(args.root, args.baseline_sha, args.candidate_sha)
@@ -406,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
         }, sort_keys=True))
         return 2
     print(json.dumps(evidence, sort_keys=True))
+    if args.audit_cache_pins and not evidence["cache_pins_coherent"]:
+        return 2
     return 0
 
 
