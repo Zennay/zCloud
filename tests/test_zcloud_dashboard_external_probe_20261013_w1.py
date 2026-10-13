@@ -9,6 +9,7 @@ import pathlib
 import socket
 import ssl
 import unittest
+from datetime import datetime, timedelta, timezone
 import urllib.error
 from contextlib import redirect_stdout
 from unittest import mock
@@ -20,7 +21,7 @@ import sys
 sys.modules[spec.name] = probe
 spec.loader.exec_module(probe)
 
-VALID = b'{"time":"2026-10-13T22:41:00Z","projects":[]}'
+VALID = json.dumps({"time": datetime.now(timezone.utc).isoformat(), "projects": []}).encode("utf-8")
 
 
 class Response:
@@ -100,6 +101,28 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertEqual(probe.probe_once(Opener(Response(raw=raw))), "invalid_json")
         overdepth = b'{"time":"2026-10-13T22:41:00Z","projects":' + b"[" * 36 + b"0" + b"]" * 36 + b"}"
         self.assertEqual(probe.probe_once(Opener(Response(raw=overdepth))), "invalid_json")
+
+    def test_server_timestamp_freshness_and_future_denial(self):
+        now = datetime(2026, 10, 13, 22, 45, tzinfo=timezone.utc)
+        cases = [
+            (timedelta(seconds=-181), "stale_timestamp"),
+            (timedelta(seconds=-180), "healthy"),
+            (timedelta(seconds=30), "healthy"),
+            (timedelta(seconds=31), "future_timestamp"),
+        ]
+        for delta, expected in cases:
+            with self.subTest(seconds=delta.total_seconds()):
+                stamp = (now + delta).isoformat()
+                raw = json.dumps({"time": stamp, "projects": []}).encode("utf-8")
+                self.assertEqual(probe._validate_payload(raw, now=now), expected)
+        raw = json.dumps({"time": now.isoformat(), "projects": []}).encode("utf-8")
+        with self.assertRaises(ValueError):
+            probe._validate_payload(raw, now=datetime(2026, 10, 13))
+
+    def test_stale_response_not_reported_healthy(self):
+        stamp = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        raw = json.dumps({"time": stamp, "projects": []}).encode("utf-8")
+        self.assertEqual(probe.probe_once(Opener(Response(raw=raw))), "stale_timestamp")
 
     def test_schema_invalid_or_timezone_missing(self):
         for raw in (
