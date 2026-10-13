@@ -311,19 +311,17 @@ def verify_cache_bust(root: Path, baseline: str, candidate: str) -> dict:
         raise PlanError("baseline_index_asset_reference_untrusted")
     try:
         raw = git(root, "cat-file", "blob", before_index)
-        if len(raw) > MAX_ASSET_BYTES or b"\\0" in raw:
+        if len(raw) > MAX_ASSET_BYTES or b"\0" in raw:
             raise PlanError("baseline_index_asset_reference_untrusted")
         before_versions = index_bundle_versions(raw)
     except PlanError:
         raise PlanError("baseline_index_asset_reference_untrusted") from None
 
-    before_assets = {}
     for name in ("app.js", "enhancements.css"):
         path = "public/" + name
         identity = blob_at(root, baseline, path)
         if identity is None:
             raise PlanError("baseline_dashboard_asset_missing")
-        before_assets[name] = identity
 
     changed = {item["path"] for item in proposal["assets"]}
     for name in ("app.js", "enhancements.css"):
