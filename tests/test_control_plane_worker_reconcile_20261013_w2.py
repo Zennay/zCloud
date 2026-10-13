@@ -36,6 +36,7 @@ class ReconcileTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             conn.execute("CREATE TABLE ai_global_slots(slot INTEGER,project_id TEXT,worker_slot INTEGER)")
             conn.execute("CREATE TABLE runner_workers(project_id TEXT,worker_slot INTEGER,desired_state TEXT,conversation_id TEXT)")
+            conn.execute("CREATE TABLE runner_commands(id INTEGER PRIMARY KEY,project_id TEXT,action TEXT,status TEXT,created_at TEXT,updated_at TEXT,result TEXT)")
             conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'active','private-conversation')")
         self.roster = module.read_roster(self.db)
@@ -127,6 +128,49 @@ class ReconcileTests(unittest.TestCase):
         ]))
         self.assertFalse(report["authorizes_mutation"])
         self.assertEqual(report["allocated_count"], 1)
+
+    def test_stale_pending_push_detected_without_command_body(self):
+        from datetime import datetime, timezone
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO runner_commands VALUES(1,'cloud::w1','push','pending',?,?,?)",
+                         ("2026-10-13T17:00:00+00:00", "2026-10-13T17:00:00+00:00", "SECRET_COMMAND_RESULT"))
+        roster = module.read_roster(self.db)
+        at = datetime(2026, 10, 13, 17, 3, tzinfo=timezone.utc)
+        result = module.reconcile(roster, live([worker()]), now=at)
+        self.assertEqual(result["stale_pending_dispatch_count"], 1)
+        self.assertIn("pending_dispatch_over_two_minutes", result["problem_counts"])
+        self.assertNotIn("SECRET_COMMAND_RESULT", json.dumps(result))
+
+    def test_recent_pending_command_is_counted_not_stalled(self):
+        from datetime import datetime, timezone
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO runner_commands VALUES(1,'cloud::w1','start','pending',?,?,?)",
+                         ("2026-10-13T17:00:00+00:00", "2026-10-13T17:00:00+00:00", "private"))
+        at = datetime(2026, 10, 13, 17, 1, tzinfo=timezone.utc)
+        result = module.reconcile(module.read_roster(self.db), live([worker()]), now=at)
+        self.assertEqual(result["pending_dispatch_count"], 1)
+        self.assertEqual(result["stale_pending_dispatch_count"], 0)
+        self.assertEqual(result["state"], "ok")
+
+    def test_future_pending_command_timestamp_fails_closed(self):
+        from datetime import datetime, timezone
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO runner_commands VALUES(1,'cloud::w1','force_start','pending',?,?,?)",
+                         ("2026-10-14T17:00:00+00:00", "2026-10-14T17:00:00+00:00", "private"))
+        at = datetime(2026, 10, 13, 17, 0, tzinfo=timezone.utc)
+        result = module.reconcile(module.read_roster(self.db), live([worker()]), now=at)
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["pending_age_unverifiable"], 1)
+
+    def test_non_pending_completed_dispatch_is_not_stale(self):
+        from datetime import datetime, timezone
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO runner_commands VALUES(1,'cloud::w1','start','succeeded',?,?,?)",
+                         ("2026-10-13T13:00:00+00:00", "2026-10-13T13:00:00+00:00", "private"))
+        at = datetime(2026, 10, 13, 17, 0, tzinfo=timezone.utc)
+        result = module.reconcile(module.read_roster(self.db), live([worker()]), now=at)
+        self.assertEqual(result["pending_dispatch_count"], 0)
+        self.assertEqual(result["state"], "ok")
 
     def test_duplicate_live_worker_rejected(self):
         with self.assertRaises(module.InvalidEvidence):
