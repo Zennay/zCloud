@@ -6,12 +6,16 @@
   "use strict";
   const API = "http://127.0.0.1:8765/api";
   const TAG = "zcloud-v2-worker-key";
+  const RESERVE_TAG = "zcloud-v2-pool-reserve";
   const KNOWN_KEY = "zcloud-v2-known-worker-ids";
   const TICK_MS = 30000;
   const STALE_POLL_MS = 4 * 60 * 1000;
   const RELOAD_COOLDOWN_MS = 10 * 60 * 1000;
   const MISSING_TAB_RECHECK_MS = 2000;
+  const POOL_SAVE_CHECK_MS = 5000;
   const ownership = new Map(); // worker key -> tab ID (same tab across chats)
+  const reserves = new Map(); // idle ChatGPT capacity slot -> dedicated Firefox tab ID
+  const reserveObservations = new Map();
   const candidateRemovals = new Map();
   const closeCooldown = new Map();
   const stalePollObservations = new Map();
@@ -30,6 +34,42 @@
   }
   function workerMarker(url) {
     try { return new URL(url).searchParams.get("zcloud_worker") || ""; } catch (_) { return ""; }
+  }
+  function reservedSlot(url) {
+    try {
+      const u = new URL(url);
+      if (u.hostname !== "chatgpt.com" || u.pathname !== "/" ||
+          u.searchParams.size !== 1 || !u.searchParams.has("zcloud_pool")) return 0;
+      const raw = u.searchParams.get("zcloud_pool");
+      const n = Number(raw);
+      return /^(?:[1-9][0-9]*)$/.test(raw || "") &&
+        Number.isInteger(n) && n >= 1 && n <= 16 ? n : 0;
+    } catch (_) { return 0; }
+  }
+  async function reserveIdle(tabId) {
+    try {
+      const [idle] = await browser.tabs.executeScript(tabId, {
+        code:'(() => { const el=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\'); return document.readyState==="complete" && !document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\') && !String(el?.value||el?.innerText||el?.textContent||"").trim(); })()'
+      });
+      return idle === true;
+    } catch (_) { return false; }
+  }
+  async function recoverReserves(tabs) {
+    const live = new Set(tabs.map(t => t.id));
+    for (const [slot, id] of reserves) if (!live.has(id)) reserves.delete(slot);
+    for (const tab of tabs) {
+      const slot = reservedSlot(tab.url);
+      if (!slot || reserves.has(slot) || [...ownership.values()].includes(tab.id)) continue;
+      let tag = "";
+      try { tag = String(await browser.sessions.getTabValue(tab.id, RESERVE_TAG) || ""); }
+      catch (_) {}
+      // An exact pool-only URL identifies our own parked tab after session
+      // restore. Never adopt arbitrary ChatGPT conversations or expert tabs.
+      if (tag && tag !== String(slot)) continue;
+      reserves.set(slot, tab.id);
+      try { await browser.sessions.setTabValue(tab.id, RESERVE_TAG, String(slot)); } catch (_) {}
+      if (workerWindow === null) workerWindow = tab.windowId;
+    }
   }
   // A paused or draining assignment STILL owns its Firefox tab. The page
   // runner controls dispatch; the extension must restore the tab, not run it.
@@ -144,6 +184,27 @@
     if (windowId == null || ownership.has(key)) return;
     const url = new URL("https://chatgpt.com/");
     url.searchParams.set("zcloud_worker", key);
+    // Reuse an extension-owned, EMPTY capacity tab from Opslaan instead of
+    // closing/reopening tabs. No conversation tab or draft may be repurposed.
+    const slot = Number(target.provider_worker_slot ?? target.global_worker_slot);
+    const reservedId = reserves.get(slot);
+    if (reservedId != null) {
+      const tab = await browser.tabs.get(reservedId).catch(() => null);
+      let tag = "";
+      try { tag = String(await browser.sessions.getTabValue(reservedId, RESERVE_TAG) || ""); }
+      catch (_) {}
+      if (tab && reservedSlot(tab.url) === slot && tag === String(slot) &&
+          await reserveIdle(reservedId)) {
+        await browser.tabs.update(reservedId, {url:String(url), active:false});
+        reserves.delete(slot);
+        ownership.set(key, reservedId);
+        try { await browser.sessions.setTabValue(reservedId, TAG, key); } catch (_) {}
+        try { await browser.sessions.removeTabValue(reservedId, RESERVE_TAG); } catch (_) {}
+        await rememberWorker(key);
+        await note("worker-tab-reserve-activated", key, "safe-idle-same-tab-rebind");
+        return;
+      }
+    }
     // active:false is absolute: starting a worker may NEVER switch active tabs.
     const tab = await browser.tabs.create({url:String(url), windowId, active:false});
     ownership.set(key, tab.id);
@@ -162,6 +223,7 @@
       if (!payload || typeof payload.projects !== "object" || !payload.projects)
         throw new Error("invalid-target-payload");
       const tabs = await recoverOwnership();
+      await recoverReserves(tabs);
       const desired = new Map(Object.values(payload.projects).filter(assigned).map(t => [t.project_id,t]));
       // Queue leases may disappear during a browser crash or scheduler
       // handover, even though the worker still exists in the user's saved
@@ -225,6 +287,74 @@
         // The v2 in-page runner alone decides whether a prompt is permitted.
         if (!ownership.has(key) && Number(recoveryObservations.get(key) || 0) >= 2)
           await createWorkerTab(key, target, windowId);
+      }
+      // Saved ChatGPT pool capacity owns exactly one Firefox tab per slot,
+      // even while the queue allocator has not assigned a project. Unassigned
+      // slots are parked (no zcloud_worker identity, so no prompt dispatch).
+      // This is the missing path for "2 -> 3 workers, click Opslaan".
+      const poolCount = Number(payload.dynamic_workers?.chatgpt_count);
+      if (Number.isInteger(poolCount) && poolCount >= 0 && poolCount <= 16) {
+        const used = new Set();
+        for (const target of desired.values()) {
+          const slot = Number(target.provider_worker_slot ?? target.global_worker_slot);
+          if ((!target.provider || target.provider === "chatgpt") &&
+              Number.isInteger(slot) && slot >= 1 && slot <= poolCount)
+            used.add(slot);
+        }
+        for (const [key] of ownership) {
+          const slot = Number(lastChatGPTProviderSlot.get(key));
+          if (Number.isInteger(slot) && slot >= 1 && slot <= poolCount) used.add(slot);
+        }
+        let missingAssigned = 0;
+        for (const key of desired.keys()) if (!ownership.has(key)) missingAssigned++;
+        const missingCapacity = Math.max(0, poolCount -
+          ownership.size - reserves.size - missingAssigned);
+        let newReserves = 0;
+        for (let slot = 1; slot <= poolCount && newReserves < missingCapacity; slot++) {
+          if (used.has(slot) || reserves.has(slot)) continue;
+          const observations = (reserveObservations.get(slot) || 0) + 1;
+          reserveObservations.set(slot, observations);
+          if (observations < 2) {
+            if (quickRecheckTimer === null && typeof setTimeout === "function")
+              quickRecheckTimer = setTimeout(() => {
+                quickRecheckTimer = null;
+                reconcile();
+              }, MISSING_TAB_RECHECK_MS);
+            continue;
+          }
+          if (windowId === null) continue;
+          const url = "https://chatgpt.com/?zcloud_pool=" + slot;
+          const tab = await browser.tabs.create({url,windowId,active:false});
+          reserves.set(slot,tab.id);
+          try { await browser.sessions.setTabValue(tab.id,RESERVE_TAG,String(slot)); } catch (_) {}
+          newReserves++;
+          await note("worker-pool-tab-created",String(slot),"dashboard-saved-unassigned-capacity");
+        }
+        for (const slot of [...reserveObservations.keys()])
+          if (used.has(slot) || reserves.has(slot) || slot > poolCount)
+            reserveObservations.delete(slot);
+        // Shrinking the pool never removes a real worker here. Only surplus
+        // explicitly tagged reserve tabs may be retired after 3 stable polls,
+        // and only when idle with no unsent text.
+        for (const [slot, tabId] of reserves) {
+          if (slot <= poolCount && !used.has(slot)) {
+            reserveObservations.delete(slot);
+            continue;
+          }
+          const seen = (reserveObservations.get(slot) || 0) + 1;
+          reserveObservations.set(slot, seen);
+          if (seen < 3) continue;
+          const tab = await browser.tabs.get(tabId).catch(() => null);
+          let tag = "";
+          try { tag = String(await browser.sessions.getTabValue(tabId, RESERVE_TAG) || ""); }
+          catch (_) {}
+          if (!tab || reservedSlot(tab.url) !== slot ||
+              tag !== String(slot) || !(await reserveIdle(tabId))) continue;
+          await browser.tabs.remove(tabId);
+          reserves.delete(slot);
+          reserveObservations.delete(slot);
+          await note("worker-pool-tab-retired",String(slot),"unneeded-empty-reserve");
+        }
       }
       // Detect a *stalled running worker*, not an inactive browser tab.
       // Background/minimized tabs are healthy when their v2 poll timestamp
@@ -342,7 +472,7 @@
           await note("worker-tab-removed",key,explicitlyReduced?"verified-project-count-decrease":"verified-provider-pool-decrease");
         }
       }
-      lastSnapshot = {at:Date.now(),workers:[...desired.keys()],tabs:[...ownership]};
+      lastSnapshot = {at:Date.now(),workers:[...desired.keys()],tabs:[...ownership],reserves:[...reserves]};
     } catch (error) {
       await note("worker-reconcile-failed",null,String(error));
       // API failure never authorizes tab deletion or another browser window.
@@ -386,5 +516,26 @@
   // This controller NEVER starts Firefox and NEVER calls windows.create.
   reconcile();
   setInterval(reconcile,TICK_MS);
+  // Cheap saved-count probe makes Opslaan visible without waiting 30 seconds.
+  // Full allocation reads happen only when the count actually changes.
+  let lastSavedPoolCount = null;
+  let poolProbeBusy = false;
+  async function checkSavedPoolCount() {
+    if (poolProbeBusy) return;
+    poolProbeBusy = true;
+    try {
+      const response = await fetch(API + "/dynamic-workers", {cache:"no-store"});
+      if (!response.ok) return;
+      const payload = await response.json();
+      const count = Number(payload?.dynamic_workers?.chatgpt_count);
+      if (!Number.isInteger(count) || count < 0 || count > 16) return;
+      if (lastSavedPoolCount !== null && count !== lastSavedPoolCount)
+        await reconcile();
+      lastSavedPoolCount = count;
+    } catch (_) { /* No tab mutation on a failed config probe. */ }
+    finally { poolProbeBusy = false; }
+  }
+  checkSavedPoolCount();
+  setInterval(checkSavedPoolCount, POOL_SAVE_CHECK_MS);
   globalThis.ZCLOUD_V2_CONTROLLER = {snapshot:()=>lastSnapshot};
 })();
