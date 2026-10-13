@@ -461,6 +461,21 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self._simulate(["a" * 40, "a" * 40], 3,
                        output="unexpected public URL: SECRET_TOKEN\n", published=False)
 
+    def test_duplicate_and_contradictory_statuses_never_green(self):
+        valid = ("## zCloud · externe dashboardcontrole\n"
+                 "**Status:** API bereikbaar\n"
+                 "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\n")
+        for extra in ("**Status:** API bereikbaar\n",
+                      "**Status:** API niet aantoonbaar bereikbaar\n"):
+            with self.subTest(extra=extra):
+                self._simulate(["a" * 40, "a" * 40], 3,
+                               output=valid + extra, published=False)
+
+    def test_missing_safety_disclaimer_never_green(self):
+        self._simulate(["a" * 40, "a" * 40], 3,
+                       output="## zCloud · externe dashboardcontrole\n"
+                              "**Status:** API bereikbaar\n", published=False)
+
     def test_failure_exit_cannot_publish_healthy_summary(self):
         self._simulate(["a" * 40, "a" * 40], 3, probe_rc=1, published=False)
 
