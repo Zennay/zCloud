@@ -234,7 +234,7 @@
           const [result] = await browser.tabs.executeScript(tabId, {code:"(() => { const e=document.documentElement; const b=document.querySelector('button[data-testid=\"stop-button\"],button[aria-label=\"Stop generating\"],button[aria-label=\"Stop response\"]'); const d=document.querySelector('#prompt-textarea,[contenteditable=\"true\"][role=\"textbox\"],textarea'); return {version:e?.getAttribute(\"data-zcloud-violentmonkey-ready\")||\"\",owner:e?.getAttribute(\"data-zcloud-v2-owner\")||\"\",lastPoll:Number(e?.getAttribute(\"data-zcloud-v2-last-poll\")||0),generating:!!b,draft:!!String(d?.value||d?.innerText||d?.textContent||\"\").trim()}; })()"});
           probe = result;
         } catch (_) { /* A loading/unresponsive tab is not proven idle. */ }
-        if (!probe || probe.version !== "2.0.0" || probe.owner !== key ||
+        if (!probe || !/^2\.0\.[01]$/.test(probe.version) || probe.owner !== key ||
             !Number.isFinite(probe.lastPoll) || probe.lastPoll <= 0 ||
             Date.now() - probe.lastPoll < STALE_POLL_MS ||
             probe.generating || probe.draft) {
@@ -279,7 +279,7 @@
           if(!match)continue;
           const row=latest.get(match[1]);
           const oldCount=Number(row?.old_value),newCount=Number(row?.new_value);
-          const recent=Number.isFinite(Date.parse(row?.ts))&&Date.now()-Date.parse(row.ts)<10*60*1000;
+          const recent=Number.isFinite(Date.parse(row?.ts))&&Date.now()-Date.parse(row.ts)>=0&&Date.now()-Date.parse(row.ts)<10*60*1000;
           const explicitlyReduced=row?.result==="succeeded"&&
             oldCount>newCount&&Number(match[2])>newCount&&recent;
           if(!explicitlyReduced||payload.projects?.[key])continue;

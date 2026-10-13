@@ -50,7 +50,7 @@ jobs:
           assert m["background"]["scripts"][-1]=="worker-controller-v2.js"
           assert "storage" in m["permissions"]
           s=pathlib.Path("public/zcloud-worker.user.js").read_text()
-          assert "// @version      2.0.0" in s
+          assert "// @version      2.0.1" in s
           assert "if (window.__ZCLOUD_SINGLE_TAB_V2) return;" in s
           assert "POLL_MS=30000" in s
           print("EXCLUSIVE_V2_SOURCE_CONTRACT=1")
@@ -92,4 +92,4 @@ jobs:
           echo "V2_ADDON_CONTROLLER_HOT_RELOADED=1"
           echo "CRASH_TAB_REHYDRATION_INSTALLED=1"
           echo "ACTIVE_TAB_SELF_HEAL_INSTALLED=1"
-          echo "NOTE=Violentmonkey installed script must independently upgrade to 2.0.0; existing tabs have not been reloaded."
+          echo "NOTE=Violentmonkey installed script must independently upgrade to 2.0.1; existing tabs have not been reloaded."

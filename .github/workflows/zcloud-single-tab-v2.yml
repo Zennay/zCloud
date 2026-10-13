@@ -13,8 +13,10 @@ on:
       - tests/test_v2_auto_open_missing_worker_ids_20261013_w4.js
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
+      - tests/test_v2_workmode_high_controls.js
       - tests/test_single_tab_v2_cycle.js
       - tests/test_v2_dispatch_recovery_20261013_w3.js
+      - scripts/zcloud_retire_legacy_worker_services.sh
       - .github/workflows/zcloud-single-tab-v2.yml
   push:
     branches: [main]
@@ -26,7 +28,9 @@ on:
       - firefox-extension/manifest.json
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
+      - tests/test_v2_workmode_high_controls.js
       - tests/test_single_tab_v2_cycle.js
+      - scripts/zcloud_retire_legacy_worker_services.sh
       - .github/workflows/zcloud-single-tab-v2.yml
 
 permissions:
@@ -54,6 +58,7 @@ jobs:
           node tests/test_v2_auto_open_missing_worker_ids_20261013_w4.js
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_v2_workmode_high_controls.js
           node tests/test_single_tab_v2_cycle.js
           node tests/test_v2_dispatch_recovery_20261013_w3.js
           node tests/test_worker_tab_identity_guard.js
@@ -81,8 +86,10 @@ jobs:
           test "$(hostname)" = vps-bb300bba
           test "$(id -un)" = ubuntu
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           node tests/test_single_tab_worker_v2.js
           node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_v2_workmode_high_controls.js
           node tests/test_single_tab_v2_cycle.js
           root="/home/ubuntu/zennay-cloud"
           addon="$HOME/snap/firefox/common/chatgpt-project-extension"
@@ -134,27 +141,6 @@ jobs:
           else
             echo "V2_ADDON_ACTIVATION_DEFERRED=busy-or-idle-unverified"
           fi
-          # Retire the two competing *legacy worker recovery timers*. Stop
-          # timers only; do not touch Firefox, Xorg, the backend, or GitHub
-          # runner. Keep zcloud-firefox-supervisor.timer for real crashes.
-          if systemctl --user disable --now chatgpt-runner-watchdog.timer; then
-            echo "LEGACY_WORKER_WATCHDOG_TIMER_STOPPED=1"
-          else
-            echo "LEGACY_WORKER_WATCHDOG_TIMER_STOP_FAILED=1"
-          fi
-          if sudo -n systemctl disable --now zcloud-self-heal.timer; then
-            echo "LEGACY_SELF_HEAL_TIMER_STOPPED=1"
-          else
-            echo "LEGACY_SELF_HEAL_TIMER_STOP_FAILED=1"
-          fi
-          # The legacy local zCloud watchdog is also an old automation
-          # consumer. Keep service crash recovery in systemd and the dedicated
-          # Firefox supervisor, not a third browser-control timer.
-          if systemctl --user disable --now zcloud-watchdog.timer; then
-            echo "LEGACY_LOCAL_WATCHDOG_TIMER_STOPPED=1"
-          else
-            echo "LEGACY_LOCAL_WATCHDOG_TIMER_STOP_FAILED=1"
-          fi
-          echo "CRASH_SUPERVISOR_TIMER_STATUS=$(systemctl is-active zcloud-firefox-supervisor.timer || true)"
+          bash scripts/zcloud_retire_legacy_worker_services.sh
           echo "VM_INSTALLED_SCRIPT_ACTIVATION_REQUIRES_VERSION_CHECK=1"
           echo "EXISTING_CHAT_TABS_PRESERVED=1"
