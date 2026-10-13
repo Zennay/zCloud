@@ -197,7 +197,7 @@
       "lane_profile": "product",
       "ai_worker_cap": 1,
       "autonomy": {
-        "mode": "ai_worker",
+        "mode": "external_gate",
         "auto_start": false
       },
       "compute": {
