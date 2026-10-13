@@ -169,7 +169,7 @@ class PaginationTests(unittest.TestCase):
                 return False
             def read(self, n):
                 return b"[]"
-        with patch.object(mod.urllib.request, "urlopen", return_value=Response()):
+        with patch.object(mod.urllib.request, "build_opener", return_value=type("Opener", (), {"open": lambda self, *a, **kw: Response()})()):
             with self.assertRaisesRegex(mod.InventoryDenied, "link_origin_or_query_mismatch"):
                 mod.github_fetcher("")("branches", 1)
 
@@ -183,8 +183,35 @@ class PaginationTests(unittest.TestCase):
                 return False
             def read(self, n):
                 return b"[]"
-        with patch.object(mod.urllib.request, "urlopen", return_value=Response()):
+        with patch.object(mod.urllib.request, "build_opener", return_value=type("Opener", (), {"open": lambda self, *a, **kw: Response()})()):
             self.assertEqual(mod.github_fetcher("")("branches", 1), ([], 2))
+
+    def test_authenticated_redirects_denied_before_followup_request(self):
+        handler = mod._DenyRedirect()
+        with self.assertRaisesRegex(mod.InventoryDenied, "redirect_denied"):
+            handler.redirect_request(None, None, 302, "moved", {}, "https://example.org/steal")
+
+    def test_api_request_method_is_get_and_has_bounded_timeout(self):
+        seen = []
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, n):
+                return b"[]"
+        class Opener:
+            def open(self, request, timeout):
+                seen.append((request.get_method(), request.full_url, timeout))
+                return Response()
+        with patch.object(mod.urllib.request, "build_opener", return_value=Opener()):
+            self.assertEqual(mod.github_fetcher("")("branches", 1), ([], None))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][0], "GET")
+        self.assertEqual(seen[0][2], 12)
+        self.assertTrue(seen[0][1].startswith("https://api.github.com/repos/Zennay/zCloud/branches?"))
 
 
 if __name__ == "__main__":
