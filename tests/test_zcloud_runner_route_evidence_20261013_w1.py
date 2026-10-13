@@ -261,6 +261,23 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(data["jobs"][0]["failure_phase"], "step_evidence_missing")
         self.assertFalse(data["production_deploy_verified"])
 
+    def test_real_api_empty_steps_on_failed_deploy_means_unverified_phase(self):
+        job = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                       conclusion="failure")
+        job["steps"] = []
+        data = route.classify_run(39, [job], NOW)
+        self.assertEqual(data["jobs"][0]["failure_phase"], "step_evidence_missing")
+        self.assertEqual(data["lanes"]["zcloud_vps"]["failed_jobs"], 1)
+        self.assertFalse(data["production_deploy_verified"])
+
+    def test_failed_job_without_failed_step_denies_stage_inference(self):
+        job = make_job(status="completed", runner_id=21, runner_name="zcloud-vps-1",
+                       conclusion="failure")
+        job["steps"] = [{"name": "Set up job", "conclusion": "success"}]
+        data = route.classify_run(40, [job], NOW)
+        self.assertEqual(data["jobs"][0]["failure_phase"],
+                         "step_evidence_inconsistent")
+
     def test_broken_step_types_are_denied(self):
         for steps in ({"name": "fake"}, [1], [{"conclusion": "failure"}],
                       [{"name": "something", "conclusion": {"unexpected": True}}],
