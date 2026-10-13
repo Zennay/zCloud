@@ -191,7 +191,20 @@
     try{
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
-      if(!ready(actual))return;
+      if(!ready(actual)){
+        // An open browser tab is not an authorized dispatch. Report the
+        // missing queue/slot contract instead of silently looking healthy.
+        if(actual && actual.active===true && actual.desired_state!=="paused" &&
+           actual.desired_state!=="draining"){
+          const reason=!actual.assignment_ready?"queue-assignment-not-ready":
+            !actual.queue_item?.queue_id?"queue-lease-missing":
+            !actual.global_worker_slot?"worker-slot-unallocated":
+            !String(actual.prompt||"").startsWith("Werk verder aan ")?"prompt-contract-mismatch":
+            "worker-target-not-ready";
+          await blocked(reason);
+        }
+        return;
+      }
       await status("heartbeat",{reason:"worker-v2-check-30s"});
       const cid=conversation();
       if(cid && cid!==reportedConversation) {
@@ -205,6 +218,17 @@
         everGenerating=true;awaiting=false;
         await status("generation-progress");return;
       }
+      // A terminal conversation-load error is stronger evidence than the
+      // pending generation timeout. It must be handled BEFORE the awaiting
+      // guard, otherwise a failed page remains stuck forever.
+      if(failedConversation()){
+        if(awaiting){
+          awaiting=false;everGenerating=false;next=false;
+          await status("generation-aborted",{reason:"conversation-load-failed"});
+        }
+        await newChat("could-not-load-conversation");
+        return;
+      }
       const result=reply();
       if(awaiting){
         if(everGenerating||assistantCount()>baselineAssistantCount||(result&&result!==baseline)){
@@ -215,7 +239,6 @@
       }else if(everGenerating){
         everGenerating=false;next=true;await status("generation-finished");
       }
-      if(failedConversation()){await newChat("could-not-load-conversation");return}
       if(Date.now()-chatAt>=MAX_AGE){
         if(await newChat("one-hour-conversation"))return;
       }
