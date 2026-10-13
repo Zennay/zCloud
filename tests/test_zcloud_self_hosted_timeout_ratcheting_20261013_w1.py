@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts import zcloud_self_hosted_timeout_audit as audit
 
@@ -58,6 +63,38 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
     def test_new_dynamic_runner_creates_policy_debt(self):
         row = audit.TimeoutFinding(".github/workflows/new.yml", "probe", 5, "dynamic_runner_unknown")
         self.assertEqual([row], audit.new_debt([], [row]))
+
+    def test_strict_cli_rejects_worsened_legacy_timeout_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github" / "workflows").mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for key, value in (("user.email", "audit@example.invalid"), ("user.name", "Audit Test")):
+                subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+            wf = root / ".github" / "workflows" / "old.yml"
+            wf.write_text(
+                "jobs:\n  legacy:\n    runs-on: self-hosted\n    timeout-minutes: 35\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "baseline"], check=True)
+            sha = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            wf.write_text(
+                "jobs:\n  legacy:\n    runs-on: self-hosted\n    timeout-minutes: 60\n",
+                encoding="utf-8",
+            )
+            before = wf.read_bytes()
+            args = [
+                sys.executable, str(Path(audit.__file__).resolve()),
+                "--repo-root", str(root), "--base-ref", sha,
+            ]
+            ordinary = subprocess.run(args, capture_output=True, text=True, check=False)
+            strict = subprocess.run(args + ["--require-no-new-debt"], capture_output=True, text=True, check=False)
+            self.assertEqual(0, ordinary.returncode, ordinary.stderr)
+            self.assertEqual(0, json.loads(ordinary.stdout)["new_debt_count"])
+            self.assertEqual(1, strict.returncode, strict.stderr)
+            self.assertEqual(1, json.loads(strict.stdout)["new_debt_count"])
+            self.assertEqual(before, wf.read_bytes())
 
     def test_existing_missing_timeout_can_be_fixed(self):
         base = [audit.TimeoutFinding("x.yml", "x", None, "missing")]
