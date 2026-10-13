@@ -80,10 +80,10 @@ class BranchPaginationFailClosedTests(unittest.TestCase):
             counter += 1
             return page([node(f"branch-{counter}")], next_page=True, cursor=f"cursor-{counter}")
 
-        with patch.object(collector, "MAX_BRANCHES", 2):
+        with patch.object(collector, "MAX_BRANCH_PAGES", 2):
             with self.assertRaisesRegex(collector.CollectorError, "branch_page_bound_exceeded"):
                 collector._branch_refs("Zennay", "zCloud", runner)
-        self.assertEqual(counter, 3)
+        self.assertEqual(counter, 2)
 
     def test_normal_two_page_scan_preserves_exact_ref_metadata(self):
         responses = [
