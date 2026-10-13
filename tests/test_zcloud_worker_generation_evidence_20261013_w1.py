@@ -34,7 +34,8 @@ def targets(*items):
             "provider": item.get("provider", "chatgpt"),
             "active": True, "assignment_ready": True,
             "desired_state": "running",
-            "queue_item": {"queue_id": item.get("queue_id")},
+            "queue_item": {"queue_id": item.get("queue_id"),
+                           "claimed_at": (NOW - timedelta(minutes=5)).isoformat()},
         }
     return {"projects": projects, "global_allocation": {"workers": list(items)}}
 
@@ -194,6 +195,38 @@ class GenerationEvidenceTests(unittest.TestCase):
         raw = b'{"x":' + b'[' * depth + b'0' + b']' * depth + b'}'
         with self.assertRaisesRegex(subject.EvidenceDenied, "malformed_json"):
             subject._load(raw)
+
+    def test_generation_from_before_current_queue_claim_is_not_green(self):
+        t = targets(allocation())
+        t["projects"]["cloud::w1"]["queue_item"]["claimed_at"] = (NOW - timedelta(seconds=3)).isoformat()
+        report = self.classify(t=t, d=debug(row(last_event_age_s=8)))
+        self.assertFalse(report["all_allocated_chatgpt_generating"])
+        self.assertEqual("generation_predates_claim", report["workers"][0]["state"])
+
+    def test_recent_event_after_current_claim_can_still_be_reported(self):
+        t = targets(allocation())
+        t["projects"]["cloud::w1"]["queue_item"]["claimed_at"] = (NOW - timedelta(seconds=9)).isoformat()
+        report = self.classify(t=t, d=debug(row(last_event_age_s=8)))
+        self.assertTrue(report["all_allocated_chatgpt_generating"])
+
+    def test_claim_epoch_missing_naive_and_future_denied(self):
+        for raw, reason in [
+            (None, "invalid_observation_time"),
+            ("2026-10-13T18:30:00", "naive_observation_time"),
+            ((NOW + timedelta(seconds=11)).isoformat(), "future_target_claim"),
+        ]:
+            with self.subTest(raw=raw):
+                t = targets(allocation())
+                t["projects"]["cloud::w1"]["queue_item"]["claimed_at"] = raw
+                self.denied(t=t, reason=reason)
+
+    def test_same_queue_claim_epoch_refresh_is_detected(self):
+        before = targets(allocation())
+        after = targets(allocation())
+        after["projects"]["cloud::w1"]["queue_item"]["claimed_at"] = (NOW - timedelta(minutes=3)).isoformat()
+        with patch.object(subject, "_fetch", side_effect=[before, debug(row()), after]):
+            with self.assertRaisesRegex(subject.EvidenceDenied, "allocation_changed_during_observation"):
+                subject._live_snapshots()
 
     def test_stale_event_even_with_generating_verdict_fails(self):
         report = self.classify(d=debug(row(last_event_age_s=121)))
