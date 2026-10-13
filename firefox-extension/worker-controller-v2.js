@@ -199,7 +199,7 @@
         });
       } catch (_) { continue; }
       if (!state || state.owner !== oldKey ||
-          !/^2\\.0\\.[01]$/.test(state.version) ||
+          !/^2\.0\.[01]$/.test(state.version) ||
           state.generating !== false || state.draft !== false ||
           !Number.isFinite(state.poll) || state.poll <= 0 ||
           Date.now()-state.poll < 0 || Date.now()-state.poll >= 120000)
