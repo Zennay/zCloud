@@ -90,8 +90,14 @@ def _map_branches(entries):
 
 
 def _map_pr_heads(entries):
-    result = {}
+    result, seen_numbers = {}, set()
     for row in entries:
+        number = row.get("number")
+        if type(number) is not int or not 1 <= number <= 2147483647:
+            raise InventoryDenied("invalid_pr_number")
+        if number in seen_numbers:
+            raise InventoryDenied("duplicate_pr_page_entry")
+        seen_numbers.add(number)
         head = row.get("head")
         if not isinstance(head, dict):
             raise InventoryDenied("invalid_pr_head")
@@ -108,6 +114,23 @@ def _map_pr_heads(entries):
             raise InventoryDenied("conflicting_pr_heads")
         result[branch] = sha
     return result
+
+
+def _pr_identity(entries):
+    """Preserve full PR identity across both independent pagination passes."""
+    identities = []
+    for row in entries:
+        head = row.get("head")
+        if not isinstance(head, dict) or not isinstance(head.get("repo"), dict):
+            raise InventoryDenied("invalid_pr_identity")
+        number = row.get("number")
+        if type(number) is not int or not 1 <= number <= 2147483647:
+            raise InventoryDenied("invalid_pr_number")
+        identities.append((number, head["repo"].get("full_name"),
+                           head.get("ref"), head.get("sha")))
+    if len(identities) != len(set(identities)):
+        raise InventoryDenied("duplicate_pr_page_entry")
+    return sorted(identities)
 
 
 def collect(fetch, expected_main_sha):
@@ -130,7 +153,8 @@ def collect(fetch, expected_main_sha):
     prs_again, _ = _pages(fetch, "pulls")
     if _map_branches(branches_again) != branches:
         raise InventoryDenied("branch_inventory_drift")
-    if _map_pr_heads(prs_again) != pr_heads:
+    if (_map_pr_heads(prs_again) != pr_heads
+            or _pr_identity(prs_again) != _pr_identity(prs_raw)):
         raise InventoryDenied("pr_inventory_drift")
     if _sha(fetch("main", 0)[0]) != expected:
         raise InventoryDenied("main_drift_after")
