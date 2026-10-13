@@ -96,6 +96,8 @@ def classify(payload, now, stale_seconds=180):
         labels(runner.get('labels'))
     counters = {'offline': 0, 'busy': 0, 'label_or_access_gap': 0, 'group_access_unverified': 0, 'available_but_queued': 0}
     unknown_stale_runs = 0
+    # Fixed, public-label profiles: never echo arbitrary workflow/job labels.
+    target_profiles = {'ftmo_research': 0, 'zcloud_vps': 0, 'other': 0}
     seen_runs = set()
     for run in runs:
         if not isinstance(run, dict) or type(run.get('id')) is not int or run['id'] <= 0 or run['id'] in seen_runs or run.get('status') not in PENDING_RUN_STATES:
@@ -131,6 +133,12 @@ def classify(payload, now, stale_seconds=180):
             # the *actual queued job's* creation time, not the workflow age.
             if (now - queued_at).total_seconds() < stale_seconds:
                 continue
+            if 'ftmo-research' in required:
+                target_profiles['ftmo_research'] += 1
+            elif {'zcloud', 'vps'} <= required:
+                target_profiles['zcloud_vps'] += 1
+            else:
+                target_profiles['other'] += 1
             group_id, group_name = job.get('runner_group_id'), job.get('runner_group_name')
             if group_id is not None and (type(group_id) is not int or group_id <= 0):
                 raise EvidenceError('invalid_runner_group')
@@ -155,6 +163,7 @@ def classify(payload, now, stale_seconds=180):
                'labels_or_access_unproven')
     return {'classification': verdict, 'stale_unassigned_jobs': count,
             'unknown_stale_queued_runs': unknown_stale_runs,
+            'stale_label_profiles': target_profiles,
             'observed_runners': len(runners),
             'runner_inventory_verified': not unverified_roster,
             'by_cause': counters,
