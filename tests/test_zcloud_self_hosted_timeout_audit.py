@@ -227,10 +227,10 @@ jobs:
         )
         self.assertIn("persist-credentials: false", text)
         self.assertIn("github.actor == 'Zennay'", text)
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            text,
-        )
+        self.assertIn("github.event_name == 'workflow_dispatch'", text)
+        self.assertIn("github.repository == 'Zennay/zCloud'", text)
+        self.assertIn("github.ref == 'refs/heads/main'", text)
+        self.assertIn("ZCLOUD_TIMEOUT_AUDIT_EXACT_MAIN_GREEN", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
         self.assertIn("retention-days: 14", text)
         self.assertIn("BASE_SHA:", text)
