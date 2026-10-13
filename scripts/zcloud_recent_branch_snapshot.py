@@ -163,7 +163,14 @@ def _branch_refs(
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
     cursor: str | None = None
+    seen_cursors: set[str] = set()
+    page_count = 0
+    # A non-advancing GitHub cursor can otherwise hold the entire worker
+    # ownership preflight indefinitely, even when the branch count stays zero.
     while True:
+        if page_count >= MAX_BRANCHES + 1:
+            raise CollectorError("branch_page_bound_exceeded")
+        page_count += 1
         refs = _graphql_page(owner, name, cursor, runner)
         for node in refs["nodes"]:
             if not isinstance(node, dict):
@@ -195,8 +202,13 @@ def _branch_refs(
             break
         if len(rows) >= MAX_BRANCHES:
             raise CollectorError("branch_bound_exceeded")
+        if not refs["nodes"]:
+            raise CollectorError("branch_page_empty")
         if not isinstance(next_cursor, str) or not next_cursor:
             raise CollectorError("branch_page_invalid")
+        if next_cursor in seen_cursors:
+            raise CollectorError("branch_cursor_repeated")
+        seen_cursors.add(next_cursor)
         cursor = next_cursor
 
     return tuple(sorted(rows, key=lambda item: item["name"]))
