@@ -34,8 +34,11 @@ def targets(*items):
             "provider": item.get("provider", "chatgpt"),
             "active": True, "assignment_ready": True,
             "desired_state": "running",
-            "queue_item": {"queue_id": item.get("queue_id"),
-                           "claimed_at": (NOW - timedelta(minutes=5)).isoformat()},
+            "queue_item": {"queue_id": item.get("queue_id"), "project_id": project,
+                           "worker_slot": item.get("global_worker_slot"),
+                           "status": "claimed", "eligible": True,
+                           "claimed_at": (NOW - timedelta(minutes=5)).isoformat(),
+                           "claim_expires": (NOW + timedelta(minutes=5)).isoformat()},
         }
     return {"projects": projects, "global_allocation": {"workers": list(items)}}
 
@@ -195,6 +198,30 @@ class GenerationEvidenceTests(unittest.TestCase):
         raw = b'{"x":' + b'[' * depth + b'0' + b']' * depth + b'}'
         with self.assertRaisesRegex(subject.EvidenceDenied, "malformed_json"):
             subject._load(raw)
+
+    def test_invalid_queue_status_and_slot_or_eligibility_denied(self):
+        for changes in [
+            {"status": "queued"}, {"status": "done"},
+            {"eligible": False}, {"eligible": 1},
+            {"project_id": "haxlab"}, {"worker_slot": 2},
+            {"worker_slot": True},
+        ]:
+            with self.subTest(changes=changes):
+                t = targets(allocation())
+                t["projects"]["cloud::w1"]["queue_item"].update(changes)
+                self.denied(t=t, reason="target_queue_not_eligible")
+
+    def test_expired_queue_lease_rejects_fresh_generating_flag(self):
+        t = targets(allocation())
+        t["projects"]["cloud::w1"]["queue_item"]["claim_expires"] = (NOW - timedelta(seconds=2)).isoformat()
+        report = self.classify(t=t)
+        self.assertEqual("expired_queue_claim", report["workers"][0]["state"])
+        self.assertFalse(report["all_allocated_chatgpt_generating"])
+
+    def test_no_expiry_queue_claim_is_supported(self):
+        t = targets(allocation())
+        t["projects"]["cloud::w1"]["queue_item"]["claim_expires"] = None
+        self.assertTrue(self.classify(t=t)["all_allocated_chatgpt_generating"])
 
     def test_generation_from_before_current_queue_claim_is_not_green(self):
         t = targets(allocation())
