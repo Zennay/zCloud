@@ -362,9 +362,9 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             expected, 'printf "%s" "$FAKE_PROBE_OUTPUT" > "$summary_file"; '
                       'probe_rc="$FAKE_PROBE_RC"')
         if output is None:
-            output = ("## zCloud · externe dashboardcontrole\\n"
-                      "**Status:** API bereikbaar\\n"
-                      "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\\n")
+            output = ("## zCloud · externe dashboardcontrole\n"
+                      "**Status:** API bereikbaar\n"
+                      "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\n")
         if published is None:
             published = expected_rc == 0
         current = "a" * 40
@@ -439,22 +439,22 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
 
     def test_invalid_success_summary_never_green(self):
         self._simulate(["a" * 40, "a" * 40], 3,
-                       output="unexpected public URL: SECRET_TOKEN\\n", published=False)
+                       output="unexpected public URL: SECRET_TOKEN\n", published=False)
 
     def test_failure_exit_cannot_publish_healthy_summary(self):
         self._simulate(["a" * 40, "a" * 40], 3, probe_rc=1, published=False)
 
     def test_failure_summary_can_publish_but_job_remains_failed(self):
-        body = ("## zCloud · externe dashboardcontrole\\n"
-                "**Status:** API niet aantoonbaar bereikbaar\\n"
-                "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\\n")
+        body = ("## zCloud · externe dashboardcontrole\n"
+                "**Status:** API niet aantoonbaar bereikbaar\n"
+                "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\n")
         observed = self._simulate(["a" * 40, "a" * 40], 1,
                                   output=body, probe_rc=1, published=True)
         self.assertIn("niet aantoonbaar", observed)
 
     def test_oversized_summary_is_rejected(self):
-        body = ("## zCloud · externe dashboardcontrole\\n"
-                "**Status:** API bereikbaar\\n" + "x" * 2200)
+        body = ("## zCloud · externe dashboardcontrole\n"
+                "**Status:** API bereikbaar\n" + "x" * 2200)
         self._simulate(["a" * 40, "a" * 40], 3, output=body, published=False)
 
     def test_main_moved_during_probe_denies_summary(self):
