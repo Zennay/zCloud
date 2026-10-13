@@ -199,7 +199,7 @@
         });
       } catch (_) { continue; }
       if (!state || state.owner !== oldKey ||
-          !/^2\.0\.[012]$/.test(state.version) ||
+          !/^2\.0\.[0123]$/.test(state.version) ||
           state.generating !== false || state.draft !== false ||
           !Number.isFinite(state.poll) || state.poll <= 0 ||
           Date.now()-state.poll < 0 || Date.now()-state.poll >= 120000)
@@ -454,7 +454,7 @@
           const [result] = await browser.tabs.executeScript(tabId, {code:"(() => { const e=document.documentElement; const b=document.querySelector('button[data-testid=\"stop-button\"],button[aria-label=\"Stop generating\"],button[aria-label=\"Stop response\"]'); const d=document.querySelector('#prompt-textarea,[contenteditable=\"true\"][role=\"textbox\"],textarea'); return {version:e?.getAttribute(\"data-zcloud-violentmonkey-ready\")||\"\",owner:e?.getAttribute(\"data-zcloud-v2-owner\")||\"\",lastPoll:Number(e?.getAttribute(\"data-zcloud-v2-last-poll\")||0),generating:!!b,draft:!!String(d?.value||d?.innerText||d?.textContent||\"\").trim()}; })()"});
           probe = result;
         } catch (_) { /* A loading/unresponsive tab is not proven idle. */ }
-        if (!probe || !/^2\.0\.[012]$/.test(probe.version) || probe.owner !== key ||
+        if (!probe || !/^2\.0\.[0123]$/.test(probe.version) || probe.owner !== key ||
             !Number.isFinite(probe.lastPoll) || probe.lastPoll <= 0 ||
             Date.now() - probe.lastPoll < STALE_POLL_MS ||
             probe.generating || probe.draft) {
@@ -540,7 +540,7 @@
             const [state]=await browser.tabs.executeScript(tabId,{
               code:'(() => { const e=document.documentElement; const box=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\'); return {owner:e?.getAttribute("data-zcloud-v2-owner")||"",version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"",lastPoll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(box?.value||box?.innerText||box?.textContent||"").trim()}; })()'
             });
-            idle=state?.owner===key && /^2\.0\.[012]$/.test(state.version) &&
+            idle=state?.owner===key && /^2\.0\.[0123]$/.test(state.version) &&
               state.generating===false && state.draft===false &&
               Number.isFinite(state.lastPoll) && state.lastPoll>0 &&
               Date.now()-state.lastPoll>=0 && Date.now()-state.lastPoll<120000;
@@ -649,7 +649,7 @@
           code:'(() => {const e=document.documentElement;const b=document.querySelector(\'#prompt-textarea,[contenteditable="true"][role="textbox"],textarea\');return {owner:e?.getAttribute("data-zcloud-v2-owner")||"",version:e?.getAttribute("data-zcloud-violentmonkey-ready")||"",poll:Number(e?.getAttribute("data-zcloud-v2-last-poll")||0),busy:e?.getAttribute("data-zcloud-v2-busy"),generating:!!document.querySelector(\'button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]\'),draft:!!String(b?.value||b?.innerText||b?.textContent||"").trim()};})()'
         });
       } catch (_) { return null; }
-      if (!state || state.owner !== key || !/^2\.0\.[012]$/.test(state.version) ||
+      if (!state || state.owner !== key || !/^2\.0\.[0123]$/.test(state.version) ||
           state.busy !== "false" || state.generating !== false ||
           state.draft !== false || !Number.isFinite(state.poll) ||
           state.poll <= 0 || Date.now()-state.poll < 0 ||
@@ -693,7 +693,7 @@
       if (!response.ok) return;
       const payload = await response.json();
       const pending = (Array.isArray(payload?.commands) ? payload.commands : [])
-        .filter(x => x && (x.action === "start" || x.action === "push") &&
+        .filter(x => x && (x.action === "start" || x.action === "force_start" || x.action === "push") &&
           Number.isInteger(Number(x.id)) && Number(x.id) > 0);
       if (!pending.length) return;
       // Pending commands are not proof of a granted queue lease. Reconcile

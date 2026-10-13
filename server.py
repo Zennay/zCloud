@@ -4680,7 +4680,13 @@ class Handler(BaseHTTPRequestHandler):
                     ") ORDER BY id",
                     (command_limit,),
                 ).fetchall()
-            return self.reply({'commands':[{'id':r['id'],'project_id':r['project_id'], 'action':r['action'], 'created_at':r['created_at'], 'force':r['result']=='force-new-tab'} for r in rows]})
+            # Old userscripts only understand 'start'. Wire a distinct browser-facing
+            # action for Force so an outdated tab can NEVER consume its fresh
+            # replacement-tab ticket while Firefox/Violentmonkey updates.
+            return self.reply({'commands':[{'id':r['id'],'project_id':r['project_id'],
+                'action':'force_start' if r['result']=='force-new-tab' else r['action'],
+                'created_at':r['created_at'],'force':r['result']=='force-new-tab'}
+                for r in rows]})
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
             if data is None:return self.reply({'error':'Monitor start op'},503)

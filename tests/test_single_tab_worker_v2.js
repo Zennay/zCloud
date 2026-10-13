@@ -189,7 +189,7 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  // Explicit Force must replace an idle worker tab even for the SAME worker ID.
  // The new tab is ticketed; old tab never receives a second Force prompt.
  const createsBeforeForce=calls.filter(x=>x.type==="create").length;
- pendingCommands=[{id:102,project_id:"lightup",action:"start",force:true}];
+ pendingCommands=[{id:102,project_id:"lightup",action:"force_start",force:true}];
  await ctx.commandProbe();
  const forced=tabs.find(t=>t.url.includes("zcloud_force_command=102"))?.id;
  assert.ok(forced&&forced!==rebound,"Force replaces same-ID worker with a new tab");
@@ -206,7 +206,7 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  await ctx.commandProbe();
  // Busy worker may NOT be interrupted; retry after it is independently idle.
  busyTabs.add(forced);
- pendingCommands=[{id:103,project_id:"lightup",action:"start",force:true}];
+ pendingCommands=[{id:103,project_id:"lightup",action:"force_start",force:true}];
  await ctx.commandProbe();
  assert.equal(calls.filter(x=>x.type==="create").length,createsAfterForce,
    "Force never interrupts a generating worker");
@@ -216,6 +216,7 @@ const pump=async()=>{await ctx.timer();await new Promise(r=>setTimeout(r,1));};
  assert.equal(calls.filter(x=>x.type==="create").length,createsAfterForce+1,
    "once idle the pending Force creates its new dedicated tab");
  assert.ok(tabs.some(t=>t.id===2),"expert tab survives every Force");
+ assert.ok(engine.includes('"force_start"'),"legacy versions must never consume Force");
  assert.ok(engine.includes('String(command.id)!==forceTicket'),
    "old userscript must refuse a Force ticket belonging to the replacement");
  assert.ok(engine.includes('data-zcloud-v2-busy'),
