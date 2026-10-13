@@ -15,6 +15,8 @@ import time
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 REPO = 'Zennay/zCloud'
+# Immutable production URL. Tests may patch this module constant for local HTTP integration.
+API_BASE = 'https://api.github.com'
 MAX_BODY = 262144
 MAX_PAGES = 5
 # Hosted preflights may already be running while a downstream VPS job is queued.
@@ -153,7 +155,7 @@ class RefuseRedirect(HTTPRedirectHandler):
 def api(path, token):
     if not path.startswith('/repos/Zennay/zCloud/actions/'):
         raise EvidenceError('forbidden_endpoint')
-    request = Request('https://api.github.com' + path, headers={
+    request = Request(API_BASE + path, headers={
         'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
         'User-Agent': 'zcloud-runner-route-triage/1',
         'X-GitHub-Api-Version': '2022-11-28'})
