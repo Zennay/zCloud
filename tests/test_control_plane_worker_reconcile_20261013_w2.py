@@ -35,14 +35,14 @@ class ReconcileTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "history.db"
         with sqlite3.connect(self.db) as conn:
-            conn.execute("CREATE TABLE ai_global_slots(slot INTEGER,project_id TEXT,worker_slot INTEGER)")
+            conn.execute("CREATE TABLE ai_global_slots(slot INTEGER,project_id TEXT,worker_slot INTEGER,assigned_at TEXT)")
             conn.execute("CREATE TABLE runner_workers(project_id TEXT,worker_slot INTEGER,desired_state TEXT,conversation_id TEXT)")
             conn.execute("CREATE TABLE runner_commands(id INTEGER PRIMARY KEY,project_id TEXT,action TEXT,status TEXT,created_at TEXT,updated_at TEXT,result TEXT)")
             conn.execute("CREATE TABLE runner_targets(project_id TEXT PRIMARY KEY,active INTEGER,worker_count INTEGER)")
             conn.execute("CREATE TABLE portfolio_queue(queue_id TEXT PRIMARY KEY,project_id TEXT,worker_slot INTEGER,status TEXT,claim_expires TEXT,updated_at TEXT)")
             conn.execute("INSERT INTO portfolio_queue VALUES('private-claim-id','cloud',1,'running',NULL,'2026-10-13')")
             conn.execute("INSERT INTO runner_targets VALUES('cloud',1,2)")
-            conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
+            conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1,'2026-10-13T17:00:00Z')")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'running','private-conversation')")
         self.roster = module.read_roster(self.db)
 
@@ -119,7 +119,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_multiple_independent_slots(self):
         with sqlite3.connect(self.db) as conn:
-            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2)")
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2,'2026-10-13T17:00:00Z')")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running','redacted')")
         roster = module.read_roster(self.db)
         report = module.reconcile(roster, live([
@@ -223,7 +223,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_slot_outside_configured_worker_count_is_degraded(self):
         with sqlite3.connect(self.db) as conn:
-            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2)")
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2,'2026-10-13T17:00:00Z')")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running','redacted')")
             conn.execute("UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'")
         roster = module.read_roster(self.db)
@@ -382,6 +382,33 @@ class ReconcileTests(unittest.TestCase):
             with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
                 module.observe(self.db)
 
+    def test_aba_reassignment_to_same_worker_detected_by_slot_watermark(self):
+        def reassign_same_identity(_fixture):
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("UPDATE ai_global_slots SET assigned_at='2026-10-13T17:05:00Z' WHERE slot=1")
+            return live([worker()])
+        with mock.patch.object(module, "read_live", side_effect=reassign_same_identity):
+            with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
+                module.observe(self.db)
+
+    def test_same_project_queue_claim_replacement_detected_by_private_id(self):
+        def change_queue_identity(_fixture):
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("UPDATE portfolio_queue SET queue_id='new-private-claim' WHERE worker_slot=1")
+            return live([worker()])
+        with mock.patch.object(module, "read_live", side_effect=change_queue_identity):
+            with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
+                module.observe(self.db)
+
+    def test_same_project_queue_claim_refresh_detected_by_watermark(self):
+        def touch_claim(_fixture):
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("UPDATE portfolio_queue SET updated_at='2026-10-13T17:06:00Z' WHERE worker_slot=1")
+            return live([worker()])
+        with mock.patch.object(module, "read_live", side_effect=touch_claim):
+            with self.assertRaisesRegex(module.InvalidEvidence, "scheduler changed"):
+                module.observe(self.db)
+
     def test_pending_dispatch_arriving_during_api_read_denies_false_healthy(self):
         def insert_pending(_fixture):
             with sqlite3.connect(self.db) as conn:
@@ -404,7 +431,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_duplicate_global_allocation_rejected(self):
         with sqlite3.connect(self.db) as conn:
-            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',1)")
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',1,'2026-10-13T17:00:00Z')")
         with self.assertRaises(module.InvalidEvidence):
             module.read_roster(self.db)
 
