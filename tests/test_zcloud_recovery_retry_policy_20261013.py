@@ -108,6 +108,12 @@ class RetryPolicyTests(unittest.TestCase):
         obj = evidence(); obj["regression"]["runs"][0]["status"] = "queued"
         self.check(obj, "DENY", "regression_contradictory_outcome")
 
+    def test_non_scalar_evidence_is_denied_without_exception(self):
+        for field, value in (("event", {}), ("status", []), ("conclusion", [])):
+            obj = evidence()
+            obj["regression"]["runs"][0][field] = value
+            self.check(obj, "DENY", "malformed_evidence_types")
+
     def test_wrong_repository_and_schema_denied(self):
         for field, value in (("repository", "someone/else"), ("schema", "old"), ("main_sha", "bad")):
             obj = evidence(); obj[field] = value
