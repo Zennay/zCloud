@@ -264,9 +264,17 @@ def _verified_job_provenance(job: dict, requested_run_id: int) -> str:
     return (sha, attempt)
 
 
-def fetch_jobs(run_id: int, token: str) -> list:
+def _validated_token(token: str) -> None:
+    """Reject malformed bearer credentials before constructing any HTTP header."""
     if not token:
         raise InvalidEvidence("missing_actions_token")
+    if (type(token) is not str or len(token) > 2048
+            or re.fullmatch(r"[A-Za-z0-9_.-]+", token) is None):
+        raise InvalidEvidence("invalid_actions_token")
+
+
+def fetch_jobs(run_id: int, token: str) -> list:
+    _validated_token(token)
     opener = urllib.request.build_opener(NoRedirect())
     jobs = []
     count = None
@@ -349,8 +357,7 @@ def _verified_main_deploy_run(item: dict, now: datetime) -> tuple[str, int]:
 
 def latest_main_deploy_receipts(token: str, count: int = 2) -> list[tuple[int, str, int]]:
     """Bind each newest main deploy to its immutable head SHA and run attempt."""
-    if not token:
-        raise InvalidEvidence("missing_actions_token")
+    _validated_token(token)
     if type(count) is not int or not 1 <= count <= 3:
         raise InvalidEvidence("invalid_run_selection")
     url = ("https://api.github.com/repos/Zennay/zCloud/actions/workflows/"
@@ -430,6 +437,7 @@ def main(argv: list[str] | None = None) -> int:
             "partial_runner_identity","invalid_conclusion","completed_without_conclusion",
             "nonterminal_with_conclusion","inconsistent_runner_state","missing_jobs",
             "duplicate_job_id","invalid_run_id","missing_actions_token",
+            "invalid_actions_token",
             "unexpected_redirect","nonjson_api_reply","github_api_unavailable",
             "malformed_pagination","unstable_pagination","incomplete_pagination",
             "page_limit_exceeded","incomplete_recent_deploys","invalid_run_selection",

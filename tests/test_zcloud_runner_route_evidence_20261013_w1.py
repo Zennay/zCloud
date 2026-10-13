@@ -194,6 +194,28 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         with self.assertRaises(route.InvalidEvidence):
             route.strict_json(b"x" * (route.MAX_BYTES + 1))
 
+    def test_malformed_action_tokens_fail_before_any_api_call(self):
+        import contextlib
+        import io
+        import json
+        from unittest.mock import patch
+        for token in ("two words", "ghs_token\r\nInjected: x", "\n",
+                      "x" * 2049, "invalid/route", "ghs_token:bad"):
+            with self.subTest(token_length=len(token)):
+                output = io.StringIO()
+                with (patch.dict("os.environ", {"GH_TOKEN": token}),
+                      patch.object(route.urllib.request, "build_opener",
+                                   side_effect=AssertionError("network must not start")),
+                      contextlib.redirect_stdout(output)):
+                    self.assertEqual(route.main(["--run-id", "42"]), 2)
+                    self.assertEqual(route.main(["--recent-deploy"]), 2)
+                first, second = output.getvalue().splitlines()
+                for line in (first, second):
+                    data = json.loads(line)
+                    self.assertFalse(data["authorizes_mutation"])
+                    self.assertEqual(data["error"], "invalid_actions_token")
+                    self.assertNotIn(token, line)
+
     def test_cli_fails_closed_without_token(self):
         import contextlib
         import io
