@@ -54,6 +54,13 @@ class RecoveryTests(unittest.TestCase):
             cmd = run.call_args.args[0]
             self.assertEqual(["sudo", "-n", "systemctl", "start", mod.UNITS["ftmo"][0]], cmd)
 
+    def test_v2_retirement_keeps_runner_and_memory_self_heal(self):
+        retirement = (PATH.parents[1] / "scripts/zcloud_retire_legacy_worker_services.sh").read_text()
+        self.assertNotIn("retire system zcloud-self-heal", retirement)
+        self.assertIn("retire user chatgpt-runner-watchdog", retirement)
+        self.assertIn("retire user zcloud-watchdog", retirement)
+        self.assertIn("zcloud-firefox-supervisor.timer", retirement)
+
     def test_repository_recovery_scope_is_narrow(self):
         text = PATH.read_text()
         self.assertNotIn("systemctl restart", text)
