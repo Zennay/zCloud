@@ -5,7 +5,7 @@ from copy import deepcopy
 import unittest
 
 from scripts.zcloud_deploy_workflow_run_origin_offline_20261012_w1 import (
-    classify, classify_github_payload, Decision, REPOSITORY,
+    classify, classify_github_payload, Decision, REPOSITORY, REPOSITORY_ID,
 )
 
 MAIN = "a" * 40
@@ -35,11 +35,11 @@ def accepted_fixture():
 def actual_github_payload():
     fixture = accepted_fixture()
     run = deepcopy(fixture["workflow_run"])
-    run["repository"] = {"full_name": REPOSITORY, "id": 42}
+    run["repository"] = {"full_name": REPOSITORY, "id": REPOSITORY_ID}
     run["head_repository"]["id"] = 42
     return {
         "action": "completed",
-        "repository": {"full_name": REPOSITORY, "id": 42, "private": True},
+        "repository": {"full_name": REPOSITORY, "id": REPOSITORY_ID, "private": True},
         "workflow_run": run,
         "sender": {"login": "not-an-authorization"},
     }
@@ -78,7 +78,7 @@ class WorkflowRunOriginOfflineTests(unittest.TestCase):
                 self.assertFalse(result.deploy_authorized)
 
     def test_actual_webhook_requires_positive_exact_event_repo_id(self):
-        for invalid in (None, True, False, 0, -1, 42.0, "42", [], {}):
+        for invalid in (None, True, False, 0, -1, float(REPOSITORY_ID), str(REPOSITORY_ID), [], {}):
             with self.subTest(id=repr(invalid)):
                 payload = actual_github_payload()
                 payload["repository"]["id"] = invalid
@@ -89,10 +89,36 @@ class WorkflowRunOriginOfflineTests(unittest.TestCase):
                 self.assertFalse(decision.trusted_origin_observed)
                 self.assertFalse(decision.deploy_authorized)
 
+    def test_matching_wrong_repository_ids_are_still_untrusted(self):
+        for invalid in (1, REPOSITORY_ID - 1, REPOSITORY_ID + 1, 999999999):
+            with self.subTest(id=invalid):
+                payload = actual_github_payload()
+                payload["repository"]["id"] = invalid
+                payload["workflow_run"]["repository"]["id"] = invalid
+                payload["workflow_run"]["head_repository"]["id"] = invalid
+                decision = classify_github_payload(
+                    payload, event_name="workflow_run", canonical_main_sha=MAIN,
+                )
+                self.assertEqual(decision.reason, "event_repository_id_mismatch")
+                self.assertFalse(decision.trusted_origin_observed)
+                self.assertFalse(decision.actions_cancel_authorized)
+                self.assertFalse(decision.runner_restart_authorized)
+                self.assertFalse(decision.worker_push_authorized)
+                self.assertFalse(decision.deploy_authorized)
+
+    def test_verified_canonical_repo_id_is_exact_immutable_constant(self):
+        self.assertEqual(REPOSITORY_ID, 1389227570)
+        payload = actual_github_payload()
+        decision = classify_github_payload(
+            payload, event_name="workflow_run", canonical_main_sha=MAIN,
+        )
+        self.assertTrue(decision.trusted_origin_observed)
+        self.assertFalse(decision.deploy_authorized)
+
     def test_actual_webhook_rejects_malformed_or_forked_run_repository(self):
         for invalid in (None, [], {}, "Zennay/zCloud",
-                        {"full_name": "fork/zCloud", "id": 42},
-                        {"full_name": REPOSITORY + " ", "id": 42}):
+                        {"full_name": "fork/zCloud", "id": REPOSITORY_ID},
+                        {"full_name": REPOSITORY + " ", "id": REPOSITORY_ID}):
             with self.subTest(repo=repr(invalid)):
                 payload = actual_github_payload()
                 payload["workflow_run"]["repository"] = invalid
@@ -104,7 +130,7 @@ class WorkflowRunOriginOfflineTests(unittest.TestCase):
                 self.assertFalse(decision.actions_cancel_authorized)
 
     def test_actual_webhook_run_repo_id_must_match_event_repo_id(self):
-        for invalid in (None, True, 0, 99, 42.0, "42"):
+        for invalid in (None, True, 0, 99, float(REPOSITORY_ID), str(REPOSITORY_ID)):
             with self.subTest(id=repr(invalid)):
                 payload = actual_github_payload()
                 payload["workflow_run"]["repository"]["id"] = invalid
@@ -116,7 +142,7 @@ class WorkflowRunOriginOfflineTests(unittest.TestCase):
                 self.assertFalse(decision.runner_restart_authorized)
 
     def test_actual_webhook_head_repo_id_must_match_event_repo_id(self):
-        for invalid in (None, True, 0, 99, 42.0, "42"):
+        for invalid in (None, True, 0, 99, float(REPOSITORY_ID), str(REPOSITORY_ID)):
             with self.subTest(id=repr(invalid)):
                 payload = actual_github_payload()
                 payload["workflow_run"]["head_repository"]["id"] = invalid
