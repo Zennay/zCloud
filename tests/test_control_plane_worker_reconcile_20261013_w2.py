@@ -38,6 +38,8 @@ class ReconcileTests(unittest.TestCase):
             conn.execute("CREATE TABLE ai_global_slots(slot INTEGER,project_id TEXT,worker_slot INTEGER)")
             conn.execute("CREATE TABLE runner_workers(project_id TEXT,worker_slot INTEGER,desired_state TEXT,conversation_id TEXT)")
             conn.execute("CREATE TABLE runner_commands(id INTEGER PRIMARY KEY,project_id TEXT,action TEXT,status TEXT,created_at TEXT,updated_at TEXT,result TEXT)")
+            conn.execute("CREATE TABLE runner_targets(project_id TEXT PRIMARY KEY,active INTEGER,worker_count INTEGER)")
+            conn.execute("INSERT INTO runner_targets VALUES('cloud',1,2)")
             conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
             conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'running','private-conversation')")
         self.roster = module.read_roster(self.db)
@@ -216,6 +218,41 @@ class ReconcileTests(unittest.TestCase):
     def test_live_age_boundary(self):
         self.assertEqual(self.diagnose(live([worker(age_seconds=90)]))["state"], "ok")
         self.assertEqual(self.diagnose(live([worker(age_seconds=91)]))["state"], "degraded")
+
+    def test_slot_outside_configured_worker_count_is_degraded(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2)")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running','redacted')")
+            conn.execute("UPDATE runner_targets SET worker_count=1 WHERE project_id='cloud'")
+        roster = module.read_roster(self.db)
+        report = module.reconcile(roster, live([worker(),
+            {"worker_id": "cloud::w2", "worker_slot": 2, "state": "live",
+             "active": True, "generating": False, "sending": False, "age_seconds": 20}
+        ]))
+        self.assertEqual(report["state"], "degraded")
+        self.assertEqual(report["problem_counts"]["allocation_outside_worker_count"], 1)
+
+    def test_missing_project_target_is_not_a_valid_worker_allocation(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM runner_targets WHERE project_id='cloud'")
+        report = module.reconcile(module.read_roster(self.db), live([worker()]))
+        self.assertEqual(report["problem_counts"]["allocation_without_project_target"], 1)
+
+    def test_invalid_project_target_boolean_and_count_fail_closed(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE runner_targets SET active=2 WHERE project_id='cloud'")
+        with self.assertRaisesRegex(module.InvalidEvidence, "invalid project active"):
+            module.read_roster(self.db)
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE runner_targets SET active=1,worker_count=0 WHERE project_id='cloud'")
+        with self.assertRaisesRegex(module.InvalidEvidence, "invalid target worker count"):
+            module.read_roster(self.db)
+
+    def test_missing_project_targets_table_denied(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DROP TABLE runner_targets")
+        with self.assertRaisesRegex(module.InvalidEvidence, "missing runner_targets"):
+            module.read_roster(self.db)
 
     def test_mismatched_worker_id_and_reported_slot_rejected(self):
         with self.assertRaisesRegex(module.InvalidEvidence, "disagree"):
