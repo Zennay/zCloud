@@ -60,12 +60,12 @@ def _runs_on_text(block: str) -> str | None:
     if match is None:
         return None
     value = match.group("value").strip()
-    if value:
+    if value and value not in ("|", "|-", "|+", ">", ">-", ">+"):
         return value
 
     lines = block.splitlines()
     for index, line in enumerate(lines):
-        if re.match(r"^ {4}runs-on:\s*(?:#.*)?$", line):
+        if re.match(r"^ {4}runs-on:\s*(?:[>|][+-]?)?(?:#.*)?$", line):
             continuation: list[str] = []
             for following in lines[index + 1 :]:
                 stripped = following.lstrip()
