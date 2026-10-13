@@ -107,7 +107,14 @@ def classify(payload, now, stale_seconds=180):
                 raise EvidenceError('invalid_runner_assignment')
             created = when(run.get('created_at'))
             if (created - now).total_seconds() > 120: raise EvidenceError('future_run_clock')
-            if assigned or (now - created).total_seconds() < stale_seconds:
+            if assigned:
+                continue
+            queued_at = when(job.get('created_at'))
+            if (queued_at - now).total_seconds() > 120 or (created - queued_at).total_seconds() > 120:
+                raise EvidenceError('invalid_job_queue_clock')
+            # A workflow's hosted preflight may have finished hours ago. Use
+            # the *actual queued job's* creation time, not the workflow age.
+            if (now - queued_at).total_seconds() < stale_seconds:
                 continue
             group_id, group_name = job.get('runner_group_id'), job.get('runner_group_name')
             if group_id is not None and (type(group_id) is not int or group_id <= 0):
@@ -148,7 +155,7 @@ def api(path, token):
         'X-GitHub-Api-Version': '2022-11-28'})
     try:
         with build_opener(ProxyHandler({}), RefuseRedirect()).open(request, timeout=12) as response:
-            if response.status != 200 or not response.headers.get('content-type', '').lower().startswith('application/json'):
+            if response.status != 200 or response.headers.get('content-type', '').split(';', 1)[0].strip().lower() != 'application/json':
                 raise EvidenceError('untrusted_api_response')
             data = response.read(MAX_BODY + 1)
     except (OSError, TimeoutError) as exc:
