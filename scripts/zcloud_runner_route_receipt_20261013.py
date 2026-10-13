@@ -50,12 +50,23 @@ def receipt(blob, exit_code):
             raise EvidenceError('false_green_queue_receipt')
         if exit_code == 1 and (not count or gaps):
             raise EvidenceError('contradictory_queue_receipt')
+    profiles = obj.get('stale_label_profiles')
+    if profiles is None:
+        if count:
+            raise EvidenceError('missing_label_profiles')
+        profiles = {'ftmo_research': 0, 'zcloud_vps': 0, 'other': 0}
+    if not isinstance(profiles, dict) or set(profiles) != {'ftmo_research', 'zcloud_vps', 'other'}:
+        raise EvidenceError('invalid_label_profile_shape')
+    profiles = {k: checked_count(v) for k, v in profiles.items()}
+    if sum(profiles.values()) != count:
+        raise EvidenceError('contradictory_label_profile_count')
     return {
         'evidence': 'github_actions_get_only',
         'classification': obj['classification'],
         'probe_exit': exit_code,
         'stale_unassigned_jobs': count,
         'unknown_stale_queued_runs': gaps,
+        'stale_label_profiles': profiles,
         'runner_inventory_verified': False,
         'mutation_authorized': False,
         'production_status_verified': False,
