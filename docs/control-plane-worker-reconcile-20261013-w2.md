@@ -19,9 +19,13 @@ python3 scripts/zcloud_control_plane_worker_reconcile.py \
 ```
 
 The CLI returns **one bounded JSON object**. Exit code `0` means observed
-allocation is consistent; `2` means attention, degraded, or unknown.
-`authorizes_mutation` is **always false**. This is a triage aid, **not** a
-deployment or force-start approval.
+allocation is internally consistent; `2` means attention, degraded, or unknown.
+`authorizes_mutation` and `browser_generation_verified` are **always false**.
+The `evidence_mode` field is `offline_fixture` when supplying a JSON fixture and
+`loopback_http` for the live localhost route, on both success and failure.
+A green `offline_fixture` report is **not proof of live worker continuity**;
+a green live report is not proof that ChatGPT accepted a submitted prompt.
+This is a triage aid, **not** a deployment or force-start approval.
 
 ## Sources and classification
 
