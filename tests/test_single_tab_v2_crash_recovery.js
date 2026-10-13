@@ -21,7 +21,7 @@ let projects={
   "ftmo::w1":allocated("ftmo::w1",2),
   "haxlab::w1":allocated("haxlab::w1",3,true),
 };
-let networkOk=true, nextTab=40;
+let networkOk=true, nextTab=40, v2VersionConfirmed=true;
 const calls=[],tags=new Map();
 const tabs=[
   {id:1,windowId:7,url:"https://chatgpt.com/c/expert-personal"},
@@ -51,7 +51,7 @@ function startup(){
       remove:async id=>{calls.push({action:"remove",id});const idx=tabs.findIndex(t=>t.id===id);if(idx>=0)tabs.splice(idx,1)},
       executeScript:async(id,{code})=>{
         if(code.includes("sessionStorage.getItem"))return [id===2?"supa::w1":""];
-        if(code.includes("data-zcloud-violentmonkey-ready"))return ["2.0.0"];
+        if(code.includes("data-zcloud-violentmonkey-ready"))return [v2VersionConfirmed?"2.0.0":"1.3.18"];
         return [true];
       },
       onRemoved:{addListener:cb=>{handlers.removed=cb}},
@@ -91,10 +91,11 @@ async function settle(){await new Promise(r=>setTimeout(r,25))}
   ctx=startup();
   await settle();
   assert.equal(tabs.length,1,"first snapshot waits for Firefox session restore");
+  v2VersionConfirmed=false; // simulated VM upgrade still pending on recovered page
   await ctx.tick();
-  assert.equal(tabs.length,2,"second valid snapshot restores one trusted worker slot");
+  assert.equal(tabs.length,4,"second trusted snapshot restores ALL assigned tabs despite VM bootstrap delay");
   await ctx.tick();
-  assert.equal(tabs.length,4,"all three assigned worker tabs are now present");
+  assert.equal(tabs.length,4,"old VM readiness must not block or duplicate recovered slot identities");
   assert.equal(new Set(tabs.map(t=>t.id)).size,tabs.length);
   assert.equal(calls.filter(c=>c.action==="create").length,5);
   assert.equal(calls.filter(c=>c.action==="remove").length,0);
