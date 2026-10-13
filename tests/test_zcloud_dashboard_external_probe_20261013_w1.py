@@ -370,7 +370,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         shell = self._workflow_shell()
         # Fake only the external probe; execute real bounded Git and real
         # publication shell logic in a disposable environment with no VPS.
-        expected = ('timeout -k 2s 115s python3 '
+        expected = ('env -u GH_TOKEN timeout -k 2s 115s python3 '
                     'scripts/zcloud_dashboard_external_probe_20261013_w1.py '
                     '--attempts 6 --format markdown > "$summary_file" || probe_rc=$?')
         self.assertIn(expected, shell)
@@ -437,7 +437,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
         self.assertNotIn("git ls-remote", manual)
         self.assertNotIn("gh api --method POST", manual)
-        self.assertIn("timeout -k 2s 115s python3 scripts/", manual)
+        self.assertIn("env -u GH_TOKEN timeout -k 2s 115s python3 scripts/", manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
         self.assertEqual(manual.count("verify_main_head\n"), 2)
         self.assertLess(manual.index("verify_main_head\n"),
