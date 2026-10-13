@@ -25,6 +25,12 @@
   const fromUrl = new URL(location.href).searchParams.get("zcloud_worker") || "";
   const stored = sessionStorage.getItem("zcloud-v2-worker") || sessionStorage.getItem("zcloud-bound-project") || "";
   if (fromUrl && stored && fromUrl !== stored) return;
+  // Force commands have a unique browser-tab ticket. An older conversation
+  // with the same worker ID must not steal a forced prompt on project switch.
+  const ticketFromUrl = new URL(location.href).searchParams.get("zcloud_force_command") || "";
+  const forceTicket = /^(?:[1-9][0-9]*)$/.test(ticketFromUrl) ? ticketFromUrl :
+    sessionStorage.getItem("zcloud-v2-force-command") || "";
+  if (ticketFromUrl) sessionStorage.setItem("zcloud-v2-force-command",forceTicket);
   const id = fromUrl || stored;
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
@@ -34,6 +40,18 @@
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
+  const markBusy=()=>document.documentElement?.setAttribute("data-zcloud-v2-busy",
+    sending||awaiting||generating()?"true":"false");
+  // An explicit Force owns one command ID and may only be delivered to its
+  // freshly created tab. Fail closed when the local command service is down.
+  async function forceAllowed(){
+    try{
+      const payload=await api("/runner-commands?limit=100");
+      return !(payload.commands||[]).some(c=>c?.force===true &&
+        (c.project_id===id||c.project_id===target?.base_project_id) &&
+        String(c.id)!==forceTicket);
+    }catch(_){return false}
+  }
   let resetRoute=null;
   let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
   let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
@@ -157,8 +175,9 @@
   }
   async function send(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
+    if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
     const prompt=String(target.prompt||"").trim();if(!prompt)return false;
-    sending=true;
+    sending=true;markBusy();
     try{
       if(!(await ensureHigh())){await blocked("high-not-verified");return false}
       if(!(await fill(prompt))){await blocked("composer-missing");return false}
@@ -176,7 +195,7 @@
       awaiting=true;everGenerating=false;next=false;lastBlock="";
       await status("prompt-sent",{reason,thinkingEffort:"high"});
       return true;
-    }finally{sending=false}
+    }finally{sending=false;markBusy()}
   }
   async function commands(){
     let result;try{result=await api("/runner-commands")}catch(_){return}
@@ -185,6 +204,7 @@
     for(const command of incoming){
       const action=String(command.action||"");
       if(!["start","push","new_chat"].includes(action))continue;
+      if(command.force===true && String(command.id)!==forceTicket)continue;
       if(awaiting||generating()||sending)continue;
       // Legacy watchdogs queue new_chat after a stale heartbeat, which used
       // to steal a tab straight after Send. In v2, ONLY a visible load error
@@ -284,11 +304,12 @@
       if((next||!promptAt)&&!awaiting&&!generating())
         await send(next?"next-prompt-after-response":"initial-prompt");
     }catch(e){await blocked("poll-error:"+String(e.message||e).slice(0,80))}
-    finally{inflight=false}
+    finally{inflight=false;markBusy()}
   }
   // Firefox addon wakes this exact slot after Forceer/Start, without
   // waiting for the 30-second background heartbeat cycle. The page still
   // verifies a fresh queue lease and Thinking High before any send.
+  markBusy();
   document.documentElement?.addEventListener?.("zcloud-v2-wake", () => {
     if (!inflight) poll();
   });
