@@ -92,6 +92,7 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         proof = self.report()
         self.assertTrue(proof["all_allocated_chatgpt_generating"])
         self.assertFalse(proof["all_allocated_chatgpt_progressing"])
+        self.assertEqual(2, proof["progress_counts"]["heartbeat_only"])
         # A real browser driver's generated-text change sends this distinct
         # event, unlike the timer heartbeat which reports state only.
         for worker in chatgpt:
@@ -99,6 +100,7 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
                       reason="response-text-changed")
         proof = self.report()
         self.assertTrue(proof["all_allocated_chatgpt_progressing"], proof)
+        self.assertEqual(2, proof["progress_counts"]["recent_text_change"])
         self.assertTrue(all(row["progress_evidence"] for row in proof["workers"]
                             if row["state"] != "other_provider"))
 
@@ -126,6 +128,7 @@ class WorkerGenerationHTTPIntegrationTests(unittest.TestCase):
         self.assertFalse(proof["all_allocated_chatgpt_progressing"])
         by_worker = {row["worker"]: row for row in proof["workers"]}
         self.assertFalse(by_worker[chatgpt[0]]["progress_evidence"])
+        self.assertEqual("heartbeat_only", by_worker[chatgpt[0]]["progress_state"])
 
     def test_actual_server_paused_worker_cannot_be_green_after_heartbeat(self):
         chatgpt, _ = self.allocated_keys()
