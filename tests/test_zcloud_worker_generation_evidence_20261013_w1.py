@@ -20,13 +20,15 @@ def targets(*items):
 
 def allocation(name="cloud::w1", provider="chatgpt"):
     project, slot = name.rsplit("::w", 1)
-    return {"worker_key": name, "project_id": project, "worker_slot": int(slot), "provider": provider}
+    return {"worker_key": name, "project_id": project, "worker_slot": int(slot),
+            "global_worker_slot": int(slot), "queue_id": "qid-" + name, "provider": provider}
 
 
 def row(name="cloud::w1", verdict="generating", **changes):
     project, slot = name.rsplit("::w", 1)
     return {
         "worker": name, "project": project, "slot": int(slot),
+        "global_slot": int(slot), "queue_id": "qid-" + name, "provider": "chatgpt",
         "verdict": verdict, "last_event_age_s": 8,
         "last_prompt_age_s": 10,
         **changes,
@@ -140,6 +142,29 @@ class GenerationEvidenceTests(unittest.TestCase):
         self.denied(t=targets(bad), reason="allocation_identity_mismatch")
         bad["worker_slot"] = True
         self.denied(t=targets(bad), reason="allocation_identity_mismatch")
+
+    def test_generation_from_previous_queue_owner_denied(self):
+        self.denied(d=debug(row(queue_id="another-claim")),
+                    reason="allocation_debug_binding_mismatch")
+
+    def test_generation_from_reassigned_global_slot_denied(self):
+        self.denied(d=debug(row(global_slot=2)), reason="allocation_debug_binding_mismatch")
+
+    def test_generation_from_wrong_provider_denied(self):
+        self.denied(d=debug(row(provider="claude")), reason="allocation_debug_binding_mismatch")
+
+    def test_missing_or_ambiguous_allocation_binding_denied(self):
+        for changes, reason in [
+            ({"queue_id": None}, "invalid_allocated_queue"),
+            ({"queue_id": ""}, "invalid_allocated_queue"),
+            ({"queue_id": "z"*161}, "invalid_allocated_queue"),
+            ({"global_worker_slot": True}, "invalid_allocated_global_slot"),
+            ({"global_worker_slot": 0}, "invalid_allocated_global_slot"),
+        ]:
+            with self.subTest(changes=changes):
+                item = allocation()
+                item.update(changes)
+                self.denied(t=targets(item), reason=reason)
 
     def test_duplicate_allocation_and_debug_denied(self):
         self.denied(t=targets(allocation(), allocation()), reason="duplicate_allocated_worker")
