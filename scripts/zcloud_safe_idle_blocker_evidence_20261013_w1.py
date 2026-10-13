@@ -16,8 +16,8 @@ MAX_LOG_BYTES = 256 * 1024
 MAX_MARKER_BYTES = 24 * 1024
 MARKER = "ZCLOUD_DEPLOY_SAFE_IDLE_BLOCKED: browser workers did not reach safe-idle before deployment timeout; "
 LOG_LINE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z " + re.escape(MARKER) +
-    r"(\[[^\r\n]*\])$", re.MULTILINE
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) " +
+    re.escape(MARKER) + r"(\[[^\r\n]*\])$", re.MULTILINE
 )
 _ALLOWED_EVENT = {"heartbeat", "generation-progress", "generation-started",
                   "generation-completed", "blocked", "ready", "idle"}
