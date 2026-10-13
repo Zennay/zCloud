@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      2.0.2
+// @version      2.0.3
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -35,7 +35,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.2");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.3");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -82,7 +82,7 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.2",...extra
+      provider:"chatgpt",runnerVersion:"2.0.3",...extra
     })}catch(_){}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
@@ -203,7 +203,7 @@
       (c.project_id===id||(c.project_id===target?.base_project_id&&Number(target?.worker_slot||1)===1)));
     for(const command of incoming){
       const action=String(command.action||"");
-      if(!["start","push","new_chat"].includes(action))continue;
+      if(!["start","force_start","push","new_chat"].includes(action))continue;
       if(command.force===true && String(command.id)!==forceTicket)continue;
       if(awaiting||generating()||sending)continue;
       // Legacy watchdogs queue new_chat after a stale heartbeat, which used
