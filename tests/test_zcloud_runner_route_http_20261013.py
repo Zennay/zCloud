@@ -67,6 +67,9 @@ class Handler(BaseHTTPRequestHandler):
                              'workflow_runs':runs[(page-1)*100:page*100]})
             return
         if p.path == base + '/runs/123/jobs':
+            if owner.mode == 'jobs_empty':
+                self.reply_json({'total_count':0,'jobs':[]})
+                return
             if owner.mode == 'jobs_forbidden':
                 self.reply(b'{"message":"forbidden"}', code=403)
                 return
@@ -144,6 +147,12 @@ class RealHttpTests(unittest.TestCase):
         self.mode='runner_forbidden'
         with self.assertRaisesRegex(route.EvidenceError,'api_unavailable'):
             self.live()
+
+    def test_real_http_stale_queued_run_without_jobs_denied(self):
+        self.mode='jobs_empty'
+        snap=self.live()
+        with self.assertRaisesRegex(route.EvidenceError,'stale_queued_run_without_job_evidence'):
+            route.classify(snap,datetime.now(timezone.utc))
 
     def test_real_http_job_permission_denial_is_unknown(self):
         self.mode='jobs_forbidden'
