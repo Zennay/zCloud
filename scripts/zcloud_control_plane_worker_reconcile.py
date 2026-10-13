@@ -121,7 +121,8 @@ def read_roster(db: Path) -> dict:
             raise InvalidEvidence("unsupported runner_commands schema")
         pending = [dict(r) for r in conn.execute(
             "SELECT project_id,action,created_at FROM runner_commands "
-            "WHERE status='pending' AND action IN ('start','push','force_start','new_chat') "
+            "WHERE status='pending' AND project_id LIKE '%::w%' "
+            "AND action IN ('start','push','force_start','new_chat') "
             "ORDER BY id DESC LIMIT 1025"
         )]
         conn.execute("ROLLBACK")
