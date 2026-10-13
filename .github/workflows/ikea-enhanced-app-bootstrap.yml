@@ -1,0 +1,107 @@
+name: Create IKEA Enhanced App repository
+on:
+  push:
+    branches: [feature/bootstrap-ikea-enhanced-app-20261013]
+    paths: [".github/workflows/ikea-enhanced-app-bootstrap.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ikea-enhanced-repo-bootstrap
+  cancel-in-progress: false
+jobs:
+  bootstrap:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Create private standalone PWA repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          command -v gh >/dev/null
+          command -v node >/dev/null
+          unset GH_TOKEN GITHUB_TOKEN GITHUB_PAT
+          gh auth status --hostname github.com >/dev/null 2>&1 || { echo "Owner GitHub CLI authentication missing"; exit 1; }
+          test "$(gh api user --jq '.login')" = "Zennay" || { echo "GitHub account mismatch"; exit 1; }
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          gh repo clone Zennay/iRecoverScanner "$tmp/source" -- --depth 1 --branch feature/ikea-lens-companion --single-branch >/dev/null
+          test -f "$tmp/source/ikea-lens/index.html"
+          test -f "$tmp/source/ikea-lens/logic.mjs"
+          (cd "$tmp/source/ikea-lens" && node --test)
+          mkdir -p "$tmp/target/.github/workflows"
+          cp -a "$tmp/source/ikea-lens/." "$tmp/target/"
+          cat >"$tmp/target/.github/workflows/ci.yml" <<'YAML'
+          name: Verify IKEA Enhanced App PWA
+          on: [push, pull_request]
+          permissions:
+            contents: read
+          jobs:
+            test:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-node@v4
+                  with:
+                    node-version: "22"
+                - run: npm test
+          YAML
+          cat >"$tmp/target/.github/workflows/pages.yml" <<'YAML'
+          name: Publish IKEA Enhanced App
+          on:
+            push:
+              branches: [main]
+            workflow_dispatch:
+          permissions:
+            contents: read
+            pages: write
+            id-token: write
+          concurrency:
+            group: pages
+            cancel-in-progress: false
+          jobs:
+            deploy:
+              runs-on: ubuntu-latest
+              environment:
+                name: github-pages
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-node@v4
+                  with:
+                    node-version: "22"
+                - run: npm test
+                - uses: actions/configure-pages@v5
+                - uses: actions/upload-pages-artifact@v3
+                  with:
+                    path: .
+                - id: deployment
+                  uses: actions/deploy-pages@v4
+          YAML
+          cat >"$tmp/target/.gitignore" <<'IGNORE'
+          node_modules/
+          .env
+          .env.*
+          .DS_Store
+          .idea/
+          IGNORE
+          if gh repo view Zennay/ikea-enhanced-app --json name --jq '.name' >/dev/null 2>&1; then
+            if [ "$(gh api 'repos/Zennay/ikea-enhanced-app/branches?per_page=1' --jq 'length')" != "0" ]; then
+              echo "Existing nonempty target preserved; no overwrite."
+              exit 0
+            fi
+          else
+            gh repo create Zennay/ikea-enhanced-app --private --description "Installable IKEA product scanner and Gemini Flash assistant PWA" --disable-wiki
+            echo "PRIVATE_REPO_CREATED=1" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cd "$tmp/target"
+          git init -q -b main
+          git config user.name "Zennay"
+          git config user.email "112865109+Zennay@users.noreply.github.com"
+          git add -A
+          git commit -qm "feat: initialize IKEA Enhanced App standalone PWA"
+          git remote add origin https://github.com/Zennay/ikea-enhanced-app.git
+          git -c credential.helper='!gh auth git-credential' push -u origin HEAD:main
+          test "$(gh api repos/Zennay/ikea-enhanced-app --jq '.private')" = "true"
+          echo "Repository ready: https://github.com/Zennay/ikea-enhanced-app" >> "$GITHUB_STEP_SUMMARY"
