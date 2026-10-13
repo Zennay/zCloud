@@ -330,8 +330,8 @@ def _verified_main_deploy_run(item: dict, now: datetime) -> tuple[str, int]:
     return (stamp, run_id)
 
 
-def latest_main_deploy_ids(token: str, count: int = 2) -> list[int]:
-    """Snapshot the newest main deploy attempts; no workflow dispatch or writes."""
+def latest_main_deploy_receipts(token: str, count: int = 2) -> list[tuple[int, str, int]]:
+    """Bind each newest main deploy to its immutable head SHA and run attempt."""
     if not token:
         raise InvalidEvidence("missing_actions_token")
     if type(count) is not int or not 1 <= count <= 3:
@@ -360,7 +360,14 @@ def latest_main_deploy_ids(token: str, count: int = 2) -> list[int]:
     ids = [run_id for _, run_id in sorted(keyed, reverse=True)]
     if len(ids) < count or len(set(ids)) != len(ids):
         raise InvalidEvidence("incomplete_recent_deploys")
-    return ids[:count]
+    by_id = {item["id"]: item for item in runs}
+    return [(run_id, by_id[run_id]["head_sha"], by_id[run_id]["run_attempt"])
+            for run_id in ids[:count]]
+
+
+def latest_main_deploy_ids(token: str, count: int = 2) -> list[int]:
+    """Backward-compatible ID-only observation, never release authority."""
+    return [run_id for run_id, _, _ in latest_main_deploy_receipts(token, count)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,14 +383,25 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("GH_TOKEN", "")
     try:
         ids = list(args.run_id)
+        expected_deploy = {}
         if args.recent_deploy:
-            ids.extend(latest_main_deploy_ids(token))
+            receipts = latest_main_deploy_receipts(token)
+            ids.extend([run_id for run_id, _, _ in receipts])
+            expected_deploy = {run_id: (sha, attempt)
+                               for run_id, sha, attempt in receipts}
         # Duplicates across requested/recent run IDs are the same observation.
         ids = list(dict.fromkeys(ids))
         if len(ids) > 10:
             raise InvalidEvidence("invalid_run_selection")
-        data = [classify_run(run_id, fetch_jobs(run_id, token))
-                for run_id in ids]
+        data = []
+        for run_id in ids:
+            jobs = fetch_jobs(run_id, token)
+            if run_id in expected_deploy:
+                sha, attempt = expected_deploy[run_id]
+                if not all(job["head_sha"] == sha and job["run_attempt"] == attempt
+                           for job in jobs):
+                    raise InvalidEvidence("deploy_job_metadata_mismatch")
+            data.append(classify_run(run_id, jobs))
     except (InvalidEvidence, OSError) as exc:
         # Emit only a finite allowlisted diagnostic; never dump URL, token or logs.
         reason = str(exc)
@@ -401,7 +419,8 @@ def main(argv: list[str] | None = None) -> int:
             "invalid_step_evidence","untrusted_deploy_run","invalid_unicode",
             "json_structure_limit","untrusted_job_provenance",
             "cross_run_job_evidence","mixed_run_head_sha",
-            "mixed_run_workflow_name","mixed_run_attempts"} else "unavailable"
+            "mixed_run_workflow_name","mixed_run_attempts",
+            "deploy_job_metadata_mismatch"} else "unavailable"
         print(json.dumps({"schema": "zcloud-runner-route-evidence-v1",
                           "error": safe, "authorizes_mutation": False}))
         return 2
