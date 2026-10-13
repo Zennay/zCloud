@@ -22,8 +22,8 @@ def live(items=None):
 
 
 def worker(**updates):
-    item = {"worker_id": "cloud::w1", "active": True,
-            "generating": False, "sending": False, "age_seconds": 20}
+    item = {"worker_id": "cloud::w1", "worker_slot": 1, "active": True,
+            "state": "live", "generating": False, "sending": False, "age_seconds": 20}
     item.update(updates)
     return item
 
@@ -38,7 +38,7 @@ class ReconcileTests(unittest.TestCase):
             conn.execute("CREATE TABLE runner_workers(project_id TEXT,worker_slot INTEGER,desired_state TEXT,conversation_id TEXT)")
             conn.execute("CREATE TABLE runner_commands(id INTEGER PRIMARY KEY,project_id TEXT,action TEXT,status TEXT,created_at TEXT,updated_at TEXT,result TEXT)")
             conn.execute("INSERT INTO ai_global_slots VALUES(1,'cloud',1)")
-            conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'active','private-conversation')")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',1,'running','private-conversation')")
         self.roster = module.read_roster(self.db)
 
     def diagnose(self, payload=None):
@@ -53,14 +53,16 @@ class ReconcileTests(unittest.TestCase):
         self.assertNotIn("private-conversation", json.dumps(result))
 
     def test_actively_generating_is_not_stalled(self):
-        result = self.diagnose(live([worker(generating=True, age_seconds=600)]))
+        result = self.diagnose(live([worker(generating=True, age_seconds=20)]))
         self.assertEqual(result["state"], "ok")
         self.assertEqual(result["busy_count"], 1)
 
-    def test_idle_older_than_five_minutes_is_attention_not_permission(self):
+    def test_idle_older_than_live_api_window_is_not_healthy(self):
+        # A truly live worker has <=90s since its last event. The server
+        # switches to stale/offline thereafter; contradictory fixtures deny.
         result = self.diagnose(live([worker(age_seconds=301)]))
-        self.assertEqual(result["state"], "attention")
-        self.assertEqual(result["problems"][0]["code"], "idle_over_five_minutes")
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problems"][0]["code"], "worker_activity_unknown")
         self.assertFalse(result["authorizes_mutation"])
 
     def test_missing_observation_is_not_assumed_missing_tab(self):
@@ -113,10 +115,11 @@ class ReconcileTests(unittest.TestCase):
     def test_multiple_independent_slots(self):
         with sqlite3.connect(self.db) as conn:
             conn.execute("INSERT INTO ai_global_slots VALUES(2,'cloud',2)")
-            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'active','redacted')")
+            conn.execute("INSERT INTO runner_workers VALUES('cloud',2,'running','redacted')")
         roster = module.read_roster(self.db)
         report = module.reconcile(roster, live([
-            worker(), {"worker_id": "cloud::w2", "active": True,
+            worker(), {"worker_id": "cloud::w2", "worker_slot": 2, "active": True,
+                       "state": "live", "age_seconds": 15,
                        "generating": True, "sending": False}
         ]))
         self.assertEqual(report["allocated_count"], 2)
@@ -124,7 +127,8 @@ class ReconcileTests(unittest.TestCase):
 
     def test_unallocated_live_worker_never_implies_scheduler_permission(self):
         report = self.diagnose(live([worker(),
-            {"worker_id": "cloud::w2", "active": True, "generating": True, "sending": False}
+            {"worker_id": "cloud::w2", "worker_slot": 2, "active": True, "state": "live",
+             "age_seconds": 15, "generating": True, "sending": False}
         ]))
         self.assertFalse(report["authorizes_mutation"])
         self.assertEqual(report["allocated_count"], 1)
@@ -181,6 +185,58 @@ class ReconcileTests(unittest.TestCase):
         result = module.reconcile(module.read_roster(self.db), live([worker()]), now=at)
         self.assertEqual(result["pending_dispatch_count"], 0)
         self.assertEqual(result["state"], "ok")
+
+    def test_generation_stalled_is_not_successful_busy_evidence(self):
+        result = self.diagnose(live([worker(state="stalled", generating=True,
+                                            age_seconds=12)]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["busy_count"], 0)
+        self.assertEqual(result["problem_counts"]["generation_stalled"], 1)
+
+    def test_stale_generating_state_cannot_override_offline(self):
+        result = self.diagnose(live([worker(state="offline", generating=True,
+                                            age_seconds=5000)]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["worker_not_live"], 1)
+        self.assertEqual(result["busy_count"], 0)
+
+    def test_missing_live_state_fails_closed(self):
+        item = worker()
+        item.pop("state")
+        result = self.diagnose(live([item]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["worker_state_unknown"], 1)
+
+    def test_unrecognised_live_state_fails_closed(self):
+        result = self.diagnose(live([worker(state="connected-but-not-proven")]))
+        self.assertEqual(result["state"], "degraded")
+        self.assertEqual(result["problem_counts"]["worker_state_unknown"], 1)
+
+    def test_live_age_boundary(self):
+        self.assertEqual(self.diagnose(live([worker(age_seconds=90)]))["state"], "ok")
+        self.assertEqual(self.diagnose(live([worker(age_seconds=91)]))["state"], "degraded")
+
+    def test_mismatched_worker_id_and_reported_slot_rejected(self):
+        with self.assertRaisesRegex(module.InvalidEvidence, "disagree"):
+            self.diagnose(live([worker(worker_id="cloud::w2", worker_slot=1)]))
+
+    def test_mismatched_identity_cannot_claim_different_worker_slot(self):
+        with self.assertRaisesRegex(module.InvalidEvidence, "disagree"):
+            self.diagnose(live([worker(worker_id="cloud::w1", worker_slot=2)]))
+
+    def test_noncanonical_worker_identity_rejected(self):
+        with self.assertRaisesRegex(module.InvalidEvidence, "noncanonical"):
+            self.diagnose(live([worker(worker_id="cloud::w01")]))
+
+    def test_cross_project_worker_identity_rejected(self):
+        with self.assertRaisesRegex(module.InvalidEvidence, "unmatchable"):
+            self.diagnose(live([worker(worker_id="supa::w1")]))
+
+    def test_unknown_desired_state_fails_closed_before_reporting_healthy(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE runner_workers SET desired_state='forever-running'")
+        with self.assertRaisesRegex(module.InvalidEvidence, "invalid desired worker state"):
+            module.read_roster(self.db)
 
     def test_duplicate_live_worker_rejected(self):
         with self.assertRaises(module.InvalidEvidence):
