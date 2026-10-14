@@ -1,0 +1,117 @@
+"""Hermetic negative matrix for monotonic pull_request_target gate."""
+import importlib.util
+from pathlib import Path
+import tempfile
+import subprocess
+import unittest
+from unittest.mock import patch
+
+TARGET = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_pr_target_delta_guard_20261014.py"
+spec = importlib.util.spec_from_file_location("target_delta", TARGET)
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+
+SAFE = """name: read only
+on:
+  pull_request_target:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'trusted metadata'
+"""
+
+
+class GuardTests(unittest.TestCase):
+    def test_safe_hosted_read_only(self):
+        self.assertEqual(gate.risk_set(SAFE), set())
+
+    def test_root_write(self):
+        self.assertIn("write_permission", gate.risk_set(SAFE.replace("contents: read", "contents: write")))
+
+    def test_job_write(self):
+        src = SAFE.replace("    runs-on:", "    permissions:\n      actions: write\n    runs-on:")
+        self.assertIn("write_permission", gate.risk_set(src))
+
+    def test_inline_and_quoted_permissions(self):
+        for replacement in ("permissions: {contents: write}",
+                            "permissions:\n  contents: 'write'",
+                            'permissions: {contents: read, actions: "write"}'):
+            with self.subTest(replacement=replacement):
+                src = SAFE.replace("permissions:\n  contents: read", replacement)
+                self.assertIn("write_permission", gate.risk_set(src))
+
+    def test_write_all(self):
+        self.assertIn("write_all", gate.risk_set(SAFE.replace("permissions:\n  contents: read", "permissions: write-all")))
+
+    def test_secret_reference(self):
+        self.assertIn("secret_reference", gate.risk_set(SAFE + "      - run: echo '${{ secrets.ADMIN }}'\n"))
+
+    def test_untrusted_checkout(self):
+        src = SAFE + "      - uses: actions/checkout@abcdef\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n"
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_untrusted_head_in_run(self):
+        src = SAFE + "      - run: git checkout '${{ github.head_ref }}'\n"
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_comments_are_not_risks(self):
+        self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
+
+    def test_non_pr_target_unaffected(self):
+        self.assertEqual(gate.risk_set(SAFE.replace("pull_request_target", "pull_request").replace("contents: read", "contents: write")), set())
+
+    def test_alias_denied(self):
+        self.assertIn("yaml_alias_or_merge", gate.risk_set(SAFE.replace("    runs-on:", "    <<: *unsafe\n    runs-on:")))
+
+    def test_malformed_event_refused(self):
+        with self.assertRaises(gate.Unverified):
+            gate.risk_set(SAFE + "on: [workflow_dispatch]\n")
+
+    def test_monotonic_same_debt_is_allowed(self):
+        baseline = gate.risk_set(SAFE.replace("contents: read", "contents: write"))
+        candidate = gate.risk_set(SAFE.replace("contents: read", "contents: write") + "# extra docs\n")
+        self.assertEqual(candidate - baseline, set())
+
+    def test_monotonic_added_secret_denied(self):
+        baseline = gate.risk_set(SAFE.replace("contents: read", "contents: write"))
+        candidate = gate.risk_set(SAFE.replace("contents: read", "contents: write") + "      - run: echo '${{ secrets.X }}'\n")
+        self.assertEqual(candidate - baseline, {"secret_reference"})
+
+    def test_git_base_delta_blocks_new_risk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def command(*args):
+                return subprocess.check_output(["git", *args], cwd=root, stderr=subprocess.DEVNULL).decode().strip()
+            command("init", "-q")
+            command("config", "user.name", "zcloud test")
+            command("config", "user.email", "test@example.invalid")
+            path = root / ".github" / "workflows" / "guard.yml"
+            path.parent.mkdir(parents=True)
+            path.write_text(SAFE)
+            command("add", ".")
+            command("commit", "-qm", "base")
+            base = command("rev-parse", "HEAD")
+            path.write_text(SAFE.replace("contents: read", "contents: write"))
+            command("add", ".")
+            command("commit", "-qm", "head")
+            head = command("rev-parse", "HEAD")
+            self.assertEqual(gate.evaluate(root, base, head), (1, [('.github/workflows/guard.yml', 'write_permission')]))
+            self.assertEqual(gate.evaluate(root, head, head), (0, []))
+
+    def test_changed_workflow_inventory_bounded(self):
+        with patch.object(gate, "git", return_value=b".github/workflows/a.yml\x00.github/workflows/a.yml\x00"):
+            with self.assertRaises(gate.Unverified):
+                gate.changed_workflows(Path("."), "a"*40, "b"*40)
+
+    def test_git_mode_denies_symlink(self):
+        with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
+            with self.assertRaises(gate.Unverified):
+                gate.source_at(Path("."), "a"*40, ".github/workflows/a.yml")
+
+
+if __name__ == "__main__":
+    unittest.main()
