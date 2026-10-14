@@ -91,6 +91,10 @@ def risks(text, *, details=False):
         raise Unverifiable("structure")
     if re.search(r"(?m)^[ ]{0,6}(?:<<:|concurrency:\s*[&*]|runs-on:\s*[&*])", text):
         raise Unverifiable("yaml_alias")
+    # YAML permits whitespace before the colon in a mapping key; the strict
+    # source scanner must deny those layouts rather than miss enabled cancels.
+    if re.search(r"(?m)^[ \t]*(?:concurrency|cancel-in-progress)[ \t]+:", text):
+        raise Unverifiable("policy_key_whitespace")
     # Nonstandard valid YAML indentation or quoted policy keys are DENY, not PASS.
     if re.search(r"(?m)^[ \t]*[\x27\x22](?:concurrency|cancel-in-progress)[\x27\x22]\s*:", text):
         raise Unverifiable("quoted_key")
@@ -112,6 +116,12 @@ def risks(text, *, details=False):
         raise Unverifiable("jobs")
     if len({m.group(1) for m in markers}) != len(markers):
         raise Unverifiable("duplicate_job")
+    # Duplicated YAML mapping keys have parser-dependent precedence; do not
+    # treat two literal false values as evidence of disabled cancellation.
+    if len(re.findall(r"(?m)^concurrency:", outside_jobs)) > 1 or len(
+        re.findall(r"(?m)^  cancel-in-progress:", outside_jobs)
+    ) > 1:
+        raise Unverifiable("duplicate_global_policy")
     global_cancel = _cancel_values(outside_jobs, indent="  ") or _inline_concurrency(outside_jobs, "")
     findings = []
     possible_vps = False
@@ -124,6 +134,10 @@ def risks(text, *, details=False):
         runner = RUNNER.findall("  " + marker.group(1) + ":\n" + job)
         is_hosted = len(runner) == 1 and bool(HOSTED.fullmatch(runner[0].strip()))
         possible_vps = possible_vps or not is_hosted
+        if len(re.findall(r"(?m)^    concurrency:", job)) > 1 or len(
+            re.findall(r"(?m)^      cancel-in-progress:", job)
+        ) > 1:
+            raise Unverifiable("duplicate_job_policy")
         job_cancel = _cancel_values(job, indent="      ") or _inline_concurrency(job, "    ")
         job_cancel_any = job_cancel_any or job_cancel
         if (global_cancel or job_cancel) and not is_hosted:
