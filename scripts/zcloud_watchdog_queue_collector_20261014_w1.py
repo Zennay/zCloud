@@ -192,10 +192,14 @@ def collect(api_get, *, clock=None):
     when = clock or datetime.now(timezone.utc)
     if not isinstance(when, datetime) or when.tzinfo is None or when.utcoffset().total_seconds() != 0:
         raise InventoryError("invalid_clock")
+    chunks = [mapped[i:i + _PAGE_SIZE] for i in range(0, len(mapped), _PAGE_SIZE)] or [[]]
     return {
         "repository": REPO, "main_sha_before": before, "main_sha_after": after,
         "observed_at": when.isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "run_pages": [{"runs": mapped, "has_next": False}],
+        "run_pages": [
+            {"runs": chunk, "has_next": index < len(chunks) - 1}
+            for index, chunk in enumerate(chunks)
+        ],
     }
 
 
