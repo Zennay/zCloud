@@ -96,6 +96,40 @@ class QueueWatchTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(m.Unavailable):
                 m.summarize([r], {1: [j]}, NOW, total_count=invalid)
 
+    def test_truncated_stale_queue_cannot_alone_assert_listener_gap(self):
+        pairs = (sample(1, age=1600), sample(2, age=1500), sample(3, age=1300))
+        runs = [r for r, _ in pairs]
+        jobs = {r["id"]: [j] for r, j in pairs}
+        # All sampled jobs are stale and unassigned, but an unsampled page
+        # could still contain a recently assigned job.
+        result = m.summarize(runs, jobs, NOW, total_count=31)
+        self.assertEqual(result["stale_unassigned"], 3)
+        self.assertTrue(result["sample_truncated"])
+        self.assertEqual(result["classification"], "INCOMPLETE_QUEUE_SAMPLE")
+        self.assertFalse(result["runner_offline_verified"])
+        self.assertFalse(result["mutation_authorized"])
+
+    def test_complete_stale_queue_retains_cautious_warning(self):
+        pairs = (sample(1, age=1600), sample(2, age=1500), sample(3, age=1300))
+        runs = [r for r, _ in pairs]
+        jobs = {r["id"]: [j] for r, j in pairs}
+        report = m.summarize(runs, jobs, NOW, total_count=3)
+        self.assertFalse(report["sample_truncated"])
+        self.assertEqual(report["classification"], "POSSIBLE_LISTENER_GAP")
+
+    def test_truncated_positive_assignment_is_still_counted(self):
+        pairs = (
+            sample(1, age=1600), sample(2, age=1500),
+            sample(3, age=1300),
+            sample(4, age=80, status="in_progress", runner=21),
+        )
+        report = m.summarize([r for r, _ in pairs],
+                             {r["id"]: [j] for r, j in pairs},
+                             NOW, total_count=99)
+        self.assertTrue(report["sample_truncated"])
+        self.assertEqual(report["classification"], "RECENT_RUNNER_ASSIGNMENT_OBSERVED")
+        self.assertFalse(report["runner_offline_verified"])
+
     def test_queued_job_identity_must_match_exact_run(self):
         for mutation in ({"workflow_name": "Other workflow"},
                          {"head_branch": "elsewhere"},
