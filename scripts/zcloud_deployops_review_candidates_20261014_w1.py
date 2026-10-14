@@ -8,6 +8,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import PurePosixPath
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -41,7 +42,17 @@ def paths(value):
                 and not any(ord(c) < 32 or ord(c) == 127 for c in p)
                 and PurePosixPath(p).as_posix() == p for p in value), "invalid_path")
     require(len(value) == len(set(value)), "duplicate_paths")
+    require(len({unicodedata.normalize("NFC", p).casefold() for p in value}) == len(value),
+            "ambiguous_unicode_paths")
     return set(value)
+
+
+def path_collision(left, right):
+    """Directory/file swaps and case/normalization collisions reserve both owners."""
+    l = {unicodedata.normalize("NFC", p).casefold() for p in left}
+    r = {unicodedata.normalize("NFC", p).casefold() for p in right}
+    return any(a == b or a.startswith(b + "/") or b.startswith(a + "/")
+               for a in l for b in r)
 
 
 def complete_files(record, main_sha, head_sha):
@@ -130,7 +141,8 @@ def snapshot(report):
         if not all(c["head_sha"] == p["head_sha"] and c["conclusion"] == "success"
                    for c in p["checks"]):
             reasons.append("exact_head_checks_not_green")
-        if any(files & other for owner, other in all_owners if owner != f"pr:{n}"):
+        if any(path_collision(files, other) for owner, other in all_owners
+               if owner != f"pr:{n}"):
             reasons.append("overlapping_owner")
         out.append({"number": n, "review_candidate": not reasons, "reasons": reasons})
     return {"main_sha": d["main_sha"], "inventory_complete": True,
