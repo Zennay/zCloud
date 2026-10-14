@@ -361,6 +361,62 @@ jobs:
         after = SAFE.replace("permissions:\n  contents: read", '"permissions": "write-all"')
         self.assertIn("write_all", gate.increasing_risks(before, after))
 
+
+    def test_pr_title_passed_through_step_env_into_shell_is_risky(self):
+        original = SAFE
+        candidate = SAFE + """      - name: command from PR title
+        env:
+          COMMAND: ${{ github.event.pull_request.title }}
+        run: bash -c "$COMMAND"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(original, candidate))
+
+    def test_pr_env_data_not_used_by_run_is_not_shell_exposure(self):
+        candidate = SAFE + """      - name: metadata
+        env:
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: echo safe
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_pr_env_in_different_step_does_not_conflate_with_execution(self):
+        candidate = SAFE + """      - name: metadata only
+        env:
+          CODE: ${{ github.event.pull_request.body }}
+      - name: safe job
+        run: echo "$CODE"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_braced_shell_variable_with_quoted_env_key(self):
+        candidate = SAFE + """      - name: command
+        'env':
+          'SCRIPT': ${{ github.event.pull_request['body'] }}
+        run: bash -c "${SCRIPT}"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_github_expression_env_binding_reused_in_run(self):
+        candidate = SAFE + """      - name: head command
+        env:
+          CMD: ${{ github.event.pull_request.head.ref }}
+        run: eval '${{ env.CMD }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_equal_count_env_pr_source_identity_swap_denied(self):
+        previous = SAFE + """      - env:
+          PAYLOAD: ${{ github.event.pull_request.title }}
+        run: bash -c "$PAYLOAD"
+"""
+        candidate = previous.replace(
+            "github.event.pull_request.title", "github.event.pull_request.body"
+        )
+        self.assertEqual(gate.risk_counts(previous)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(previous, candidate))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
