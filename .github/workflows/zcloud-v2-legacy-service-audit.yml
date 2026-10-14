@@ -14,6 +14,11 @@ on:
         description: "Explicit exact current main SHA for read-only VPS inventory"
         type: string
         required: true
+      approve_readonly_probe:
+        description: "I explicitly authorize a metadata-only VPS service inventory at the confirmed main SHA"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -51,6 +56,8 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.approve_readonly_probe == true &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
@@ -64,6 +71,7 @@ jobs:
         shell: bash
         env:
           CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_READONLY: ${{ inputs.approve_readonly_probe }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'
@@ -71,6 +79,8 @@ jobs:
           test "$GITHUB_REF" = 'refs/heads/main'
           test "$GITHUB_ACTOR" = 'Zennay'
           test "$GITHUB_TRIGGERING_ACTOR" = 'Zennay'
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$APPROVE_READONLY" = 'true'
           [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRMED_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
@@ -86,8 +96,23 @@ jobs:
         env:
           XDG_RUNTIME_DIR: /run/user/1000
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_READONLY: ${{ inputs.approve_readonly_probe }}
         run: |
           set -euo pipefail
+          # Admission is time-sensitive. Recheck immediately before any VPS
+          # process/systemd probe, not only in the preceding validation step.
+          test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'
+          test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_ACTOR" = 'Zennay'
+          test "$GITHUB_TRIGGERING_ACTOR" = 'Zennay'
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$APPROVE_READONLY" = 'true'
+          test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$CONFIRMED_SHA"
           echo '=== FIREFOX PROCESS IDENTITIES (no arguments) ==='
           ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 5 || true
           echo '=== USER SERVICE NAMES ==='

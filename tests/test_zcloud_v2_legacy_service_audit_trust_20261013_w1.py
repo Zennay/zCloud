@@ -124,25 +124,30 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
             "github.repository == 'Zennay/zCloud' &&",
             "github.actor == 'Zennay' &&",
             "github.triggering_actor == 'Zennay' &&",
+            "github.run_attempt == 1 &&",
+            "inputs.approve_readonly_probe == true &&",
             "inputs.confirm_sha == github.sha",
         ])
         sha = "a" * 40
         cases = [
-            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", sha, True),
-            ("pull_request", "refs/pull/1313/merge", "Zennay/zCloud", "Zennay", "Zennay", sha, False),
-            ("push", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", sha, False),
-            ("workflow_dispatch", "refs/heads/feature", "Zennay/zCloud", "Zennay", "Zennay", sha, False),
-            ("workflow_dispatch", "refs/heads/main", "fork/zCloud", "Zennay", "Zennay", sha, False),
-            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "outside", "Zennay", sha, False),
-            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "outside", sha, False),
-            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", "b" * 40, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", 1, True, sha, True),
+            ("pull_request", "refs/pull/1313/merge", "Zennay/zCloud", "Zennay", "Zennay", 1, True, sha, False),
+            ("push", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", 1, True, sha, False),
+            ("workflow_dispatch", "refs/heads/feature", "Zennay/zCloud", "Zennay", "Zennay", 1, True, sha, False),
+            ("workflow_dispatch", "refs/heads/main", "fork/zCloud", "Zennay", "Zennay", 1, True, sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "outside", "Zennay", 1, True, sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "outside", 1, True, sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", 2, True, sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", 1, False, sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", 1, True, "b" * 40, False),
         ]
-        for event, ref, repo, actor, rerun_actor, confirmed, expected in cases:
-            with self.subTest(event=event, ref=ref, repo=repo, actor=actor, rerun=rerun_actor):
+        for event, ref, repo, actor, rerun_actor, attempt, consent, confirmed, expected in cases:
+            with self.subTest(event=event, ref=ref, repo=repo, actor=actor, attempt=attempt, consent=consent):
                 result = (event == "workflow_dispatch" and
                           ref == "refs/heads/main" and
                           repo == "Zennay/zCloud" and
                           actor == rerun_actor == "Zennay" and
+                          attempt == 1 and consent is True and
                           confirmed == sha)
                 self.assertEqual(result, expected)
 
@@ -153,6 +158,10 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
         self.assertIn("required: true", header)
         gate = self.job(self.text, "inspect")
         self.assertIn("inputs.confirm_sha == github.sha", gate)
+        self.assertIn("inputs.approve_readonly_probe == true", gate)
+        self.assertIn("github.run_attempt == 1", gate)
+        self.assertIn("approve_readonly_probe:", header)
+        self.assertIn("default: false", header)
 
     def test_manual_guard_fails_closed_before_live_observation(self):
         gate = self.job(self.text, "inspect").split(
@@ -167,6 +176,25 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
             'test "$current_main" = "$CONFIRMED_SHA"',
         ):
             self.assertIn(required, gate)
+
+    def test_recheck_fresh_main_and_manual_consent_before_any_process_read(self):
+        vps = self.job(self.text, "inspect")
+        observation = vps.split("- name: Read-only bounded worker service inventory", 1)[1]
+        gate = observation.split("echo '=== FIREFOX PROCESS IDENTITIES", 1)[0]
+        for requirement in (
+            "CONFIRMED_SHA: ${{ inputs.confirm_sha }}",
+            "APPROVE_READONLY: ${{ inputs.approve_readonly_probe }}",
+            """test "$GITHUB_RUN_ATTEMPT" = '1'""",
+            """test "$APPROVE_READONLY" = 'true'""",
+            """test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA" """.strip(),
+            "timeout 15 git ls-remote --exit-code origin refs/heads/main",
+            """test "$current_main" = "$CONFIRMED_SHA" """.strip(),
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, gate)
+        self.assertLess(observation.index("git ls-remote"),
+                        observation.index("ps -eo pid=,ppid=,comm="))
+        self.assertNotIn("systemctl ", gate)
 
     def test_hosted_pr_validates_exact_head_not_synthetic_merge_sha(self):
         validate = self.job(self.text, "validate")
