@@ -51,7 +51,8 @@ jobs:
           }
           verify_main_head
           summary_file="$(mktemp)"
-          trap 'rm -f "$summary_file"' EXIT
+          verified_file="$(mktemp)"
+          trap 'rm -f "$summary_file" "$verified_file"' EXIT
           probe_rc=0
           # Socket read timeout only protects individual waits. Slow-drip HTTP
           # streams must also be bounded by one process-wide wall-clock budget.
@@ -63,35 +64,12 @@ jobs:
           fi
           # Verify freshness before releasing ANY summary, including failures.
           verify_main_head
-          # A zero exit code with no recognized result must not be a green job.
-          [[ -s "$summary_file" && $(wc -c < "$summary_file") -le 2048 ]] || {
-            echo "DASHBOARD_TRIAGE_INVALID_SUMMARY"
+          # Strict, bounded offline gate reconstructs the COMPLETE canonical
+          # human report from allowed status categories/counts. No arbitrary
+          # probe output reaches Actions summaries; malformed output stays private.
+          if ! python3 scripts/zcloud_dashboard_summary_guard_20261014_w1.py --probe-rc "$probe_rc" < "$summary_file" > "$verified_file"; then
+            echo "DASHBOARD_TRIAGE_SUMMARY_REJECTED"
             exit 3
-          }
-          [[ $(grep -Fc '## zCloud · externe dashboardcontrole' "$summary_file") -eq 1 ]] || {
-            echo "DASHBOARD_TRIAGE_INVALID_SUMMARY"
-            exit 3
-          }
-          # Exactly one status claim; contradictory or repeated health lines
-          # must fail even when the probe process returned exit code zero.
-          [[ $(grep -Ec '^[*][*]Status:[*][*]' "$summary_file") -eq 1 ]] || {
-            echo "DASHBOARD_TRIAGE_AMBIGUOUS_STATUS"
-            exit 3
-          }
-          grep -Fxq '**Herstel of herstart wordt nooit automatisch uitgevoerd.**' "$summary_file" || {
-            echo "DASHBOARD_TRIAGE_MISSING_SAFETY_NOTE"
-            exit 3
-          }
-          if (( probe_rc == 0 )); then
-            grep -Fxq '**Status:** API bereikbaar' "$summary_file" || {
-              echo "DASHBOARD_TRIAGE_INCONSISTENT_SUCCESS"
-              exit 3
-            }
-          else
-            grep -Fxq '**Status:** API niet aantoonbaar bereikbaar' "$summary_file" || {
-              echo "DASHBOARD_TRIAGE_INVALID_FAILURE_SUMMARY"
-              exit 3
-            }
           fi
-          cat "$summary_file" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$verified_file" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$probe_rc"
