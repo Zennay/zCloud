@@ -119,6 +119,27 @@ def api(token, method, path, data=None):
         raise Refused("github_api_request_failed") from exc
 
 
+
+def list_open_prs(transport, token, max_pages=10):
+    """Use bounded GitHub pages; never silently ignore older opted-in PRs."""
+    seen = set()
+    prs = []
+    for page in range(1, max_pages + 1):
+        batch = transport(token, "GET",
+                          f"/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}")
+        if not isinstance(batch, list) or len(batch) > 100:
+            raise Refused("invalid_pr_page")
+        for pr in batch:
+            number = pr.get("number") if isinstance(pr, dict) else None
+            if type(number) is not int or not 1 <= number <= 10000000 or number in seen:
+                raise Refused("ambiguous_pr_page")
+            seen.add(number)
+            prs.append(pr)
+        if len(batch) < 100:
+            return prs
+    raise Refused("pr_inventory_exceeds_bounded_budget")
+
+
 def main(argv=None, environ=None, transport=api):
     env = os.environ if environ is None else environ
     parser = argparse.ArgumentParser(description=__doc__)
@@ -143,9 +164,7 @@ def main(argv=None, environ=None, transport=api):
     main_sha = (branch.get("commit") or {}).get("sha")
     if main_sha != checked_sha:
         raise Refused("workflow_source_is_stale")
-    prs = transport(token, "GET", "/pulls?state=open&per_page=100")
-    if not isinstance(prs, list) or len(prs) >= 100:
-        raise Refused("incomplete_pr_inventory")
+    prs = list_open_prs(transport, token)
     receipts = []
     for p in prs:
         if not isinstance(p, dict) or not has_label(p):
