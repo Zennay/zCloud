@@ -476,5 +476,59 @@ class GitTest(unittest.TestCase):
         self.assertNotIn("echo safe", output.getvalue())
 
 
+class WorkflowSourceTest(unittest.TestCase):
+    """Protect the exact hosted ratchet trigger and its non-mutating authority."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (MODULE.parents[0] /
+                      ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
+                     ).read_text(encoding="utf-8")
+
+    def test_triggered_by_any_changed_main_workflow(self):
+        self.assertIn('      - ".github/workflows/**"', self.source)
+        self.assertIn("      - main", self.source)
+        self.assertIn("  push:\n", self.source)
+        self.assertIn("  pull_request:\n", self.source)
+
+    def test_source_path_and_tests_retrigger_on_change(self):
+        for path in ("scripts/zcloud_deployops_cancellation_ratchet_20261014.py",
+                     "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"):
+            self.assertGreaterEqual(self.source.count(path), 3)
+
+    def test_no_selfhosted_or_write_permissions(self):
+        self.assertIn("    runs-on: ubuntu-latest", self.source)
+        self.assertNotIn("runs-on: [self-hosted", self.source)
+        self.assertNotIn("    runs-on: self-hosted", self.source)
+        self.assertIn("permissions:\n  contents: read", self.source)
+        for denied in ("contents: write", "actions: write",
+                       "id-token: write", "pull-requests: write"):
+            self.assertNotIn(denied, self.source)
+
+    def test_checkout_exact_commit_and_credentials_not_persisted(self):
+        self.assertIn("github.event.pull_request.head.sha || github.sha",
+                      self.source)
+        self.assertIn("persist-credentials: false", self.source)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXACT_HEAD"', self.source)
+        self.assertIn("fetch-depth: 0", self.source)
+
+    def test_concurrency_can_never_cancel_running_job(self):
+        self.assertIn("  cancel-in-progress: false", self.source)
+        self.assertEqual(1, self.source.count("cancel-in-progress: false"))
+
+    def test_both_snapshot_census_and_candidate_gate(self):
+        self.assertIn('--base "$EXACT_BASE" --head "$EXACT_HEAD"', self.source)
+        self.assertIn('--inventory-head "$EXACT_BASE"', self.source)
+        self.assertIn('--inventory-head "$EXACT_HEAD"', self.source)
+
+    def test_no_host_mutation_commands(self):
+        for forbidden in ("systemctl", "sudo ", "gh run cancel", "docker ",
+                          "scp ", "rsync ", "gh workflow run ", "kill -9"):
+            self.assertNotIn(forbidden, self.source)
+
+    def test_bounded_hosted_timeout(self):
+        self.assertIn("    timeout-minutes: 5", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()
