@@ -12,6 +12,14 @@ An older workflow revision can still have a live VPS job when the new revision s
 
 Existing untouched workflows are not changed or declared secure; edited legacy cancellation debt requires owner review. Removing cancellation risk is allowed.
 
+## Syntax and Git-source adversarial hardening
+
+The source gate now **DENIES instead of accidentally passing** YAML mapping keys with whitespace before the colon (`cancel-in-progress : true`, `concurrency :`), duplicate root/job concurrency or cancellation keys, and explicit complex YAML policy keys (`? concurrency`). Tests also prove executable-mode and symlink workflow blobs, undecodable UTF-8 and oversized Git blobs fail closed; safe renames pass while hazardous renamed workflows fail.
+
+Mixed literal and dynamic groups within the same workflow are not treated as wholly literal: a previous VPS job can select a dynamic job-level group even when its workflow-level group is fixed. **Group names are case-insensitive according to [GitHub's Actions syntax reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)**, so collisions such as `Prod` versus `prod` are matched even when only casing differs. The hosted guard also has a direct source test proving its own jobs are always recognized as hosted and never dynamic/reusable.
+
+**Limit:** GitHub can also cancel *pending* jobs depending on concurrency queue configuration even when `cancel-in-progress: false`. This scanner is narrowly scoped to prevention of cancellation of **in-progress** VPS jobs from changed source. It is not a live queue audit, pending-job continuity guarantee, runner recovery, or complete GitHub YAML validator.
+
 ## Cross-workflow and cross-revision safety
 
 The check now looks at **both the previous and candidate Git snapshots**. Switching a workflow to hosted-only jobs does **not** erase the possibility that a previous VPS job is still running under its old concurrency group. The gate denies newly enabled global or job-level cancellation in that case.
