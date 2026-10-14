@@ -315,6 +315,44 @@ class DashboardProbeTests(unittest.TestCase):
                 response.headers["Cache-Status"] = value
                 self.assertEqual(probe.probe_once(Opener(response)), "healthy")
 
+    def test_structured_cache_status_boolean_and_quoted_parameters(self):
+        # RFC 9211 Cache-Status hit is a structured boolean: an explicit
+        # hit=?1 must not slip through as fresh status. Quoted separators
+        # inside detail must never create a phantom 'hit' token.
+        cases = (
+            ("CDN; hit=?1", "cache_evidence"),
+            ("Origin; fwd=miss, CDN; hit=?1; ttl=35", "cache_evidence"),
+            ("cdn; hit=?0", "healthy"),
+            ("cdn; hit=?0; fwd=uri-miss", "healthy"),
+            ('cdn; detail="quoted; hit"; fwd=uri-miss', "healthy"),
+            ('cdn; detail="quoted, other; hit=?1"', "healthy"),
+            ('cdn; detail="escaped \\"; hit" ; fwd=miss', "healthy"),
+            ("cdn; hit=?1; fwd=miss", "invalid_headers"),
+            ("cdn; hit; fwd=stale", "invalid_headers"),
+            ("cdn; hit=?1; hit=?1", "invalid_headers"),
+            ("cdn; hit=?1; hit=?0", "invalid_headers"),
+            ("cdn; hit=yes", "invalid_headers"),
+            ("cdn; hit=1", "invalid_headers"),
+            ("cdn; hit=?", "invalid_headers"),
+            ("cdn; hit=", "invalid_headers"),
+            ("cdn; fwd", "invalid_headers"),
+            ("cdn; hit=?2", "invalid_headers"),
+            ('cdn; detail="unterminated', "invalid_headers"),
+            ("cdn; fwd=miss,", "invalid_headers"),
+            ("cdn;; hit", "invalid_headers"),
+        )
+        for value, expected in cases:
+            with self.subTest(cache_status=value):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                if expected != "healthy":
+                    response.read = mock.Mock(
+                        side_effect=AssertionError("cached or ambiguous body must not be read")
+                    )
+                self.assertEqual(probe.probe_once(Opener(response)), expected)
+                if expected != "healthy":
+                    response.read.assert_not_called()
+
     def test_http_cache_status_malformed_or_duplicate_denied(self):
         for value in ("", "cdn; " + "x" * 513, "cdn; hit\n",
                       "cdn; hit\x00", "cdn; hït"):
@@ -701,6 +739,17 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
                   extra_headers=(("Cache-Status", "CDN; hit; ttl=30"),))
         self._run("healthy",
                   extra_headers=(("Cache-Status", "CDN; fwd=uri-miss"),))
+
+    def test_actual_http_structured_boolean_cache_hit_not_green(self):
+        for value, expected in (
+            ("CDN; hit=?1", "cache_evidence"),
+            ("CDN; hit=?0", "healthy"),
+            ('Edge; detail="semi; hit"; fwd=uri-miss', "healthy"),
+            ("Origin; fwd=uri-miss, CDN; hit=?1", "cache_evidence"),
+            ("CDN; hit=?1; fwd=miss", "invalid_headers"),
+        ):
+            with self.subTest(value=value):
+                self._run(expected, extra_headers=(("Cache-Status", value),))
 
     def test_actual_http_duplicate_cache_status_is_denied(self):
         self._run("invalid_headers",
