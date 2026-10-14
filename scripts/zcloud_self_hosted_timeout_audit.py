@@ -254,12 +254,21 @@ def new_debt(
         previous = base_debt.get((row.path, row.job))
         if previous is None:
             introduced.append(row)
-        elif deny_worsening and previous.status == "over_limit":
-            # Legacy debt is grandfathered, but its timeout cannot grow or disappear.
-            if (row.status != "over_limit"
-                    or row.timeout_minutes is None
-                    or previous.timeout_minutes is None
-                    or row.timeout_minutes > previous.timeout_minutes):
+        elif deny_worsening and previous.status in (
+            "over_limit", "dynamic_runner_unknown", "runner_target_unknown"
+        ):
+            # An existing untrusted runner or over-limit job is grandfathered
+            # only while its timeout and provenance do not become less safe.
+            if (
+                row.status != previous.status
+                or (
+                    previous.timeout_minutes is not None
+                    and (
+                        row.timeout_minutes is None
+                        or row.timeout_minutes > previous.timeout_minutes
+                    )
+                )
+            ):
                 introduced.append(row)
     return introduced
 
