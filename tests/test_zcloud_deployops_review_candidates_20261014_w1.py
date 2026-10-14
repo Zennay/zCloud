@@ -32,6 +32,8 @@ def payload():
                      'draft': False, 'owner_approved': True,
                      'owner_review_evidence': {
                          'complete': True, 'decision': 'approved', 'dismissed': False,
+                         'repository_full_name': 'Zennay/zCloud',
+                         'pr_number': 12, 'review_id': 99012,
                          'author_login': 'project-author', 'reviewer_login': 'independent-reviewer',
                          'reviewed_head_sha': H,
                          'submitted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -46,6 +48,10 @@ def payload():
 def snap(d):
     """Produce matching synthetic #1312 receipt for local tests with branches."""
     # Synthetic complete diff evidence; targeted malformed tests bypass this helper.
+    for item in d['prs']:
+        if isinstance(item.get('owner_review_evidence'), dict):
+            item['owner_review_evidence']['pr_number'] = item['number']
+            item['owner_review_evidence']['review_id'] = 99000 + item['number']
     for item in d['prs'] + d['branches']:
         if isinstance(item.get('files_evidence'), dict):
             item.setdefault('previous_files', [])
@@ -164,6 +170,49 @@ class ReviewQueueTests(unittest.TestCase):
         report = snap(d)
         self.assertEqual(report['review_candidate_count'], 1)
         self.assertFalse(report['release_authorized'])
+
+    def test_review_from_other_pr_denied(self):
+        d = payload()
+        d['prs'][0]['owner_review_evidence']['pr_number'] = 13
+        with self.assertRaises(mod.InvalidEvidence) as context:
+            mod.snapshot(d)
+        self.assertEqual(str(context.exception), 'review_pr_mismatch')
+
+    def test_duplicate_review_id_across_prs_denied(self):
+        d = payload()
+        other = copy.deepcopy(d['prs'][0])
+        other['number'] = 13
+        other['owner_review_evidence']['pr_number'] = 13
+        other['files'] = ['safe/other.py']
+        # Same review_id is unacceptable even when heads and reviewers match.
+        d['prs'].append(other)
+        d['inventory']['open_pr_count'] = 2
+        with self.assertRaises(mod.InvalidEvidence) as context:
+            mod.snapshot(d)
+        self.assertEqual(str(context.exception), 'duplicate_review_id')
+
+    def test_review_from_other_repository_denied(self):
+        d = payload()
+        d['prs'][0]['owner_review_evidence']['repository_full_name'] = 'attacker/other'
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_invalid_or_boolean_review_ids_denied(self):
+        for value in (0, -1, True, 1.5, '123', 10**18):
+            d = payload()
+            d['prs'][0]['owner_review_evidence']['review_id'] = value
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_distinct_review_id_across_prs_allowed_as_advisory(self):
+        d = payload()
+        second = copy.deepcopy(d['prs'][0])
+        second['number'] = 13
+        second['files'] = ['safe/disjoint.py']
+        d['prs'].append(second)
+        result = snap(d)
+        self.assertEqual(result['review_candidate_count'], 2)
+        self.assertFalse(result['release_authorized'])
 
     def test_independent_review_must_match_exact_pr_head(self):
         d = payload()
