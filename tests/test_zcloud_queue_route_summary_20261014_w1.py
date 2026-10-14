@@ -181,7 +181,7 @@ class QueueRouteSummaryTests(unittest.TestCase):
         ]
         output, status = self.render(report(rows))
         self.assertEqual(status, 0)
-        self.assertIn("**1 wachtende jobs zonder runnertoewijzing**", output)
+        self.assertIn("**1 wachtende runs zonder runnertoewijzing**", output)
         self.assertIn("FTMO-runnerroute", output)
         self.assertNotIn("zCloud-runnerlabels en repositorytoegang", output)
         self.assertIn("Geen bewijs van productiestatus", output)
@@ -206,7 +206,7 @@ class QueueRouteSummaryTests(unittest.TestCase):
         self.assertIn("**2 FTMO-onderzoek**", markdown)
         self.assertIn("**1 zCloud-VPS**", markdown)
         self.assertIn("**1 zonder jobrecords**", markdown)
-        self.assertIn("**3 zonder runnertoewijzing**", markdown)
+        self.assertIn("**3 wachtende runs zonder runnertoewijzing**", markdown)
         self.assertIn("**1 op huidige main**", markdown)
         self.assertNotIn("productie groen", markdown.lower())
 
