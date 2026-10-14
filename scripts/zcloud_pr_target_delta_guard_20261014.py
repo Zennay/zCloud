@@ -97,6 +97,29 @@ def _content_without_comments(source: str) -> str:
     return "\n".join(output) + "\n"
 
 
+def executable_steps(source: str) -> list[str]:
+    """Isolate step-level checkout/run contexts, never conflate different jobs.
+
+    This intentionally does not execute YAML or GitHub expressions. Steps are
+    only grouped by literal sibling "- name", "- uses" and "- run" tokens.
+    """
+    lines = source.splitlines()
+    starts = []
+    for index, line in enumerate(lines):
+        match = re.match(r"^([ ]{6,})-\s+(?:name|uses|run):", line)
+        if match:
+            starts.append((index, len(match.group(1))))
+    blocks = []
+    for position, (start, indent) in enumerate(starts):
+        end = len(lines)
+        for other_start, other_indent in starts[position + 1:]:
+            if other_indent <= indent:
+                end = other_start
+                break
+        blocks.append("\n".join(lines[start:end]))
+    return blocks
+
+
 def risk_set(source: str) -> set[str]:
     """Return coarse, monotonic reasons (no source text or secrets exposed)."""
     if not source:
@@ -132,10 +155,14 @@ def risk_set(source: str) -> set[str]:
         risk.add("write_permission")
     if re.search(r"\bsecrets\s*\.", clean, re.I) or re.search(r"\bsecrets\s*\[", clean, re.I):
         risk.add("secret_reference")
-    if CHECKOUT.search(clean) and PR_SOURCE.search(clean):
-        risk.add("untrusted_pr_checkout")
-    if RUN_STEP.search(clean) and PR_SOURCE.search(clean):
-        risk.add("pr_source_in_run_job")
+    for step in executable_steps(clean):
+        # A trusted-base checkout and PR metadata in a different job are not
+        # evidence that any untrusted PR bytes will be executed.
+        if CHECKOUT.search(step) and PR_SOURCE.search(step):
+            risk.add("untrusted_pr_checkout")
+        command = RUN_STEP.search(step)
+        if command is not None and PR_SOURCE.search(step[command.start():]):
+            risk.add("pr_source_in_run_job")
     return risk
 
 
