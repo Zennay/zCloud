@@ -88,6 +88,10 @@ The route observer treats GitHub's standard OS/architecture self-hosted labels (
 
 The GET-only GitHub reader now admits only bounded printable ASCII token characters (`A-Z`, `a-z`, `0-9`, underscore, dot and hyphen). It rejects whitespace (including tabs), HTTP header control bytes, Unicode, malformed token shapes and oversized values **before constructing an HTTP Authorization header or attempting network access**. The exact token is neither serialized into diagnostic receipts nor printed in logs. The test matrix exercises header-injection, Unicode and long-value denial while retaining common scoped GitHub token layouts and the existing read-only path allowlist. This does **not** grant new GitHub permissions or change the production workflow token.
 
+### Nederlandse operatorroute zonder technische overclaim
+
+After allowlist, identity, timestamp and count validation, the summary prints a Dutch description of each run's branch provenance, runner pool, runner assignment and queued/active state. It then supplies **one** conditional troubleshooting checkpoint: inspect the current-main zCloud runner label/repo grant for eligible unassigned zCloud jobs, otherwise inspect the FTMO repository route for unassigned FTMO jobs, otherwise inspect workflow conditions when queued run entries have no job records. These are read-only manual review suggestions, **never** `systemctl`, cancellation, retry, or dispatch steps. Mixed/stale/malformed evidence still emits no claims or links. The explanatory priority is deterministic and tested; no runner-offline or AI-generation assertion is inferred from these counts.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
