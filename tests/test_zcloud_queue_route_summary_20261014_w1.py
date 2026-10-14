@@ -265,6 +265,19 @@ class QueueRouteSummaryTests(unittest.TestCase):
                 data[field] = val
                 self.assertEqual(self.render(data)[1], 1)
 
+    def test_oversized_run_ids_never_generate_operator_links(self):
+        for oversized in ((1 << 63), (1 << 128), (1 << 256)):
+            with self.subTest(run_id=oversized):
+                data = report([record(oversized)])
+                output, status = self.render(data)
+                self.assertEqual(status, 1)
+                self.assertIn("Geen aantallen gepubliceerd", output)
+                self.assertNotIn("https://github.com/Zennay/zCloud/actions/runs/", output)
+        max_id = (1 << 63) - 1
+        markdown, code = self.render(report([record(max_id)]))
+        self.assertEqual(code, 0)
+        self.assertIn(f"/runs/{max_id}", markdown)
+
     def test_duplicate_or_boolean_run_id_deny(self):
         for rows in ([record(), record()],
                      [record(True)], [record(0)], [record("71")]):
