@@ -31,7 +31,7 @@ def payload():
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
                      'draft': False, 'owner_approved': True,
                      'owner_review_evidence': {
-                         'complete': True, 'decision': 'approved',
+                         'complete': True, 'decision': 'approved', 'dismissed': False,
                          'author_login': 'project-author', 'reviewer_login': 'independent-reviewer',
                          'reviewed_head_sha': H,
                          'submitted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -88,6 +88,7 @@ class ReviewQueueTests(unittest.TestCase):
             (['required_checks_missing'], 'verify_required_checks'),
             (['exact_head_checks_not_green'], 'rerun_exact_head_checks'),
             (['owner_review_stale'], 'request_exact_head_reapproval'),
+            (['owner_review_dismissed'], 'request_fresh_approval'),
             (['owner_review_missing'], 'request_independent_review'),
             (['draft'], 'request_owner_completion'),
             ([], 'independent_source_review'),
@@ -129,6 +130,40 @@ class ReviewQueueTests(unittest.TestCase):
     def test_stale_base_denied(self):
         d = payload(); d['prs'][0]['base_sha'] = H
         self.assertEqual(snap(d)['review_candidates'][0]['reasons'], ['stale_base'])
+
+    def test_dismissed_review_is_not_current_approval(self):
+        d = payload()
+        d['prs'][0]['owner_review_evidence']['dismissed'] = True
+        row = snap(d)['review_candidates'][0]
+        self.assertFalse(row['review_candidate'])
+        self.assertIn('owner_review_dismissed', row['reasons'])
+        self.assertEqual(row['next_action']['code'], 'request_fresh_approval')
+        self.assertIn('goedkeuring is ingetrokken', mod.markdown(snap(d)))
+
+    def test_missing_or_ambiguous_dismissal_status_denied(self):
+        for value in (None, 0, 1, 'false', [], {}):
+            d = payload()
+            d['prs'][0]['owner_review_evidence']['dismissed'] = value
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_review_event_later_than_snapshot_rejected(self):
+        d = payload()
+        observed = datetime.fromisoformat(d['observed_at'].replace('Z', '+00:00'))
+        d['prs'][0]['owner_review_evidence']['submitted_at'] = (
+            observed + timedelta(seconds=31)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        with self.assertRaises(mod.InvalidEvidence) as caught:
+            mod.snapshot(d)
+        self.assertEqual(str(caught.exception), 'future_review_event')
+
+    def test_30_second_clock_skew_accepted_without_release_authority(self):
+        d = payload()
+        observed = datetime.fromisoformat(d['observed_at'].replace('Z', '+00:00'))
+        d['prs'][0]['owner_review_evidence']['submitted_at'] = (
+            observed + timedelta(seconds=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        report = snap(d)
+        self.assertEqual(report['review_candidate_count'], 1)
+        self.assertFalse(report['release_authorized'])
 
     def test_independent_review_must_match_exact_pr_head(self):
         d = payload()
@@ -566,6 +601,7 @@ class ReviewQueueTests(unittest.TestCase):
         d = payload()
         for age in (0, 300, -30):
             d['observed_at'] = (base - timedelta(seconds=age)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            d['prs'][0]['owner_review_evidence']['submitted_at'] = d['observed_at']
             self.assertEqual(mod.snapshot(d, now=base)['review_candidate_count'], 1)
 
     def test_time_window_rejects_stale_or_future(self):
