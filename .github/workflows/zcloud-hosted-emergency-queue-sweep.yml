@@ -2,26 +2,65 @@
 name: zCloud hosted emergency queue sweep
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-hosted-emergency-queue-sweep.yml"
+      - "scripts/zcloud_hosted_queue_sweep_policy.py"
+      - "tests/test_hosted_queue_sweep_policy.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
       - ".github/workflows/zcloud-hosted-emergency-queue-sweep.yml"
+      - "scripts/zcloud_hosted_queue_sweep_policy.py"
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
-  statuses: write
 
 concurrency:
-  group: zcloud-hosted-emergency-queue-sweep
-  cancel-in-progress: true
+  group: zcloud-hosted-emergency-queue-sweep-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate fail-closed sweep policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_hosted_queue_sweep_policy
+
   sweep:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      statuses: write
     steps:
+      - name: Check out exact sweep policy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Sweep stale self-hosted blockers and publish evidence
         shell: bash
         env:
@@ -39,6 +78,8 @@ jobs:
           import urllib.request
           from datetime import datetime, timezone
 
+          from scripts.zcloud_hosted_queue_sweep_policy import classify_run
+
           repo = os.environ["REPO"]
           token = os.environ["GH_TOKEN"]
           current_run = int(os.environ["RUN_ID"])
@@ -47,16 +88,8 @@ jobs:
               "Authorization": f"Bearer {token}",
               "Accept": "application/vnd.github+json",
               "X-GitHub-Api-Version": "2022-11-28",
-              "User-Agent": "zcloud-hosted-emergency-queue-sweep/1",
+              "User-Agent": "zcloud-hosted-emergency-queue-sweep/2",
           }
-
-          protected_fragments = (
-              "zcloud-dashboard-access-recovery",
-              "zcloud-restart-workers",
-              "push-all-workers-now",
-              "zcloud-self-hosted-queue-watchdog",
-              "zcloud-hosted-emergency-queue-sweep",
-          )
 
           def request(path, method="GET", payload=None):
               data = None if payload is None else json.dumps(payload).encode()
@@ -89,15 +122,29 @@ jobs:
                       continue
                   path = str(run.get("path") or "")
                   name = str(run.get("name") or "")
-                  haystack = (path + " " + name).lower()
-                  if any(fragment in haystack for fragment in protected_fragments):
-                      protected.append({"id": run_id, "status": status, "name": name, "path": path})
-                      continue
                   created = datetime.fromisoformat(str(run["created_at"]).replace("Z", "+00:00"))
                   age_s = int((now - created).total_seconds())
-                  if age_s < 480:
-                      retained.append({"id": run_id, "status": status, "age_s": age_s, "name": name})
+                  decision = classify_run(
+                      path=path,
+                      name=name,
+                      status=status,
+                      age_seconds=age_s,
+                  )
+                  summary = {
+                      "id": run_id,
+                      "status": status,
+                      "age_s": age_s,
+                      "name": name,
+                      "path": path,
+                      "reason": decision.reason,
+                  }
+                  if not decision.cancel:
+                      if decision.reason == "protected_mutation":
+                          protected.append(summary)
+                      else:
+                          retained.append(summary)
                       continue
+
                   jobs = (
                       request(f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100")
                       .get("jobs")
@@ -109,18 +156,19 @@ jobs:
                       and str(job.get("status") or "") in {"queued", "in_progress"}
                   ]
                   if not self_hosted:
+                      summary["reason"] = "no_active_self_hosted_job"
+                      retained.append(summary)
                       continue
-                  candidates.append({
-                      "id": run_id,
-                      "status": status,
-                      "age_s": age_s,
-                      "name": name,
-                      "path": path,
-                      "jobs": [
-                          {"id": j.get("id"), "name": j.get("name"), "status": j.get("status"), "labels": j.get("labels")}
-                          for j in self_hosted
-                      ],
-                  })
+                  summary["jobs"] = [
+                      {
+                          "id": j.get("id"),
+                          "name": j.get("name"),
+                          "status": j.get("status"),
+                          "labels": j.get("labels"),
+                      }
+                      for j in self_hosted
+                  ]
+                  candidates.append(summary)
 
           for item in candidates:
               try:
@@ -131,6 +179,7 @@ jobs:
                       raise
                   item = dict(item)
                   item["cancel_http"] = exc.code
+                  item["reason"] = "cancel_race"
                   retained.append(item)
 
           runner_probe = {"available": False}
@@ -154,16 +203,17 @@ jobs:
 
           evidence = {
               "ok": True,
+              "policy": "fail_closed_allowlist_v1",
               "cancelled_count": len(cancelled),
               "cancelled": cancelled,
-              "protected_recovery_runs": protected,
-              "retained_recent_or_nonselfhosted": retained,
+              "protected_mutation_runs": protected,
+              "retained_runs": retained,
               "runner_probe": runner_probe,
           }
           print("ZCLOUD_HOSTED_QUEUE_SWEEP=" + json.dumps(evidence, sort_keys=True))
 
           description = (
-              f"sweep green; cancelled={len(cancelled)} protected={len(protected)}"
+              f"sweep green; cancelled={len(cancelled)} protected={len(protected)} retained={len(retained)}"
           )[:140]
           payload = {
               "state": "success",
