@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "configs": {
+    "projects.json": {
+      "current_version": 1,
+      "version_source": "sidecar"
+    },
+    "project-layout.json": {
+      "current_version": 1,
+      "version_source": "sidecar"
+    },
+    "resource-policy.json": {
+      "current_version": 1,
+      "version_source": "sidecar"
+    },
+    "project-contracts.json": {
+      "current_version": 1,
+      "version_source": "embedded",
+      "version_field": "schema_version"
+    }
+  }
+}
