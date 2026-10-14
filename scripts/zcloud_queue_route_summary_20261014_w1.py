@@ -103,7 +103,7 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
                 f"**{ftmo} FTMO-onderzoek**, **{zcloud} zCloud-VPS**, "
                 f"**{no_jobs} zonder jobrecords**; "
                 f"**{unassigned} zonder runnertoewijzing**, "
-                f"**{current} op huidige main**.\\n"
+                f"**{current} op huidige main**.\n"
             )
             lines.append(
                 "- Een job zonder runnertoewijzing bewijst **niet** dat een listener defect is; "
