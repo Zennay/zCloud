@@ -137,8 +137,10 @@ jobs:
           root="/home/ubuntu/zennay-cloud"
           extension="$HOME/snap/firefox/common/chatgpt-project-extension"
           unit="$HOME/.config/systemd/user/chatgpt-firefox.service"
+          # Bounded PID/name evidence only: no process argv, user profile paths,
+          # URLs, prompts or OAuth tokens may reach Actions logs.
           echo "=== EXISTING FIREFOX PROCESSES (before; no signals will be sent) ==="
-          ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
+          ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 20 || true
           echo "=== SYSTEMD UNIT (before) ==="
           systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
           echo "=== INSTALL WITHOUT STOPPING BROWSER ==="
@@ -177,6 +179,6 @@ jobs:
           echo "BROWSER_SERVICE_SIGNAL_SKIPPED=1"
           echo "=== POST DEPLOY (existing Firefox untouched) ==="
           systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
-          ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
+          ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 20 || true
           echo "NO_FIREFOX_OR_TAB_TERMINATION_ISSUED=1"
           echo "NOTE=Violentmonkey installed userscript is activated by its regular update cycle; no unsafe live-tab reload was attempted."
