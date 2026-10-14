@@ -6,6 +6,7 @@ on:
     paths:
       - "scripts/zcloud_artifact_retention_audit.py"
       - "tests/test_zcloud_artifact_retention_audit.py"
+      - "tests/test_artifact_retention_hosted_proof_20261014.py"
       - ".github/workflows/zcloud-artifact-retention-audit.yml"
   workflow_dispatch:
 
@@ -14,7 +15,7 @@ permissions:
 
 concurrency:
   group: zcloud-artifact-retention-audit-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -39,16 +40,23 @@ jobs:
       - name: Run hosted artifact-retention regressions
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_zcloud_artifact_retention_audit
+          python3 -m unittest -v tests.test_zcloud_artifact_retention_audit tests.test_artifact_retention_hosted_proof_20261014
           python3 -m py_compile scripts/zcloud_artifact_retention_audit.py
 
-  prove:
+  audit:
+    name: Repository source-retention audit (hosted; no VPS)
     needs: validate
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, zcloud, vps]
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.repository == 'Zennay/zCloud' &&
+       github.ref == 'refs/heads/main' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay')
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check out exact candidate revision
@@ -59,21 +67,20 @@ jobs:
           clean: true
           fetch-depth: 1
 
-      - name: Prove exact permanent zCloud runner
+      - name: Confirm immutable source audit without VPS authority
         shell: bash
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          test "$(id -un)" = "ubuntu"
-          test "$(hostname)" = "vps-bb300bba"
-          python3 scripts/zcloud_vps_runner_guard.py --json
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$RUNNER_OS" = "Linux"
 
-      - name: Re-run focused regressions on permanent VPS
+      - name: Re-run focused regressions on GitHub-hosted CI
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_zcloud_artifact_retention_audit
+          python3 -m unittest -v tests.test_zcloud_artifact_retention_audit tests.test_artifact_retention_hosted_proof_20261014
           python3 -m py_compile scripts/zcloud_artifact_retention_audit.py
 
       - name: Audit repository artifact retention read only
