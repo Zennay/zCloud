@@ -83,7 +83,10 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", self.text)
         job = self.job(self.text, "inspect")
         probe = job.split("- name: Read-only bounded worker service inventory", 1)[1]
-        self.assertIn("ps -eo pid=,ppid=,comm=", probe)
+        self.assertIn("python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py", probe)
+        self.assertNotIn("ps -eo", probe)
+        self.assertNotIn("systemctl --user list-units", probe)
+        self.assertNotIn("PRIVATE", probe)
         self.assertNotIn("ps -eo pid=,ppid=,comm=,args=", probe)
         for forbidden in (
             "sudo ", "systemctl restart", "systemctl stop", "systemctl disable",
@@ -101,11 +104,12 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
 
     def test_bounded_diagnostics(self):
         job = self.job(self.text, "inspect")
-        for cap in ("head -n 5", "head -n 65", "head -n 25"):
-            self.assertIn(cap, job)
-        self.assertIn("LIVE_EXTENSION_BACKGROUND_FILE_COUNT=", job)
+        self.assertIn("scripts/zcloud_v2_legacy_service_inventory_20261014.py", job)
+        self.assertNotIn("ps -eo", job)
+        self.assertNotIn("head -n", job)
         self.assertNotIn("LIVE_EXTENSION_BACKGROUND_FILES=", job)
         self.assertIn("NO_PROCESS_OR_TAB_MUTATION=1", job)
+
 
 
     def test_manual_probe_denies_moved_main_before_any_live_read(self):
@@ -193,7 +197,7 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, gate)
         self.assertLess(observation.index("git ls-remote"),
-                        observation.index("ps -eo pid=,ppid=,comm="))
+                        observation.index("python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py"))
         self.assertNotIn("systemctl ", gate)
 
     def test_hosted_pr_validates_exact_head_not_synthetic_merge_sha(self):

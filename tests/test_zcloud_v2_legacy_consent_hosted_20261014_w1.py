@@ -36,11 +36,14 @@ class LegacyConsentHostedCIContract(unittest.TestCase):
     def test_self_test_and_focused_manual_admission_regressions_run(self):
         self.assertIn("python3 -m unittest -v "
                       "tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1 "
-                      "tests.test_zcloud_v2_legacy_consent_hosted_20261014_w1", self.text)
+                      "tests.test_zcloud_v2_legacy_consent_hosted_20261014_w1 "
+                      "tests.test_zcloud_v2_legacy_service_inventory_20261014", self.text)
         for path in (".github/workflows/zcloud-v2-legacy-service-audit.yml",
                      ".github/workflows/zcloud-v2-legacy-consent-hosted-20261014-w1.yml",
                      "tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py",
-                     "tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py"):
+                     "tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py",
+                     "scripts/zcloud_v2_legacy_service_inventory_20261014.py",
+                     "tests/test_zcloud_v2_legacy_service_inventory_20261014.py"):
             self.assertEqual(self.text.count("- " + path), 2)
         self.assertIn("python3 -m unittest discover -v", self.text)
 

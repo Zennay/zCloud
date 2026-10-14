@@ -8,6 +8,8 @@ on:
     paths:
       - .github/workflows/zcloud-v2-legacy-service-audit.yml
       - tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py
+      - scripts/zcloud_v2_legacy_service_inventory_20261014.py
+      - tests/test_zcloud_v2_legacy_service_inventory_20261014.py
   workflow_dispatch:
     inputs:
       confirm_sha:
@@ -46,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          python3 -m unittest -v tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1
+          python3 -m unittest -v tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1 tests.test_zcloud_v2_legacy_service_inventory_20261014
 
   inspect:
     name: Explicit trusted-main VPS legacy worker service inventory
@@ -113,31 +115,7 @@ jobs:
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
           test "$current_main" = "$CONFIRMED_SHA"
-          echo '=== FIREFOX PROCESS IDENTITIES (no arguments) ==='
-          ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 5 || true
-          echo '=== USER SERVICE NAMES ==='
-          systemctl --user list-units --all --no-pager --plain |
-            grep -Ei 'zcloud|chatgpt|firefox|worker|watchdog|self-heal' | head -n 65 || true
-          echo '=== SYSTEM SERVICE NAMES ==='
-          systemctl list-units --all --no-pager --plain |
-            grep -Ei 'zcloud|zennay-cloud|chatgpt|firefox|worker|watchdog|self-heal' | head -n 65 || true
-          echo '=== USER TIMERS ==='
-          systemctl --user list-timers --all --no-pager |
-            grep -Ei 'zcloud|chatgpt|firefox|worker|watchdog' | head -n 25 || true
-          echo '=== NON-SECRET SOURCE VERSION EVIDENCE ==='
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
-          p = Path('/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js')
-          if p.is_file():
-              for line in p.read_text(encoding='utf-8',errors='replace').splitlines()[:8]:
-                  if line.startswith('// @version'):
-                      print('LIVE_VM_SCRIPT_SOURCE_VERSION=' + line[:100].strip())
-          e = Path('/home/ubuntu/snap/firefox/common/chatgpt-project-extension/manifest.json')
-          if e.is_file():
-              manifest = json.loads(e.read_text(encoding='utf-8'))
-              scripts = manifest.get('background',{}).get('scripts',[])
-              if isinstance(scripts,list):
-                  print('LIVE_EXTENSION_BACKGROUND_FILE_COUNT=' + str(min(len(scripts),1000)))
-          PY
-          echo 'NO_PROCESS_OR_TAB_MUTATION=1'
+          # Private process IDs, unit descriptions, user paths and browser
+          # metadata must never be printed to public Actions output.
+          # This module emits a bounded allowlisted JSON summary only.
+          python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py

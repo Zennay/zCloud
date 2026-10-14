@@ -10,6 +10,8 @@ on:
       - .github/workflows/zcloud-v2-legacy-consent-hosted-20261014-w1.yml
       - tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py
       - tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py
+      - scripts/zcloud_v2_legacy_service_inventory_20261014.py
+      - tests/test_zcloud_v2_legacy_service_inventory_20261014.py
   pull_request:
     branches: [main]
     paths:
@@ -17,6 +19,8 @@ on:
       - .github/workflows/zcloud-v2-legacy-consent-hosted-20261014-w1.yml
       - tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py
       - tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py
+      - scripts/zcloud_v2_legacy_service_inventory_20261014.py
+      - tests/test_zcloud_v2_legacy_service_inventory_20261014.py
 
 permissions:
   contents: read
@@ -51,7 +55,8 @@ jobs:
           test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           python3 -m py_compile tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py
-          python3 -m unittest -v tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1 tests.test_zcloud_v2_legacy_consent_hosted_20261014_w1
+          python3 -m unittest -v tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1 tests.test_zcloud_v2_legacy_consent_hosted_20261014_w1 tests.test_zcloud_v2_legacy_service_inventory_20261014
+          python3 -m py_compile scripts/zcloud_v2_legacy_service_inventory_20261014.py
           echo "ZCLOUD_V2_LEGACY_CONSENT_SOURCE_VERIFIED=1"
 
   hosted-full-regression:
