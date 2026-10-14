@@ -148,6 +148,78 @@ def _exception_category(exc):
     return "transport_failure"
 
 
+def _cache_status_signal(value):
+    """Conservative RFC 9211 hit classifier; never print intermediary data.
+
+    Cache-Status is an RFC 8941 structured list. Split only *outside* quoted
+    strings so detail="foo; hit" is not falsely interpreted as a hit.
+    Ambiguous or malformed hit/fwd parameters must never yield healthy.
+    """
+    if (not isinstance(value, str) or not 1 <= len(value) <= 512 or
+            not value.isascii() or
+            any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+        return "invalid_headers"
+    groups = []
+    parts = []
+    field = []
+    quoted = False
+    escaped = False
+    for ch in value:
+        if escaped:
+            escaped = False
+            field.append(ch)
+        elif quoted and ch == "\\\\":
+            escaped = True
+            field.append(ch)
+        elif ch == '"':
+            quoted = not quoted
+            field.append(ch)
+        elif not quoted and ch in ";,":
+            token = "".join(field).strip()
+            if not token:
+                return "invalid_headers"
+            parts.append(token)
+            field = []
+            if ch == ",":
+                groups.append(parts)
+                parts = []
+        else:
+            field.append(ch)
+    if quoted or escaped or not "".join(field).strip():
+        return "invalid_headers"
+    parts.append("".join(field).strip())
+    groups.append(parts)
+    hit_detected = False
+    for group in groups:
+        # A cache identifier is mandatory. Unquoted commas/semicolons
+        # inside identifiers have already been split as separators.
+        if not group[0]:
+            return "invalid_headers"
+        cache_hit = None
+        has_fwd = False
+        for param in group[1:]:
+            key, separator, raw_value = param.partition("=")
+            key = key.strip().lower()
+            if key == "hit":
+                if cache_hit is not None:
+                    return "invalid_headers"
+                if not separator or raw_value.strip() == "?1":
+                    cache_hit = True
+                elif raw_value.strip() == "?0":
+                    cache_hit = False
+                else:
+                    return "invalid_headers"
+            elif key == "fwd":
+                if has_fwd or not separator or not raw_value.strip():
+                    return "invalid_headers"
+                has_fwd = True
+        # The two RFC 9211 mechanisms are mutually exclusive.
+        if cache_hit is True and has_fwd:
+            return "invalid_headers"
+        hit_detected |= cache_hit is True
+    return "cache_evidence" if hit_detected else None
+
+
 def probe_once(opener=None):
     """Single non-mutating GET. The injectable opener is for offline fixtures."""
     if opener is None:
@@ -189,25 +261,14 @@ def probe_once(opener=None):
                     return "invalid_headers"
                 if int(age_header) > 0:
                     return "cache_evidence"
-            # RFC 9211 Cache-Status exposes intermediary cache hits even if
-            # an Age field is absent or zero. Only admit bounded ASCII header
-            # metadata, never log it, and fail closed on an explicit 'hit'
-            # parameter. This is just replay evidence, not origin proof.
+            # HTTP Cache-Status is a structured list. Recognize both bare
+            # hit and explicit hit=?1, not quoted detail or hit=?0. Any
+            # contradictory/ambiguous status must fail closed before body IO.
             cache_status = headers.get("Cache-Status")
             if cache_status is not None:
-                if (not isinstance(cache_status, str) or
-                        not 1 <= len(cache_status) <= 512 or
-                        not cache_status.isascii() or
-                        any(ord(char) < 32 or ord(char) == 127
-                            for char in cache_status)):
-                    return "invalid_headers"
-                cache_parts = [
-                    part.strip().lower()
-                    for item in cache_status.split(",")
-                    for part in item.split(";")
-                ]
-                if "hit" in cache_parts:
-                    return "cache_evidence"
+                signal = _cache_status_signal(cache_status)
+                if signal is not None:
+                    return signal
             # A conflicting or exotic charset cannot safely describe the
             # UTF-8 JSON bytes we parse. Reject duplicate/malformed params,
             # controls and opaque non-ASCII metadata instead of ignoring them.
