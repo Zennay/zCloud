@@ -342,6 +342,23 @@ jobs:
                 with self.assertRaisesRegex(RuntimeError, "symlink or non-tree"):
                     audit.scan_git_ref(root, sha, max_minutes=30)
 
+    def test_strict_mode_rejects_changes_between_legacy_debt_types(self):
+        path = ".github/workflows/legacy.yml"
+        missing = audit.TimeoutFinding(path, "legacy", None, "missing")
+        dynamic = audit.TimeoutFinding(path, "legacy", None, "dynamic_or_invalid")
+        invalid_zero = audit.TimeoutFinding(path, "legacy", 0, "invalid")
+        invalid_negative = audit.TimeoutFinding(path, "legacy", -1, "invalid")
+        fixed = audit.TimeoutFinding(path, "legacy", 15, "bounded")
+
+        self.assertEqual([dynamic], audit.new_debt([missing], [dynamic], deny_worsening=True))
+        self.assertEqual([missing], audit.new_debt([dynamic], [missing], deny_worsening=True))
+        self.assertEqual([invalid_negative], audit.new_debt(
+            [invalid_zero], [invalid_negative], deny_worsening=True
+        ))
+        self.assertEqual([], audit.new_debt([missing], [missing], deny_worsening=True))
+        self.assertEqual([], audit.new_debt([invalid_zero], [fixed], deny_worsening=True))
+        self.assertEqual([], audit.new_debt([missing], [dynamic]))
+
     def test_legacy_unknown_runner_timeout_cannot_increase_or_disappear(self):
         path = ".github/workflows/private.yml"
         for status in ("dynamic_runner_unknown", "runner_target_unknown"):
