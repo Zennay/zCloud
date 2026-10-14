@@ -21,6 +21,19 @@ Example (informational only):
 
 **Never** treat NOOP, REVIEW_ONLY, inventory_complete=true or CLI exit zero as cancellation, restart or deployment permission. candidate_duplicate_groups are human-review hints. cancel_run_ids is always empty and mutation_authorized=false.
 
+## GET-only snapshot collector (second deliverable)
+
+- scripts/zcloud_watchdog_queue_collector_20261014_w1.py
+- tests/test_zcloud_watchdog_queue_collector_20261014_w1.py
+
+The separate collector reads the **canonical main SHA before and after**, fetches every available queued run page and every selected run's job pages (all requests strictly HTTP GET to api.github.com), verifies total counts and exact next-page links, and repeats the first queue page to detect mid-read changes. Unknown/oversized totals, external links, duplicate JSON keys, moved main, missing jobs, race or timeout are denied with a fixed privacy-safe reason. It has a 115-second global wall-clock and maximum 640-request budget. Proxy inheritance, HTTP redirects and dynamic destination hosts are disallowed. Tokens are never printed.
+
+Run manually for observation only on a trusted shell with an appropriately scoped read-only token in the environment:
+
+    GITHUB_TOKEN=<read-only-token> python3 scripts/zcloud_watchdog_queue_collector_20261014_w1.py
+
+Do not place a real token in documentation, issue comments or command history. A complete GET snapshot still has no separately authenticated same-intent key and **cannot authorize cancellation**, even if identical queued runs are reported. CI only runs offline fakes and a fake HTTP opener, not real privileged API calls.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
