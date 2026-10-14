@@ -54,7 +54,7 @@ class MobileConsoleHostedCITrustTests(unittest.TestCase):
         self.assertIn('test "$EXPECTED_REPO" = "Zennay/zCloud"', self.text)
         self.assertLess(self.text.index('test "$(git rev-parse HEAD)"'), self.text.index("Check dashboard JavaScript and worker diagnostics behavior"))
         # No repository-controlled tests execute before exact source verification.
-        window = self.text[self.text.index("Checkout exact immutable source"):self.text.index("Parse dashboard source")]
+        window = self.text[self.text.index("Checkout exact immutable source"):self.text.index("Check dashboard JavaScript and worker diagnostics behavior")]
         self.assertNotRegex(window, r"(?m)^\s*run: (?:node|python|bash)")
 
     def test_real_worker_debug_and_enhancement_js_are_executed(self):
