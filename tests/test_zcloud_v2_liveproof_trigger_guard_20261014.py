@@ -12,13 +12,15 @@ SOURCE = (Path(__file__).resolve().parents[1] /
 
 
 def manual_eligible(event, repository, ref, actor, triggering_actor,
-                    submitted_sha, confirmed_sha, remote_main_sha):
+                    submitted_sha, confirmed_sha, remote_main_sha, run_attempt=1):
     return (
         event == "workflow_dispatch"
         and repository == "Zennay/zCloud"
         and ref == "refs/heads/main"
         and actor == "Zennay"
         and triggering_actor == "Zennay"
+        and type(run_attempt) is int
+        and run_attempt == 1
         and type(submitted_sha) is str
         and len(submitted_sha) == 40
         and all(char in "0123456789abcdef" for char in submitted_sha)
@@ -59,6 +61,7 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
             "github.ref == 'refs/heads/main'",
             "github.actor == 'Zennay'",
             "github.triggering_actor == 'Zennay'",
+            "github.run_attempt == 1",
         ):
             self.assertIn(marker, self.gate)
         self.assertNotIn("||", self.gate)
@@ -71,12 +74,34 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
         for marker in (
             'test "$GITHUB_ACTOR" = "Zennay"',
             'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
             'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
             'test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
             "timeout 15 git ls-remote --exit-code origin refs/heads/main",
             "scripts/zcloud_vps_runner_guard.py --json",
         ):
             self.assertIn(marker, before)
+
+    def test_replay_attempt_is_rejected_without_vps_access(self):
+        for attempt in (0, 2, 3, -1, "1", True, 1.0, None):
+            with self.subTest(attempt=attempt):
+                self.assertFalse(manual_eligible(*self.good, run_attempt=attempt))
+
+    def test_main_rechecked_directly_before_live_observation(self):
+        observation = self.live.split(
+            "- name: Check live worker heartbeats on read-only SQLite and localhost", 1
+        )[1]
+        proof = observation.split("python3 scripts/zcloud_v2_live_proof_freshness_20261013_w1.py", 1)
+        self.assertEqual(len(proof), 2)
+        for marker in (
+            'test "$GITHUB_EVENT_NAME" = "workflow_dispatch"',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
+            'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+            'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+            "timeout 15 git ls-remote --exit-code origin refs/heads/main",
+        ):
+            self.assertIn(marker, proof[0])
+        self.assertIn("timeout 15 git ls-remote --exit-code origin refs/heads/main", proof[1])
 
     def test_trusted_fresh_owner_manual_is_eligible(self):
         self.assertTrue(manual_eligible(*self.good))
