@@ -163,7 +163,7 @@ def project_runner_prompt(project_id, name):
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
         'Controleer actuele main, open issues/PRs, branch-eigenaars en CI; kies het belangrijkste bestaande onvoltooide werk in de ACTUELE fase. '
-        'In de ontwikkelfase: rond open PRs af vóór nieuwe branches, herstel conflicten, integreer op actuele main en merge zelfstandig na groene toepasselijke exact-head CI en branchveiligheidschecks. Vraag geen extra menselijke review als GitHub-branchregels die niet vereisen; maak draft-PRs eerst reviewklaar. Na uitrol gelden de strengere release- en reviewregels; een merge geeft nooit toestemming voor live deploy, security-tests of risicovol research-/brokerwerk. '
+        'Ontwikkelfase: rond open PRs eerst af; merge zelfstandig op actuele main na groene exact-head CI en branchchecks. Geen extra review tenzij GitHub die verplicht; maak drafts eerst reviewklaar. Na uitrol gelden release-gates; merge is geen live deploy of toestemming voor security-, broker- of researchacties. '
         'Bouw zichtbare functionaliteit en los echte bugs op; geen eindeloze QA-rondes, synthetische testmatrixen, checklists of toekomstfase-drafts zonder concrete productblokkade. '
         'Test gericht wat je wijzigt en voer de relevante bestaande suite uit; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
