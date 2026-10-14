@@ -1,0 +1,103 @@
+name: zCloud hosted read-only queue watchdog evidence
+
+# Explicit operator-only observation. Never auto-trigger on PR, push,
+# workflow_run, schedule or failed production status.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    concurrency:
+      group: zcloud-hosted-queue-observation
+      cancel-in-progress: false
+    steps:
+      - name: Check out immutable manually selected main revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Observe bounded queue without writes
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # Read-only canonical SHA, not a potentially synthetic workflow ref.
+          main_before="$(timeout 12s gh api --method GET repos/Zennay/zCloud/branches/main --jq '.commit.sha')"
+          test "$main_before" = "$GITHUB_SHA"
+
+          report="$RUNNER_TEMP/zcloud-queue-readonly.json"
+          # A REVIEW_ONLY or DENY exit is expected: collect without aborting
+          # before the post-observation main SHA check and safe summary.
+          set +e
+          timeout --signal=TERM --kill-after=5s 125s \
+            python3 scripts/zcloud_watchdog_queue_collector_20261014_w1.py > "$report"
+          read_rc=$?
+          set -e
+
+          main_after="$(timeout 12s gh api --method GET repos/Zennay/zCloud/branches/main --jq '.commit.sha')"
+          if [[ "$main_after" != "$GITHUB_SHA" ]]; then
+            echo "Queue observer denied: canonical main moved during scan." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          REPORT="$report" READ_RC="$read_rc" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          # Summary never includes raw endpoint payloads, tokens, prompts,
+          # owner names, or untrusted API error text.
+          try:
+              raw = Path(os.environ["REPORT"]).read_bytes()
+              if not 0 < len(raw) < 32768:
+                  raise ValueError("report_size")
+              report = json.loads(raw)
+              if not isinstance(report, dict):
+                  raise ValueError("report_type")
+              decision = report.get("decision")
+              if decision not in {"NOOP", "REVIEW_ONLY", "DENY"}:
+                  raise ValueError("decision")
+              if report.get("mutation_authorized") is not False:
+                  raise ValueError("authorization")
+              if report.get("production_verified") is not False:
+                  raise ValueError("production")
+              if report.get("cancel_run_ids") != []:
+                  raise ValueError("cancellation")
+              if report.get("inventory_complete") is not False:
+                  raise ValueError("unverified_inventory")
+              exit_status = int(os.environ["READ_RC"])
+              if exit_status != (0 if decision == "NOOP" else 1):
+                  raise ValueError("inconsistent_exit")
+          except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+              decision = "DENY"
+              exit_status = 1
+
+          summary = (
+              "### zCloud queue — observation only\n"
+              f"- Queue classification: **{decision}**\n"
+              "- Cancellation, restart, worker push: **NOT AUTHORIZED**\n"
+              "- Production and real worker generation: **NOT VERIFIED**\n"
+              "- Queue provenance: GET-only source observation, not same-intent proof\n"
+          )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+              stream.write(summary)
+          if exit_status != 0:
+              raise SystemExit(1)
+          PY
