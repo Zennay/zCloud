@@ -192,13 +192,27 @@ def collect(api_get, *, clock=None, monotonic_clock=None):
                       max_count=_MAX_JOBS_PER_RUN, query={"per_page": "100"})
         if not jobs or any(type(job) is not dict for job in jobs):
             raise InventoryError("run_without_valid_job_evidence")
-        # GitHub job objects carry their parent run_id. Reject a partial,
-        # missing or cross-run mix before it can influence human triage.
-        if any(
-            not _integer(job.get("run_id")) or job["run_id"] != run["id"]
-            for job in jobs
+        # Bind the job to the *same attempt* and source revision as the run.
+        # Matching run IDs alone are insufficient for a retried workflow.
+        attempt = run.get("run_attempt")
+        if (
+            not _integer(attempt) or not _integer(run.get("workflow_id"))
+            or type(run.get("head_sha")) is not str
+            or not _SHA.fullmatch(run["head_sha"])
+            or type(run.get("head_branch")) is not str
+            or not run["head_branch"]
         ):
-            raise InventoryError("cross_run_job_evidence")
+            raise InventoryError("invalid_run_provenance")
+        for job in jobs:
+            if (
+                not _integer(job.get("run_id"))
+                or job["run_id"] != run["id"]
+                or not _integer(job.get("run_attempt"))
+                or job["run_attempt"] != attempt
+                or job.get("head_sha") != run["head_sha"]
+                or job.get("head_branch") != run["head_branch"]
+            ):
+                raise InventoryError("cross_run_job_evidence")
         mapped.append({
             "id": run["id"], "repository": (run.get("head_repository") or {}).get("full_name"),
             "head_sha": run.get("head_sha"), "head_branch": run.get("head_branch"),
