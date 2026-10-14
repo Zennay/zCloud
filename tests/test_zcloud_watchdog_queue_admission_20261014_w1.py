@@ -39,7 +39,8 @@ class TestWatchdogQueueAdmission(unittest.TestCase):
     def test_empty_complete_queue_is_noop(self):
         result = self.classify(fixture())
         self.assertEqual(result["decision"], "NOOP")
-        self.assertTrue(result["inventory_complete"])
+        self.assertFalse(result["inventory_complete"])
+        self.assertTrue(result["submitted_pagination_consistent"])
         self.assertFalse(result["mutation_authorized"])
 
     def test_same_workflow_duplicate_is_review_only_not_cancel(self):
