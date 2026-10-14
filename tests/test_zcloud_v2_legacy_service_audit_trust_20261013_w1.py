@@ -204,6 +204,18 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
                         observation.index("python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py"))
         self.assertNotIn("systemctl ", gate)
 
+    def test_privileged_vps_steps_pin_python_not_runner_path(self):
+        inspect = self.job(self.text, "inspect")
+        self.assertIn(
+            "/usr/bin/python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null 2>&1",
+            inspect,
+        )
+        self.assertIn(
+            "/usr/bin/python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py",
+            inspect,
+        )
+        self.assertNotIn("\\n          python3 scripts/", inspect)
+
     def test_canonical_runner_identity_checked_again_at_time_of_observation(self):
         vps = self.job(self.text, "inspect")
         for required in (
