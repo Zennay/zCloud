@@ -162,13 +162,13 @@ def project_runner_prompt(project_id, name):
     return (
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
-        'Controleer actuele main, open issues/PRs, branch-eigenaars en CI; kies het belangrijkste bestaande onvoltooide werk in de ACTUELE fase. '
-        'Rond open PRs af vóór nieuwe branches: herstel conflicten, integreer op actuele main en merge zelfstandig na groene exact-head CI, vereiste review en toepasselijke veiligheidschecks. '
-        'Bouw zichtbare functionaliteit en los echte bugs op; geen eindeloze QA-rondes, synthetische testmatrixen, checklists of toekomstfase-drafts zonder concrete productblokkade. '
-        'Test gericht wat je wijzigt en voer de relevante bestaande suite uit; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
+        'Check actuele main, open issues/PRs, branch-eigenaars en CI; kies urgent open werk in de ACTUELE fase. '
+        'Rond open PRs af vóór nieuwe branches in de ontwikkelfase; integreer op actuele main en merge zelfstandig na groene exact-head CI en branchchecks. Geen extra review tenzij GitHub die verplicht; maak drafts eerst reviewklaar. Na uitrol gelden release-gates; merge is geen live deploy of toestemming voor security-, broker- of researchacties. '
+        'Bouw echte functionaliteit en fix bugs; geen eindeloze QA-rondes of toekomstfase-drafts zonder productblokkade. '
+        'Test wijzigingen gericht; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
         'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
-        'Ontbrekende externe data of toestemming blokkeren geen onafhankelijke functies in de actuele fase. Als iets wacht op CI, VPS of review, pak direct ander veilig uitvoerbaar werk. '
+        'Ontbrekende data/toestemming blokkeren ander veilig fasewerk niet. Als iets wacht op CI, VPS of review, pak direct ander veilig uitvoerbaar werk. '
         'Kies steeds een vrij onderdeel, respecteer parallel eigenaarschap en ga door tot de runlimiet of echte afronding. '
         'Sluit issues pas na aantoonbaar resultaat; rapporteer kort gebouwd, getest, gemerged, live en resterende echte blokkades.'
     )
