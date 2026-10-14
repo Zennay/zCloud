@@ -27,7 +27,9 @@ class AutonomyManualMainAdmissionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
-        cls.gate = cls.text.split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+        cls.hosted = cls.text.split("  validate-source:\n", 1)[1].split("  verify:\n", 1)[0]
+        cls.verify = cls.text.split("  verify:\n", 1)[1]
+        cls.gate = cls.verify.split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
         cls.guard = cls.text.split("- name: Verify exact candidate and permanent runner", 1)[1].split(
             "- name: Record live memory admission", 1
         )[0]
@@ -44,8 +46,27 @@ class AutonomyManualMainAdmissionTests(unittest.TestCase):
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, self.gate)
+        self.assertNotIn("github.event_name == 'pull_request'", self.gate)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",
-                      self.gate)
+                      self.hosted)
+
+    def test_pull_requests_have_hosted_only_source_validation(self):
+        self.assertIn("runs-on: ubuntu-latest", self.hosted)
+        self.assertNotIn("runs-on: [self-hosted", self.hosted)
+        self.assertIn("github.event_name == 'pull_request'", self.hosted)
+        self.assertIn("github.actor == 'Zennay'", self.hosted)
+        self.assertIn("github.triggering_actor == 'Zennay'", self.hosted)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", self.hosted)
+        self.assertIn("persist-credentials: false", self.hosted)
+        self.assertIn("tests.test_autonomy_memory_manual_admission_20261014", self.hosted)
+
+    def test_live_self_hosted_job_requires_manual_owner_and_main(self):
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", self.verify)
+        self.assertIn("github.event_name == 'workflow_dispatch'", self.gate)
+        self.assertNotIn("||", self.gate)
+        self.assertNotIn("github.event_name == 'pull_request'", self.verify)
+        self.assertIn("EXPECTED_ZCLOUD_SHA: ${{ github.sha }}", self.verify)
+        self.assertIn("git ls-remote --exit-code origin refs/heads/main", self.verify)
 
     def test_manual_runtime_rejects_stale_sha_before_memory_read(self):
         for clause in (
