@@ -278,6 +278,29 @@ jobs:
         src += "x-ignore: &docs\n  note: safe\n"
         self.assertEqual(gate.risk_set(src), set())
 
+
+    def test_existing_write_all_cannot_hide_second_job_write_all(self):
+        original = SAFE.replace("permissions:\n  contents: read", "permissions: write-all")
+        candidate = original.replace(
+            "    runs-on:", "    permissions: write-all\n    runs-on:"
+        )
+        self.assertEqual(gate.risk_counts(original)["write_all"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["write_all"], 2)
+        self.assertIn("write_all", gate.increasing_risks(original, candidate))
+
+    def test_quoted_and_folded_write_all_counts_still_monotonic(self):
+        previous = SAFE.replace("permissions:\n  contents: read", "permissions: 'write-all'")
+        candidate = previous.replace(
+            "    runs-on:", "    permissions: >-\n      write-all\n    runs-on:"
+        )
+        self.assertEqual(gate.risk_counts(previous)["write_all"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["write_all"], 2)
+        self.assertIn("write_all", gate.increasing_risks(previous, candidate))
+
+    def test_repeat_write_all_rewriting_comments_not_added_authority(self):
+        previous = SAFE.replace("permissions:\n  contents: read", "permissions: write-all")
+        self.assertNotIn("write_all", gate.increasing_risks(previous, previous + "# write-all\n"))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
