@@ -1,0 +1,127 @@
+name: zCloud worker attention projection proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_worker_attention_projection.py"
+      - "tests/test_zcloud_worker_attention_projection.py"
+      - ".github/workflows/zcloud-worker-attention-projection.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-attention-projection-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused worker attention regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_worker_attention_projection
+          python3 -m py_compile scripts/zcloud_worker_attention_projection.py
+
+      - name: Prove bounded worker attention projection read only
+        shell: bash
+        run: |
+          set -euo pipefail
+          now="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+          snapshot="$RUNNER_TEMP/zcloud-worker-attention-input.json"
+          report="$RUNNER_TEMP/zcloud-worker-attention-projection.json"
+          NOW="$now" SNAPSHOT="$snapshot" python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+
+          now = dt.datetime.fromisoformat(os.environ["NOW"])
+          base = now - dt.timedelta(minutes=40)
+
+          def cycle(worker, cycle_id, start_min, end_min, category, delegable, outputs):
+              return {
+                  "worker_id": worker,
+                  "cycle_id": cycle_id,
+                  "started_at": (base + dt.timedelta(minutes=start_min)).isoformat(),
+                  "ended_at": (base + dt.timedelta(minutes=end_min)).isoformat(),
+                  "category": category,
+                  "vps_delegable": delegable,
+                  "material_outputs": outputs,
+              }
+
+          payload = {
+              "schema_version": 1,
+              "captured_at": now.isoformat(),
+              "cycles": [
+                  cycle("cloud:w1", "build", 0, 15, "feature_code", False, ["commit", "code_change"]),
+                  cycle("cloud:w1", "validate", 15, 25, "validation", True, ["deploy_success"]),
+                  cycle("cloud:w1", "poll", 25, 30, "polling_waiting", True, []),
+                  cycle("cloud:w2", "repair", 30, 40, "bugfix", False, ["blocker_removed", "code_change"]),
+              ],
+          }
+          Path(os.environ["SNAPSHOT"]).write_text(
+              json.dumps(payload, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+          python3 scripts/zcloud_worker_attention_projection.py             "$snapshot"             --require-cycles | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "zcloud-worker-attention-projection-v1"
+          assert payload["cycle_count"] == 4
+          assert payload["worker_count"] == 2
+          assert payload["mutation_performed"] is False
+          assert payload["useful_attention_ratio"] > 0
+          assert payload["validation_attention_percentage"] > 0
+          assert payload["vps_delegable_attention_percentage"] > 0
+          assert any(
+              cycle["routing_advice"] == "delegate_and_continue"
+              for cycle in payload["cycles"]
+          )
+          print(
+              "ZCLOUD_WORKER_ATTENTION_PROJECTION_GREEN="
+              f"cycles:{payload['cycle_count']}:workers:{payload['worker_count']}:"
+              f"useful:{payload['useful_attention_ratio']}:"
+              f"delegable:{payload['vps_delegable_attention_percentage']}"
+          )
+          PY
+
+      - name: Upload bounded worker attention evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-worker-attention-projection-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-worker-attention-projection.json
+          if-no-files-found: error
+          retention-days: 14
