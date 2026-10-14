@@ -224,10 +224,16 @@ def evaluate(root, base, head):
         # An already-running old VPS job can be cancelled even if new runner
         # definitions are hosted-only. Check both old and current snapshots.
         collision = False
-        if not now and not prior_vps and now_cancels and static_concurrency_groups(after):
-            if exposure_index is None:
-                exposure_index = build_vps_group_index(root, base, head)
-            collision = literal_group_collision(path, after, exposure_index)
+        if not now and not prior_vps and now_cancels:
+            groups = static_concurrency_groups(after)
+            if not groups:
+                # Dynamic/unknown group identity cannot prove isolation from
+                # an independent, possibly running VPS workflow.
+                collision = True
+            else:
+                if exposure_index is None:
+                    exposure_index = build_vps_group_index(root, base, head)
+                collision = literal_group_collision(path, after, exposure_index)
         if now or (prior_vps and now_cancels) or collision:
             result.append(path)
     return result
