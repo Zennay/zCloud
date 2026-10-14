@@ -39,6 +39,10 @@ def failures(source: str) -> list[str]:
     for condition in CONDITIONS:
         if condition not in guard:
             issues.append("event:" + condition)
+    # Both push and manual admission have independent main-ref checks.
+    main_condition = "github.ref == 'refs/heads/main'"
+    if guard.count(main_condition) != 2 and "event:" + main_condition not in issues:
+        issues.append("event:" + main_condition)
     if re.findall(r"(?m)^  ([a-z][a-z-]*):\s*$", jobs) != ["critical-runner-flows"]:
         issues.append("single_hosted_job")
     if "runs-on: ubuntu-latest" not in jobs:
