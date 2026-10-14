@@ -177,6 +177,78 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
         with self.assertRaisesRegex(collection.InventoryError, "invalid_run_identity"):
             collection.collect(fetch, clock=NOW)
 
+
+    def test_candidate_job_started_after_first_read_denied(self):
+        """A stable run ID is insufficient once an actual job has started."""
+        get, _ = api_snapshot(run(1), run(2))
+        observations = {1: 0, 2: 0}
+        def changing(path):
+            if "/jobs?" in path:
+                ident = int(path.split("/runs/")[1].split("/")[0])
+                observations[ident] += 1
+                record = job(ident + 1000)
+                if ident == 2 and observations[ident] == 2:
+                    record["status"] = "in_progress"
+                return {"total_count": 1, "jobs": [record]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "candidate_job_changed"):
+            collection.collect(changing, clock=NOW)
+        self.assertEqual(observations, {1: 2, 2: 2})
+
+    def test_candidate_runner_assignment_change_denied(self):
+        get, _ = api_snapshot(run(1), run(2))
+        observations = {1: 0, 2: 0}
+        def changing(path):
+            if "/jobs?" in path:
+                ident = int(path.split("/runs/")[1].split("/")[0])
+                observations[ident] += 1
+                record = job(ident + 1000)
+                if ident == 1 and observations[ident] == 2:
+                    record["runner_id"] = 404
+                return {"total_count": 1, "jobs": [record]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "candidate_job_changed"):
+            collection.collect(changing, clock=NOW)
+
+    def test_nonmatching_workflows_do_not_consume_candidate_recheck_budget(self):
+        first = run(1)
+        second = run(2)
+        second["workflow_id"] = 99
+        get, calls = api_snapshot(first, second)
+        result = collection.collect(get, clock=NOW)
+        self.assertEqual(len(result["run_pages"][0]["runs"]), 2)
+        self.assertEqual(sum("/jobs?" in path for path in calls), 2)
+
+    def test_candidate_signature_requires_valid_labels_and_ids(self):
+        for bad in ({"id": True, "labels": []}, {"id": 1, "labels": [True]},
+                    {"id": 0, "labels": ["vps"]}, {"id": 1, "labels": None}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(collection.InventoryError):
+                    collection._job_signature(bad)
+
+    def test_excessive_candidate_rechecks_are_denied(self):
+        rows = [run(i) for i in range(1, 112)]
+        second_page = ROOT + "/actions/runs?status=queued&per_page=100&page=2"
+        next_link = '<https://api.github.com' + second_page + '>; rel="next"'
+        reads = {}
+        def api(path):
+            reads[path] = reads.get(path, 0) + 1
+            if path == MAIN:
+                return main()
+            if path == RUNS:
+                return {"total_count": 111, "workflow_runs": rows[:100]}, next_link
+            if path == second_page:
+                return {"total_count": 111, "workflow_runs": rows[100:]}, ""
+            if "/jobs?" in path:
+                ident = int(path.split("/runs/")[1].split("/")[0])
+                return {"total_count": 1, "jobs": [job(ident + 1000)]}, ""
+            raise AssertionError(path)
+        with self.assertRaisesRegex(collection.InventoryError, "candidate_recheck_cap_exceeded"):
+            collection.collect(api, clock=NOW)
+        # Every original job is observed, but no unsafe or unbounded
+        # second-pass job reads are started beyond the cap.
+        self.assertEqual(sum("/jobs?" in path for path in reads), 111)
+
     def test_truncated_second_page_denied(self):
         def fetch(path):
             if path == MAIN:
