@@ -93,7 +93,7 @@ class NoBrowserChurnManualGateTests(unittest.TestCase):
         self.assertIn("sudo -n install", install)
 
     def test_manual_install_has_no_pr_or_push_fallback(self):
-        install = SOURCE.split("  install:\\n", 1)[1]
+        install = SOURCE.split("  install:\n", 1)[1]
         job_gate = install.split("    runs-on:", 1)[0]
         self.assertIn("github.event_name == 'workflow_dispatch'", job_gate)
         self.assertNotIn("||", job_gate)
