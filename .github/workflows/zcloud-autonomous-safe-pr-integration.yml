@@ -56,6 +56,7 @@ jobs:
             tests.test_deployops_automerge_trust_roots_20261014_w12 \
             tests.test_deployops_automerge_check_provenance_20261014_w14 \
             tests.test_deployops_automerge_file_count_cpu_20261014_w15 \
+            tests.test_deployops_automerge_import_shadow_20261014_w16 \
             tests.test_zcloud_automerge_report_20261014
       - name: Plan or merge one approved development PR
         env:
