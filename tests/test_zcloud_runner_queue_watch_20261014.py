@@ -239,6 +239,10 @@ class QueueWatchTests(unittest.TestCase):
         self.assertIn("github.triggering_actor == 'Zennay'", wf)
         self.assertIn("github.run_attempt == 1", wf)
         self.assertIn("retention-days: 7", wf)
+        for field in ("queued_over_2h", "oldest_queued_minutes",
+                      "sample_truncated", "total_workflow_runs",
+                      "assigned_failures"):
+            self.assertIn(field, wf)
 
 
 if __name__ == "__main__":
