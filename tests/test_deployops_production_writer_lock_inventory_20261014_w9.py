@@ -64,8 +64,9 @@ class ProductionWriterInventoryTests(unittest.TestCase):
                 current = text(workflow)
                 if "cancel-in-progress: false" not in current:
                     self.fail(f"No expected non-cancelling writer in {workflow}")
-                changed = current.replace("cancel-in-progress: false",
-                                          "cancel-in-progress: true", 1)
+                changed = current.replace(
+                    "      cancel-in-progress: false" if workflow != "zcloud-vps-deploy.yml" else "  cancel-in-progress: false",
+                    "      cancel-in-progress: true" if workflow != "zcloud-vps-deploy.yml" else "  cancel-in-progress: true", 1)
                 self.assertNotEqual(
                     audit_mod.inspect_source(workflow, changed)["risk"], "protected")
 
@@ -73,8 +74,9 @@ class ProductionWriterInventoryTests(unittest.TestCase):
         name = "zcloud-postsend-tab-preservation-live.yml"
         current = text(name)
         self.assertIn("group: zcloud-postsend-hosted-", current)
-        changed = current.replace("group: zcloud-postsend-hosted-",
-                                  "group: zcloud-production-deploy", 1)
+        changed = current.replace(
+            "group: zcloud-postsend-hosted-${{ github.event.pull_request.number || github.ref }}",
+            "group: zcloud-production-deploy", 1)
         self.assertEqual("hosted_proof_holds_writer_lock",
                          audit_mod.inspect_source(name, changed)["risk"])
 
