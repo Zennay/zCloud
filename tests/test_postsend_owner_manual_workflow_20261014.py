@@ -71,6 +71,31 @@ class PostsendOwnerManualWorkflowTests(unittest.TestCase):
             self.assertIn("persist-credentials: false", job)
             self.assertNotIn("actions/checkout@v4", job)
 
+    def test_checkout_yaml_cannot_have_duplicate_with_mappings(self):
+        """GitHub rejects a workflow with duplicate sibling 'with:' keys before jobs start."""
+        # Each job contains exactly one checkout and exactly one options mapping.
+        for name, job in (("offline", self.offline), ("install", self.install)):
+            with self.subTest(job=name):
+                checkout = job.split("- uses: " + CHECKOUT, 1)[1].split("- name:", 1)[0]
+                self.assertEqual(1, len(re.findall(r"(?m)^        with:\\s*$", checkout)))
+                self.assertEqual(1, len(re.findall(r"(?m)^          ref:", checkout)))
+                self.assertIn("clean: true", checkout)
+                self.assertIn("persist-credentials: false", checkout)
+
+    def test_exact_source_is_checked_out_for_both_modes(self):
+        offline_checkout = self.offline.split("- uses: " + CHECKOUT, 1)[1].split("- name:", 1)[0]
+        manual_checkout = self.install.split("- uses: " + CHECKOUT, 1)[1].split("- name:", 1)[0]
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", offline_checkout)
+        self.assertIn("ref: ${{ github.sha }}", manual_checkout)
+
+    def test_untrusted_reruns_cannot_install(self):
+        gate = self.install.split("    runs-on:", 1)[0]
+        self.assertIn("github.triggering_actor == 'Zennay'", gate)
+        self.assertIn('test "$GITHUB_TRIGGERING_ACTOR" = Zennay', self.install)
+
+    def test_remote_main_recheck_is_time_bounded(self):
+        self.assertIn("timeout 15s git ls-remote origin refs/heads/main", self.install)
+
     def test_preflight_precedes_all_file_mutations(self):
         marker = "- name: Verify manual owner approval and immutable current main"
         copying = "- name: Record running Firefox, install files, preserve session"
