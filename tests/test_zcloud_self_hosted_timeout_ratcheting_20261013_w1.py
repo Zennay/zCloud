@@ -329,7 +329,7 @@ jobs:
             directory = root / ".github" / "workflows"
             directory.mkdir(parents=True)
             (directory / "proof.yml").write_text(
-                "jobs:\\n  proof:\\n    runs-on: self-hosted\\n    timeout-minutes: 10\\n",
+                "jobs:\n  proof:\n    runs-on: self-hosted\n    timeout-minutes: 10\n",
                 encoding="utf-8",
             )
             original_open = audit.os.open
@@ -355,13 +355,13 @@ jobs:
             directory = root / ".github" / "workflows"
             directory.mkdir(parents=True)
             (directory / "proof.yml").write_text(
-                "jobs:\\n  legitimate:\\n    runs-on: self-hosted\\n"
-                "    timeout-minutes: 10\\n", encoding="utf-8",
+                "jobs:\n  legitimate:\n    runs-on: self-hosted\n"
+                "    timeout-minutes: 10\n", encoding="utf-8",
             )
             external = root / "external"
             external.mkdir()
             (external / "proof.yml").write_text(
-                "jobs:\\n  swapped:\\n    runs-on: ubuntu-latest\\n", encoding="utf-8"
+                "jobs:\n  swapped:\n    runs-on: ubuntu-latest\n", encoding="utf-8"
             )
             real_listdir = audit.os.listdir
 
