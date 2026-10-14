@@ -64,3 +64,17 @@ jobs:
           assert result['release_authorized'] is False
           assert result['mutations_performed'] is False
           PY
+      - name: Publish human-readable non-authorizing proof context
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            printf '%s\n' '### zCloud deploy-ops: reviewveiligheid (bronbewijs)'
+            printf '%s\n' ''
+            printf '%s\n' 'Deze run test een **kunstmatig offline scenario**. Dit is geen echte inventarisatie van open PR’s en geen toestemming om wijzigingen te publiceren.'
+            printf '%s\n' ''
+            printf '%s\n' 'De tests toetsen volledigheid, bestandsconflicten, hernoemingen, verouderde gegevens en bescherming tegen ongeautoriseerde deployment.'
+            printf '%s\n' 'Bekijk de resultaten van de afzonderlijke stappen om te zien of alle controles zijn geslaagd.'
+            printf '%s\n' ''
+            printf '%s\n' '**Geen VPS-/SQLite-/Firefox-/worker-/queue-/productieactie uitgevoerd door deze workflow.**'
+          } >> "$GITHUB_STEP_SUMMARY"
