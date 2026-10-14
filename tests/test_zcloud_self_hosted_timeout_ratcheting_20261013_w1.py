@@ -41,12 +41,12 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         for first_root, second_root in (("jobs", "jobs"), ("jobs", "'jobs'")):
             with self.subTest(first_root=first_root, second_root=second_root):
                 source = (
-                    first_root + ":\\n"
-                    "  safe:\\n    runs-on: ubuntu-latest\\n"
-                    + second_root + ":\\n"
-                    "  hidden:\\n    runs-on: [self-hosted, zcloud]\\n"
-                    "    timeout-minutes: 200\\n"
-                ).replace("\\\\n", "\\n")
+                    f"{first_root}:\n"
+                    "  safe:\n    runs-on: ubuntu-latest\n"
+                    f"{second_root}:\n"
+                    "  hidden:\n    runs-on: [self-hosted, zcloud]\n"
+                    "    timeout-minutes: 200\n"
+                )
                 with self.assertRaisesRegex(RuntimeError, "duplicate root jobs sections"):
                     audit.inspect_workflow(".github/workflows/roots.yml", source, max_minutes=30)
 
