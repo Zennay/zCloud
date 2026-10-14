@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import signal
+import time
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, build_opener, HTTPSHandler, ProxyHandler, HTTPRedirectHandler
 
@@ -205,12 +207,36 @@ def collect(api_get, *, clock=None):
 
 def main():
     token = os.environ.get("GITHUB_TOKEN", "")
+    deadline = time.monotonic() + 115
+    requests = 0
+
+    def timeout_handler(_number, _frame):
+        raise InventoryError("collector_wallclock_exceeded")
+
+    if hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, 115)
+
     try:
-        snapshot = collect(ReadOnlyAPI(token).get)
+        reader = ReadOnlyAPI(token)
+        def bounded_get(path):
+            nonlocal requests
+            requests += 1
+            if requests > 640 or time.monotonic() >= deadline:
+                raise InventoryError("collector_budget_exhausted")
+            result = reader.get(path)
+            if time.monotonic() >= deadline:
+                raise InventoryError("collector_budget_exhausted")
+            return result
+
+        snapshot = collect(bounded_get)
         answer = policy.assess(snapshot, expected_main_sha=snapshot["main_sha_before"],
                                now=datetime.now(timezone.utc))
     except (InventoryError, OSError, TypeError, AttributeError, ValueError, RecursionError):
         answer = policy._fail("github_inventory_untrusted")
+    finally:
+        if hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM"):
+            signal.setitimer(signal.ITIMER_REAL, 0)
     print(json.dumps(answer, sort_keys=True, separators=(",", ":")))
     # Even observational review output is not a privileged-workflow admission.
     return 0 if answer["decision"] == "NOOP" else 1
