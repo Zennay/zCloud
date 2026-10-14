@@ -158,9 +158,13 @@ def main() -> int:
     parser.add_argument("--expected-main-sha", required=True)
     args = parser.parse_args()
     try:
-        with open(args.snapshot, "r", encoding="utf-8") as stream:
-            snapshot = json.load(stream, object_pairs_hook=_unique_pairs,
-                                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite_json")))
+        # Refuse excessive or streaming snapshots before JSON allocation.
+        with open(args.snapshot, "rb") as stream:
+            raw = stream.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError("oversized_snapshot")
+        snapshot = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                              parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite_json")))
         decision = assess(snapshot, expected_main_sha=args.expected_main_sha,
                           now=datetime.now(timezone.utc))
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RecursionError):
