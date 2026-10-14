@@ -16,9 +16,9 @@ WORKFLOW_SUFFIXES = {".yml", ".yaml"}
 MAX_WORKFLOW_FILES = 512
 MAX_WORKFLOW_FILE_BYTES = 1_048_576
 JOB_RE = re.compile(
-    r"""^(?P<indent> +)(?:["']?(?P<job>[A-Za-z0-9_-]+)["']?):[ \t]*(?:#.*)?$"""
+    r"""^(?P<indent> +)(?P<quote>['"]?)(?P<job>[A-Za-z0-9_-]+)(?P=quote):[ \t]*(?P<tail>[^#]*)(?:#.*)?$"""
 )
-ROOT_JOBS_RE = re.compile(r"""^(?:jobs|'jobs'|"jobs"):[ \t]*(?:#.*)?$""")
+ROOT_JOBS_RE = re.compile(r"""^(?:jobs|'jobs'|"jobs"):[ \t]*(?P<tail>[^#]*)(?:#.*)?$""")
 RUNS_ON_KEY_RE = r"""(?:runs-on|'runs-on'|"runs-on")"""
 TIMEOUT_KEY_RE = r"""(?:timeout-minutes|'timeout-minutes'|"timeout-minutes")"""
 SELF_HOSTED_LABEL_RE = re.compile(r"(?<![\w-])self-hosted(?![\w-])", re.IGNORECASE)
@@ -65,7 +65,10 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
 
     for index, line in enumerate(lines):
         if not in_jobs:
-            if ROOT_JOBS_RE.fullmatch(line):
+            root_jobs = ROOT_JOBS_RE.fullmatch(line)
+            if root_jobs:
+                if root_jobs.group("tail").strip():
+                    raise RuntimeError("inline root jobs mapping cannot be audited")
                 in_jobs = True
             continue
 
@@ -141,9 +144,12 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
         key_indent = _job_key_indent(block)
         runs_on = _runs_on_text(block, key_indent=key_indent)
         if runs_on is None:
-            # A job-level YAML merge alias may inherit an implicit runs-on.
-            # Without a resolved AST this cannot be accepted as hosted.
-            if re.search(rf"(?m)^ {{{key_indent}}}<<:[ \t]*\*[A-Za-z_]", block):
+            # Inline job maps and YAML aliases can conceal self-hosted runners.
+            # A scalar-only audit cannot resolve them; classify as untrusted.
+            declaration = JOB_RE.match(block.splitlines()[0])
+            if declaration and declaration.group("tail").strip():
+                runs_on = "*yaml_inline_job_runner"
+            elif re.search(rf"(?m)^ {{{key_indent}}}<<:[ \t]*\*[A-Za-z_]", block):
                 runs_on = "*yaml_inherited_runner"
             else:
                 continue
