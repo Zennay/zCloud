@@ -186,6 +186,18 @@ class QueueRouteSummaryTests(unittest.TestCase):
         self.assertNotIn("zCloud-runnerlabels en repositorytoegang", output)
         self.assertIn("Geen bewijs van productiestatus", output)
 
+    def test_multi_job_run_is_one_run_not_three_runner_incidents(self):
+        payload = report([record(111, scope="current_main",
+                                 route="zcloud_vps",
+                                 assignment="not_assigned",
+                                 state="queued", jobs=3)])
+        output, code = self.render(payload)
+        self.assertEqual(code, 0)
+        self.assertIn("**1 wachtende runs zonder runnertoewijzing**", output)
+        self.assertNotIn("**3 wachtende runs zonder runnertoewijzing**", output)
+        self.assertIn("Run 111", output)
+        self.assertIn("Geen bewijs van productiestatus", output)
+
     def test_unknown_job_phase_does_not_print_any_run_link(self):
         data = report([record(state="PRIVATE_UNTRUSTED_STATUS")])
         output, status = self.render(data)
