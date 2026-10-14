@@ -311,20 +311,52 @@ def unique_pairs(items):
                       parse_constant=lambda _: (_ for _ in ()).throw(InvalidEvidence("non_finite_json")))
 
 
+def read_manifest_bytes(path):
+    """Bounded, descriptor-relative POSIX read; never follow a symlink ancestor.
+
+    A final-component O_NOFOLLOW alone is insufficient: parent directories can
+    be replaced with symlinks between a caller's inspection and os.open().
+    """
+    require(type(path) is str and 0 < len(path) <= 4096 and "\x00" not in path,
+            "invalid_manifest_path")
+    absolute = path.startswith("/")
+    components = path.split("/")
+    if absolute:
+        components = components[1:]
+    require(components and all(part not in ("", "..") for part in components),
+            "invalid_manifest_path")
+    directory_flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                       | getattr(os, "O_CLOEXEC", 0))
+    file_flags = (os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+                  | getattr(os, "O_CLOEXEC", 0))
+    parent_fd = os.open("/" if absolute else ".", directory_flags)
+    try:
+        for component in components[:-1]:
+            if component == ".":
+                continue
+            next_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = next_fd
+        require(components[-1] not in (".", ".."), "invalid_manifest_path")
+        fd = os.open(components[-1], file_flags, dir_fd=parent_fd)
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            require(stat.S_ISREG(metadata.st_mode), "invalid_manifest_file_type")
+            require(metadata.st_size <= MAX_BYTES, "oversized_snapshot")
+            body = stream.read(MAX_BYTES + 1)
+        require(len(body) <= MAX_BYTES, "oversized_snapshot")
+        return body
+    finally:
+        os.close(parent_fd)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", help="untrusted local JSON snapshot; no network access")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     a = parser.parse_args(argv)
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(a.manifest, flags)
-        with os.fdopen(fd, "rb") as f:
-            info = os.fstat(f.fileno())
-            require(stat.S_ISREG(info.st_mode), "invalid_manifest_file_type")
-            require(info.st_size <= MAX_BYTES, "oversized_snapshot")
-            body = f.read(MAX_BYTES + 1)
-        require(len(body) <= MAX_BYTES, "oversized_snapshot")
+        body = read_manifest_bytes(a.manifest)
         result = snapshot(unique_pairs(body.decode("utf-8")))
         print(markdown(result) if a.format == "markdown" else
               json.dumps(result, sort_keys=True, separators=(",", ":")))
