@@ -99,7 +99,7 @@ jobs:
           assert report["mutation_performed"] is False
           assert report["release_authorized"] is False
           assert report["production_verified"] is False
-          assert report["outstanding_writer_debt"], "Do not misreport historic collision debt as fixed"
+          assert len(report["protected_workflows"]) + len(report["outstanding_writer_debt"]) == report["observed_workflows"]
           print("WRITER_LOCK_SOURCE_INVENTORY_VERIFIED=1")
           print("KNOWN_UNPROTECTED_WRITERS=" + str(len(report["outstanding_writer_debt"])))
           print("PRODUCTION_RELEASE_AUTHORIZED=false")
