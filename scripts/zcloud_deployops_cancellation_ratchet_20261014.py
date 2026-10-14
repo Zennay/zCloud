@@ -115,6 +115,7 @@ def risks(text, *, details=False):
     global_cancel = _cancel_values(outside_jobs, indent="  ") or _inline_concurrency(outside_jobs, "")
     findings = []
     possible_vps = False
+    job_cancel_any = False
     for index, marker in enumerate(markers):
         job = jobs_area[
             marker.end():markers[index + 1].start()
@@ -124,11 +125,12 @@ def risks(text, *, details=False):
         is_hosted = len(runner) == 1 and bool(HOSTED.fullmatch(runner[0].strip()))
         possible_vps = possible_vps or not is_hosted
         job_cancel = _cancel_values(job, indent="      ") or _inline_concurrency(job, "    ")
+        job_cancel_any = job_cancel_any or job_cancel
         if (global_cancel or job_cancel) and not is_hosted:
             findings.append("possible_vps_cancellation")
     findings = sorted(set(findings))
     if details:
-        return findings, possible_vps, global_cancel
+        return findings, possible_vps, global_cancel or job_cancel_any
     return findings
 
 
@@ -137,14 +139,14 @@ def evaluate(root, base, head):
     for path in changed(root, base, head):
         before = source(root, base, path, missing_ok=True)
         after = source(root, head, path)
-        now, _, now_global_cancel = risks(after, details=True)
+        now, _, now_cancels = risks(after, details=True)
         prior_vps = False
         if before is not None:
             _, prior_vps, _ = risks(before, details=True)
         # GitHub concurrency may cancel a still-running job from the previous
         # workflow revision. Hosted-only new jobs do NOT prove older VPS
         # invocations with the same group have stopped.
-        if now or (prior_vps and now_global_cancel):
+        if now or (prior_vps and now_cancels):
             # Changed legacy risk needs owner review. Risk removal passes.
             result.append(path)
     return result
