@@ -70,6 +70,10 @@ def snapshot(report):
         require(sha(p.get("head_sha")) and sha(p.get("base_sha")), "invalid_pr_sha")
         require(type(p.get("draft")) is bool and type(p.get("owner_approved")) is bool,
                 "invalid_pr_admission")
+        required_checks = p.get("required_checks")
+        require(type(required_checks) is list and 0 < len(required_checks) <= 100
+                and all(type(x) is str and 0 < len(x) <= 128 for x in required_checks)
+                and len(required_checks) == len(set(required_checks)), "invalid_required_checks")
         checks = p.get("checks")
         require(type(checks) is list and 0 < len(checks) <= 100, "missing_checks")
         seen_checks = set()
@@ -103,6 +107,8 @@ def snapshot(report):
             reasons.append("draft")
         if not p["owner_approved"]:
             reasons.append("owner_review_missing")
+        if not set(p["required_checks"]).issubset({c["name"] for c in p["checks"]}):
+            reasons.append("required_checks_missing")
         if not all(c["head_sha"] == p["head_sha"] and c["conclusion"] == "success"
                    for c in p["checks"]):
             reasons.append("exact_head_checks_not_green")
