@@ -737,7 +737,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         shell = self._workflow_shell()
         # Fake only the external probe; execute real bounded Git and real
         # publication shell logic in a disposable environment with no VPS.
-        expected = ('env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN timeout -k 2s 115s python3 '
+        expected = ('env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 '
                     'scripts/zcloud_dashboard_external_probe_20261013_w1.py '
                     '--attempts 6 --format markdown > "$summary_file" || probe_rc=$?')
         self.assertIn(expected, shell)
@@ -822,7 +822,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertNotIn("uses: actions/checkout@v4", workflow)
         self.assertNotIn("git ls-remote", manual)
         self.assertNotIn("gh api --method POST", manual)
-        self.assertIn("env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN timeout -k 2s 115s python3 scripts/", manual)
+        self.assertIn("env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/", manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
         self.assertEqual(manual.count("verify_main_head\n"), 3)
         self.assertLess(manual.index("verify_main_head\n"),
@@ -830,25 +830,32 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertLess(manual.rindex("verify_main_head\n"),
                         manual.index('cat "$verified_file"; printf'))
 
-    def test_probe_subprocess_has_no_inherited_github_credentials(self):
-        # Actually exercise the same process-env scrubbing syntax used in
-        # the manual workflow, with fake names and no network or real tokens.
-        names = ("GH_TOKEN", "GITHUB_TOKEN",
-                 "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+    def test_probe_subprocess_uses_minimal_allowlisted_environment(self):
+        # The same env -i policy as the manual workflow strips arbitrary
+        # inherited secrets, not just known GitHub token environment names.
+        # This is entirely local and never invokes the public dashboard.
+        names = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+                 "GITHUB_ENTERPRISE_TOKEN", "ZCLOUD_EXTERNAL_SECRET",
+                 "UNRELATED_SERVICE_KEY", "HTTP_PROXY", "HOME")
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             for key in names:
                 env[key] = "SECRET_FAKE_CREDENTIAL"
             proc = subprocess.run(
-                ["env", *[v for key in names for v in ("-u", key)],
-                 sys.executable, "-c",
-                 "import json, os; print(json.dumps(sorted(k for k in "
-                 + repr(names) + " if k in os.environ)))"],
+                ["env", "-i", "PATH=" + env.get("PATH", "/usr/bin:/bin"),
+                 "LANG=C.UTF-8", "TZ=UTC", sys.executable, "-c",
+                 "import json, os; print(json.dumps({"
+                 "'sensitive': sorted(k for k in " + repr(names)
+                 + " if k in os.environ), "
+                 "'required': sorted(k for k in ('PATH','LANG','TZ') "
+                 "if k in os.environ)}))"],
                 env=env, cwd=tmp, capture_output=True, text=True,
                 timeout=5, check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(json.loads(proc.stdout), [])
+            result = json.loads(proc.stdout)
+            self.assertEqual(result["sensitive"], [])
+            self.assertEqual(result["required"], ["LANG", "PATH", "TZ"])
             self.assertNotIn("SECRET_FAKE_CREDENTIAL", proc.stdout + proc.stderr)
 
     def test_workflow_bash_parses_without_network(self):
