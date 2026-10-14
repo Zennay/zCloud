@@ -16,7 +16,21 @@ import subprocess
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-PR_SOURCE = re.compile(r"\b(?:github\.event\.pull_request\.head(?:\.[A-Za-z_][\w]*)+|github\.head_ref|github\.event\.pull_request\.(?:title|body))\b", re.I)
+# GitHub expressions accept both dotted and bracket-key access. Match the
+# untrusted PR fields without evaluating expressions or printing source data.
+PR_SOURCE = re.compile(
+    r"""(?ix)
+    \bgithub
+    (?:
+      (?:\s*\.\s*event|\s*\[\s*['"]event['"]\s*\])
+      (?:\s*\.\s*pull_request|\s*\[\s*['"]pull_request['"]\s*\])
+      (?:\s*\.\s*(?:head|title|body)\b|\s*\[\s*['"](?:head|title|body)['"]\s*\])
+      (?:\s*\.\s*[A-Za-z_]\w*|\s*\[\s*['"][A-Za-z_]\w*['"]\s*\])*
+      |
+      (?:\s*\.\s*head_ref\b|\s*\[\s*['"]head_ref['"]\s*\])
+    )
+    """
+)
 CHECKOUT = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?['\"]?uses['\"]?[ \t]*:[ \t]*['\"]?actions/checkout@", re.I)
 RUN_STEP = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?['\"]?run['\"]?[ \t]*:", re.I)
 PR_TARGET = re.compile(r"\bpull_request_target\b")
