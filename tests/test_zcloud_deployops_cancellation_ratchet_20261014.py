@@ -513,6 +513,7 @@ class GitTest(unittest.TestCase):
                                    "--repo-root", str(self.root)])
         self.assertEqual(0, status)
         self.assertIn("TRIAGE=OBSERVED", out.getvalue())
+        self.assertIn("sha=" + sha, out.getvalue())
         self.assertIn("VPS_MUTATION_AUTHORIZED=false", out.getvalue())
         self.assertIn(".github/workflows/cancellation.yml", out.getvalue())
         for denied in ("echo safe", "runs-on:", "token:"):
@@ -548,6 +549,7 @@ class GitTest(unittest.TestCase):
                                  "--inventory-head", sha])
         self.assertEqual(0, code)
         self.assertIn("risky=1", report.getvalue())
+        self.assertIn("sha=" + sha, report.getvalue())
         self.assertIn("VPS_MUTATION_AUTHORIZED=false", report.getvalue())
         self.assertNotIn("echo safe", report.getvalue())
         self.assertNotIn("runs-on:", report.getvalue())
