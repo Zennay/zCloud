@@ -88,8 +88,9 @@ def _assignment(jobs: list[dict]) -> str:
         if unassigned_id and unassigned_name:
             values.append("not_assigned")
         elif (
-            type(runner_id) is int and runner_id > 0 and type(name) is str
-            and bool(name.strip())
+            type(runner_id) is int and 0 < runner_id <= _MAX_GITHUB_ID
+            and type(name) is str and bool(name.strip())
+            and name.isprintable()
         ):
             values.append("assigned")
         else:
@@ -120,11 +121,12 @@ def _validated_jobs(jobs: list[dict], run: dict) -> tuple:
             # A key that is present with a JSON null value differs from
             # missing runner evidence. Only null and bounded strings are valid.
             or "runner_id" not in job or "runner_name" not in job
+            or (type(job["runner_id"]) is int
+                and job["runner_id"] > _MAX_GITHUB_ID)
             or not (job["runner_name"] is None
                     or (type(job["runner_name"]) is str
                         and len(job["runner_name"]) <= 128
-                        and not any(ord(character) < 32 or ord(character) == 127
-                                    for character in job["runner_name"])))
+                        and job["runner_name"].isprintable()))
         ):
             raise source.InventoryError("invalid_runner_evidence")
         signatures.append((signature, job["runner_name"]))
