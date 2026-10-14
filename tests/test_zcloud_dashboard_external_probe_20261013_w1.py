@@ -786,7 +786,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         shell = self._workflow_shell()
         # Fake only the external probe; execute real bounded Git and real
         # publication shell logic in a disposable environment with no VPS.
-        expected = ('env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 '
+        expected = ('env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 '
                     'scripts/zcloud_dashboard_external_probe_20261013_w1.py '
                     '--attempts 6 --format markdown > "$summary_file" || probe_rc=$?')
         self.assertIn(expected, shell)
@@ -871,7 +871,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertNotIn("uses: actions/checkout@v4", workflow)
         self.assertNotIn("git ls-remote", manual)
         self.assertNotIn("gh api --method POST", manual)
-        self.assertIn('env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/', manual)
+        self.assertIn('env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/', manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
         self.assertEqual(manual.count("verify_main_head\n"), 3)
         self.assertLess(manual.index("verify_main_head\n"),
@@ -891,7 +891,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             for key in names:
                 env[key] = "SECRET_FAKE_CREDENTIAL"
             proc = subprocess.run(
-                ["env", "-i", "PATH=" + env.get("PATH", "/usr/bin:/bin"),
+                ["env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin",
                  "LANG=C.UTF-8", "TZ=UTC", sys.executable, "-c",
                  "import json, os; print(json.dumps({"
                  "'sensitive': sorted(k for k in " + repr(names)
@@ -905,6 +905,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             result = json.loads(proc.stdout)
             self.assertEqual(result["sensitive"], [])
             self.assertEqual(result["required"], ["LANG", "PATH", "TZ"])
+            self.assertIn("PATH=/usr/local/bin:/usr/bin:/bin", proc.args)
             self.assertNotIn("SECRET_FAKE_CREDENTIAL", proc.stdout + proc.stderr)
 
     def test_workflow_bash_parses_without_network(self):
