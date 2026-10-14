@@ -357,7 +357,16 @@ def enter_safe_idle(
         return changed
 
     capture_and_drain()
-    write_state(state_path, snapshot)
+    try:
+        # Do not leave worker commands and desired_state='draining' behind if
+        # the first durable rollback snapshot cannot be written (disk full,
+        # permissions, read-only run-state directory, etc.). The polling loop
+        # already compensates subsequent snapshot errors; initial admission
+        # needs the same guarantee.
+        write_state(state_path, snapshot)
+    except Exception:
+        restore_snapshot(db, snapshot)
+        raise
 
     deadline = time.monotonic() + max(1.0, timeout_seconds)
     stable_since: float | None = None
