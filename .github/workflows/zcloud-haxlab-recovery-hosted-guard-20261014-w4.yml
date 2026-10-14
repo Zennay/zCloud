@@ -1,0 +1,63 @@
+name: zCloud HaxLab live recovery admission (hosted-only)
+
+# Source contract only. No VPS labels, secrets, localhost, sudo, or recovery.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-haxlab-allocation-recovery.yml"
+      - ".github/workflows/zcloud-haxlab-recovery-hosted-guard-20261014-w4.yml"
+      - "tests/test_deployops_haxlab_live_recovery_guard_20261014_w4.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-haxlab-allocation-recovery.yml"
+      - ".github/workflows/zcloud-haxlab-recovery-hosted-guard-20261014-w4.yml"
+      - "tests/test_deployops_haxlab_live_recovery_guard_20261014_w4.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-haxlab-recovery-hosted-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-source-trust:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.run_attempt == 1 &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.repo.full_name == github.repository) ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable event source without retained credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Assert canonical head and hosted-only runner
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPO: ${{ github.repository }}
+          RUNNER_KIND: ${{ runner.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = Zennay/zCloud
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$RUNNER_KIND" = github-hosted
+      - name: Prove service recovery cannot be admitted from PR or automatic events
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/test_deployops_haxlab_live_recovery_guard_20261014_w4.py
+          python3 -m unittest -v tests.test_deployops_haxlab_live_recovery_guard_20261014_w4
+          echo "HAXLAB_LIVE_RECOVERY_SOURCE_GUARD_PASS=1"
+          echo "VPS_MUTATION_AUTHORIZED=false"
