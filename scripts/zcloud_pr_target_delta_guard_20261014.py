@@ -155,7 +155,9 @@ def executable_steps(source: str) -> list[str]:
     return blocks
 
 
-def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[str]:
+def _env_expressions_executed_by_run(
+    step: str, command_source: str, *, require_shell_sink: bool = True
+) -> Counter[str]:
     """Trace simple step-local env bindings into a run command without YAML eval.
 
     A PR title in an env declaration is dangerous if the shell subsequently
@@ -166,7 +168,7 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
     # PR values passed as immutable data are routine in the trusted source
     # scanner (e.g. EXACT_HEAD for git fetch). Require an actual dynamic shell
     # execution sink before classifying step-local environment forwarding.
-    if not re.search(
+    if require_shell_sink and not re.search(
         r"(?i)\b(?:eval|exec|source)\b"
         r"|\b(?:bash|sh|zsh)\s+-[a-z]*c[a-z]*\b"
         r"|\bpython[0-9.]*\s+-c\b|\bnode\s+-(?:e|p)\b"
@@ -212,7 +214,7 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
     return references
 
 
-def _job_env_run_risks(clean: str) -> Counter[str]:
+def _job_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[str]:
     """Find job-scoped PR env values consumed by dynamic run steps in that job.
 
     A source in job A never contaminates a run in job B. This is intentionally
@@ -267,15 +269,16 @@ def _job_env_run_risks(clean: str) -> Counter[str]:
             continue
         source = "\n".join(job_lines)
         for step in executable_steps(source):
-            command = RUN_STEP.search(step)
+            command = CHECKOUT.search(step) if checkout else RUN_STEP.search(step)
             if command:
                 found.update(_env_expressions_executed_by_run(
-                    "\n".join(job_env_blocks), step[command.start():]
+                    "\n".join(job_env_blocks), step[command.start():],
+                    require_shell_sink=not checkout,
                 ))
     return found
 
 
-def _workflow_env_run_risks(clean: str) -> Counter[str]:
+def _workflow_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[str]:
     """Detect untrusted workflow-level env forwarded to executable shell code."""
     header = re.search(r"""(?m)^['"]?env['"]?[ \t]*:[ \t]*$""", clean)
     if not header:
@@ -287,10 +290,11 @@ def _workflow_env_run_risks(clean: str) -> Counter[str]:
     env_section = rest[:header.end()-header.start()+boundary.start()] if boundary else rest
     found: Counter[str] = Counter()
     for step in executable_steps(clean):
-        run = RUN_STEP.search(step)
-        if run is not None:
+        command = CHECKOUT.search(step) if checkout else RUN_STEP.search(step)
+        if command is not None:
             found.update(_env_expressions_executed_by_run(
-                env_section, step[run.start():]
+                env_section, step[command.start():],
+                require_shell_sink=not checkout,
             ))
     return found
 
@@ -330,6 +334,8 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
             )
     found["pr_source_in_run_job"].update(_job_env_run_risks(clean))
     found["pr_source_in_run_job"].update(_workflow_env_run_risks(clean))
+    found["untrusted_pr_checkout"].update(_job_env_run_risks(clean, checkout=True))
+    found["untrusted_pr_checkout"].update(_workflow_env_run_risks(clean, checkout=True))
     return {reason: count for reason, count in found.items() if count}
 
 
