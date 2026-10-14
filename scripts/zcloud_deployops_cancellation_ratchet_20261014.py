@@ -29,6 +29,8 @@ def git(root, *args):
 def changed(root, base, head):
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
         raise Unverifiable("sha")
+    if git(root, "merge-base", base, head).decode("ascii", "strict").strip() != base:
+        raise Unverifiable("base_not_ancestor")
     raw = git(root, "diff", "--name-only", "-z", "--diff-filter=ACMRT",
               f"{base}...{head}", "--", ".github/workflows/")
     paths = [part.decode("utf-8", "strict") for part in raw.split(b"\0") if part]
