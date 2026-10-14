@@ -34,6 +34,10 @@ _HOSTED_LABELS = {
     "windows-latest", "windows-2022", "windows-2025",
     "macos-latest", "macos-14", "macos-15", "macos-15-intel",
 }
+# GitHub's built-in self-hosted OS/architecture labels do not name the
+# project runner pool. Never silently ignore arbitrary extra labels when
+# telling an operator that a queued job specifically targets zCloud/FTMO.
+_RUNNER_META_LABELS = {"Linux", "Windows", "macOS", "X64", "ARM", "ARM64"}
 
 
 def _deny(reason: str = "unverified_github_inventory") -> dict:
@@ -54,13 +58,15 @@ def _route(jobs: list[dict]) -> str:
     candidates = []
     for job in jobs:
         labels = job["labels"]
-        if "self-hosted" not in labels and len(labels) == 1 and labels[0] in _HOSTED_LABELS:
-            candidates.append("github_hosted")
-        elif "self-hosted" not in labels:
+        labels_set = set(labels)
+        pool = labels_set - _RUNNER_META_LABELS
+        if len(labels_set) != len(labels):
             candidates.append("other_or_mixed")
-        elif {"self-hosted", "zcloud", "vps"}.issubset(labels) and "ftmo-research" not in labels:
+        elif len(labels) == 1 and labels[0] in _HOSTED_LABELS:
+            candidates.append("github_hosted")
+        elif pool == {"self-hosted", "zcloud", "vps"}:
             candidates.append("zcloud_vps")
-        elif {"self-hosted", "ftmo-research"}.issubset(labels) and not {"zcloud", "vps"}.intersection(labels):
+        elif pool == {"self-hosted", "ftmo-research"}:
             candidates.append("ftmo_research")
         else:
             candidates.append("other_or_mixed")
