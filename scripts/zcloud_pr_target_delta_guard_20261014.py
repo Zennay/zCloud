@@ -8,6 +8,8 @@ admission and human review. Detection is conservative, not a YAML evaluator.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import hashlib
 from pathlib import Path
 import re
 import subprocess
@@ -143,9 +145,46 @@ def risk_set(source: str) -> set[str]:
 # adds a SECOND secret use to a workflow with one pre-existing secret reference
 # would silently pass a boolean/category-only monotonic check.
 WRITE_SCOPE = re.compile(
-    r"(?m)(?:^[ \t]*|(?<=[{,])[ \t]*)[A-Za-z][\w-]*[ \t]*:[ \t]*['\"]?write['\"]?[ \t]*(?=$|[,}])"
+    r"""(?m)(?:^[ \t]*|(?<=[{,])[ \t]*)(?P<scope>["']?[A-Za-z][\w-]*["']?)[ \t]*:[ \t]*["']?write["']?[ \t]*(?=$|[,}])"""
 )
 SECRET_REFERENCE = re.compile(r"\bsecrets[ \t]*(?:\.|\[)", re.I)
+SECRET_IDENTITY = re.compile(
+    r"(?i)\bsecrets[ \t]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]\r\n]{1,160}\])"
+)
+
+
+def risk_signatures(source: str) -> dict[str, Counter[str]]:
+    """Track identities in addition to totals, without emitting secret names."""
+    risks = risk_set(source)
+    if not risks:
+        return {}
+    clean = _content_without_comments(source)
+    signatures: dict[str, Counter[str]] = {}
+    if "write_permission" in risks:
+        signatures["write_permission"] = Counter(
+            match.group("scope").strip("\"'").lower()
+            for match in WRITE_SCOPE.finditer(clean)
+        )
+    if "secret_reference" in risks:
+        signatures["secret_reference"] = Counter(
+            hashlib.sha256(match.group(0).upper().encode("utf-8")).hexdigest()
+            for match in SECRET_IDENTITY.finditer(clean)
+        )
+    return signatures
+
+
+def increasing_risks(before: str, after: str) -> set[str]:
+    """Never net new exposure against removed exposure of a different kind."""
+    old_counts, new_counts = risk_counts(before), risk_counts(after)
+    added = {key for key, count in new_counts.items()
+             if count > old_counts.get(key, 0)}
+    old_signatures, new_signatures = risk_signatures(before), risk_signatures(after)
+    for reason, candidate in new_signatures.items():
+        previous = old_signatures.get(reason, Counter())
+        if any(count > previous.get(identity, 0)
+               for identity, count in candidate.items()):
+            added.add(reason)
+    return added
 
 
 def risk_counts(source: str) -> dict[str, int]:
@@ -175,10 +214,7 @@ def evaluate(root: Path, base: str, head: str) -> tuple[int, list[tuple[str, str
         candidate = source_at(root, head, path)
         # Existing risk may be reduced, but never newly introduced. This
         # preserves already-owned legacy debt without legitimizing it.
-        before = risk_counts(original)
-        after = risk_counts(candidate)
-        additional = {reason for reason, count in after.items()
-                      if count > before.get(reason, 0)}
+        additional = increasing_risks(original, candidate)
         for reason in sorted(additional):
             findings.append((path, reason))
     return len(paths), findings
