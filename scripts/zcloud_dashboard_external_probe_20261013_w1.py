@@ -163,9 +163,15 @@ def probe_once(opener=None):
             # HTTPMessage.get_all exposes duplicate / conflicting header lines.
             # A dictionary test fixture cannot contain duplicate physical lines.
             if hasattr(headers, "get_all"):
-                for header in ("Content-Type", "Content-Length", "Content-Encoding"):
+                for header in ("Content-Type", "Content-Length", "Content-Encoding", "Transfer-Encoding"):
                     if len(headers.get_all(header, [])) > 1:
                         return "invalid_headers"
+            # urllib/http.client de-chunks some Transfer-Encoding variants. A
+            # framing/coding header here is not an attested representation of
+            # the status body, especially when paired with Content-Length.
+            # Prefer a false negative to claiming an ambiguous HTTP frame green.
+            if headers.get("Transfer-Encoding") is not None:
+                return "invalid_headers"
             media_type = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
             if media_type != "application/json":
                 return "content_type"
