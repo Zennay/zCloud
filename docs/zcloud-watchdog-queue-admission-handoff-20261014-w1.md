@@ -51,6 +51,21 @@ For structurally accepted NOOP/REVIEW_ONLY observations the Dutch summary shows 
 
 This workflow provides **no** restart, runner repair, run cancellation, SQLite write, Firefox mutation, worker push or deploy. It does **not** replace the existing privileged watchdog owner; the fact that an observation is structurally stable does not prove duplicate run intent.
 
+## Separate read-only GitHub queue route triage for #1326
+
+- scripts/zcloud_queue_route_triage_20261014_w1.py
+- scripts/zcloud_queue_route_summary_20261014_w1.py
+- tests/test_zcloud_queue_route_triage_20261014_w1.py
+- tests/test_zcloud_queue_route_summary_20261014_w1.py
+
+The original strict admission classifier **must deny** a mixed historical queue and a queued workflow with no returned jobs; relaxing it to treat these runs as safe cancellation targets would be a regression. The **new independent route triage does not share its admission result**. Instead, it fetches a maximum of 40 queued runs, including non-main and older-main runs, with two complete bounded GET passes of both the run census and every run's job records. An API result of zero jobs is displayed as **`no_job_records`**, *not* as a healthy worker or cancellable stale job. It identifies `ftmo_research`, `zcloud_vps`, other/mixed and GitHub-hosted routes using only allowlisted labels, and separates `not_assigned` from `assigned` and `indeterminate` without claiming listener liveness.
+
+**Exact raw observation on 14 October 2026 (source GitHub GET, not privileged execution):** `actions/runs?status=queued` returned **8 runs**; the individual jobs API returned three queued `[self-hosted,ftmo-research]` jobs with `runner_id=0` and empty runner names, and five queued-run records whose jobs endpoint returned an empty list. These runs include historical main and other-branch workflows; they are **not** authenticated duplicates, evidence of a broken `[self-hosted,zcloud,vps]` listener, or license to cancel/requeue. See [#1326](https://github.com/Zennay/zCloud/issues/1326) and its exclusive recovery owner [PR #1317](https://github.com/Zennay/zCloud/pull/1317).
+
+Triage deliberately does **not** use the strict `assess` admission result. It instead produces a separate privacy-safe observation `OBSERVED` or `DENY`, with generated canonical numeric GitHub run links, bounded aggregates, source scope (`current_main`, `historical_main`, `other_branch`, `foreign_repository`) and route/assignment categories. On any disagreement between two job-state scans, main drift, page drift, invalid run/job identity, oversized inventory or stale scan, it refuses to publish counts. Its output **always** carries `runner_recovery_authorized=false`, `cancel_run_ids=[]`, `production_verified=false`, `worker_generation_verified=false`. The separate report renderer checks every run URL against its numeric ID, rejects duplicate/boolean IDs and inconsistent counts, and never echoes raw job payloads, branch strings, prompts, runner names, labels, errors, or secrets.
+
+The existing new **manual-only GitHub-hosted** read-only workflow now runs both references before a final main SHA recheck, publishes both sanitized Dutch reports, and exits non-green if either fails. Its hosted runtime timeout was increased from four to **six minutes** to bound the two collectors; permission scope remains exactly `contents:read` plus `actions:read`. No automatic trigger, GitHub write, cancellation, VPS contact, worker push or deploy has been introduced. This workflow is still **draft/unmerged and not runnable from main**. Actual runner recovery remains entirely with #1317 and serialized release approval.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
