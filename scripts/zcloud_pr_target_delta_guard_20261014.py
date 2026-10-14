@@ -339,7 +339,10 @@ def _job_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[str]:
 
 def _workflow_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[str]:
     """Detect untrusted workflow-level env forwarded to executable shell code."""
-    header = re.search(r"""(?m)^['"]?env['"]?[ \t]*:[ \t]*$""", clean)
+    header = re.search(
+        r"""(?m)^['"]?env['"]?[ \t]*:[ \t]*(?:\{[^\r\n]*\})?[ \t]*$""",
+        clean,
+    )
     if not header:
         return Counter()
     # Only the top-level env mapping is inherited by every job. A later
