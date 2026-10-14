@@ -4,7 +4,7 @@ Scope: isolated **offline-only** advisory for [issue #1009](https://github.com/Z
 
 ## What it actually checks
 
-- Current-main SHA is 40 lowercase hexadecimal characters and both PR and PR-less branch inventories are explicitly complete.
+- Current-main SHA is 40 lowercase hexadecimal characters and both PR and PR-less branch inventories are explicitly complete. The declared total number of open PRs and PR-less branches must exactly match their returned arrays (not merely a `complete=true` flag); mismatches deny the entire snapshot.
 - Releases #580/PWQ-41, #1089 and #1135 have explicit known issue state (open/closed); even when all are closed the tool always emits `release_authorized=false`.
 - Every PR has a unique numeric identity, exact immutable head and base SHA, explicit draft flag, owner approval signal and at least one uniquely named CI check bound to **that head** with a successful conclusion. Each must also declare a nonempty, unambiguous `required_checks` inventory; missing required checks cannot be replaced by a single convenient green check. The collector must derive this requirement from authenticated branch protection/rulesets, not user-supplied JSON alone.
 - The manifest must include a **separately owned #1312-compatible PR-less branch inventory receipt**; its exact main SHA, full branch names and head SHAs, completion counters and never-authorizing flags must agree with the candidate manifest. If the receipt is missing, partial or mismatched, the classifier refuses the entire input. This is schema/consistency checking, not authentication of data or ownership takeover.
@@ -28,7 +28,8 @@ The input JSON schema uses:
 {
   "main_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "observed_at": "2026-10-14T01:00:00Z",
-  "inventory": {"prs_complete": true, "branches_complete": true},
+  "inventory": {"prs_complete": true, "branches_complete": true,
+    "open_pr_count": 1, "prless_branch_count": 0},
   "branch_inventory_receipt": {
     "schema": "zcloud-prless-branch-snapshot-v1",
     "inventory_complete": true, "admission_authorized": false,
