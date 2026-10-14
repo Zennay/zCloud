@@ -12,6 +12,16 @@ An older workflow revision can still have a live VPS job when the new revision s
 
 Existing untouched workflows are not changed or declared secure; edited legacy cancellation debt requires owner review. Removing cancellation risk is allowed.
 
+## Cross-workflow and cross-revision safety
+
+The check now looks at **both the previous and candidate Git snapshots**. Switching a workflow to hosted-only jobs does **not** erase the possibility that a previous VPS job is still running under its old concurrency group. The gate denies newly enabled global or job-level cancellation in that case.
+
+For edited hosted-only workflows with cancellation enabled and a statically known concurrency group, the gate additionally builds a single bounded read-only index of all old/new workflow files and denies collisions with other VPS-capable workflow paths sharing that literal group. Quoted/unquoted literal groups are normalized, duplicate groups are denied, and incomplete cross-workflow sources fail closed. Dynamic group expressions are deliberately **not** claimed to be fully checked for cross-workflow collision; they need separate owner review. This source comparison is not a substitute for GitHub's live queue/runner-state proof.
+
+## Measured baseline
+
+[Source-only hosted run 38617904818](https://github.com/Zennay/zCloud/actions/runs/38617904818) reported **216 workflows: 142 with no match for this limited source-risk rule, 74 matching possible cancellation risk, 0 unknown**, on its exact tested branch SHA. This is code-level potential exposure only, **not** 74 outages or 74 verified live runner cancellations. No workflows or queues were changed by the census. The previous/main baseline should be distinguished from any later candidate count by exact Git SHA, and the newer hosted workflow now prints both immutable snapshots.
+
 ## Verification
 
 ```bash
