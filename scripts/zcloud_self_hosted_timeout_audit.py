@@ -104,6 +104,10 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
             seen_jobs.add(job_name)
             starts.append((index, job_name))
 
+    # A syntactically present but empty/unparseable job map cannot be
+    # positive evidence that every self-hosted job has a bounded timeout.
+    if not starts:
+        raise RuntimeError("workflow has no auditable jobs")
     for pos, (start, job) in enumerate(starts):
         end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
         yield job, "\n".join(lines[start:end])
