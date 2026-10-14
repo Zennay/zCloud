@@ -1,6 +1,11 @@
 name: zCloud dynamic worker pool activation
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-one-worker-testing-activation.yml"
+      - "tests/test_one_worker_testing_activation_workflow.py"
   workflow_run:
     workflows: ["zCloud VPS deploy"]
     types: [completed]
@@ -10,21 +15,46 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-dynamic-worker-pool-activation
-  cancel-in-progress: true
+  group: zcloud-dynamic-worker-pool-activation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Validate activation trust contract
+        run: python3 -m unittest -v tests.test_one_worker_testing_activation_workflow
+
   activate:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
-    runs-on: self-hosted
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'workflow_run'
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     steps:
-      - name: Check out the deployed revision
-        uses: actions/checkout@v4
+      - name: Check out the trusted deploy revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
           clean: true
           fetch-depth: 1
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.workflow_run.head_sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Ensure the Firefox runner runtime is live
         shell: bash
@@ -85,6 +115,12 @@ jobs:
                           return json.load(response)
                   except urllib.error.HTTPError as exc:
                       detail = exc.read().decode("utf-8", "replace")
+                      if runner_live and exc.code == 503:
+                          print(
+                              f"RUNNER_LIVE_TRANSIENT http={exc.code} detail={detail[:300]}",
+                              flush=True,
+                          )
+                          return {}
                       if method == "GET" and exc.code == 503 and attempt + 1 < attempts:
                           time.sleep(2)
                           continue
@@ -102,6 +138,12 @@ jobs:
                           raise AllocationChurn(detail[:1000]) from exc
                       raise SystemExit(f"{method} {path} failed with HTTP {exc.code}: {detail[:1000]}") from exc
                   except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as exc:
+                      if runner_live:
+                          print(
+                              f"RUNNER_LIVE_TRANSIENT transport={type(exc).__name__} detail={exc}",
+                              flush=True,
+                          )
+                          return {}
                       if attempt + 1 >= attempts:
                           raise SystemExit(f"{method} {path} transport failed after {attempts} attempt(s): {exc}") from exc
                       time.sleep(1)
@@ -158,6 +200,14 @@ jobs:
                   )
               if command_status == "failed":
                   raise SystemExit(f"worker command failed for {key}: {command}")
+              # A newer pending command can legitimately supersede the exact
+              # activation command after the browser is already live. The
+              # worker's live state + <=90s heartbeat is the activation proof;
+              # requiring that newer scheduler/watchdog command to complete
+              # turns healthy workers into false negatives and causes a
+              # needless new_chat recovery loop.
+              if latest_command_id > int(command_id) and command_status == "pending":
+                  return worker
               if command_status != "completed":
                   return None
               if not worker.get("generating") and event not in DISPATCH_EVENTS:
