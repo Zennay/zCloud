@@ -1,0 +1,42 @@
+name: Manual VPS dispatch safety ratchet (hosted source only)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py'
+      - 'tests/test_zcloud_manual_vps_dispatch_ratchet_20261014.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-vps-dispatch-ratchet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-policy:
+    if: github.repository == 'Zennay/zCloud' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable Git inputs and focused offline tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
+          python3 scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
