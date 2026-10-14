@@ -42,6 +42,9 @@ CHECKOUT = re.compile(
 )
 RUN_STEP = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?['\"]?run['\"]?[ \t]*:", re.I)
 PR_TARGET = re.compile(r"\bpull_request_target\b")
+# A PR head/merge can be checked out with a literal refs/pull/... ref
+# without referring to an untrusted github.head expression at all.
+PULL_REF = re.compile(r"""(?i)\brefs/pull/[^\s'"<>]{1,160}""")
 
 
 class Unverified(ValueError):
@@ -162,11 +165,20 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
             found["untrusted_pr_checkout"].update(
                 match.group(0).lower() for match in PR_SOURCE.finditer(step)
             )
+            found["untrusted_pr_checkout"].update(
+                "pull_ref:" + match.group(0).lower()
+                for match in PULL_REF.finditer(step)
+            )
         command = RUN_STEP.search(step)
         if command is not None:
+            command_source = step[command.start():]
             found["pr_source_in_run_job"].update(
                 match.group(0).lower()
-                for match in PR_SOURCE.finditer(step[command.start():])
+                for match in PR_SOURCE.finditer(command_source)
+            )
+            found["pr_source_in_run_job"].update(
+                "pull_ref:" + match.group(0).lower()
+                for match in PULL_REF.finditer(command_source)
             )
     return {reason: count for reason, count in found.items() if count}
 
