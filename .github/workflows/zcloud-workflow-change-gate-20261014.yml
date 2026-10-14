@@ -8,6 +8,7 @@ on:
       - ".github/workflows/**"
       - "scripts/zcloud_workflow_change_gate_20261014.py"
       - "tests/test_zcloud_workflow_change_gate_20261014.py"
+      - "tests/test_zcloud_workflow_trusted_gate_20261014.py"
 
 permissions:
   contents: read

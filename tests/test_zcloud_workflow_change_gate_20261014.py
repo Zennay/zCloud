@@ -121,6 +121,41 @@ class WorkflowChangeGateTests(unittest.TestCase):
     def test_inline_events_work(self):
         self.assertEqual(gate.judge(HOSTED.replace("on:\n  pull_request:\n    branches: [main]", "on: [pull_request]")), [])
 
+    def test_duplicate_on_event_shadow_denied(self):
+        shadowed = HOSTED + "\non: [workflow_dispatch]\n"
+        self.assertEqual(gate.judge(shadowed), ["duplicate_top_level_on"])
+
+    def test_duplicate_jobs_shadow_denied(self):
+        shadowed = HOSTED + "\njobs:\n  attack:\n    runs-on: [self-hosted, zcloud, vps]\n"
+        self.assertEqual(gate.judge(shadowed), ["duplicate_top_level_jobs"])
+
+    def test_duplicate_root_permissions_denied(self):
+        shadowed = "permissions:\n  contents: read\n" + HOSTED + "\npermissions: write-all\n"
+        self.assertEqual(gate.judge(shadowed), ["duplicate_top_level_permissions"])
+
+    def test_yaml_merge_alias_denied(self):
+        shadowed = HOSTED.replace("    runs-on:", "    <<: *untrusted\n    runs-on:")
+        self.assertEqual(gate.judge(shadowed), ["yaml_merge_alias_not_supported"])
+
+    def test_duplicate_job_id_denied(self):
+        shadowed = HOSTED + "  unit:\n    runs-on: ubuntu-latest\n"
+        self.assertEqual(gate.judge(shadowed), ["duplicate_job_id"])
+
+    def test_duplicate_runner_denied(self):
+        shadowed = HOSTED.replace("    runs-on: ubuntu-latest",
+                                  "    runs-on: ubuntu-latest\n    runs-on: [self-hosted, zcloud, vps]")
+        self.assertIn("unit:duplicate_runs_on", gate.judge(shadowed))
+
+    def test_duplicate_manual_condition_denied(self):
+        shadowed = MANUAL.replace("    runs-on: [self-hosted, zcloud, vps]",
+                                  "    if: true\n    runs-on: [self-hosted, zcloud, vps]")
+        self.assertIn("apply:duplicate_if", gate.judge(shadowed))
+
+    def test_duplicate_job_permissions_denied(self):
+        shadowed = HOSTED.replace("    runs-on: ubuntu-latest",
+                                  "    permissions: {contents: read}\n    permissions: write-all\n    runs-on: ubuntu-latest")
+        self.assertIn("unit:duplicate_permissions", gate.judge(shadowed))
+
     def test_exact_sha_required(self):
         with self.assertRaises(ValueError):
             gate.changed_workflows("main", "b" * 40)
