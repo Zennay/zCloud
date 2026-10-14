@@ -167,5 +167,66 @@ class HaxlabLiveRecoveryGuardTests(unittest.TestCase):
         self.assertIn("redacted_queue_summary", failures(bad))
         self.assertIn("raw_queue_log", failures(bad))
 
+HOSTED_GUARD = ROOT / ".github/workflows/zcloud-haxlab-recovery-hosted-guard-20261014-w4.yml"
+
+def hosted_failures(source: str) -> list[str]:
+    issues = []
+    triggers = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0] if "\non:\n" in source else ""
+    for expected in ("  pull_request:", "  push:", "    branches: [main]",
+                     "zcloud-haxlab-allocation-recovery.yml",
+                     "tests/test_deployops_haxlab_live_recovery_guard_20261014_w4.py"):
+        if expected not in triggers:
+            issues.append("missing_trigger:" + expected)
+    if "workflow_dispatch:" in triggers or "workflow_run:" in triggers:
+        issues.append("unexpected_privileged_trigger")
+    job = source.split("\njobs:\n", 1)[1] if "\njobs:\n" in source else ""
+    for label, token in {
+        "job_canonical": "github.repository == 'Zennay/zCloud'",
+        "job_exact_same_repo": "github.event.pull_request.head.repo.full_name == github.repository",
+        "job_single_attempt": "github.run_attempt == 1",
+        "hosted_only": "runs-on: ubuntu-latest",
+        "pinned_checkout": "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+        "immutable_revision": "ref: " + "$" + "{{ github.event.pull_request.head.sha || github.sha }}",
+        "drop_credentials": "persist-credentials: false",
+        "source_sha": 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
+        "test_invoked": "python3 -m unittest -v tests.test_deployops_haxlab_live_recovery_guard_20261014_w4",
+    }.items():
+        if token not in job:
+            issues.append(label)
+    if not re.search(r"(?m)^permissions:\n  contents: read\s*$", source):
+        issues.append("token_read_only")
+    if re.search(r"(?m)^\s*-\s*name:.*(?:deploy|restart|install)\s*$", job, re.I):
+        issues.append("privileged_job")
+    if re.search(r"(?m)^\s*(?:sudo|systemctl|curl -X POST)\b", job):
+        issues.append("unexpected_runtime_mutation")
+    return issues
+
+class HaxlabHostedVerificationIsolationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = HOSTED_GUARD.read_text(encoding="utf-8")
+
+    def test_hosted_guard_has_no_privileged_actions(self):
+        self.assertEqual([], hosted_failures(self.workflow))
+
+    def test_extra_privileged_dispatch_rejected(self):
+        s = self.workflow.replace("  pull_request:", "  workflow_dispatch:\n  pull_request:", 1)
+        self.assertIn("unexpected_privileged_trigger", hosted_failures(s))
+
+    def test_self_hosted_runner_rejected(self):
+        s = self.workflow.replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, zcloud, vps]", 1)
+        self.assertIn("hosted_only", hosted_failures(s))
+
+    def test_credential_retention_and_unpinned_checkout_rejected(self):
+        self.assertIn("drop_credentials", hosted_failures(self.workflow.replace(
+            "persist-credentials: false", "persist-credentials: true", 1)))
+        self.assertIn("pinned_checkout", hosted_failures(self.workflow.replace(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+            "actions/checkout@v4", 1)))
+
+    def test_explicit_mutation_command_rejected(self):
+        self.assertIn("unexpected_runtime_mutation", hosted_failures(
+            self.workflow + "\n          sudo -n systemctl restart zennay-cloud.service\n"))
+
 if __name__ == "__main__":
     unittest.main()
