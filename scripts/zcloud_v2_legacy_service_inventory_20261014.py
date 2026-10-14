@@ -156,17 +156,35 @@ def summarize_units(lines, *, kind):
     return {"matching_units": count, "active_units": active, "failed_units": failed}
 
 
+def _open_no_symlink_ancestors(path):
+    """Open via directory descriptors so no parent symlink can be swapped in."""
+    parts = Path(path).parts
+    if len(parts) < 2 or parts[0] != "/" or any(part in ("", ".", "..") for part in parts[1:]):
+        raise ValueError("non-absolute or ambiguous source path")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open("/", directory_flags)
+    try:
+        for component in parts[1:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                       dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def read_regular(path, maximum):
-    """Read only the regular inode opened; reject symlink swaps and concurrent edits."""
+    """Read a stable regular inode with no symlinks in any ancestor."""
     if not isinstance(maximum, int) or isinstance(maximum, bool) or not 0 <= maximum <= 65536:
         return None
-    if not hasattr(os, "O_NOFOLLOW"):
+    if not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK")):
         return None
     descriptor = None
     try:
-        # A prior Path.is_symlink()/stat() check races with a hostile replace.
-        # O_NOFOLLOW validates the final component at the actual open syscall.
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        # Resolve every directory as its own nofollow fd to close ancestor
+        # symlink races; finally validate the actual file before/after read.
+        descriptor = _open_no_symlink_ancestors(path)
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or not 0 <= before.st_size <= maximum:
             return None
@@ -222,7 +240,7 @@ def get_background_count(path=EXTENSION_MANIFEST):
         if any(not isinstance(item, str) for item in scripts):
             return None
         return len(scripts)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return None
 
 

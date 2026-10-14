@@ -110,6 +110,8 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
+            manifest.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+            self.assertIsNone(get_background_count(manifest))
 
     def test_main_returns_failure_for_partial_snapshot_without_leaking_raw_error(self):
         payload = {
@@ -221,6 +223,19 @@ class LegacyServiceInventoryTests(unittest.TestCase):
         self.assertIsNone(_bounded_process_output(slow, timeout_seconds=0.05))
         self.assertIsNone(_bounded_process_output(slow, timeout_seconds=0))
         self.assertIsNone(_bounded_process_output(slow, timeout_seconds=6))
+
+    def test_readonly_file_rejects_symlink_ancestor_and_relative_traversal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real = root / "real"
+            real.mkdir()
+            data = real / "safe.json"
+            data.write_text('{"ok":1}', encoding="utf-8")
+            self.assertEqual(read_regular(data, 65536), '{"ok":1}')
+            (root / "link").symlink_to(real, target_is_directory=True)
+            self.assertIsNone(read_regular(root / "link" / "safe.json", 65536))
+            self.assertIsNone(read_regular(Path("relative-file"), 65536))
+            self.assertIsNone(read_regular(real / ".." / "real" / "safe.json", 65536))
 
     def test_readonly_file_handles_symlink_fifo_and_invalid_bounds_without_blocking(self):
         with tempfile.TemporaryDirectory() as temp:

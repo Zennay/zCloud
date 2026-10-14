@@ -32,3 +32,6 @@ The JSON contains `observation_complete` for the four command components, and `i
 ## Exit semantics and false-green prevention
 
 The inventory CLI **exits with code 2 when `inventory_complete=false`**, after publishing only bounded allowlisted JSON with `missing_components`. Thus missing systemctl evidence, absent/invalid source version, inaccessible manifest or insufficient process data cannot make the GitHub diagnostic job appear green. A zero exit means only that the bounded inventory had every expected component; it is **never** proof of healthy worker generation or production acceptance.
+
+
+Directory ancestry hardening: source reads now walk each absolute directory component via `O_DIRECTORY | O_NOFOLLOW` descriptors, then open the leaf with `O_NOFOLLOW | O_NONBLOCK`, rejecting symlinked ancestors, relative traversal and ambiguous paths without race-prone pre-checks. Deeply nested JSON manifests fail closed without logging a traceback. These constraints may deliberately mark older symlink-based installations incomplete until their separate operator-controlled upgrade is approved.
