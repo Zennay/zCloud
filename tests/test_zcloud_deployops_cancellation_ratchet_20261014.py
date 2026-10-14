@@ -203,6 +203,45 @@ class GitTest(unittest.TestCase):
         self.assertRaises(scanner.Unverifiable, scanner.evaluate,
                           self.root, base, head)
 
+    def test_dynamic_previous_vps_group_may_match_hosted_group(self):
+        # An old expression may evaluate to the new hosted candidate's
+        # literal group at runtime; a negative Git-only match is not proof.
+        other = self.path.parent / "dynamic-vps.yml"
+        other.write_text(
+            SELFHOST.replace(
+                "group: isolated",
+                "group: " + "$" + "{{ github.event.inputs.group }}"
+            ),
+            encoding="utf-8",
+        )
+        base = self.commit(SAFE)
+        head = self.commit(
+            SAFE.replace("cancel-in-progress: false",
+                         "cancel-in-progress: true")
+        )
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_vps_without_any_group_is_not_collision_evidence(self):
+        other = self.path.parent / "isolated-vps.yml"
+        other.write_text(
+            SELFHOST.replace(
+                "concurrency:\n  group: isolated\n  cancel-in-progress: false\n",
+                "",
+            ),
+            encoding="utf-8",
+        )
+        base = self.commit(SAFE)
+        head = self.commit(
+            SAFE.replace("cancel-in-progress: false",
+                         "cancel-in-progress: true")
+        )
+        self.assertEqual([], scanner.evaluate(self.root, base, head))
+
+    def test_dynamic_group_owned_only_by_candidate_not_cross_workflow(self):
+        self.assertFalse(scanner.literal_group_collision(
+            "only.yml", SAFE, {None: {"only.yml"}}
+        ))
+
     def test_different_literal_groups_do_not_collide(self):
         other = self.path.parent / "other-vps.yml"
         other.write_text(SELFHOST.replace("group: isolated", "group: other"),
