@@ -192,6 +192,13 @@ def collect(api_get, *, clock=None, monotonic_clock=None):
                       max_count=_MAX_JOBS_PER_RUN, query={"per_page": "100"})
         if not jobs or any(type(job) is not dict for job in jobs):
             raise InventoryError("run_without_valid_job_evidence")
+        # GitHub job objects carry their parent run_id. Reject a partial,
+        # missing or cross-run mix before it can influence human triage.
+        if any(
+            not _integer(job.get("run_id")) or job["run_id"] != run["id"]
+            for job in jobs
+        ):
+            raise InventoryError("cross_run_job_evidence")
         mapped.append({
             "id": run["id"], "repository": (run.get("head_repository") or {}).get("full_name"),
             "head_sha": run.get("head_sha"), "head_branch": run.get("head_branch"),
