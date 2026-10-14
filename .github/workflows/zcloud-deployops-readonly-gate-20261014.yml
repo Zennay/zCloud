@@ -3,9 +3,9 @@ name: zCloud deploy-ops read-only exact-main receipt proof
 on:
   push:
     branches:
-      - deployops/production-gate-evidence-20261014-w1
-    # Run on every branch commit, including source-only main restacks.
-    # This branch is isolated and cannot invoke privileged VPS jobs.
+      - deployops/manual-main-readonly-proof-20261014-w1
+    # Isolated source-validation branch only. No automatic main-push trigger.
+    # Main is allowed exclusively through explicit owner workflow_dispatch.
   workflow_dispatch:
 
 permissions:
@@ -21,7 +21,12 @@ jobs:
   offline-exact-head-validation:
     if: >-
       github.repository == 'Zennay/zCloud' &&
-      github.ref == 'refs/heads/deployops/production-gate-evidence-20261014-w1'
+      ((github.event_name == 'push' &&
+        github.ref == 'refs/heads/deployops/manual-main-readonly-proof-20261014-w1') ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay' &&
+        github.run_attempt == 1))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
