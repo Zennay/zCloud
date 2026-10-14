@@ -75,7 +75,11 @@ def changed_workflows(root: Path, base: str, head: str) -> list[str]:
     # --no-renames exposes the removed side of a rename for explicit review.
     removed = git(root, "diff", "--name-only", "-z", "--no-renames",
                   "--diff-filter=D", f"{base}...{head}", "--", ".github/workflows/")
-    if removed:
+    removed_paths = [item.decode("utf-8", "strict")
+                     for item in removed.split(b"\x00") if item]
+    if len(removed_paths) > 250 or len(removed_paths) != len(set(removed_paths)):
+        raise Unverified("incomplete_or_untrusted_workflow_inventory")
+    if any(WORKFLOW.fullmatch(path) for path in removed_paths):
         raise Unverified("workflow_removal_requires_review")
     raw = git(root, "diff", "--name-only", "-z", "--diff-filter=ACMRT", f"{base}...{head}", "--", ".github/workflows/")
     paths = [part.decode("utf-8", "strict") for part in raw.split(b"\x00") if part]
