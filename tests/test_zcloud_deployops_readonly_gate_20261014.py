@@ -71,6 +71,44 @@ class GateTests(unittest.TestCase):
         self.assertEqual(result["observation"], "STATUS_GREEN_UNVERIFIED")
         self.assertFalse(result["release_authorized"])
 
+    def test_green_status_conflicting_with_failed_deploy_is_not_silently_overridden(self):
+        item = fixture()
+        item["status"]["statuses"][0]["state"] = "success"
+        result = gate.classify(item)
+        self.assertEqual(result["observation"], "STATUS_RUN_CONFLICT")
+        self.assertEqual(result["production_status"], "success")
+        self.assertTrue(result["source_conflict"])
+        self.assertEqual(result["next_check"], "review_exact_main_status_and_deploy_attempts")
+        self.assertFalse(result["release_authorized"])
+
+    def test_failed_status_conflicting_with_green_deploy_is_explicit(self):
+        item = fixture()
+        item["runs"]["workflow_runs"][0]["conclusion"] = "success"
+        item["jobs_by_run"]["1234"]["jobs"][0]["conclusion"] = "success"
+        result = gate.classify(item)
+        self.assertEqual(result["observation"], "STATUS_RUN_CONFLICT")
+        self.assertTrue(result["source_conflict"])
+        self.assertFalse(result["production_verified"])
+
+    def test_active_deploy_does_not_suggest_retrigger(self):
+        item = fixture()
+        item["runs"]["workflow_runs"][0].update(status="in_progress", conclusion=None)
+        item["jobs_by_run"]["1234"]["jobs"][0].update(status="in_progress", conclusion=None)
+        result = gate.classify(item)
+        self.assertEqual(result["observation"], "DEPLOY_RUN_IN_PROGRESS")
+        self.assertEqual(result["next_check"], "observe_existing_deploy_without_redispatch")
+        self.assertFalse(result["mutation_authorized"])
+
+    def test_absent_status_no_automatic_recovery(self):
+        item = fixture()
+        item["status"]["statuses"] = []
+        item["runs"]["workflow_runs"] = []
+        item["runs"]["total_count"] = 0
+        item["jobs_by_run"] = {}
+        result = gate.classify(item)
+        self.assertEqual(result["next_check"], "review_missing_status_without_redispatch")
+        self.assertFalse(result["release_authorized"])
+
     def test_queued_unassigned_is_not_listener_outage_proof(self):
         item = fixture()
         item["runs"]["workflow_runs"][0].update(status="queued", conclusion=None)
