@@ -96,6 +96,62 @@ class QueueWatchTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(m.Unavailable):
                 m.summarize([r], {1: [j]}, NOW, total_count=invalid)
 
+    def test_recent_rerun_assignment_of_old_workflow_is_not_lost(self):
+        run, job = sample(8, age=65, status="in_progress", runner=21)
+        run["created_at"] = iso(m.MAX_AGE + 300)
+        run["run_attempt"] = 2
+        job["run_attempt"] = 2
+        result = self.classify((run, job))
+        self.assertEqual(result["classification"], "RECENT_RUNNER_ASSIGNMENT_OBSERVED")
+        self.assertEqual(result["inspected_recent_runs"], 1)
+        self.assertEqual(result["recent_assignments"], 1)
+        self.assertFalse(result["runner_offline_verified"])
+        self.assertFalse(result["mutation_authorized"])
+
+    def test_three_old_run_ids_with_new_queued_jobs_are_checked_by_job_age(self):
+        pairs = []
+        for number in (1, 2, 3):
+            run, job = sample(number, age=1500)
+            run["created_at"] = iso(m.MAX_AGE + number * 600)
+            run["run_attempt"] = 2
+            job["run_attempt"] = 2
+            pairs.append((run, job))
+        result = self.classify(*pairs)
+        self.assertEqual(result["classification"], "POSSIBLE_LISTENER_GAP")
+        self.assertEqual(result["stale_unassigned"], 3)
+        self.assertEqual(result["inspected_recent_runs"], 3)
+        self.assertFalse(result["runner_offline_verified"])
+
+    def test_old_run_with_old_job_is_not_miscounted_as_current_queue(self):
+        run, job = sample(9, age=m.MAX_AGE + 3600)
+        result = self.classify((run, job))
+        self.assertEqual(result["classification"], "INSUFFICIENT_QUEUE_EVIDENCE")
+        self.assertEqual(result["inspected_recent_runs"], 0)
+        self.assertEqual(result["stale_unassigned"], 0)
+
+    def test_old_run_with_new_job_requires_complete_bound_provenance(self):
+        run, job = sample(9, age=70, status="in_progress", runner=21)
+        run["created_at"] = iso(m.MAX_AGE + 1200)
+        run["run_attempt"] = 2
+        job["run_attempt"] = 2
+        with self.assertRaisesRegex(m.Unavailable, "jobs_missing|incomplete_job_inventory"):
+            m.summarize([run], {}, NOW)
+        job["run_attempt"] = 1
+        with self.assertRaisesRegex(m.Unavailable, "unbound_job_provenance"):
+            self.classify((run, job))
+
+    def test_cross_run_reused_job_id_is_contradictory_provenance(self):
+        first_run, first_job = sample(1)
+        second_run, second_job = sample(2)
+        second_job["id"] = first_job["id"]
+        second_job["url"] = first_job["url"]
+        second_job["html_url"] = (
+            f"https://github.com/{m.REPO}/actions/runs/{second_run['id']}"
+            f"/job/{first_job['id']}"
+        )
+        with self.assertRaisesRegex(m.Unavailable, "unbound_job_provenance"):
+            self.classify((first_run, first_job), (second_run, second_job))
+
     def test_truncated_stale_queue_cannot_alone_assert_listener_gap(self):
         pairs = (sample(1, age=1600), sample(2, age=1500), sample(3, age=1300))
         runs = [r for r, _ in pairs]
