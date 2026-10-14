@@ -287,7 +287,10 @@ def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFindi
             raise RuntimeError("unexpected git ls-tree output")
         mode, object_type, _object_id = metadata.split(" ", 2)
         path = Path(relative)
-        if path.suffix.lower() not in WORKFLOW_SUFFIXES:
+        # Actions only loads workflow files directly under .github/workflows.
+        # Align immutable Git baselines with the non-recursive working scan:
+        # nested examples/templates are not schedulable workflow jobs.
+        if path.parent != WORKFLOW_DIR or path.suffix.lower() not in WORKFLOW_SUFFIXES:
             continue
         workflow_count += 1
         if workflow_count > MAX_WORKFLOW_FILES:
