@@ -84,6 +84,10 @@ The triage receipt now explicitly includes `mutation_authorized=false` in both O
 
 The route observer treats GitHub's standard OS/architecture self-hosted labels (`Linux`, `X64`, `ARM64`, etc.) as non-pool metadata; only an exact remaining pool label set `self-hosted + zcloud + vps` or `self-hosted + ftmo-research` yields the corresponding diagnosis. Unknown additional routing labels, combined FTMO/zCloud labels and duplicated label strings are `other_or_mixed`, **not** a confident statement that a particular VPS runner is targeted. This deliberately sacrifices optimistic classification for trustworthy incident triage. No change to actual workflow runner selection or any runner registration has been made.
 
+### Bearer token header safety
+
+The GET-only GitHub reader now admits only bounded printable ASCII token characters (`A-Z`, `a-z`, `0-9`, underscore, dot and hyphen). It rejects whitespace (including tabs), HTTP header control bytes, Unicode, malformed token shapes and oversized values **before constructing an HTTP Authorization header or attempting network access**. The exact token is neither serialized into diagnostic receipts nor printed in logs. The test matrix exercises header-injection, Unicode and long-value denial while retaining common scoped GitHub token layouts and the existing read-only path allowlist. This does **not** grant new GitHub permissions or change the production workflow token.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
