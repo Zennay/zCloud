@@ -210,11 +210,18 @@ def _cache_status_signal(value):
                 else:
                     return "invalid_headers"
             elif key == "fwd":
-                if has_fwd or not separator or not raw_value.strip():
+                # RFC 9211 requires an RFC 8941 token rather than a string,
+                # list, or structured Boolean for the forward reason.
+                reason = raw_value.strip()
+                if (has_fwd or not separator or not reason or
+                        not reason[0].isalpha() or
+                        any(not (ch.isalnum() or ch in "_-.*:/")
+                            for ch in reason)):
                     return "invalid_headers"
                 has_fwd = True
-        # The two RFC 9211 mechanisms are mutually exclusive.
-        if cache_hit is True and has_fwd:
+        # RFC 9211 says hit and fwd are exclusive on a single member,
+        # including an explicitly false hit=?0.
+        if cache_hit is not None and has_fwd:
             return "invalid_headers"
         hit_detected |= cache_hit is True
     return "cache_evidence" if hit_detected else None
