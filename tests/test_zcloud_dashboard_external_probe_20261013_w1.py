@@ -152,6 +152,27 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertEqual(probe.probe_once(Opener(Response(content_type="text/html"))), "content_type")
         self.assertEqual(probe.probe_once(Opener(Response(content_type="application/json-ish"))), "content_type")
 
+    def test_strict_json_content_type_rejects_conflicting_charsets(self):
+        for value in ("application/json; charset=latin-1",
+                      "application/json; charset=iso-8859-1",
+                      "application/json; charset=utf-8; profile=secret",
+                      "application/json; charset=", "application/json;",
+                      "application/json; profile=foo", "application/json\u000a",
+                      "application/json; charset=utf-8\u0000",
+                      "application/json; charset=utf-8; charset=utf-8",
+                      "application/json; " + "x" * 200):
+            with self.subTest(value=repr(value)):
+                self.assertEqual(probe.probe_once(Opener(Response(content_type=value))),
+                                 "content_type")
+
+    def test_strict_json_content_type_accepts_normalized_utf8(self):
+        for value in ("application/json", "application/json; charset=utf-8",
+                      'APPLICATION/JSON; CHARSET="UTF-8"',
+                      "application/json ; charset=UTF-8"):
+            with self.subTest(value=value):
+                self.assertEqual(probe.probe_once(Opener(Response(content_type=value))),
+                                 "healthy")
+
     def test_rejects_mismatched_and_malformed_content_length(self):
         for length in ("0", "1", "999", "-1", "+3", "1, 2",
                        "1e5", "１２", "1" * 100):
