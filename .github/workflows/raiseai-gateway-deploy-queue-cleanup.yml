@@ -9,6 +9,11 @@ on:
         description: "Exact current zCloud main commit SHA (40 lowercase hex)"
         required: true
         type: string
+      perform_cancellations:
+        description: "Explicit second opt-in (false means no mutation)"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,18 +30,32 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
-      github.run_attempt == 1
+      github.run_attempt == 1 &&
+      inputs.perform_cancellations == true
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     env:
       RAISE_REPO: Zennay/RaiseAI
+      ZCLOUD_EXPECTED_SHA: ${{ inputs.confirm_sha }}
     steps:
       - name: Cancel only superseded queued gateway deploys
         shell: bash
         run: |
           set -euo pipefail
+          # Never grant the stored VPS gh credential cancellation authority
+          # unless both an exact caller-intended and fresh remote main agree.
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          [[ "$ZCLOUD_EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_SHA" = "$ZCLOUD_EXPECTED_SHA"
           gh auth status >/dev/null 2>&1
+          test "$(gh api repos/Zennay/zCloud/commits/main --jq .sha)" = "$ZCLOUD_EXPECTED_SHA"
           main_sha="$(gh api repos/$RAISE_REPO/commits/main --jq .sha)"
+          [[ "$main_sha" =~ ^[a-f0-9]{40}$ ]]
           echo "RAISEAI_MAIN_SHA=$main_sha"
 
           mapfile -t stale < <(
