@@ -135,6 +135,20 @@ class GuardTests(unittest.TestCase):
         candidate = previous + "      - run: echo '${{ secrets.EXISTING }}'\n"
         self.assertIn("secret_reference", gate.increasing_risks(previous, candidate))
 
+    def test_checkout_head_expression_swap_denied_at_equal_count(self):
+        base = SAFE + "      - uses: actions/checkout@012345\n        with:\n          ref: ${{ github.event.pull_request.head.ref }}\n"
+        candidate = base.replace("github.event.pull_request.head.ref", "github.event.pull_request.head.sha")
+        self.assertEqual(gate.risk_counts(base)["untrusted_pr_checkout"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["untrusted_pr_checkout"], 1)
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(base, candidate))
+
+    def test_run_head_expression_swap_denied_at_equal_count(self):
+        base = SAFE + "      - run: git fetch origin '${{ github.head_ref }}'\n"
+        candidate = base.replace("github.head_ref", "github.event.pull_request.head.sha")
+        self.assertEqual(gate.risk_counts(base)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(base, candidate))
+
     def test_comment_only_rewrite_preserves_risk_counters(self):
         previous = SAFE.replace("contents: read", "contents: write") + "      - run: echo '${{ secrets.FIRST }}'\n"
         candidate = previous + "# actions: write and secrets.BAD are commented out\n"
