@@ -75,6 +75,18 @@ class ManualDispatchPolicy(unittest.TestCase):
     def test_no_dispatch_event_is_not_in_scope(self):
         self.assertTrue(guard.evaluate({}, {WF: workflow(event="push:")})["ok"])
 
+    def test_dispatch_after_push_is_not_ignored(self):
+        body = workflow().decode().replace("  workflow_dispatch:", "  push:\n  workflow_dispatch:")
+        self.assertDenied(body.encode())
+
+    def test_unmodified_legacy_ambiguous_yaml_does_not_block_safe_changes(self):
+        historical = workflow().replace(b"  workflow_dispatch:", b"  workflow_dispatch: &anchor")
+        head = {WF: historical, ".github/workflows/new.yml": workflow(if_statement=SAFE_IF)}
+        base = {WF: historical}
+        self.assertTrue(guard.evaluate(base, head)["ok"])
+        with self.assertRaises(guard.RefError):
+            guard.evaluate(base, {WF: historical.replace(b"&anchor", b"&changed")})
+
     def test_flow_dispatch_event_detected(self):
         body = workflow().decode().replace("on:\n  workflow_dispatch:", "on: [workflow_dispatch]")
         self.assertDenied(body.encode())
