@@ -205,7 +205,7 @@ class LegacyServiceInventoryTests(unittest.TestCase):
         # Every independently timed-out component must make the snapshot
         # incomplete, without publishing source exceptions or private output.
         baseline = {
-            "process": "firefox\\n",
+            "process": "firefox\n",
             "user_services": "zcloud.service loaded active running",
             "system_services": "zcloud.service loaded inactive dead",
             "user_timers": "zcloud-hourly.timer loaded active waiting",
@@ -213,7 +213,7 @@ class LegacyServiceInventoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             worker = root / "worker.user.js"
-            worker.write_text("// @version 2.0.3\\n", encoding="utf-8")
+            worker.write_text("// @version 2.0.3\n", encoding="utf-8")
             manifest = root / "manifest.json"
             manifest.write_text('{"background":{"scripts":["entry.js"]}}', encoding="utf-8")
             for broken in COMMANDS:
@@ -239,7 +239,7 @@ class LegacyServiceInventoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             worker = root / "worker.user.js"
-            worker.write_text("// @version 2.0.3\\n", encoding="utf-8")
+            worker.write_text("// @version 2.0.3\n", encoding="utf-8")
             manifest = root / "manifest.json"
             manifest.write_text('{"background":{"scripts":["entry.js"]}}', encoding="utf-8")
             missing = root / "not-installed"
