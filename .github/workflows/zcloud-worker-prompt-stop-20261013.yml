@@ -10,12 +10,18 @@ on:
       - scripts/zcloud_worker_prompt_safe_diagnostic.py
       - tests/test_zcloud_worker_prompt_safe_diagnostic.py
       - tests/test_zcloud_worker_prompt_fresh_main_20261014.py
+      - tests/test_zcloud_worker_diagnostic_explicit_consent_20261014.py
   workflow_dispatch:
     inputs:
       confirm_sha:
         description: "Explicit exact current main SHA to permit read-only numeric worker diagnosis"
         type: string
         required: true
+      approve_readonly_diagnostic:
+        description: "I explicitly authorize a bounded, private worker-state diagnostic"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -43,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          python3 -m unittest -v tests.test_zcloud_worker_prompt_safe_diagnostic tests.test_zcloud_worker_prompt_fresh_main_20261014
+          python3 -m unittest -v tests.test_zcloud_worker_prompt_safe_diagnostic tests.test_zcloud_worker_prompt_fresh_main_20261014 tests.test_zcloud_worker_diagnostic_explicit_consent_20261014
           python3 -m py_compile scripts/zcloud_worker_prompt_safe_diagnostic.py
 
   owner-vps-inspection:
@@ -53,7 +59,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
       github.run_attempt == 1 &&
-      inputs.confirm_sha == github.sha
+      inputs.confirm_sha == github.sha &&
+      inputs.approve_readonly_diagnostic == true
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     steps:
@@ -68,8 +75,10 @@ jobs:
         shell: bash
         env:
           CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_DIAGNOSTIC: ${{ inputs.approve_readonly_diagnostic }}
         run: |
           set -euo pipefail
+          test "$APPROVE_DIAGNOSTIC" = "true"
           test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -87,7 +96,27 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Collect redacted numeric summary only
         shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_DIAGNOSTIC: ${{ inputs.approve_readonly_diagnostic }}
         run: |
           set -euo pipefail
+          # Revalidate authority in the exact step that accesses private runtime.
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$APPROVE_DIAGNOSTIC" = "true"
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
           python3 -m unittest -q tests.test_zcloud_worker_prompt_safe_diagnostic
           python3 scripts/zcloud_worker_prompt_safe_diagnostic.py
