@@ -69,13 +69,16 @@ class RestartWorkersPendingReconcileTests(unittest.TestCase):
             "exec",
         )
 
-    def test_proof_is_permanent_vps_bound_and_read_only(self):
+    def test_proof_runs_offline_on_hosted_without_privileged_vps_access(self):
         text = PROOF.read_text(encoding="utf-8")
 
-        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertNotIn("runs-on: [self-hosted", text)
         self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn("github.repository == 'Zennay/zCloud'", text)
+        self.assertIn("github.actor == 'Zennay'", text)
         self.assertIn(
-            "github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository",
+            "github.event.pull_request.head.repo.full_name == github.repository",
             text,
         )
         self.assertIn(
@@ -83,15 +86,14 @@ class RestartWorkersPendingReconcileTests(unittest.TestCase):
             text,
         )
         self.assertIn("persist-credentials: false", text)
-        self.assertLess(
-            text.index("python3 scripts/zcloud_vps_runner_guard.py --json"),
-            text.index("python3 -m unittest -v"),
-        )
+        self.assertIn("test \"$actual\" = \"$EXPECTED_ZCLOUD_SHA\"", text)
+        self.assertIn("python3 -m unittest -v", text)
         for forbidden in (
             "/home/ubuntu/zennay-cloud",
             "systemctl ",
             "scripts/zcloud_transactional_promote.py",
             "scripts/zcloud_runtime.py",
+            "zcloud_vps_runner_guard.py",
             "curl ",
             "sudo ",
         ):

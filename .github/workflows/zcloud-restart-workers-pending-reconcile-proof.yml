@@ -9,6 +9,7 @@ on:
       - tests/test_restart_workers_pending_reconcile.py
       - tests/test_restart_workers_firefox_timeout.py
       - tests/test_restart_workers_allocation_churn.py
+      - tests/test_restart_pending_hosted_proof_20261014.py
   push:
     branches: [main]
     paths:
@@ -17,6 +18,7 @@ on:
       - tests/test_restart_workers_pending_reconcile.py
       - tests/test_restart_workers_firefox_timeout.py
       - tests/test_restart_workers_allocation_churn.py
+      - tests/test_restart_pending_hosted_proof_20261014.py
   workflow_dispatch:
 
 permissions:
@@ -28,8 +30,14 @@ concurrency:
 
 jobs:
   prove:
-    if: github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, zcloud, vps]
+    # These are offline source-contract tests. PRs must never queue a VPS job
+    # or execute code from an unreviewed revision on the production host.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name != 'pull_request' ||
+       (github.actor == 'Zennay' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -50,12 +58,6 @@ jobs:
           test "$actual" = "$EXPECTED_ZCLOUD_SHA"
           printf 'ZCLOUD_RESTART_RECONCILE_EXACT_CHECKOUT_GREEN sha=%s\n' "$actual"
 
-      - name: Enforce permanent zCloud VPS runner identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/zcloud_vps_runner_guard.py --json
-
       - name: Run restart reconciliation contract tests
         shell: bash
         run: |
@@ -63,7 +65,8 @@ jobs:
           python3 -m unittest -v \
             tests.test_restart_workers_firefox_timeout \
             tests.test_restart_workers_allocation_churn \
-            tests.test_restart_workers_pending_reconcile
+            tests.test_restart_workers_pending_reconcile \
+            tests.test_restart_pending_hosted_proof_20261014
 
       - name: Mark restart reconciliation proof green
         run: echo "ZCLOUD_RESTART_PENDING_RECONCILE_PROOF_GREEN=1"
