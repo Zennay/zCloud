@@ -92,6 +92,36 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertNotIn("SECRET", json.dumps(result))
         self.assertFalse(result["worker_generation_verified"])
 
+    def test_exact_eight_queued_run_shapes_remain_separate_and_non_authorizing(self):
+        """Regression for the 14 October GET-only eight-run incident census."""
+        ftmo_ids = [38444164413, 38417002886, 38410397682]
+        nojob_ids = [37655509528, 37655509566, 37642380865,
+                     37642380864, 37642380862]
+        entries = [
+            run(ftmo_ids[0], branch="fix/force-deploy-verified-live-sha-20261013", sha=OLD),
+            run(ftmo_ids[1], branch="diagnostic/physics-20261013", sha=OLD),
+            run(ftmo_ids[2], sha=OLD),
+        ] + [run(number, sha=OLD) for number in nojob_ids]
+        evidence = {}
+        for entry in entries[:3]:
+            number = entry["id"]
+            j = job(number)
+            j["head_sha"] = entry["head_sha"]
+            j["head_branch"] = entry["head_branch"]
+            evidence[number] = [j]
+        get, calls = mock(entries, evidence)
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["decision"], "OBSERVED")
+        self.assertEqual(result["observed_runs"], 8)
+        self.assertEqual(sum(row["route"] == "ftmo_research" for row in result["runs"]), 3)
+        self.assertEqual(sum(row["assignment"] == "not_assigned" for row in result["runs"]), 3)
+        self.assertEqual(sum(row["route"] == "no_job_records" for row in result["runs"]), 5)
+        self.assertEqual(sum(row["scope"] == "current_main" for row in result["runs"]), 0)
+        self.assertEqual(sum("/jobs?" in path for path in calls), 16)
+        self.assertEqual(result["cancel_run_ids"], [])
+        self.assertFalse(result["runner_recovery_authorized"])
+        self.assertFalse(result["worker_generation_verified"])
+
     def test_current_main_zcloud_vps_job_is_still_not_runner_recovery(self):
         get, _ = mock([run(1)], {1: [job(1, route="zcloud_vps")]})
         result = triage.collect(get, clock=NOW)
