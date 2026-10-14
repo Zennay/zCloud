@@ -47,6 +47,9 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha &&
       inputs.maintenance_ack == 'I_APPROVE_PAGECACHE_RECLAIM'
     concurrency:
       group: zcloud-production-deploy
@@ -70,10 +73,14 @@ jobs:
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = "1"
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$CONFIRMED_SHA" = "$GITHUB_SHA"
-          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
           test "$(hostname)" = vps-bb300bba
           test "$(id -un)" = ubuntu
           python3 scripts/zcloud_vps_runner_guard.py --json
@@ -106,9 +113,16 @@ jobs:
           # Without sync, dirty write caches stay safely intact.
           # Recheck immutable main immediately before even considering root IO.
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          last_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$last_main"
+          test "$last_main" = "$GITHUB_SHA"
           # Skip if memory evidence is corrupt, critical, or pressure absent.
           if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then
+            # Re-check after the final policy computation, as directly as
+            # possible before the only privileged kernel write.
+            root_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            test -n "$root_main"
+            test "$root_main" = "$GITHUB_SHA"
             sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'
             echo "SAFE_RECLAIM_CLEAN_PAGECACHE=1"
           else
