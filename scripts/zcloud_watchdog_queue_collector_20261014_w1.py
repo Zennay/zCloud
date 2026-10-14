@@ -155,8 +155,30 @@ def _main(api_get):
     return sha
 
 
-def collect(api_get, *, clock=None):
-    """Fetch main before/after a complete queued-run + job snapshot, GET only."""
+def _run_identity(run):
+    """Select stable admission fields, not incidental GitHub display metadata."""
+    if type(run) is not dict or type(run.get("head_repository")) is not dict:
+        raise InventoryError("invalid_run_identity")
+    if not _integer(run.get("id")):
+        raise InventoryError("invalid_run_id")
+    return (
+        run["id"], run.get("run_attempt"), run.get("workflow_id"),
+        run.get("head_sha"), run.get("head_branch"), run.get("event"),
+        run.get("status"), run["head_repository"].get("full_name"),
+    )
+
+
+def collect(api_get, *, clock=None, monotonic_clock=None):
+    """Verify stable queue census and bounded acquisition time; GET only."""
+    monotonic = monotonic_clock or time.monotonic
+    started_tick = monotonic()
+    observed_at = clock if clock is not None else datetime.now(timezone.utc)
+    if (
+        type(started_tick) not in (int, float) or
+        not isinstance(observed_at, datetime) or observed_at.tzinfo is None or
+        observed_at.utcoffset().total_seconds() != 0
+    ):
+        raise InventoryError("invalid_observation_clock")
     before = _main(api_get)
     run_route = "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100"
     runs = _pages(api_get, run_route, "workflow_runs", max_pages=_MAX_RUN_PAGES,
@@ -178,22 +200,24 @@ def collect(api_get, *, clock=None):
             "jobs": [{"id": j.get("id"), "status": j.get("status"), "labels": j.get("labels")}
                      for j in jobs if type(j) is dict],
         })
-    # Catch a queue replacement on the leading page, not merely Git main drift.
-    latest, latest_link = api_get(run_route + "&page=1")
-    initial_ids = [r.get("id") for r in runs[:_PAGE_SIZE] if type(r) is dict]
-    latest_ids = [r.get("id") for r in latest.get("workflow_runs", [])
-                  if type(r) is dict] if type(latest.get("workflow_runs")) is list else None
-    if (latest.get("total_count") != len(runs) or latest_ids != initial_ids
-            or _next_link(latest_link, expected_path=run_route.split("?")[0], expected_page=1,
-                          required_query={"status": "queued", "per_page": "100"})
-            != (len(runs) > _PAGE_SIZE)):
+    # Re-read the COMPLETE run census, not only the first page. A later-page
+    # replacement or identical IDs with different claim metadata must deny.
+    verified_runs = _pages(api_get, run_route, "workflow_runs",
+                           max_pages=_MAX_RUN_PAGES, max_count=_MAX_RUNS,
+                           query={"status": "queued", "per_page": "100"})
+    if [_run_identity(item) for item in verified_runs] != [
+        _run_identity(item) for item in runs
+    ]:
         raise InventoryError("queue_changed_during_inventory")
     after = _main(api_get)
     if after != before:
         raise InventoryError("main_moved_during_inventory")
-    when = clock or datetime.now(timezone.utc)
-    if not isinstance(when, datetime) or when.tzinfo is None or when.utcoffset().total_seconds() != 0:
-        raise InventoryError("invalid_clock")
+    span = monotonic() - started_tick
+    if type(span) not in (int, float) or not 0 <= span <= 45:
+        raise InventoryError("snapshot_acquisition_too_slow")
+    # The timestamp is the BEGINNING of the observation, never refreshed at
+    # the end to make a slow or partially stale scan appear fresh.
+    when = observed_at
     chunks = [mapped[i:i + _PAGE_SIZE] for i in range(0, len(mapped), _PAGE_SIZE)] or [[]]
     return {
         "repository": REPO, "main_sha_before": before, "main_sha_after": after,
