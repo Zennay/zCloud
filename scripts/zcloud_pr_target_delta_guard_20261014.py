@@ -452,6 +452,11 @@ def risk_set(source: str) -> set[str]:
     # must not be misclassified as an ordinary non-target workflow.
     if re.search(r"(?m)^\s*<<\s*:\s*\*[A-Za-z_][\w-]*", event_region):
         raise Unverified("aliased_event_trigger")
+    # A list can smuggle the same aliased event after an ordinary trigger:
+    # "on: [push, *privileged]" or "on:\n  - *privileged".
+    # Never regard an opaque event entry as a verified non-target trigger.
+    if re.search(r"(?<![A-Za-z0-9_])\*[A-Za-z_][\w-]*", event_region):
+        raise Unverified("aliased_event_trigger")
     if not PR_TARGET.search(event_region):
         return set()
     risk = set()
