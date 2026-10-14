@@ -4,21 +4,69 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zcloud-firefox-worker-recovery-probe-20261013.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-firefox-worker-recovery-probe-20261013.yml
+      - scripts/zcloud_firefox_readonly_snapshot_20261014.py
+      - tests/test_zcloud_firefox_readonly_snapshot_20261014.py
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  hosted-proof:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify offline SQLite-only metadata and no GET-side mutation
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_firefox_readonly_snapshot_20261014
+          python3 -m py_compile scripts/zcloud_firefox_readonly_snapshot_20261014.py
+
   inspect:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.ref == 'refs/heads/main'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     steps:
-      - name: Inspect running Firefox, addon launcher, backend claims, tabs and active script evidence without mutation
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Enforce exact current main and permanent VPS before local observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Inspect local SQLite counters strictly read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_firefox_readonly_snapshot_20261014.py
+      - name: Inspect running Firefox, addon launcher, and active script evidence without mutation
         shell: bash
         run: |
           set -euo pipefail
           test "$(hostname)" = "vps-bb300bba"
           python3 - <<'PY'
-          import json,pathlib,subprocess,urllib.request,re,socket
+          import json,pathlib,subprocess,re,socket
           out=subprocess.check_output(["ps","-eo","pid=,ppid=,args="],text=True)
           rows=out.splitlines()
           main=[x for x in rows if "firefox" in x.lower() and "-start-debugger-server" in x and "contentproc" not in x]
@@ -33,20 +81,10 @@ jobs:
           print("V2_ADDON_SOURCE_ON_DISK="+str(script.is_file()))
           if manifest.is_file():
             data=json.loads(manifest.read_text());print("EXTENSION_MANIFEST_VERSION="+str(data.get("version")))
-          try:
-            with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets",timeout=8) as response:
-              payload=json.load(response)
-            rows=list((payload.get("projects") or {}).values())
-            active=[r for r in rows if r.get("active")]
-            ready=[r for r in rows if r.get("assignment_ready") and r.get("queue_item",{}).get("queue_id")]
-            allocation=payload.get("global_allocation") or {}
-            print("CONFIGURED_WORKER_COUNT="+str((payload.get("dynamic_workers") or {}).get("count")))
-            print("ALLOCATION_COUNT="+str(len(allocation.get("workers") or [])))
-            print("ACTIVE_WORKER_TARGET_COUNT="+str(len(active)))
-            print("ASSIGNMENT_READY_COUNT="+str(len(ready)))
-            print("ALLOCATED_WORKER_KEYS="+json.dumps([str(r.get("worker_key")) for r in allocation.get("workers",[])][:20]))
-            print("RUNNER_TARGETS="+json.dumps([{"key":r.get("project_id"),"slot":r.get("global_worker_slot"),"ready":r.get("assignment_ready"),"active":r.get("active"),"provider":r.get("provider")} for r in rows if r.get("global_worker_slot") is not None][:20]))
-          except Exception as e:print("RUNNER_TARGET_READ_ERROR="+type(e).__name__+":"+str(e)[:150])
+          # No localhost control-plane GETs: /api/runner-targets may reconcile
+          # and mutate SQLite (issue #1341). This live probe deliberately reports
+          # no worker identities, prompts or browser navigation.
+          print("RUNNER_TARGETS_HTTP_SKIPPED=backend_get_may_write")
           ports=[int(k) for row in main for k in re.findall(r"-start-debugger-server\\s+(\\d+)",row)]
           if len(ports)!=1:
             print("RDP_SKIPPED=port-not-unique")
@@ -69,8 +107,8 @@ jobs:
               root=recv();send({"to":root.get("from","root"),"type":"listAddons"})
               ans=recv()
               addons=[{"id":a.get("id"),"name":a.get("name")} for a in ans.get("addons",[]) if "project-runner" in str(a.get("id",""))]
-              print("LIVE_PROJECT_RUNNER_ADDONS="+json.dumps(addons))
+              print("LIVE_PROJECT_RUNNER_ADDON_COUNT="+str(len(addons)))
               sock.close()
-            except Exception as e:print("RDP_PROBE_ERROR="+type(e).__name__+":"+str(e)[:100])
+            except Exception as e:print("RDP_PROBE_ERROR="+type(e).__name__)
           print("READ_ONLY_NO_PROCESS_OR_TAB_MUTATION=1")
           PY
