@@ -37,6 +37,31 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_git_baseline_preserves_exact_unusual_workflow_filenames(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            names = ("name with space.yml", "tab\\tname.yaml", "unicode-épreuve.yml", "line\\nbreak.yml")
+            for position, name in enumerate(names):
+                (workflows / name).write_text(
+                    f"jobs:\\n  proof_{position}:\\n    runs-on: self-hosted\\n"
+                    "    timeout-minutes: 15\\n",
+                    encoding="utf-8",
+                )
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for key, value in (("user.name", "Audit Tests"), ("user.email", "audit@example.invalid")):
+                subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+            subprocess.run(["git", "-C", str(root), "add", ".github"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "unusual filenames"], check=True)
+            sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            self.assertEqual(
+                audit.scan_repository(root, max_minutes=30),
+                audit.scan_git_ref(root, sha, max_minutes=30),
+            )
+
     def test_git_baseline_only_counts_direct_workflow_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
