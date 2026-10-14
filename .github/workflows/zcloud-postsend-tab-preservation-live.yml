@@ -71,6 +71,7 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.apply == true &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
@@ -93,6 +94,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_ACTOR" = Zennay
           test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = "1"
           test "$APPLY_REQUESTED" = true
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
@@ -102,6 +104,7 @@ jobs:
           test "$current_main" = "$CONFIRM_SHA"
           test "$(hostname -s)" = vps-bb300bba
           test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
           echo "POSTSEND_OWNER_MANUAL_MAIN_VERIFIED=1"
       - name: Record running Firefox, install files, preserve session
         shell: bash
@@ -113,6 +116,22 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # The earlier job check may be stale after an Actions queue wait.
+          # Reconfirm immutable canonical main and owner immediately before
+          # any backup, mkdir, runtime file write, or daemon-reload.
+          require_live_main() {
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test "$GITHUB_REPOSITORY" = Zennay/zCloud
+            test "$GITHUB_REF" = refs/heads/main
+            test "$GITHUB_ACTOR" = Zennay
+            test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+            test "$GITHUB_RUN_ATTEMPT" = "1"
+            test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+            local live_main
+            live_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+            test "$live_main" = "$GITHUB_SHA"
+          }
           root="/home/ubuntu/zennay-cloud"
           extension="$HOME/snap/firefox/common/chatgpt-project-extension"
           unit="$HOME/.config/systemd/user/chatgpt-firefox.service"
@@ -123,13 +142,16 @@ jobs:
           echo "=== INSTALL WITHOUT STOPPING BROWSER ==="
           node --check public/zcloud-worker.user.js
           node --check firefox-extension/background.js
+          require_live_main
           install -d -m 0755 "$root/public"
           cp -p "$root/public/zcloud-worker.user.js" "$HOME/.local/state/zcloud-userscript.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
+          require_live_main
           install -m 0644 public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           cmp public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           echo "LIVE_USER_SCRIPT_SOURCE_UPDATED=1"
           if [ -f "$extension/manifest.json" ]; then
             cp -p "$extension/background.js" "$HOME/.local/state/zcloud-background.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
+            require_live_main
             install -m 0644 firefox-extension/background.js "$extension/background.js"
             cmp firefox-extension/background.js "$extension/background.js"
             echo "LIVE_EXTENSION_SOURCE_UPDATED=1"
@@ -139,7 +161,9 @@ jobs:
           if [ -f "$unit" ]; then
             cp -p "$unit" "$unit.pre-postsend-$GITHUB_RUN_ID"
           fi
+          require_live_main
           install -D -m 0644 deploy/chatgpt-firefox.service "$unit"
+          require_live_main
           systemctl --user daemon-reload
           echo "SYSTEMD_RESTART_POLICY_INSTALLED=1"
           # The new Restart=on-abnormal policy stops profile-lock retry loops
