@@ -203,5 +203,33 @@ class RatchetTests(unittest.TestCase):
 
 
 
+    def test_automatically_invoked_reusable_workflow_is_denied(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        reusable = """name: Reusable proxy
+on: [push]
+jobs:
+  downstream:
+    uses: ./.github/workflows/zcloud-vps-deploy.yml
+"""
+        self.save("reusable.yml", reusable)
+        self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
+
+    def test_hosted_step_level_uses_is_not_reusable_job(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        hosted = """name: Hosted CI
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+"""
+        self.save("hosted-ci.yml", hosted)
+        self.assertTrue(guard.check(self.root, sha)["safe_to_review"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
