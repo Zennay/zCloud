@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from scripts import zcloud_queue_route_triage_20261014_w1 as triage
+from scripts import zcloud_queue_route_summary_20261014_w1 as summary
 from scripts import zcloud_watchdog_queue_collector_20261014_w1 as source
 
 SHA = "a" * 40
@@ -287,6 +288,22 @@ class QueueRouteTriageTests(unittest.TestCase):
                 result = triage.collect(get, clock=NOW)
                 self.assertEqual(result["runs"][0]["assignment"], expected)
                 self.assertEqual(result["cancel_run_ids"], [])
+
+    def test_null_runner_end_to_end_summary_has_no_private_name_or_false_repair(self):
+        observed_job = job(1, route="ftmo-research")
+        observed_job["runner_id"] = None
+        observed_job["runner_name"] = None
+        observed_job["name"] = "PRIVATE_JOB_NAME"
+        get, _ = mock([run(1)], {1: [observed_job]})
+        receipt = triage.collect(get, clock=NOW)
+        rendered, status = summary.safe_summary(
+            json.dumps(receipt).encode("utf-8"), 0, now=NOW)
+        self.assertEqual(status, 0)
+        self.assertIn("**1 wachtende runs zonder runnertoewijzing**", rendered)
+        self.assertIn("FTMO-runnerroute", rendered)
+        self.assertIn("geen zCloud-VPS-storing", rendered)
+        self.assertNotIn("PRIVATE_JOB_NAME", rendered)
+        self.assertIn("Geen bewijs van productiestatus", rendered)
 
     def test_missing_or_invalid_runner_fields_never_become_bogus_unassigned(self):
         for change in ("missing_name", "missing_id", "boolean_name",
