@@ -103,6 +103,48 @@ def complete_files(record, main_sha, head_sha):
     return paths(listed)
 
 
+def correlate_prless_receipt(report):
+    """Cross-check against #1312's separately owned full branch-inventory schema.
+
+    This verifies *consistency*, not signature, API origin or production authority.
+    """
+    receipt = obj(report.get("branch_inventory_receipt"), "branch_inventory_receipt")
+    require(receipt.get("schema") == "zcloud-prless-branch-snapshot-v1"
+            and receipt.get("inventory_complete") is True
+            and receipt.get("admission_authorized") is False
+            and receipt.get("deployment_authorized") is False
+            and receipt.get("paths_compared") is False, "invalid_prless_receipt")
+    require(receipt.get("main_sha") == report.get("main_sha"),
+            "prless_receipt_main_drift")
+    branches = report.get("branches")
+    listed = receipt.get("pr_less")
+    require(type(branches) is list and type(listed) is list
+            and len(branches) == len(listed) and len(listed) <= MAX_ITEMS,
+            "prless_receipt_coverage_mismatch")
+    count = receipt.get("branch_count")
+    pr_count = receipt.get("open_pr_head_count")
+    pages = (receipt.get("branch_pages"), receipt.get("pr_pages"))
+    require(type(count) is int and type(pr_count) is int
+            and count >= 1 + len(listed) and pr_count >= 0
+            and all(type(x) is int and 1 <= x <= 100 for x in pages),
+            "invalid_prless_receipt_counts")
+    names = {}
+    for item in listed:
+        b = obj(item, "prless_receipt_branch")
+        name, head = b.get("branch"), b.get("commit_sha")
+        require(type(name) is str and 0 < len(name) <= 256 and name not in names
+                and sha(head), "invalid_prless_receipt_branch")
+        names[name] = head
+    local = {}
+    for item in branches:
+        b = obj(item, "branch")
+        name, head = b.get("name"), b.get("head_sha")
+        require(type(name) is str and 0 < len(name) <= 256 and name not in local
+                and sha(head), "invalid_local_branch")
+        local[name] = head
+    require(names == local, "prless_receipt_identity_drift")
+
+
 def snapshot(report):
     d = obj(report, "snapshot")
     require(sha(d.get("main_sha")), "invalid_main_sha")
@@ -117,6 +159,7 @@ def snapshot(report):
             "invalid_pr_inventory")
     require(type(d.get("branches")) is list and len(d["branches"]) <= MAX_ITEMS,
             "invalid_branch_inventory")
+    correlate_prless_receipt(d)
     all_owners = []
     prs = []
     ids = set()
