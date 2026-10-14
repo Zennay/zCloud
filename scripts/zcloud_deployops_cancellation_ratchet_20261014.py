@@ -354,7 +354,8 @@ def main(argv=None):
             print("VPS_CANCELLATION_TRIAGE=DENY reason=unverifiable_source")
             print("VPS_MUTATION_AUTHORIZED=false")
             return 2
-        print(f"VPS_CANCELLATION_TRIAGE=OBSERVED total={total} shown={len(entries)}")
+        print(f"VPS_CANCELLATION_TRIAGE=OBSERVED sha={args.triage_head} "
+              f"total={total} shown={len(entries)}")
         for category, relative in entries:
             print(f"OBSERVED {category} {relative}")
         print("VPS_MUTATION_AUTHORIZED=false")
@@ -368,7 +369,7 @@ def main(argv=None):
             print("VPS_CANCELLATION_INVENTORY=DENY reason=unverifiable_source")
             print("VPS_MUTATION_AUTHORIZED=false")
             return 2
-        print("VPS_CANCELLATION_INVENTORY=OBSERVED "
+        print(f"VPS_CANCELLATION_INVENTORY=OBSERVED sha={args.inventory_head} "
               + " ".join(f"{key}={counts[key]}" for key in
                          ("scanned", "safe", "risky", "unknown", "risky_manual_only",
                           "risky_nonmanual_or_unknown")))
