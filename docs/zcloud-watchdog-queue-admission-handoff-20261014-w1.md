@@ -106,6 +106,12 @@ GitHub Actions job records can carry an *explicit JSON null* `runner_id` and `ru
 
 The reader rechecks each observed job in the second pass; a transition from null/null to an assigned named runner invalidates the initial observation instead of publishing a stale queue figure. End-to-end tests confirm a real-shaped `ftmo-research` queued job with `null` runner metadata remains **read-only**, generates a sanitized Dutch summary, reveals no job name, and does not infer a zCloud VPS outage. The positive count is *only* evidence of an observed pending assignment — not live availability, restart authorization, or verified AI generation.
 
+### Numeric observation envelopes cannot use truthy JSON placeholders
+
+The read-only route summary independently recomputes every queue route total from strict run records. The reported `route_counts` object must now also contain **only positive, exact JSON integers**, never booleans or floats. Python compares `True == 1` and `1.0 == 1`; a plain dictionary equality check alone would accept those malformed source claims. Adversarial offline tests include JSON `true`, `false`, float, negative, zero, null, string and compound values. All noninteger buckets fail closed, with **no link or count printed to the operator**.
+
+This is evidence integrity, not an authorization mechanism: valid numerics are not proof that two queued runs have identical dispatch intent, that the zCloud VPS listener is online, or that any production action is safe. Live recovery remains exclusively owned by the existing runner, SQLite and serialized production-release gates.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
