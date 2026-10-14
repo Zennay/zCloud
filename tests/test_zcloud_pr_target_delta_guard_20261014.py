@@ -120,6 +120,11 @@ class GuardTests(unittest.TestCase):
         previous += "      - run: echo '${{ secrets.EXISTING }}'\n"
         self.assertEqual(gate.increasing_risks(previous, previous + "# harmless edit\n"), set())
 
+    def test_quoted_permission_key_new_authority_denied(self):
+        candidate = SAFE.replace("contents: read", "'actions': write")
+        self.assertIn("write_permission", gate.risk_set(candidate))
+        self.assertIn("write_permission", gate.increasing_risks(SAFE, candidate))
+
     def test_quoted_permission_key_identity_is_accepted(self):
         baseline = SAFE.replace("contents: read", "actions: write")
         candidate = SAFE.replace("contents: read", "'actions': write")
