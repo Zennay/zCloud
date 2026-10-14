@@ -1285,6 +1285,34 @@ jobs:
         candidate = SAFE.replace("contents: read", "contents: >-\n    read")
         self.assertNotIn("write_permission", gate.risk_set(candidate))
 
+
+    def test_inline_event_list_alias_after_push_is_never_safe(self):
+        src = SAFE.replace(
+            "on:\n  pull_request_target:\n    branches: [main]",
+            "on: [push, *possibly_privileged_event]",
+        )
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.risk_set(src)
+
+    def test_block_event_list_alias_is_never_safe(self):
+        src = SAFE.replace(
+            "on:\n  pull_request_target:\n    branches: [main]",
+            "on:\n  - push\n  - *possibly_privileged_event",
+        )
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.risk_set(src)
+
+    def test_root_anchor_outside_non_target_event_does_not_break_audit(self):
+        src = SAFE.replace("pull_request_target:", "push:")
+        src += "x-labels: &descriptive_anchor\n  note: inert\n"
+        self.assertEqual(gate.risk_set(src), set())
+
+    def test_event_alias_behind_non_target_does_not_bypass_base_compare(self):
+        original = SAFE.replace("pull_request_target:", "push:")
+        candidate = original.replace("on:\n  push:", "on: [push, *hidden_event]\nx-comment:")
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.increasing_risks(original, candidate)
+
     def test_git_mode_denies_symlink(self):
         with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
             with self.assertRaises(gate.Unverified):
