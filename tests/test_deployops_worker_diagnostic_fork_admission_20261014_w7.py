@@ -53,6 +53,8 @@ def static_failures(source: str) -> list[str]:
         problems.append("admission_pr_only")
     if "runs-on: ubuntu-latest" not in first or "actions/checkout" in first:
         problems.append("admission_uses_no_contributor_code")
+    if 'test "$ATTEMPT" = 1' not in first:
+        problems.append("admission_first_attempt_only")
     if "needs: trusted-pr-source" not in hosted:
         problems.append("hosted_requires_admission")
     if "runs-on: ubuntu-latest" not in hosted:
@@ -61,7 +63,6 @@ def static_failures(source: str) -> list[str]:
         "github.repository == 'Zennay/zCloud'",
         "github.event.pull_request.head.repo.full_name == github.repository",
         "github.event.pull_request.base.repo.full_name == github.repository",
-        "github.run_attempt == 1",
     ):
         if expression not in hosted:
             problems.append("hosted_source_guard:" + expression)
