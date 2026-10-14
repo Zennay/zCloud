@@ -19,7 +19,7 @@ def payload():
     return {'main_sha': S, 'inventory': {'prs_complete': True, 'branches_complete': True},
             'gates': {'580': 'open', '1089': 'open', '1135': 'open'},
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
-                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'],
+                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'required_checks': ['tests'],
                      'checks': [{'name': 'tests', 'head_sha': H, 'conclusion': 'success'}]}],
             'branches': []}
 
@@ -102,6 +102,16 @@ class ReviewQueueTests(unittest.TestCase):
 
     def test_bad_shas_denied(self):
         self.assert_denied(lambda d: d.update(main_sha='f'*39))
+
+    def test_missing_required_green_check_denied(self):
+        d = payload(); d['prs'][0]['required_checks'] = ['security', 'tests']
+        self.assertIn('required_checks_missing', mod.snapshot(d)['review_candidates'][0]['reasons'])
+
+    def test_empty_required_check_policy_denied(self):
+        self.assert_denied(lambda d: d['prs'][0].update(required_checks=[]))
+
+    def test_duplicate_required_check_policy_denied(self):
+        self.assert_denied(lambda d: d['prs'][0].update(required_checks=['tests', 'tests']))
 
     def test_empty_checks_denied(self):
         self.assert_denied(lambda d: d['prs'][0].update(checks=[]))
