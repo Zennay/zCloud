@@ -34,8 +34,9 @@ def failures(source: str) -> list[str]:
     if source.count("\non:\n") != 1:
         issues.append("event_root")
     before_jobs, jobs = source.split("\njobs:\n", 1)
-    guard = jobs.split("    if: >-", 1)[1].split("    runs-on:", 1)[0] if "    if: >-" in jobs else ""
-    steps = jobs.split("    steps:\n", 1)[1] if "    steps:\n" in jobs else ""
+    admission, critical = jobs.split("\n  critical-runner-flows:\n", 1) if "\n  critical-runner-flows:\n" in jobs else ("", "")
+    guard = critical.split("    if: >-", 1)[1].split("    runs-on:", 1)[0] if "    if: >-" in critical else ""
+    steps = critical.split("    steps:\n", 1)[1] if "    steps:\n" in critical else ""
     for condition in CONDITIONS:
         if condition not in guard:
             issues.append("event:" + condition)
@@ -43,10 +44,25 @@ def failures(source: str) -> list[str]:
     main_condition = "github.ref == 'refs/heads/main'"
     if guard.count(main_condition) != 2 and "event:" + main_condition not in issues:
         issues.append("event:" + main_condition)
-    if re.findall(r"(?m)^  ([a-z][a-z-]*):\s*$", jobs) != ["critical-runner-flows"]:
-        issues.append("single_hosted_job")
+    if re.findall(r"(?m)^  ([a-z][a-z-]*):\s*$", jobs) != ["trusted-event", "critical-runner-flows"]:
+        issues.append("two_hosted_jobs")
+    if "needs: trusted-event" not in critical:
+        issues.append("requires_admission")
+    for boundary in (
+        "test \"$SOURCE_REPO\" = Zennay/zCloud",
+        "test \"$HEAD_REPO\" = \"$SOURCE_REPO\"",
+        "test \"$BASE_REPO\" = \"$SOURCE_REPO\"",
+        "test \"$GITHUB_BASE_REF\" = main",
+        "test \"$SOURCE_ACTOR\" = Zennay",
+        "test \"$RESTART_ACTOR\" = Zennay",
+        "test \"$ATTEMPT\" = 1",
+    ):
+        if boundary not in admission:
+            issues.append("admission:" + boundary)
+    if "actions/checkout" in admission or "github.token" in admission:
+        issues.append("untrusted_code_before_admission")
     runner_values = re.findall(r"(?m)^    runs-on:\s*(\S.*?)\s*$", jobs)
-    if runner_values != ["ubuntu-latest"]:
+    if runner_values != ["ubuntu-latest", "ubuntu-latest"]:
         issues.append("hosted_only")
     if "cancel-in-progress: false" not in before_jobs:
         issues.append("noncancelling")
@@ -96,6 +112,20 @@ class HostedRegressionSmokeTrustTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 variant = self.source.replace(fragment, "false", 1)
                 self.assertIn("event:" + fragment, failures(variant))
+
+    def test_fork_pr_fails_an_unskipped_hosted_admission_job(self):
+        self.assertIn("  trusted-event:", self.source)
+        self.assertIn("    needs: trusted-event", self.source)
+        self.assertLess(self.source.index("  trusted-event:"),
+                        self.source.index("  critical-runner-flows:"))
+        for guard in (
+            'test "$HEAD_REPO" = "$SOURCE_REPO"',
+            'test "$BASE_REPO" = "$SOURCE_REPO"',
+            'test "$GITHUB_BASE_REF" = main',
+        ):
+            with self.subTest(guard=guard):
+                mutated = self.source.replace(guard, "echo permissive", 1)
+                self.assertIn("admission:" + guard, failures(mutated))
 
     def test_offline_suite_runs_after_admission_and_before_project_code(self):
         self.assertLess(self.source.index("Verify exact immutable revision"),
