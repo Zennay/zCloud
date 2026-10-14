@@ -119,9 +119,9 @@ class HostedRegressionSmokeTrustTests(unittest.TestCase):
                 # The PR-only concurrency predicate can share event text
                 # with the job guard. Mutate the privileged admission guard
                 # specifically, never the independent cancellation gate.
-                before, critical = self.source.split("\\n  critical-runner-flows:\\n", 1)
+                before, critical = self.source.split("  critical-runner-flows:", 1)
                 self.assertIn(fragment, critical)
-                variant = before + "\\n  critical-runner-flows:\\n" + critical.replace(
+                variant = before + "  critical-runner-flows:" + critical.replace(
                     fragment, "false", 1
                 )
                 self.assertIn("event:" + fragment, failures(variant))
