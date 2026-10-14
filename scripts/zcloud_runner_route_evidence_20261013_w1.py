@@ -21,6 +21,10 @@ CANONICAL_REPOSITORY_ID = 1389227570
 CANONICAL_DEPLOY_WORKFLOW_ID = 369569470
 CANONICAL_DEPLOY_WORKFLOW_PATH = ".github/workflows/zcloud-vps-deploy.yml"
 CANONICAL_VPS_RUNNER_NAME = "zcloud-vps-1"
+# Pinned to the independently observed GitHub Actions runner record (run
+# 38417793892). A renamed/re-enrolled listener must be re-attested; a matching
+# display name on a different runner ID is insufficient provenance.
+CANONICAL_VPS_RUNNER_ID = 21
 API = f"https://api.github.com/repos/{REPO}/actions/runs"
 MAX_PAGES = 10
 MAX_BYTES = 1024 * 1024
@@ -197,7 +201,8 @@ def classify_job(job: dict, now: datetime) -> dict:
     else:
         route = "missing_runner_identity"
     canonical_vps_runner = (lane == "zcloud_vps" and route == "runner_assigned"
-                            and runner_name == CANONICAL_VPS_RUNNER_NAME)
+                            and runner_name == CANONICAL_VPS_RUNNER_NAME
+                            and runner_id == CANONICAL_VPS_RUNNER_ID)
     return {"job_id": job["id"], "lane": lane, "status": status, "route": route,
             "queue_age_seconds": age if route == "unassigned" else None,
             "runner_id": runner_id if route == "runner_assigned" else None,
