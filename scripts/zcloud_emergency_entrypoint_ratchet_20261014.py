@@ -86,7 +86,7 @@ def inspect_text(filename: str, source: str) -> list[str]:
     if config["approval"] and config["approval"] not in admission:
         problems.append("missing_explicit_optin")
     if filename == "zcloud-hosted-emergency-queue-sweep.yml":
-        if "runs-on: ubuntu-latest" not in job or "self-hosted" in job:
+        if not re.search(r"(?m)^    runs-on: ubuntu-latest\\s*$", job):
             problems.append("privileged_queue_observer_runner")
         forbidden = ('method="POST"', 'method="DELETE"', 'method="PATCH"',
                      'actions: write', 'statuses: write', '/cancel', '/statuses/',
@@ -132,7 +132,7 @@ def inspect_text(filename: str, source: str) -> list[str]:
         if filename != "zcloud-hosted-emergency-queue-sweep.yml":
             if "python3 scripts/zcloud_vps_runner_guard.py --json" not in guarded:
                 problems.append("live_action_before_runner_guard")
-    if "persist-credentials: false" not in source or        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" not in source:
+    if (source.count("persist-credentials: false") != 2 or\n            source.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") != 2):
         problems.append("checkout_provenance_regressed")
     return sorted(set(problems))
 
