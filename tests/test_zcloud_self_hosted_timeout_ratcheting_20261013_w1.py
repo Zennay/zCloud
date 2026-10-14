@@ -92,6 +92,23 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertTrue(all(row.status == "runner_target_unknown" for row in rows))
         self.assertEqual(3, audit.summarize(rows, max_minutes=30)["by_status"]["runner_target_unknown"])
 
+    def test_legacy_unknown_runner_timeout_cannot_increase_or_disappear(self):
+        path = ".github/workflows/private.yml"
+        for status in ("dynamic_runner_unknown", "runner_target_unknown"):
+            before = [audit.TimeoutFinding(path, "private", 10, status)]
+            worse = [audit.TimeoutFinding(path, "private", 20, status)]
+            missing = [audit.TimeoutFinding(path, "private", None, status)]
+            improved = [audit.TimeoutFinding(path, "private", 5, status)]
+            self.assertEqual(worse, audit.new_debt(before, worse, deny_worsening=True))
+            self.assertEqual(missing, audit.new_debt(before, missing, deny_worsening=True))
+            self.assertEqual([], audit.new_debt(before, improved, deny_worsening=True))
+            self.assertEqual([], audit.new_debt(before, improved))
+            self.assertEqual([], audit.new_debt(
+                [audit.TimeoutFinding(path, "private", None, status)],
+                [audit.TimeoutFinding(path, "private", 10, status)],
+                deny_worsening=True,
+            ))
+
     def test_custom_label_timeout_debt_is_rejected_by_strict_new_debt_gate(self):
         path = ".github/workflows/admitted.yml"
         baseline = [audit.TimeoutFinding(path, "old", 10, "bounded")]
