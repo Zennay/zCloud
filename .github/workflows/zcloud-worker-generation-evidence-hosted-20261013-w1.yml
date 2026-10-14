@@ -2,6 +2,9 @@ name: zCloud worker generation evidence (hosted)
 on:
   pull_request:
     paths:
+      - "server.py"
+      - "public/zcloud-worker.user.js"
+      - "tests/_worker_env.py"
       - "scripts/zcloud_worker_generation_evidence_20261013_w1.py"
       - "tests/test_zcloud_worker_generation_evidence_20261013_w1.py"
       - "tests/test_zcloud_worker_generation_http_integration_20261013_w1.py"
