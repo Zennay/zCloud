@@ -390,6 +390,39 @@ class DashboardProbeTests(unittest.TestCase):
                 if expected != "healthy":
                     response.read.assert_not_called()
 
+    def test_structured_cache_revalidation_requires_full_origin_status(self):
+        # RFC 9211 fwd-status 304/206 can mean the intermediary reused or
+        # assembled a stored representation, not a fresh full origin status.
+        cases = (
+            ("CDN; fwd=stale; fwd-status=304", "cache_evidence"),
+            ("CDN; fwd=partial; fwd-status=206", "cache_evidence"),
+            ("CDN; fwd=uri-miss; fwd-status=200", "healthy"),
+            ("CDN; fwd=miss; stored; collapsed=?1", "healthy"),
+            ("CDN; fwd=stale; stored=?0; ttl=-1", "healthy"),
+            ("CDN; hit; ttl=45", "cache_evidence"),
+            ("CDN; fwd-status=304", "invalid_headers"),
+            ("CDN; stored", "invalid_headers"),
+            ("CDN; collapsed=?1", "invalid_headers"),
+            ("CDN; fwd=miss; fwd-status=2000", "invalid_headers"),
+            ("CDN; fwd=miss; fwd-status=0", "invalid_headers"),
+            ("CDN; fwd=miss; fwd-status=true", "invalid_headers"),
+            ('CDN; fwd=miss; fwd-status="304"', "invalid_headers"),
+            ("CDN; fwd=miss; stored=maybe", "invalid_headers"),
+            ("CDN; fwd=miss; collapsed=1", "invalid_headers"),
+            ("CDN; fwd=miss; ttl=1.5", "invalid_headers"),
+            ("CDN; fwd=miss; ttl=+2", "invalid_headers"),
+            ("CDN; fwd=miss; ttl=1" + "0" * 16, "invalid_headers"),
+        )
+        for value, expected in cases:
+            with self.subTest(header=value):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                if expected != "healthy":
+                    response.read = mock.Mock(side_effect=AssertionError("body should not be read"))
+                self.assertEqual(probe.probe_once(Opener(response)), expected)
+                if expected != "healthy":
+                    response.read.assert_not_called()
+
     def test_http_cache_status_malformed_or_duplicate_denied(self):
         for value in ("", "cdn; " + "x" * 513, "cdn; hit\n",
                       "cdn; hit\x00", "cdn; hït"):
@@ -796,6 +829,16 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
             ("CDN Name; hit", "invalid_headers"),
             ("CDN; hit; detail=MEMORY; detail=DISK", "invalid_headers"),
             ("CDN; fwd=miss; ext=value", "healthy"),
+        ):
+            with self.subTest(value=value):
+                self._run(expected, extra_headers=(("Cache-Status", value),))
+
+    def test_actual_http_revalidated_cache_status_does_not_claim_fresh_origin(self):
+        for value, expected in (
+            ("CDN; fwd=stale; fwd-status=304", "cache_evidence"),
+            ("CDN; fwd=partial; fwd-status=206", "cache_evidence"),
+            ("CDN; fwd=uri-miss; fwd-status=200", "healthy"),
+            ("CDN; fwd-status=304", "invalid_headers"),
         ):
             with self.subTest(value=value):
                 self._run(expected, extra_headers=(("Cache-Status", value),))
