@@ -216,6 +216,28 @@ jobs:
 """
         self.assertNotIn("untrusted_pr_checkout", gate.risk_set(src))
 
+
+    def test_quoted_write_all_permissions_never_miss_authority(self):
+        for token in ("'write-all'", '"write-all"'):
+            with self.subTest(token=token):
+                src = SAFE.replace("permissions:\n  contents: read", f"permissions: {token}")
+                self.assertIn("write_all", gate.risk_set(src))
+                self.assertIn("write_all", gate.increasing_risks(SAFE, src))
+
+    def test_folded_and_plain_multiline_write_all_are_denied(self):
+        for marker in (">-", "|", ""):
+            with self.subTest(marker=marker):
+                scalar = f"permissions: {marker}\n  write-all"
+                src = SAFE.replace("permissions:\n  contents: read", scalar)
+                self.assertIn("write_all", gate.risk_set(src))
+                self.assertIn("write_all", gate.increasing_risks(SAFE, src))
+
+    def test_quoted_root_permission_key_is_recognized(self):
+        src = SAFE.replace("permissions:\n  contents: read", "'permissions':\n  contents: read")
+        self.assertNotIn("missing_explicit_root_permissions", gate.risk_set(src))
+        privileged = src.replace("contents: read", "contents: write")
+        self.assertIn("write_permission", gate.risk_set(privileged))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
