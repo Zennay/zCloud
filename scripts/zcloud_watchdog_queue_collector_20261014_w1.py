@@ -67,6 +67,10 @@ _ERROR_CATEGORIES = {
 def safe_error_category(error):
     """Return only a fixed public reason; never reflect untrusted exceptions."""
     code = error.args[0] if isinstance(error, InventoryError) and error.args else None
+    # An exception originating from malformed API data may itself contain an
+    # unhashable list/dict; do not crash while trying to deny a prior error.
+    if type(code) is not str or len(code) > 100:
+        return "github_inventory_untrusted"
     return _ERROR_CATEGORIES.get(code, "github_inventory_untrusted")
 
 
