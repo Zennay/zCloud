@@ -13,7 +13,7 @@ WORKFLOW = (Path(__file__).resolve().parents[1] /
 
 def jobs(source: str) -> tuple[str, str]:
     validate = source.split("  validate:\n", 1)[1].split("  audit:\n", 1)[0]
-    audit = source.split("  audit:\n", 1)[1]
+    audit = source.split("  audit:\n", 1)[1].split("  prove:\n", 1)[0]
     return validate, audit
 
 
@@ -31,12 +31,14 @@ class ArtifactRetentionHostedProofTests(unittest.TestCase):
         cls.gate = cls.audit.split("    if: >-\n", 1)[1].split(
             "    runs-on:", 1)[0]
 
-    def test_all_jobs_are_hosted_and_no_self_hosted_labels(self):
+    def test_pr_jobs_are_hosted_and_vps_does_not_run_on_pr(self):
         for fragment in (self.validate, self.audit):
             self.assertIn("runs-on: ubuntu-latest", fragment)
             self.assertNotIn("runs-on: [self-hosted", fragment)
-            self.assertNotIn("runs-on: self-hosted", fragment)
-        self.assertNotIn("scripts/zcloud_vps_runner_guard.py", self.source)
+        live = self.source.split("  prove:\n", 1)[1]
+        self.assertEqual(1, self.source.count("runs-on: [self-hosted, zcloud, vps]"))
+        self.assertIn("github.event_name == 'workflow_dispatch'", live)
+        self.assertNotIn("github.event_name == 'pull_request'", live)
 
     def test_checkout_exact_sha_and_no_persisted_credentials(self):
         for fragment in (self.validate, self.audit):
@@ -90,6 +92,33 @@ class ArtifactRetentionHostedProofTests(unittest.TestCase):
         self.assertIn("retention-days: 14", self.audit)
         self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.audit)
         self.assertIn("if-no-files-found: error", self.audit)
+
+    def test_optional_live_proof_is_owner_main_only(self):
+        live = self.source.split("  prove:\n", 1)[1]
+        admission = live.split("    runs-on:", 1)[0]
+        for expected in (
+            "github.event_name == 'workflow_dispatch'",
+            "github.repository == 'Zennay/zCloud'",
+            "github.ref == 'refs/heads/main'",
+            "github.actor == 'Zennay'",
+            "github.triggering_actor == 'Zennay'",
+        ):
+            self.assertIn(expected, admission)
+        self.assertNotIn("||", admission)
+        self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", live)
+
+    def test_optional_live_proof_denies_stale_main_before_reading(self):
+        live = self.source.split("  prove:\n", 1)[1]
+        for expected in (
+            'test "$GITHUB_EVENT_NAME" = "workflow_dispatch"',
+            'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+            'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+            "timeout 15 git ls-remote --exit-code origin refs/heads/main",
+            'test "$current_main" = "$GITHUB_SHA"',
+        ):
+            self.assertIn(expected, live)
+        self.assertLess(live.index('test "$current_main" = "$GITHUB_SHA"'),
+                        live.index("Verify source-only retention scanner on VPS"))
 
     def test_no_cancelled_inflight_proof_or_write_access(self):
         self.assertIn("cancel-in-progress: false", self.source)
