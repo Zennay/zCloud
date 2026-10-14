@@ -91,6 +91,13 @@ def classify(source: dict) -> dict:
     statuses = status.get("statuses")
     if not isinstance(statuses, list) or not 0 <= len(statuses) <= 100:
         raise EvidenceError("incomplete_statuses")
+    # GitHub's combined-status response includes total_count. An omitted or
+    # truncated page cannot be trusted as the latest production receipt.
+    status_total = status.get("total_count")
+    if status_total is not None and (
+        type(status_total) is not int or status_total != len(statuses)
+    ):
+        raise EvidenceError("incomplete_statuses")
     seen_status_ids: set[int] = set()
     production = []
     for item in statuses:
