@@ -1313,6 +1313,47 @@ jobs:
         with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
             gate.increasing_risks(original, candidate)
 
+
+    def test_write_scope_move_from_job_to_root_is_new_global_authority(self):
+        before = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    permissions:\n      contents: write\n    runs-on: ubuntu-latest",
+        )
+        after = SAFE.replace("contents: read", "contents: write")
+        self.assertEqual(gate.risk_counts(before)["write_permission"], 1)
+        self.assertEqual(gate.risk_counts(after)["write_permission"], 1)
+        self.assertIn("write_permission", gate.increasing_risks(before, after))
+        self.assertEqual(
+            gate.risk_signatures(after)["write_permission"]["workflow_root:contents"], 1
+        )
+
+    def test_root_scope_narrowed_to_single_job_is_not_escalation(self):
+        before = SAFE.replace("contents: read", "contents: write")
+        after = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    permissions:\n      contents: write\n    runs-on: ubuntu-latest",
+        )
+        self.assertNotIn("write_permission", gate.increasing_risks(before, after))
+
+    def test_inline_root_write_scope_after_job_grant_is_new_authority(self):
+        before = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    permissions: {actions: write}\n    runs-on: ubuntu-latest",
+        )
+        after = SAFE.replace("permissions:\n  contents: read", "permissions: {actions: write}")
+        self.assertIn("write_permission", gate.increasing_risks(before, after))
+
+    def test_folded_root_scope_after_job_grant_is_new_authority(self):
+        before = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    permissions:\n      actions: >-\n        write\n    runs-on: ubuntu-latest",
+        )
+        after = SAFE.replace(
+            "permissions:\n  contents: read",
+            "permissions:\n  actions: >-\n    write",
+        )
+        self.assertIn("write_permission", gate.increasing_risks(before, after))
+
     def test_git_mode_denies_symlink(self):
         with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
             with self.assertRaises(gate.Unverified):
