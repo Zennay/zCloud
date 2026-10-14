@@ -57,47 +57,6 @@ jobs:
             exit 1
           fi
 
-          REPORT="$report" READ_RC="$read_rc" python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          # Summary never includes raw endpoint payloads, tokens, prompts,
-          # owner names, or untrusted API error text.
-          try:
-              raw = Path(os.environ["REPORT"]).read_bytes()
-              if not 0 < len(raw) < 32768:
-                  raise ValueError("report_size")
-              report = json.loads(raw)
-              if not isinstance(report, dict):
-                  raise ValueError("report_type")
-              decision = report.get("decision")
-              if decision not in {"NOOP", "REVIEW_ONLY", "DENY"}:
-                  raise ValueError("decision")
-              if report.get("mutation_authorized") is not False:
-                  raise ValueError("authorization")
-              if report.get("production_verified") is not False:
-                  raise ValueError("production")
-              if report.get("cancel_run_ids") != []:
-                  raise ValueError("cancellation")
-              if report.get("inventory_complete") is not False:
-                  raise ValueError("unverified_inventory")
-              exit_status = int(os.environ["READ_RC"])
-              if exit_status != (0 if decision == "NOOP" else 1):
-                  raise ValueError("inconsistent_exit")
-          except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
-              decision = "DENY"
-              exit_status = 1
-
-          summary = (
-              "### zCloud queue — observation only\n"
-              f"- Queue classification: **{decision}**\n"
-              "- Cancellation, restart, worker push: **NOT AUTHORIZED**\n"
-              "- Production and real worker generation: **NOT VERIFIED**\n"
-              "- Queue provenance: GET-only source observation, not same-intent proof\n"
-          )
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
-              stream.write(summary)
-          if exit_status != 0:
-              raise SystemExit(1)
-          PY
+          python3 scripts/zcloud_watchdog_operator_summary_20261014_w1.py \
+            --report "$report" --collector-exit "$read_rc" \
+            --summary-path "$GITHUB_STEP_SUMMARY"
