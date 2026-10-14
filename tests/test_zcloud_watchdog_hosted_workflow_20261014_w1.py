@@ -55,6 +55,15 @@ class HostedQueueWorkflowContractTests(unittest.TestCase):
         self.assertIn('test "$main_before" = "$GITHUB_SHA"', self.raw)
         self.assertIn('[[ "$main_after" != "$GITHUB_SHA" ]]', self.raw)
 
+    def test_legacy_admission_and_route_triage_both_finish_before_main_recheck(self):
+        a = self.raw.index("python3 scripts/zcloud_watchdog_queue_collector_20261014_w1.py")
+        b = self.raw.index("python3 scripts/zcloud_queue_route_triage_20261014_w1.py")
+        c = self.raw.index('main_after="$(timeout 12s gh api --method GET')
+        d = self.raw.index("python3 scripts/zcloud_queue_route_summary_20261014_w1.py")
+        self.assertLess(a, b)
+        self.assertLess(b, c)
+        self.assertLess(c, d)
+
     def test_no_mutation_commands_or_privileged_runner(self):
         for forbidden in (
             "sudo ", "systemctl ", "restart ", "curl -X ", "gh workflow run",
@@ -65,8 +74,14 @@ class HostedQueueWorkflowContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, self.code)
 
     def test_timeout_and_sanitized_summary_are_required(self):
-        self.assertIn("timeout-minutes: 4", self.code)
+        self.assertIn("timeout-minutes: 6", self.code)
         self.assertIn("timeout --signal=TERM --kill-after=5s 125s", self.code)
+        self.assertIn("timeout --signal=TERM --kill-after=5s 105s", self.code)
+        self.assertIn("zcloud_queue_route_triage_20261014_w1.py", self.code)
+        self.assertIn("zcloud_queue_route_summary_20261014_w1.py", self.code)
+        self.assertIn("observer_summary_rc", self.code)
+        self.assertIn("triage_summary_rc", self.code)
+        self.assertIn("observer_summary_rc != 0 || triage_summary_rc != 0", self.code)
         self.assertIn("--collector-exit", self.code)
         self.assertIn("--summary-path", self.code)
         self.assertIn('GITHUB_STEP_SUMMARY', self.code)
