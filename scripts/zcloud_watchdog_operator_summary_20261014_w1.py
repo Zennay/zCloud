@@ -52,11 +52,11 @@ def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
         outcome = "DENY"
 
     markdown = (
-        "### zCloud wachtrij — alleen observatie\\n"
-        f"- Wachtrijclassificatie: **{outcome}**\\n"
-        "- Acties annuleren, diensten herstarten of workers forceren: **NIET TOEGESTAAN**\\n"
-        "- Productiestatus en echte AI-generatie: **NIET BEWEZEN**\\n"
-        "- GitHub-gegevens zijn geen onafhankelijk bewijs van dezelfde opdrachtintentie.\\n"
+        "### zCloud wachtrij — alleen observatie\n"
+        f"- Wachtrijclassificatie: **{outcome}**\n"
+        "- Acties annuleren, diensten herstarten of workers forceren: **NIET TOEGESTAAN**\n"
+        "- Productiestatus en echte AI-generatie: **NIET BEWEZEN**\n"
+        "- GitHub-gegevens zijn geen onafhankelijk bewijs van dezelfde opdrachtintentie.\n"
     )
     return markdown, 0 if outcome == "NOOP" else 1
 
