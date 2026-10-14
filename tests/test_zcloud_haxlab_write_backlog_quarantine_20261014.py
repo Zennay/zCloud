@@ -75,6 +75,9 @@ def problems(source):
     if "legacy synthetic P3 continuation is occupying" in job or \
             'waiting_hax_p1' in job:
         issues.append("legacy_cross_project_preemption")
+    if 'result.get("ok") is not True' not in job or \
+            'reconciled.get("ok") is not True' not in job:
+        issues.append("mutation_ack_required")
     if any(raw in job for raw in (
         'json.dumps(reconciled,sort_keys=True)',
         'print("ALLOCATION_FINAL"',
@@ -144,6 +147,14 @@ class HaxLabWriteBacklogSafety(unittest.TestCase):
             self.text.replace('"action":"enqueue"', '"result":"DONE"')))
         self.assertIn("active_worker_preemption", problems(
             self.text.replace('"action":"enqueue"', '"result":"CONTINUE"')))
+
+    def test_queue_error_cannot_be_ignored(self):
+        broken = self.text.replace('result.get("ok") is not True', "False")
+        self.assertIn("mutation_ack_required", problems(broken))
+
+    def test_pool_error_cannot_be_ignored(self):
+        broken = self.text.replace('reconciled.get("ok") is not True', "False")
+        self.assertIn("mutation_ack_required", problems(broken))
 
     def test_no_raw_worker_or_allocation_payload_log(self):
         self.assertIn("raw_data_logging", problems(
