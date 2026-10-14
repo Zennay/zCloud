@@ -86,6 +86,8 @@ def _validated_jobs(jobs: list[dict], run: dict) -> tuple:
         ):
             raise source.InventoryError("cross_run_job_evidence")
         labels = job["labels"]
+        if type(job["status"]) is not str or job["status"] not in policy._ALLOWED_STATES:
+            raise source.InventoryError("unknown_queue_job_state")
         if (
             len(labels) > 16 or any(len(label) > 64 for label in labels)
             or type(job.get("runner_name")) is not str
@@ -121,7 +123,19 @@ def collect(api_get, *, clock=None, monotonic_clock=None) -> dict:
                              query={"status": "queued", "per_page": "100"})
     # Validate the entire census before fetching individual jobs.
     identities = [source._run_identity(run) for run in run_rows]
+    if any(run["status"] != "queued" for run in run_rows):
+        raise source.InventoryError("nonqueued_run_in_queued_snapshot")
     first_jobs = [_jobs(api_get, run) for run in run_rows]
+    # GitHub job IDs are globally unique in the repository. Reusing one ID
+    # under two different parent runs is conflicting API evidence, even when
+    # each run's own pagination is internally consistent.
+    global_job_ids = set()
+    for group in first_jobs:
+        for job in group:
+            job_id = job["id"]
+            if job_id in global_job_ids:
+                raise source.InventoryError("job_identity_reused_across_runs")
+            global_job_ids.add(job_id)
     latest = source._pages(api_get, RUN_ROUTE, "workflow_runs",
                            max_pages=1, max_count=_LIMIT_RUNS,
                            query={"status": "queued", "per_page": "100"})
