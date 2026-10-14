@@ -441,7 +441,7 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["assignment"], "assigned")
         self.assertIs(result["mutation_authorized"], False)
         self.assertIs(result["worker_generation_verified"], False)
-        self.assertNotIn("Haarlem-één", json.dumps(result))
+        self.assertNotIn("Haarlem-één", json.dumps(result, ensure_ascii=False))
 
     def test_boolean_runner_assignment_denied(self):
         item = job(1)
