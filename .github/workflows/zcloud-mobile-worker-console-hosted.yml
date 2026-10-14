@@ -1,41 +1,77 @@
 name: zCloud mobile worker console hosted checks
 
 on:
-  push:
-    branches:
-      - fix/ui-consistency-tokens-and-mobile-20261010
+  pull_request:
+    branches: [main]
     paths:
       - public/app.js
       - public/design-system.css
       - public/enhancements.css
       - public/index.html
-      - tests/test_*.py
       - tests/test_worker_debug_panel.js
       - tests/test_global_worker_console_ui.py
       - tests/test_mobile_worker_console_navigation.py
       - tests/test_mobile_worker_actions_20261010.py
       - .github/workflows/zcloud-mobile-worker-console-hosted.yml
+      - tests/test_zcloud_mobile_console_ci_trust_20261014.py
+  push:
+    branches: [main, fix/ui-consistency-tokens-and-mobile-20261010]
+    paths:
+      - public/app.js
+      - public/design-system.css
+      - public/enhancements.css
+      - public/index.html
+      - tests/test_worker_debug_panel.js
+      - tests/test_global_worker_console_ui.py
+      - tests/test_mobile_worker_console_navigation.py
+      - tests/test_mobile_worker_actions_20261010.py
+      - .github/workflows/zcloud-mobile-worker-console-hosted.yml
+      - tests/test_zcloud_mobile_console_ci_trust_20261014.py
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zcloud-mobile-worker-console-${{ github.ref }}
+  group: zcloud-mobile-worker-console-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   phone-ui:
     name: Phone UI only (no VPS)
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout exact immutable source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          node-version: '20'
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify canonical repository and exact head before running code
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install pinned Node 24 runner
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
       - name: Parse dashboard source
         run: node --check public/app.js
       - name: Test worker console, three controls and mobile navigation
         run: python3 -m unittest -v tests.test_global_worker_console_ui tests.test_mobile_worker_console_navigation tests.test_mobile_worker_actions_20261010
+      - name: Test mobile-hosted workflow admission and regression coverage
+        run: python3 -m unittest -v tests.test_zcloud_mobile_console_ci_trust_20261014
       - name: Run all repository Python regression tests (hosted only)
         run: python3 -m unittest discover -v
