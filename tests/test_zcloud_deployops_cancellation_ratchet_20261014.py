@@ -50,6 +50,31 @@ class PolicyTest(unittest.TestCase):
     def test_non_cancelling_selfhost_allowed(self):
         self.assertEqual([], scanner.risks(SELFHOST))
 
+    def test_global_concurrency_after_jobs_is_checked(self):
+        variant = SELFHOST.replace(
+            "concurrency:\n  group: isolated\n  cancel-in-progress: false\n", ""
+        ) + "\nconcurrency:\n  group: shared\n  cancel-in-progress: true\n"
+        self.assertTrue(scanner.risks(variant))
+
+    def test_inline_global_cancel_refused(self):
+        variant = SELFHOST.replace(
+            "concurrency:\n  group: isolated\n  cancel-in-progress: false",
+            "concurrency: {group: shared, cancel-in-progress: true}",
+        )
+        self.assertTrue(scanner.risks(variant))
+
+    def test_inline_job_cancel_refused(self):
+        variant = SELFHOST.replace(
+            "    runs-on: [self-hosted, zcloud, vps]",
+            "    concurrency: {group: shared, cancel-in-progress: true}\n"
+            "    runs-on: [self-hosted, zcloud, vps]",
+        )
+        self.assertTrue(scanner.risks(variant))
+
+    def test_comment_does_not_enable_cancellation(self):
+        variant = SELFHOST + "\n# cancel-in-progress: true\n"
+        self.assertEqual([], scanner.risks(variant))
+
     def test_quoted_true_denied(self):
         self.assertTrue(scanner.risks(
             CANCEL.replace("cancel-in-progress: true", "cancel-in-progress: 'true'")
