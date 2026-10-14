@@ -33,8 +33,8 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_GET_PATH = re.compile(
     r"^/repos/Zennay/zCloud/(?:"
     r"branches/main"
-    r"|actions/runs\\?status=queued&per_page=100&page=[1-9][0-9]*"
-    r"|actions/runs/[1-9][0-9]*/jobs\\?per_page=100&page=[1-9][0-9]*"
+    r"|actions/runs\?status=queued&per_page=100&page=[1-9][0-9]*"
+    r"|actions/runs/[1-9][0-9]*/jobs\?per_page=100&page=[1-9][0-9]*"
     r")$"
 )
 
