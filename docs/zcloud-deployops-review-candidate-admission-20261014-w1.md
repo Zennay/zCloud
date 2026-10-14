@@ -6,7 +6,7 @@ Scope: isolated **offline-only** advisory for [issue #1009](https://github.com/Z
 
 - Current-main SHA is 40 lowercase hexadecimal characters and both PR and PR-less branch inventories are explicitly complete.
 - Releases #580/PWQ-41, #1089 and #1135 have explicit known issue state (open/closed); even when all are closed the tool always emits `release_authorized=false`.
-- Every PR has a unique numeric identity, exact immutable head and base SHA, explicit draft flag, owner approval signal and at least one uniquely named CI check bound to **that head** with a successful conclusion.
+- Every PR has a unique numeric identity, exact immutable head and base SHA, explicit draft flag, owner approval signal and at least one uniquely named CI check bound to **that head** with a successful conclusion. Each must also declare a nonempty, unambiguous `required_checks` inventory; missing required checks cannot be replaced by a single convenient green check. The collector must derive this requirement from authenticated branch protection/rulesets, not user-supplied JSON alone.
 - Every PR and PR-less branch reserves its changed paths. Draft and not-yet-reviewed PRs still own their files; any overlap rejects both candidates.
 - Invalid JSON, duplicate keys, non-finite values, missing inventory, stale base, failed/pending/skipped tests, unknown gates, path traversal, conflicting owners and oversized input deny admission. Invalid snapshots are not echoed.
 - Outputs `review_candidate` (a suggestion for **subsequent human review**, **not merge eligibility**), bounded reason codes and non-authorization flags.
@@ -32,6 +32,7 @@ The input JSON schema uses:
     "draft": false,
     "owner_approved": true,
     "files": ["scripts/example.py"],
+    "required_checks": ["unit"],
     "checks": [{
       "name": "unit",
       "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
