@@ -23,6 +23,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      - name: Verify exact immutable revision before executing repository code
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Run critical zCloud smoke suite
         run: python3 -m unittest discover -v
       - name: Verify 12h Birdseye shell scheduler isolation
