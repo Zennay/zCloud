@@ -232,41 +232,51 @@ def scan_repository(root: Path, *, max_minutes: int) -> list[TimeoutFinding]:
         raise RuntimeError("symlink workflow directory rejected")
     if not workflows.is_dir():
         raise FileNotFoundError(f"workflow directory not found: {workflows}")
+    if not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY")):
+        raise RuntimeError("safe no-follow workflow reads unavailable")
 
-    paths = [
-        path for path in sorted(workflows.iterdir())
-        if path.suffix.lower() in WORKFLOW_SUFFIXES
-    ]
-    if len(paths) > MAX_WORKFLOW_FILES:
-        raise RuntimeError("workflow inventory file count exceeds limit")
-    findings: list[TimeoutFinding] = []
-    for path in paths:
-        if path.is_symlink():
-            raise RuntimeError(f"symlink workflow rejected: {path}")
-        # Open the pathname exactly once with no symlink following. A
-        # concurrent workspace writer could replace a checked YAML path
-        # between is_symlink/is_file/stat and a later read_bytes().
-        if not hasattr(os, "O_NOFOLLOW"):
-            raise RuntimeError("safe no-follow workflow reads unavailable")
-        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
-        with os.fdopen(os.open(path, flags), "rb") as stream:
-            opened = os.fstat(stream.fileno())
-            if not stat.S_ISREG(opened.st_mode):
-                raise RuntimeError("non-file workflow entry rejected")
-            if opened.st_size > MAX_WORKFLOW_FILE_BYTES:
-                raise RuntimeError("workflow file size exceeds limit")
-            data = stream.read(MAX_WORKFLOW_FILE_BYTES + 1)
-        if len(data) > MAX_WORKFLOW_FILE_BYTES:
-            raise RuntimeError("workflow file size changed during read")
-        text = data.decode("utf-8")
-        findings.extend(
-            inspect_workflow(
-                path.relative_to(root).as_posix(),
-                text,
-                max_minutes=max_minutes,
-            )
-        )
-    return findings
+    # Pin both ancestor directories, then enumerate and read entries relative
+    # to that same directory descriptor. A rename/symlink substitution of the
+    # pathname cannot switch the set of files we inspect midway through.
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    github_fd = os.open(root / ".github", directory_flags)
+    try:
+        workflows_fd = os.open("workflows", directory_flags, dir_fd=github_fd)
+        try:
+            filenames = [
+                name for name in sorted(os.listdir(workflows_fd))
+                if Path(name).suffix.lower() in WORKFLOW_SUFFIXES
+            ]
+            if len(filenames) > MAX_WORKFLOW_FILES:
+                raise RuntimeError("workflow inventory file count exceeds limit")
+
+            findings: list[TimeoutFinding] = []
+            for name in filenames:
+                path = workflows / name
+                if path.is_symlink():
+                    raise RuntimeError(f"symlink workflow rejected: {path}")
+                file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+                with os.fdopen(os.open(name, file_flags, dir_fd=workflows_fd), "rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(opened.st_mode):
+                        raise RuntimeError("non-file workflow entry rejected")
+                    if opened.st_size > MAX_WORKFLOW_FILE_BYTES:
+                        raise RuntimeError("workflow file size exceeds limit")
+                    data = stream.read(MAX_WORKFLOW_FILE_BYTES + 1)
+                if len(data) > MAX_WORKFLOW_FILE_BYTES:
+                    raise RuntimeError("workflow file size changed during read")
+                findings.extend(
+                    inspect_workflow(
+                        path.relative_to(root).as_posix(),
+                        data.decode("utf-8"),
+                        max_minutes=max_minutes,
+                    )
+                )
+            return findings
+        finally:
+            os.close(workflows_fd)
+    finally:
+        os.close(github_fd)
 
 
 def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFinding]:
