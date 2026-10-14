@@ -135,6 +135,15 @@ class ManualDispatchPolicy(unittest.TestCase):
         body = workflow().decode().replace("    steps:", "  other:\n    runs-on: [self-hosted, zcloud, vps]\n    steps:", 1)
         self.assertDenied(body.encode(), expected=2)
 
+    def test_duplicate_authority_top_level_keys_denied(self):
+        for altered in (
+            workflow(if_statement=SAFE_IF) + b"on:\n  workflow_dispatch:\n",
+            workflow(if_statement=SAFE_IF) + b"jobs:\n  malicious:\n    runs-on: self-hosted\n",
+        ):
+            with self.subTest(source=altered[-35:]):
+                with self.assertRaises(guard.RefError):
+                    guard.risky_manual_jobs(WF, altered)
+
     def test_unsupported_event_alias_denied(self):
         body = workflow().replace(b"  workflow_dispatch:", b"  workflow_dispatch: &hidden")
         with self.assertRaises(guard.RefError):
