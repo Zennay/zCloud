@@ -689,7 +689,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertLess(manual.index("verify_main_head\n"),
                         manual.index("summary_file="))
         self.assertLess(manual.rindex("verify_main_head\n"),
-                        manual.index('cat "$verified_file" | tee'))
+                        manual.index('cat "$verified_file"; printf'))
 
     def test_workflow_bash_parses_without_network(self):
         result = subprocess.run(["bash", "-n"], input=self._workflow_shell(),
@@ -699,6 +699,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
     def test_current_main_same_before_after_can_publish(self):
         observed = self._simulate(["a" * 40, "a" * 40], 0)
         self.assertIn("**Status:** API bereikbaar", observed)
+        self.assertIn("**Getoetste main-commit:** `" + "a" * 40 + "`", observed)
 
     def test_empty_success_output_never_green(self):
         self._simulate(["a" * 40, "a" * 40], 3, output="", published=False)
