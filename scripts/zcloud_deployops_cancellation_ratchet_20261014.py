@@ -152,6 +152,20 @@ def evaluate(root, base, head):
     return result
 
 
+def is_manual_only(text):
+    """Only an unambiguous workflow_dispatch-only mapping counts as manual."""
+    marker = re.search(r"(?m)^on:[ \t]*$", text)
+    if not marker:
+        return False
+    tail = text[marker.end():]
+    other_root = re.search(r"(?m)^[A-Za-z_-][\w-]*:", tail)
+    region = tail[:other_root.start()] if other_root else tail
+    event_lines = re.findall(r"(?m)^  ([A-Za-z_]+):[ \t]*(?:#.*)?$", region)
+    return event_lines == ["workflow_dispatch"] and not re.search(
+        r"(?m)^  [^ #\r\n]", region.replace("  workflow_dispatch:", "  #event:", 1)
+    )
+
+
 def inventory(root, head):
     """Read-only exact-commit debt census, with unknowns never called safe.
 
@@ -167,7 +181,8 @@ def inventory(root, head):
         raise Unverifiable("inventory_size")
     if any(not WORKFLOW.fullmatch(path) for path in paths):
         raise Unverifiable("inventory_path")
-    counts = {"scanned": len(paths), "risky": 0, "unknown": 0, "safe": 0}
+    counts = {"scanned": len(paths), "risky": 0, "unknown": 0, "safe": 0,
+              "risky_manual_only": 0, "risky_nonmanual_or_unknown": 0}
     for path in paths:
         try:
             text = source(root, head, path)
@@ -176,7 +191,12 @@ def inventory(root, head):
             counts["unknown"] += 1
             continue
         counts["risky" if findings else "safe"] += 1
-    if sum(counts[k] for k in ("risky", "unknown", "safe")) != counts["scanned"]:
+        if findings:
+            bucket = ("risky_manual_only" if is_manual_only(text)
+                      else "risky_nonmanual_or_unknown")
+            counts[bucket] += 1
+    if (sum(counts[k] for k in ("risky", "unknown", "safe")) != counts["scanned"]
+            or counts["risky"] != counts["risky_manual_only"] + counts["risky_nonmanual_or_unknown"]):
         raise Unverifiable("inventory_inconsistent")
     return counts
 
@@ -200,7 +220,8 @@ def main(argv=None):
             return 2
         print("VPS_CANCELLATION_INVENTORY=OBSERVED "
               + " ".join(f"{key}={counts[key]}" for key in
-                         ("scanned", "safe", "risky", "unknown")))
+                         ("scanned", "safe", "risky", "unknown", "risky_manual_only",
+                          "risky_nonmanual_or_unknown")))
         print("VPS_MUTATION_AUTHORIZED=false")
         return 0
     try:
