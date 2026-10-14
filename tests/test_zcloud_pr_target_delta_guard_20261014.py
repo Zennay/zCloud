@@ -851,6 +851,35 @@ jobs:
         self.assertEqual(gate.risk_counts(after)["pr_source_in_run_job"], 1)
         self.assertIn("pr_source_in_run_job", gate.increasing_risks(before, after))
 
+
+    def test_nonseparated_hash_in_plain_run_scalar_cannot_hide_pr_title(self):
+        candidate = SAFE + """      - run: echo prefix#${{ github.event.pull_request.title }}
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, candidate))
+
+    def test_nonseparated_hash_cannot_hide_secret_expression(self):
+        candidate = SAFE + """      - run: echo payload#${{ secrets.MY_PRIVATE_KEY }}
+"""
+        self.assertIn("secret_reference", gate.risk_set(candidate))
+        self.assertIn("secret_reference", gate.increasing_risks(SAFE, candidate))
+
+    def test_nonseparated_hash_in_yaml_plain_value_is_preserved(self):
+        source = "key: prefix#suffix\n"
+        self.assertIn("prefix#suffix", gate._content_without_comments(source))
+
+    def test_whitespace_before_hash_still_starts_yaml_comment(self):
+        source = "key: value # ${{ github.event.pull_request.title }}\n"
+        self.assertNotIn("pull_request", gate._content_without_comments(source))
+
+    def test_hash_in_double_and_single_quoted_scalars_remains_literal(self):
+        source = """value: 'x#${{ secrets.FOO }}'
+other: "q#${{ github.event.pull_request.title }}"
+"""
+        clean = gate._content_without_comments(source)
+        self.assertIn("secrets.FOO", clean)
+        self.assertIn("pull_request.title", clean)
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
