@@ -11,7 +11,7 @@ from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-HOSTED = re.compile(r"(?:ubuntu|macos|windows)-[A-Za-z0-9_.-]+\Z")
+HOSTED = re.compile(r"(?:ubuntu-(?:latest|22\.04|24\.04(?:-arm)?)|windows-(?:latest|2022|2025)|macos-(?:latest|13|14|15|26))\Z")
 RUNNER = re.compile(r"(?m)^    runs-on:\s*([^\r\n#]*)")
 JOB = re.compile(r"(?m)^  ([A-Za-z_][A-Za-z0-9_-]*):\s*$")
 
