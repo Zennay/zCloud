@@ -16,7 +16,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted-event:
+    # A required check must FAIL on an untrusted PR, not silently SKIP the
+    # regression job (GitHub treats skipped required jobs as successful).
+    # This admission step NEVER checks out or executes contributor code.
+    name: Reject untrusted regression events before checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Assert trusted event and repository provenance
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+          EVENT_KIND: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          SOURCE_ACTOR: ${{ github.actor }}
+          RESTART_ACTOR: ${{ github.triggering_actor }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REPO" = Zennay/zCloud
+          case "$EVENT_KIND" in
+            pull_request)
+              test "$HEAD_REPO" = "$SOURCE_REPO"
+              test "$BASE_REPO" = "$SOURCE_REPO"
+              test "$GITHUB_BASE_REF" = main ;;
+            push)
+              [[ "$EVENT_REF" == refs/heads/main || "$EVENT_REF" == refs/heads/worker/* ]] ;;
+            workflow_dispatch)
+              test "$EVENT_REF" = refs/heads/main
+              test "$SOURCE_ACTOR" = Zennay
+              test "$RESTART_ACTOR" = Zennay
+              test "$ATTEMPT" = 1 ;;
+            *) echo "Unsupported regression event" >&2; exit 1 ;;
+          esac
   critical-runner-flows:
+    needs: trusted-event
     # Run untrusted PR code only in hosted CI and only for this repository.
     # Explicit operator dispatch always targets exact current canonical main.
     if: >-
