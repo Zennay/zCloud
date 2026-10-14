@@ -70,5 +70,31 @@ jobs:
           assert receipt.get("release_authorized") is False
           assert receipt.get("production_verified") is False
           assert receipt.get("runner_outage_verified") is False
-          print("ZCLOUD_READ_ONLY_GATE_" + str(receipt.get("observation", "DENY")))
+          from pathlib import Path
+          from os import environ
+          observation = receipt.get("observation", "DENY")
+          print("ZCLOUD_READ_ONLY_GATE_" + str(observation))
+          sha = receipt.get("main_sha", "")
+          run_id = receipt.get("current_main_deploy_run")
+          lines = [
+              "## zCloud — read-only deployment observation",
+              "",
+              f"- **Observed classification:** \`{observation}\`",
+              f"- **Exact main SHA:** \`{sha if len(sha) == 40 else 'unavailable'}\`",
+              f"- **GitHub production status:** \`{receipt.get('production_status', 'unverified')}\`",
+              f"- **Deployment run:** {('https://github.com/Zennay/zCloud/actions/runs/' + str(run_id)) if type(run_id) is int and run_id > 0 else 'unverified'}",
+              "- **Source coverage:** latest bounded window; not exhaustive",
+              "- **VPS/AI generation health:** not verified",
+              "- **Recovery, worker restart, queue cancellation or deployment authority:** none",
+              "",
+              "Hosted source regression and this observation do **not** certify production.",
+          ]
+          Path(environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8").write("\\n".join(lines) + "\\n")
           PY
+      - name: Preserve bounded non-authorizing evidence for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-readonly-gate-${{ github.run_id }}
+          path: ${{ runner.temp }}/deployops-gate.json
+          if-no-files-found: error
+          retention-days: 7
