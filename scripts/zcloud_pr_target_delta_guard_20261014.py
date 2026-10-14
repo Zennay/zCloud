@@ -494,7 +494,13 @@ WRITE_ALL = re.compile(
 # adds a SECOND secret use to a workflow with one pre-existing secret reference
 # would silently pass a boolean/category-only monotonic check.
 WRITE_SCOPE = re.compile(
-    r"""(?m)(?:^[ \t]*|(?<=[{,])[ \t]*)(?P<scope>["']?[A-Za-z][\w-]*["']?)[ \t]*:[ \t]*["']?write["']?[ \t]*(?=$|[,}])"""
+    r"""(?mx)
+    (?:^[ \t]*|(?<=[{,])[ \t]*)
+    (?P<scope>["']?[A-Za-z][\w-]*["']?)[ \t]*:[ \t]*
+    (?:["']?write["']?
+      |(?:[>|][+-]?)?[ \t]*\n[ \t]+["']?write["']?)
+    [ \t]*(?=$|[,}])
+    """
 )
 SECRET_REFERENCE = re.compile(r"\bsecrets[ \t]*(?:\.|\[)", re.I)
 SECRET_IDENTITY = re.compile(
