@@ -114,6 +114,45 @@ class ReviewQueueTests(unittest.TestCase):
                           'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
         self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
 
+    def test_many_disjoint_owners_stay_review_candidates(self):
+        d = payload()
+        d['prs'] = []
+        d['branches'] = []
+        for i in range(1, 201):
+            p = copy.deepcopy(payload()['prs'][0])
+            p['number'] = i
+            p['files'] = [f'feature/pr-{i}/run.py']
+            d['prs'].append(p)
+            d['branches'].append({
+                'name': f'worker-{i}', 'head_sha': H,
+                'files': [f'feature/branch-{i}/run.py'],
+                'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+            })
+        report = mod.snapshot(d)
+        self.assertEqual(report['review_candidate_count'], 200)
+        self.assertFalse(report['release_authorized'])
+
+    def test_tail_ownership_overlap_in_large_inventory_denied(self):
+        d = payload()
+        d['branches'] = []
+        for i in range(200):
+            path = 'scripts/a.py/new-file.py' if i == 199 else f'other/file-{i}.py'
+            d['branches'].append({'name': f'branch-{i}', 'head_sha': H,
+                                  'files': [path],
+                                  'files_evidence': {'complete': True, 'total_count': 1,
+                                                     'head_sha': H, 'base_sha': S}})
+        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+
+    def test_ancestry_index_marks_both_colliding_prs(self):
+        d = payload()
+        other = copy.deepcopy(d['prs'][0])
+        other['number'] = 13
+        other['files'] = ['scripts/a.py/inner']
+        d['prs'].append(other)
+        report = mod.snapshot(d)
+        self.assertEqual(report['review_candidate_count'], 0)
+        self.assertTrue(all('overlapping_owner' in p['reasons'] for p in report['review_candidates']))
+
     def test_file_to_directory_swap_collides(self):
         d = payload()
         d['branches'] = [{
