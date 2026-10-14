@@ -20,6 +20,7 @@ class ProtectedAutoIntegrationRoots(unittest.TestCase):
             "tests/test_zcloud_automerge_report_20261014.py",
             "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
+            "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
         }
         self.assertEqual(required, engine.PROTECTED_INTEGRATION_FILES)
         for path in sorted(required):
@@ -56,7 +57,7 @@ class ProtectedAutoIntegrationRoots(unittest.TestCase):
                 return [{"filename": "scripts/zcloud_autonomous_pr_integrator.py",
                          "status": "modified"}]
             if endpoint == f"/commits/{A}/check-runs?per_page=100":
-                return {"total_count": 1, "check_runs": checks()}
+                return {"total_count": len(checks()), "check_runs": checks()}
             if endpoint == f"/commits/{A}/statuses?per_page=100":
                 return []
             self.fail("unexpected API " + endpoint)
@@ -93,7 +94,7 @@ class ProtectedAutoIntegrationRoots(unittest.TestCase):
                 return files() + [{"filename": "tests/test_zcloud_autonomous_pr_integrator.py",
                                   "status": "modified"}]
             if endpoint == f"/commits/{A}/check-runs?per_page=100":
-                return {"total_count": 1, "check_runs": checks()}
+                return {"total_count": len(checks()), "check_runs": checks()}
             if endpoint == f"/commits/{A}/statuses?per_page=100":
                 return []
             self.fail("unexpected API " + endpoint)
