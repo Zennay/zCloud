@@ -9,7 +9,7 @@ SHA = re.compile(r"\A[0-9a-f]{40}\Z", re.ASCII)
 
 
 def admission(*, event, repository, ref, actor, triggering_actor, attempt,
-              expected_sha, checkout_sha, main_sha, head_repo, stage):
+              expected_sha, checkout_sha, main_sha, head_repo, stage, upstream_sha=None):
     report = {
         "kind": "zcloud-source-integrity-v1",
         "stage": stage if stage in ("before", "after") else "invalid",
@@ -20,7 +20,7 @@ def admission(*, event, repository, ref, actor, triggering_actor, attempt,
         "reason": "DENY",
     }
     if not (
-        type(event) is str and event in ("pull_request", "schedule", "workflow_dispatch")
+        type(event) is str and event in ("pull_request", "schedule", "workflow_dispatch", "workflow_run")
         and type(repository) is str and repository == REPO
         and type(ref) is str and type(actor) is str
         and type(triggering_actor) is str and type(attempt) is str and attempt == "1"
@@ -32,6 +32,11 @@ def admission(*, event, repository, ref, actor, triggering_actor, attempt,
         return report
     if event == "pull_request":
         if head_repo != REPO or ref == "refs/heads/main":
+            return report
+    elif event == "workflow_run":
+        if (ref != "refs/heads/main" or main_sha != expected_sha
+                or type(upstream_sha) is not str or not SHA.fullmatch(upstream_sha)
+                or upstream_sha == expected_sha):
             return report
     elif ref != "refs/heads/main" or main_sha != expected_sha:
         return report
@@ -48,6 +53,7 @@ def main():
                   "attempt", "expected-sha", "checkout-sha", "main-sha",
                   "head-repo", "stage"):
         parser.add_argument("--" + field, required=True)
+    parser.add_argument("--upstream-sha", default="")
     kwargs = vars(parser.parse_args())
     result = admission(**kwargs)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
