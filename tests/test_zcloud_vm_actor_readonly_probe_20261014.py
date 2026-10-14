@@ -69,7 +69,7 @@ class VmActorReadOnlyProbeTests(unittest.TestCase):
         self.assertEqual(passed, [(("127.0.0.1", 6000), 4)])
         self.assertEqual(result["relevant_addon_count"], 1)
         self.assertEqual(result["debuggable_count"], 1)
-        self.assertEqual(sock.sent, [b'44:{"to":"root","type":"listAddons"}'])
+        self.assertEqual(sock.sent, [b'33:{"to":"root","type":"listAddons"}'])
         self.assertTrue(sock.closed)
         self.assertEqual(sock.timeout, 6)
 
