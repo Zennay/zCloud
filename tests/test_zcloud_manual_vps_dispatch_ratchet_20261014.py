@@ -60,6 +60,9 @@ class ManualDispatchPolicy(unittest.TestCase):
             with self.subTest(removed=part):
                 self.assertDenied(workflow(if_statement=" && ".join(p for p in pieces if p != part)))
 
+    def test_true_or_admission_cannot_bypass_identity(self):
+        self.assertDenied(workflow(if_statement="true || (" + SAFE_IF + ")"))
+
     def test_separate_step_condition_does_not_count_as_job_if(self):
         body = workflow().decode().replace("      - run:", f"      - if: {SAFE_IF}\n        run:")
         self.assertDenied(body.encode())
