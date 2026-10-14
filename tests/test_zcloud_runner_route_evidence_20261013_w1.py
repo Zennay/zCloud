@@ -131,6 +131,23 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         self.assertTrue(result["jobs"][1]["canonical_vps_runner"])
         self.assertFalse(result["production_deploy_verified"])
 
+    def test_matching_runner_name_on_wrong_github_runner_id_is_not_canonical(self):
+        # Display name is not unique authority: bind the exact GitHub runner
+        # identity recorded for zcloud-vps-1 in real historical job evidence.
+        spoof = make_job(job_id=22, status="completed", conclusion="success",
+                         runner_id=999, runner_name="zcloud-vps-1")
+        real = make_job(job_id=23, status="completed", conclusion="success",
+                        runner_id=route.CANONICAL_VPS_RUNNER_ID,
+                        runner_name="zcloud-vps-1")
+        result = route.classify_run(26, [spoof, real], NOW)
+        lane = result["lanes"]["zcloud_vps"]
+        self.assertEqual(lane["assigned_count"], 2)
+        self.assertEqual(lane["canonical_vps_assigned_count"], 1)
+        self.assertEqual(lane["unexpected_vps_assigned_count"], 1)
+        self.assertFalse(result["jobs"][0]["canonical_vps_runner"])
+        self.assertTrue(result["jobs"][1]["canonical_vps_runner"])
+        self.assertFalse(result["production_deploy_verified"])
+
     def test_ftmo_target_never_inflates_canonical_zcloud_vps_counter(self):
         x = make_job(labels=["self-hosted", "ftmo-research"], status="completed",
                      conclusion="success", runner_id=21, runner_name="zcloud-vps-1")
