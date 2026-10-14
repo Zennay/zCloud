@@ -169,6 +169,11 @@ def main(argv=None, environ=None, transport=api):
         raise Refused("not_canonical_main")
     if env.get("GITHUB_EVENT_NAME") not in ("schedule", "workflow_dispatch"):
         raise Refused("untrusted_event")
+    # Rerunning an already-consumed GitHub workflow run must never admit a
+    # second PR merge. GitHub's per-run job lock is not a durable replay gate:
+    # an operator can rerun the same event after its first job terminates.
+    if env.get("GITHUB_RUN_ATTEMPT") != "1":
+        raise Refused("replayed_or_unknown_attempt")
     if options.apply and env.get("ZCLOUD_AUTOMERGE_ENABLED") != "true":
         raise Refused("explicit_feature_gate_disabled")
     if options.apply and (env.get("GITHUB_ACTOR") != "Zennay"
