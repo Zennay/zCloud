@@ -63,7 +63,9 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             return types.SimpleNamespace(returncode=1, stdout="firefox\n")
         self.assertIsNone(command_lines(COMMANDS["process"], execute=failed))
         self.assertIsNone(summarize_processes(None))
+        self.assertIsNone(summarize_processes(["firefox --private Title123"]))
         self.assertIsNone(summarize_units(None, kind="service"))
+        self.assertIsNone(summarize_units(["non-systemctl raw private data"], kind="service"))
 
     def test_unit_parser_ignores_descriptions_and_rejects_identity_ambiguity(self):
         self.assertEqual(summarize_units(["● zcloud.service loaded active running private prompt"], kind="service"),
@@ -81,6 +83,8 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             manifest = path / "manifest.json"
             worker.write_text("// @version 2.0.3\n", encoding="utf-8")
             self.assertEqual(get_source_version(worker), "2.0.3")
+            worker.write_text("// @version 2.0.3\n// @version 9.9.9\n", encoding="utf-8")
+            self.assertIsNone(get_source_version(worker))
             worker.write_text("// @version private-secret\n", encoding="utf-8")
             self.assertIsNone(get_source_version(worker))
             worker.write_bytes(b"X" * 65537)
@@ -93,6 +97,8 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             manifest.write_text('{"background":{"scripts":"private"}}', encoding="utf-8")
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[1]}}', encoding="utf-8")
+            self.assertIsNone(get_background_count(manifest))
+            manifest.write_text('{"background":{"scripts":[], "scripts":["x"]}}', encoding="utf-8")
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
