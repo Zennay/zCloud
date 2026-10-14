@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 import json
 import os
 import re
@@ -41,9 +42,19 @@ def strict_json(raw):
                 raise Unavailable("duplicate_key")
             output[name] = value
         return output
+    def finite_float(value):
+        converted = float(value)
+        if not isfinite(converted):
+            raise Unavailable("nonfinite")
+        return converted
     try:
         result = json.loads(raw, object_pairs_hook=unique,
-                            parse_constant=lambda _: (_ for _ in ()).throw(Unavailable("nonfinite")))
+                            parse_constant=lambda _: (_ for _ in ()).throw(Unavailable("nonfinite")),
+                            parse_float=finite_float)
+    except Unavailable:
+        # Preserve the exact fail-closed reason raised by strict validation.
+        # Unavailable subclasses ValueError and must not be misclassified.
+        raise
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise Unavailable("invalid_json") from exc
     if not isinstance(result, dict):
@@ -238,6 +249,11 @@ def _get(url, token, opener):
               "User-Agent": "zcloud-hosted-queue-watch"})
     try:
         with opener.open(request, timeout=12) as response:
+            # A GitHub Actions bearer token must not accept evidence returned
+            # from any alternate destination, even if a custom opener
+            # accidentally permits a redirect.
+            if response.geturl() != url:
+                raise Unavailable("unexpected_final_url")
             if response.headers.get_content_type() != "application/json":
                 raise Unavailable("not_json")
             return strict_json(response.read(1024 * 1024 + 1))
