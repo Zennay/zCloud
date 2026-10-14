@@ -104,7 +104,7 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
         self.assertIn("timeout 15 git ls-remote --exit-code origin refs/heads/main", proof[1])
 
     def test_real_bash_preflight_denies_replay_and_stale_main(self):
-        """Execute extracted workflow admission with fake Git/identity; never touch VPS."""
+        """Execute extracted Bash admission with mocked identity, never contacting VPS."""
         import os
         import subprocess
         import tempfile
@@ -113,23 +113,22 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
         preflight = self.live.split(
             "- name: Trust preflight before reading live worker/SQLite state", 1
         )[1].split("- name: Check live worker heartbeats", 1)[0]
-        script = textwrap.dedent(preflight.split("run: |\\n", 1)[1])
+        script = textwrap.dedent(preflight.split("run: |\n", 1)[1])
         good_sha = "a" * 40
         with tempfile.TemporaryDirectory() as tmp:
             commands = {
-                "git": (
-                    '#!/bin/sh\\n'
-                    'if [ "$1" = "rev-parse" ]; then printf "%s\\\\n" "$GITHUB_SHA"; exit 0; fi\\n'
-                    'if [ "$1" = "ls-remote" ]; then printf "%s\\\\trefs/heads/main\\\\n" "$MOCK_REMOTE_MAIN"; exit 0; fi\\n'
-                    'exit 3\\n'
-                ),
-                "id": '#!/bin/sh\\nprintf "ubuntu\\\\n"\\n',
-                "hostname": '#!/bin/sh\\nprintf "vps-bb300bba\\\\n"\\n',
-                "python3": '#!/bin/sh\\nprintf "guard-called\\\\n" >> "$MOCK_GUARD_LOG"\\n',
+                "git": """#!/bin/sh
+if [ "$1" = "rev-parse" ]; then echo "$GITHUB_SHA"; exit 0; fi
+if [ "$1" = "ls-remote" ]; then echo "$MOCK_REMOTE_MAIN refs/heads/main"; exit 0; fi
+exit 3
+""",
+                "id": "#!/bin/sh\necho ubuntu\n",
+                "hostname": "#!/bin/sh\necho vps-bb300bba\n",
+                "python3": '#!/bin/sh\necho guard-called >> "$MOCK_GUARD_LOG"\n',
             }
             for name, body in commands.items():
                 exe = Path(tmp) / name
-                exe.write_text(body.replace("\\\\n", "\\n").replace("\\\\t", "\\t"), encoding="utf-8")
+                exe.write_text(body, encoding="utf-8")
                 exe.chmod(0o755)
             env = dict(os.environ)
             env.update({
@@ -148,8 +147,10 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
 
             def execute(overrides):
                 log.unlink(missing_ok=True)
-                result = subprocess.run(["bash", "-c", script], env={**env, **overrides},
-                                        capture_output=True, text=True, timeout=5)
+                result = subprocess.run(
+                    ["bash", "-c", script], env={**env, **overrides},
+                    capture_output=True, text=True, timeout=5
+                )
                 return result.returncode, log.exists()
 
             self.assertEqual(execute({}), (0, True))
