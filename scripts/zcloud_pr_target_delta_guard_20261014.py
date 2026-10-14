@@ -26,7 +26,8 @@ PR_SOURCE = re.compile(
       (?:
         (?:\s*\.\s*pull_request|\s*\[\s*['"]pull_request['"]\s*\])
         (?:\s*\.\s*(?:head|title|body|number|merge_commit_sha)\b
-          |\s*\[\s*['"](?:head|title|body|number|merge_commit_sha)['"]\s*\])
+          |\s*\[\s*['"](?:head|title|body|number|merge_commit_sha)['"]\s*\]
+          |(?=\s*(?:\}\}|\)|[,|]|$)))
         (?:\s*\.\s*[A-Za-z_]\w*|\s*\[\s*['"][A-Za-z_]\w*['"]\s*\])*
         |
         (?:\s*\.\s*number\b|\s*\[\s*['"]number['"]\s*\])
