@@ -80,6 +80,18 @@ class PolicyTest(unittest.TestCase):
             CANCEL.replace("cancel-in-progress: true", "cancel-in-progress: 'true'")
         ))
 
+    def test_quoted_false_is_not_a_boolean_proof(self):
+        for quoted in ("'false'", '"false"'):
+            with self.subTest(quoted=quoted):
+                example = SELFHOST.replace(
+                    "cancel-in-progress: false",
+                    "cancel-in-progress: " + quoted,
+                )
+                self.assertTrue(scanner.risks(example))
+
+    def test_literal_false_remains_non_cancelling(self):
+        self.assertEqual([], scanner.risks(SELFHOST))
+
     def test_expression_denied(self):
         self.assertTrue(scanner.risks(CANCEL.replace(
             "cancel-in-progress: true",
