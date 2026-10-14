@@ -267,8 +267,31 @@ class GitTest(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-qm", "three-class fixture")
         counts = scanner.inventory(self.root, self.git("rev-parse", "HEAD"))
-        self.assertEqual({"scanned": 3, "safe": 1, "risky": 1, "unknown": 1},
-                         counts)
+        self.assertEqual({"scanned": 3, "safe": 1, "risky": 1, "unknown": 1,
+                          "risky_manual_only": 0,
+                          "risky_nonmanual_or_unknown": 1}, counts)
+
+    def test_inventory_detects_manual_only_debt_separately(self):
+        manual = CANCEL.replace("pull_request:", "workflow_dispatch:")
+        self.path.write_text(manual, encoding="utf-8")
+        (self.path.parent / "automatic.yml").write_text(
+            CANCEL, encoding="utf-8"
+        )
+        self.git("add", ".")
+        self.git("commit", "-qm", "manual-versus-auto-cohort")
+        observed = scanner.inventory(self.root, self.git("rev-parse", "HEAD"))
+        self.assertEqual(2, observed["risky"])
+        self.assertEqual(1, observed["risky_manual_only"])
+        self.assertEqual(1, observed["risky_nonmanual_or_unknown"])
+
+    def test_manual_detection_refuses_ambiguous_event_source(self):
+        manual = CANCEL.replace("pull_request:", "workflow_dispatch:")
+        self.assertTrue(scanner.is_manual_only(manual))
+        extra = manual.replace("  workflow_dispatch:", "  workflow_dispatch:\n  push:")
+        self.assertFalse(scanner.is_manual_only(extra))
+        self.assertFalse(scanner.is_manual_only(
+            manual.replace("  workflow_dispatch:", "  schedule:")
+        ))
 
     def test_inventory_does_not_accept_non_workflow_paths(self):
         self.commit(SAFE)
