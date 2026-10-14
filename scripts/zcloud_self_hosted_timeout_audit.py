@@ -206,7 +206,6 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
                 status = "dynamic_or_invalid"
             else:
                 timeout = int(raw)
-            else:
                 if timeout < 1:
                     status = "invalid"
                 elif timeout > max_minutes:
