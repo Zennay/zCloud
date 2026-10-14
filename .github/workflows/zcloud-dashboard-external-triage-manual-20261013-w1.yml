@@ -71,6 +71,10 @@ jobs:
             echo "DASHBOARD_TRIAGE_SUMMARY_REJECTED"
             exit 3
           fi
+          # A branch may move WHILE the sanitizer validates its input. Deny
+          # publication unless canonical main remains pinned at the final
+          # observable boundary immediately before writing the job summary.
+          verify_main_head
           # Attach trusted immutable main identity AFTER canonical report
           # admission, so an operator can correlate a copied receipt with
           # the exact tested source. Never allow endpoint text to set the SHA.
