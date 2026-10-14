@@ -164,7 +164,10 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
             declaration = JOB_RE.match(block.splitlines()[0])
             if declaration and declaration.group("tail").strip():
                 runs_on = "*yaml_inline_job_runner"
-            elif re.search(rf"(?m)^ {{{key_indent}}}<<:[ \t]*\*[A-Za-z_]", block):
+            elif re.search(rf"(?m)^ {{{key_indent}}}<<:[ \t]*", block):
+                # YAML merge keys may inherit a runner from a mapping, a
+                # sequence of aliases or a plain alias. All forms are
+                # unresolved without a complete YAML parser.
                 runs_on = "*yaml_inherited_runner"
             else:
                 continue
