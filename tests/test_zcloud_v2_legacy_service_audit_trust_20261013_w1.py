@@ -45,9 +45,14 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
             with self.subTest(job=name):
                 job = self.job(self.text, name)
                 self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", job)
-                self.assertIn("ref: ${{ github.sha }}", job)
+                expected_ref = ("github.event.pull_request.head.sha"
+                                if name == "validate" else "github.sha")
+                self.assertIn("ref: ${{ " + expected_ref + " }}", job)
                 self.assertIn("persist-credentials: false", job)
-                self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', job)
+                actual = ('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+                          if name == "validate" else
+                          'test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"')
+                self.assertIn(actual, job)
 
     def test_permanent_vps_gate_precedes_any_live_probes(self):
         job = self.job(self.text, "inspect")
@@ -107,7 +112,7 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
         vps = self.job(self.text, "inspect")
         gate = vps.split("- name: Enforce exact commit and permanent VPS identity", 1)[1].split("- name: Read-only bounded worker service inventory", 1)[0]
         self.assertIn("git ls-remote --exit-code origin refs/heads/main", gate)
-        self.assertIn('test "$current_main" = "$GITHUB_SHA"', gate)
+        self.assertIn('test "$current_main" = "$CONFIRMED_SHA"', gate)
         self.assertLess(gate.index("git ls-remote"), gate.index("python3 scripts/zcloud_vps_runner_guard.py"))
 
     def test_trigger_matrix_deny_untrusted_events_and_manual_drift(self):
@@ -117,24 +122,59 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' &&",
             "github.ref == 'refs/heads/main' &&",
             "github.repository == 'Zennay/zCloud' &&",
-            "github.actor == 'Zennay'",
+            "github.actor == 'Zennay' &&",
+            "github.triggering_actor == 'Zennay' &&",
+            "inputs.confirm_sha == github.sha",
         ])
+        sha = "a" * 40
         cases = [
-            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", True),
-            ("pull_request", "refs/pull/1313/merge", "Zennay/zCloud", "Zennay", False),
-            ("push", "refs/heads/main", "Zennay/zCloud", "Zennay", False),
-            ("workflow_run", "refs/heads/main", "Zennay/zCloud", "Zennay", False),
-            ("workflow_dispatch", "refs/heads/feature", "Zennay/zCloud", "Zennay", False),
-            ("workflow_dispatch", "refs/heads/main", "fork/zCloud", "Zennay", False),
-            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "outside", False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", sha, True),
+            ("pull_request", "refs/pull/1313/merge", "Zennay/zCloud", "Zennay", "Zennay", sha, False),
+            ("push", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", sha, False),
+            ("workflow_dispatch", "refs/heads/feature", "Zennay/zCloud", "Zennay", "Zennay", sha, False),
+            ("workflow_dispatch", "refs/heads/main", "fork/zCloud", "Zennay", "Zennay", sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "outside", "Zennay", sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "outside", sha, False),
+            ("workflow_dispatch", "refs/heads/main", "Zennay/zCloud", "Zennay", "Zennay", "b" * 40, False),
         ]
-        for event, ref, repo, actor, expected in cases:
-            with self.subTest(event=event, ref=ref, repo=repo, actor=actor):
-                result = (event == "workflow_dispatch"
-                          and ref == "refs/heads/main"
-                          and repo == "Zennay/zCloud"
-                          and actor == "Zennay")
+        for event, ref, repo, actor, rerun_actor, confirmed, expected in cases:
+            with self.subTest(event=event, ref=ref, repo=repo, actor=actor, rerun=rerun_actor):
+                result = (event == "workflow_dispatch" and
+                          ref == "refs/heads/main" and
+                          repo == "Zennay/zCloud" and
+                          actor == rerun_actor == "Zennay" and
+                          confirmed == sha)
                 self.assertEqual(result, expected)
+
+    def test_manual_dispatch_requires_explicit_sha_input(self):
+        header = self.text.split("\npermissions:", 1)[0]
+        self.assertIn("confirm_sha:", header)
+        self.assertIn("type: string", header)
+        self.assertIn("required: true", header)
+        gate = self.job(self.text, "inspect")
+        self.assertIn("inputs.confirm_sha == github.sha", gate)
+
+    def test_manual_guard_fails_closed_before_live_observation(self):
+        gate = self.job(self.text, "inspect").split(
+            "- name: Enforce exact commit and permanent VPS identity", 1
+        )[1].split("- name: Read-only bounded worker service inventory", 1)[0]
+        for required in (
+            "test \"$GITHUB_TRIGGERING_ACTOR\" = 'Zennay'",
+            '[[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]',
+            'test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+            'test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"',
+            "timeout 15 git ls-remote --exit-code origin refs/heads/main",
+            'test "$current_main" = "$CONFIRMED_SHA"',
+        ):
+            self.assertIn(required, gate)
+
+    def test_hosted_pr_validates_exact_head_not_synthetic_merge_sha(self):
+        validate = self.job(self.text, "validate")
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", validate)
+        self.assertIn("EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}", validate)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', validate)
+        self.assertNotIn("ref: ${{ github.sha }}", validate)
+
 
 
 if __name__ == "__main__":
