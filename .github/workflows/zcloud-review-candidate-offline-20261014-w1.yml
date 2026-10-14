@@ -57,7 +57,12 @@ jobs:
               'pr_less': []},
             'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
             'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
-              'draft': False,'owner_approved': True,'files': ['README.md'], 'previous_files': [], 'files_evidence': {'complete': True,
+              'draft': False,'owner_approved': True,
+              'owner_review_evidence': {'complete': True, 'decision': 'approved',
+                  'author_login': 'project-author', 'reviewer_login': 'independent-reviewer',
+                  'reviewed_head_sha': sha,
+                  'submitted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')},
+              'files': ['README.md'], 'previous_files': [], 'files_evidence': {'complete': True,
                 'total_count': 1, 'rename_sources_complete': True, 'previous_files_total': 0,
                 'head_sha': sha, 'base_sha': sha}, 'required_checks': ['unit'],
               'checks': [{'name': 'unit','head_sha': sha,'conclusion': 'success'}]}], 'branches': []})
