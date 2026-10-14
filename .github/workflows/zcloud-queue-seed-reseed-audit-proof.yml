@@ -1,0 +1,74 @@
+name: zCloud queue seed reseed audit proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_queue_seed_reseed_audit.py"
+      - "tests/test_queue_seed_reseed_audit.py"
+      - "docs/queue-seed-reseed-audit-contract.md"
+      - ".github/workflows/zcloud-queue-seed-reseed-audit-proof.yml"
+      - "portfolio_queue.seed.json"
+      - "server.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-queue-seed-reseed-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Validate audit contract
+        run: |
+          python3 -m unittest -v tests.test_queue_seed_reseed_audit
+          python3 -m py_compile scripts/zcloud_queue_seed_reseed_audit.py
+
+  prove-live-read-only:
+    if: >-
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Require canonical permanent VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Run focused audit tests
+        run: python3 -m unittest -v tests.test_queue_seed_reseed_audit
+      - name: Compare seed with live SQLite read-only
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_queue_seed_reseed_audit.py \
+            --db /home/ubuntu/zennay-cloud/history.db \
+            > /tmp/zcloud-queue-seed-reseed-audit.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path('/tmp/zcloud-queue-seed-reseed-audit.json').read_text(encoding='utf-8'))
+          assert payload['schema_version'] == 1
+          assert payload['seed_item_count'] >= 1
+          print('seed_items=' + str(payload['seed_item_count']))
+          print('runtime_present=' + str(payload['runtime_present_count']))
+          print('absent=' + str(payload['absent_count']))
+          print('runnable_reseed_risks=' + str(payload['runnable_reseed_risk_count']))
+          print('risk_ids=' + ','.join(payload['runnable_reseed_risk_ids']))
+          print('ZCLOUD_QUEUE_SEED_AUDIT_READONLY_GREEN=1')
+          PY
