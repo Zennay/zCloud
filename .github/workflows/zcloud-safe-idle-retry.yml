@@ -14,9 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
-  statuses: write
 
 concurrency:
   group: zcloud-safe-idle-retry-${{ github.event.workflow_run.head_sha || github.sha }}
@@ -24,6 +22,10 @@ concurrency:
 
 jobs:
   classify:
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
     if: >
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'failure' &&
@@ -132,6 +134,9 @@ jobs:
           echo "blockers=$blockers" >> "$GITHUB_OUTPUT"
 
   wait-and-dispatch:
+    permissions:
+      actions: write
+      contents: read
     needs: classify
     if: needs.classify.outputs.retry == 'true'
     runs-on: [self-hosted, zcloud, vps]
@@ -146,6 +151,16 @@ jobs:
           persist-credentials: false
           clean: true
           fetch-depth: 1
+
+      - name: Verify exact revision and permanent zCloud VPS runner
+        env:
+          DEPLOY_SHA: ${{ needs.classify.outputs.deploy_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Wait read-only for transient blockers
         env:
@@ -174,6 +189,9 @@ jobs:
           echo "ZCLOUD_SAFE_IDLE_RETRY_DISPATCHED sha=$DEPLOY_SHA"
 
   finalize:
+    permissions:
+      contents: read
+      statuses: write
     needs: [classify, wait-and-dispatch]
     if: always() && needs.classify.outputs.retry == 'true'
     runs-on: ubuntu-latest

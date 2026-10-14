@@ -29,6 +29,30 @@ class SafeIdleRetryWorkflowTests(unittest.TestCase):
         self.assertNotIn("runner-control", text)
         self.assertNotIn("action: start", text)
 
+    def test_retry_uses_least_privilege_and_runner_proof_before_live_read(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        top_permissions = text[text.index("permissions:"):text.index("concurrency:")]
+        self.assertNotIn("actions: write", top_permissions)
+        self.assertNotIn("statuses: write", top_permissions)
+
+        classify = text[text.index("  classify:"):text.index("  wait-and-dispatch:")]
+        self.assertIn("actions: read", classify)
+        self.assertIn("statuses: write", classify)
+
+        wait = text[text.index("  wait-and-dispatch:"):text.index("  finalize:")]
+        self.assertIn("actions: write", wait)
+        self.assertNotIn("statuses: write", wait)
+        guard = wait.index("Verify exact revision and permanent zCloud VPS runner")
+        live_read = wait.index("Wait read-only for transient blockers")
+        self.assertLess(guard, live_read)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"', wait)
+        self.assertIn('test "$(id -un)" = "ubuntu"', wait)
+        self.assertIn("scripts/zcloud_vps_runner_guard.py --json", wait)
+
+        finalize = text[text.index("  finalize:"):]
+        self.assertIn("statuses: write", finalize)
+        self.assertNotIn("actions: write", finalize)
+
     def test_retry_reconfirms_exact_main_before_dispatch(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('commits/main" --jq .sha', text)
