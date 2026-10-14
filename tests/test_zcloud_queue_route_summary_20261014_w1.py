@@ -1,5 +1,6 @@
 """Offline safety tests for the human-readable, GET-only route triage output."""
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import copy
 import json
 import os
@@ -12,6 +13,7 @@ from scripts import zcloud_queue_route_summary_20261014_w1 as summary
 from scripts import zcloud_queue_route_triage_20261014_w1 as triage
 
 CLI = Path(__file__).resolve().parents[1] / "scripts/zcloud_queue_route_summary_20261014_w1.py"
+NOW = datetime(2026, 10, 14, 4, 10, 30, tzinfo=timezone.utc)
 
 
 def record(number=71, *, scope="historical_main", route="ftmo_research",
@@ -35,6 +37,8 @@ def report(rows=None):
         "main_sha_before": "a" * 40, "main_sha_after": "a" * 40,
         "observed_at": "2026-10-14T04:10:00Z",
         "observed_runs": len(rows), "runs": rows, "route_counts": buckets,
+        "reason": "read_only_route_counts_not_runner_liveness",
+        "mutation_authorized": False,
         "runner_recovery_authorized": False, "production_verified": False,
         "worker_generation_verified": False, "cancel_run_ids": [],
     }
@@ -42,7 +46,50 @@ def report(rows=None):
 
 class QueueRouteSummaryTests(unittest.TestCase):
     def render(self, data, rc=0):
-        return summary.safe_summary(json.dumps(data).encode("utf-8"), rc)
+        return summary.safe_summary(json.dumps(data).encode("utf-8"), rc, now=NOW)
+
+    def test_stale_or_future_source_report_never_claims_current_queue(self):
+        data = report([record()])
+        old = datetime(2026, 10, 14, 4, 8, tzinfo=timezone.utc)
+        future = datetime(2026, 10, 14, 4, 11, tzinfo=timezone.utc)
+        for value in (old, future):
+            with self.subTest(time=value):
+                data["observed_at"] = value.strftime("%Y-%m-%dT%H:%M:%SZ")
+                markdown, code = self.render(data)
+                self.assertEqual(code, 1)
+                self.assertIn("Geen aantallen gepubliceerd", markdown)
+                self.assertNotIn("Run 71", markdown)
+
+    def test_exact_freshness_window_and_clock_identity(self):
+        data = report([record()])
+        data["observed_at"] = "2026-10-14T04:10:00Z"
+        for observed_now, expected in (
+            (datetime(2026, 10, 14, 4, 10, tzinfo=timezone.utc), 0),
+            (datetime(2026, 10, 14, 4, 11, tzinfo=timezone.utc), 0),
+            (datetime(2026, 10, 14, 4, 11, 0, 1, tzinfo=timezone.utc), 1),
+            (datetime(2026, 10, 14, 4, 9, 59, tzinfo=timezone.utc), 1),
+            (datetime(2026, 10, 14, 4, 10), 1),
+        ):
+            with self.subTest(observed_now=observed_now):
+                markdown, status = summary.safe_summary(
+                    json.dumps(data).encode("utf-8"), 0, now=observed_now)
+                self.assertEqual(status, expected)
+                if expected:
+                    self.assertNotIn("Run 71", markdown)
+
+    def test_forged_mutation_authorization_and_wrong_reason_denied(self):
+        for key, value in (
+            ("mutation_authorized", True),
+            ("mutation_authorized", None),
+            ("reason", "run_cancellation_approved"),
+            ("reason", None),
+        ):
+            with self.subTest(key=key, value=value):
+                data = report([record()])
+                data[key] = value
+                markdown, status = self.render(data)
+                self.assertEqual(status, 1)
+                self.assertNotIn("Run 71", markdown)
 
     def test_empty_queue_is_observation_not_authorization(self):
         markdown, rc = self.render(report())
@@ -228,6 +275,7 @@ class QueueRouteSummaryTests(unittest.TestCase):
             source = Path(tmp) / "triage.json"
             target = Path(tmp) / "summary.md"
             data = report([record()])
+            data["observed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             data["token"] = "SECRET"
             source.write_text(json.dumps(data), encoding="utf-8")
             result = subprocess.run(
