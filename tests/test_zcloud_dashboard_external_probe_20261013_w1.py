@@ -822,7 +822,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertNotIn("uses: actions/checkout@v4", workflow)
         self.assertNotIn("git ls-remote", manual)
         self.assertNotIn("gh api --method POST", manual)
-        self.assertIn("env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/", manual)
+        self.assertIn('env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/', manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
         self.assertEqual(manual.count("verify_main_head\n"), 3)
         self.assertLess(manual.index("verify_main_head\n"),
