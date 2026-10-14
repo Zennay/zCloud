@@ -10,8 +10,27 @@ on:
 permissions:
   contents: read
 
+# Do not cancel a completed source proof or a still-running main regression.
+concurrency:
+  group: zcloud-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   critical-runner-flows:
+    # Run untrusted PR code only in hosted CI and only for this repository.
+    # Explicit operator dispatch always targets exact current canonical main.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.repo.full_name == github.repository) ||
+       (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/worker/'))) ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay' &&
+        github.triggering_actor == 'Zennay' &&
+        github.run_attempt == 1))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -28,11 +47,22 @@ jobs:
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
         run: |
           set -euo pipefail
           test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$BASE_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            main_sha="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            test -n "$main_sha"
+            test "$main_sha" = "$EXPECTED_SHA"
+          fi
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Test exact-head regression-workflow admission before executing project code
+        run: python3 -m unittest -v tests.test_deployops_regression_smoke_hosted_trust_20261014_w5
       - name: Run critical zCloud smoke suite
         run: python3 -m unittest discover -v
       - name: Verify 12h Birdseye shell scheduler isolation
@@ -43,6 +73,12 @@ jobs:
         run: bash tests/test_autonomy_runner_js.sh
       - name: Verify safe in-place Firefox addon reload helper
         run: node tests/test_reload_extension.mjs
+      - name: Verify Worker Cockpit rendering and mobile enhancement scripts
+        run: |
+          set -euo pipefail
+          node --check public/enhancements.js
+          node --check public/app.js
+          node tests/test_worker_debug_panel.js
       - name: Verify Firefox crash-recovery contract
         run: |
           node --check firefox-extension/recovery.js
