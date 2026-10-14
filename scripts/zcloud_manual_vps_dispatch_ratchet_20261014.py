@@ -141,7 +141,7 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         admission = re.search(r"(?m)^    if:\s*(.+(?:\n {6,}.+)*)", block)
         value = admission.group(1) if admission else ""
         value = "\n".join(line.split(" #", 1)[0] for line in value.splitlines())
-        if not all(re.search(rule, value) for rule in TRUST):
+        if re.search(r"\|\||\btrue\b", value, re.I) or not all(re.search(rule, value) for rule in TRUST):
             findings.add((path, job))
     # An apparently manual workflow with unparseable/missing jobs must not pass.
     if not jobs and re.search(r"\b(?:runs-on|uses)\s*:", source):
