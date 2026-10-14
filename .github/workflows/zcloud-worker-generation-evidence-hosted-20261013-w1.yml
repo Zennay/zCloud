@@ -1,6 +1,20 @@
 name: zCloud worker generation evidence (hosted)
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - "server.py"
+      - "public/zcloud-worker.user.js"
+      - "tests/_worker_env.py"
+      - "scripts/zcloud_worker_generation_evidence_20261013_w1.py"
+      - "tests/test_zcloud_worker_generation_evidence_20261013_w1.py"
+      - "tests/test_zcloud_worker_generation_http_integration_20261013_w1.py"
+      - "ops/zssh-runner-recipes/zcloud-generation-check.py"
+      - "docs/control-plane-generation-evidence-20261013-w1.md"
+      - ".github/workflows/zcloud-worker-generation-evidence-hosted-20261013-w1.yml"
+      - "tests/test_zcloud_worker_generation_hosted_ci_trust_20261014.py"
+  push:
+    branches: [main]
     paths:
       - "server.py"
       - "public/zcloud-worker.user.js"
@@ -25,8 +39,14 @@ jobs:
   offline-acceptance:
     if: >-
       github.repository == 'Zennay/zCloud' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay' &&
+        github.triggering_actor == 'Zennay' &&
+        github.run_attempt == 1))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -33,6 +33,46 @@ class WorkerGenerationHostedSourceTrustTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn('      - "' + path + '"', self.workflow)
 
+    def test_same_source_changes_trigger_both_main_and_pull_request(self):
+        # A green PR result must not be the only opportunity to catch a
+        # regression when someone pushes a compatible change directly.
+        triggers = self.workflow.split("\npermissions:", 1)[0]
+        self.assertIn("  pull_request:\n    branches: [main]", triggers)
+        self.assertIn("  push:\n    branches: [main]", triggers)
+        self.assertIn("  workflow_dispatch:", triggers)
+        paths = (
+            "server.py",
+            "public/zcloud-worker.user.js",
+            "tests/_worker_env.py",
+            "scripts/zcloud_worker_generation_evidence_20261013_w1.py",
+            "tests/test_zcloud_worker_generation_evidence_20261013_w1.py",
+            "tests/test_zcloud_worker_generation_http_integration_20261013_w1.py",
+            "ops/zssh-runner-recipes/zcloud-generation-check.py",
+            "docs/control-plane-generation-evidence-20261013-w1.md",
+            ".github/workflows/zcloud-worker-generation-evidence-hosted-20261013-w1.yml",
+            "tests/test_zcloud_worker_generation_hosted_ci_trust_20261014.py",
+        )
+        pr_scope = triggers.split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
+        main_scope = triggers.split("  push:\n", 1)[1].split("  workflow_dispatch:", 1)[0]
+        self.assertEqual(pr_scope.split("    paths:\n", 1)[1],
+                         main_scope.split("    paths:\n", 1)[1])
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertIn('      - "' + path + '"', pr_scope)
+                self.assertIn('      - "' + path + '"', main_scope)
+
+    def test_manual_source_check_requires_owner_and_main(self):
+        self.assertIn("github.event_name == 'workflow_dispatch'", self.workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", self.workflow)
+        self.assertIn("github.actor == 'Zennay'", self.workflow)
+        self.assertIn("github.triggering_actor == 'Zennay'", self.workflow)
+        self.assertIn("github.run_attempt == 1", self.workflow)
+        self.assertIn("github.event_name == 'push'", self.workflow)
+        self.assertIn("github.event_name == 'pull_request'", self.workflow)
+        # Never let a new dispatch trigger silently widen code permissions.
+        self.assertEqual(self.workflow.count("runs-on: ubuntu-latest"), 1)
+        self.assertNotIn("permissions:\n  contents: write", self.workflow)
+
     def test_fork_pr_cannot_run_source_tests_on_this_canonical_repo(self):
         self.assertIn("github.repository == 'Zennay/zCloud'", self.workflow)
         self.assertIn(
