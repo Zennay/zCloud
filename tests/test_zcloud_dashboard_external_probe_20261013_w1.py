@@ -604,7 +604,8 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         body = path.read_text(encoding="utf-8").split("        run: |\n", 1)[1]
         return textwrap.dedent(body)
 
-    def _simulate(self, refs, expected_rc, *, output=None, probe_rc=0, published=None):
+    def _simulate(self, refs, expected_rc, *, output=None, probe_rc=0,
+                  published=None, expected_reads=None):
         shell = self._workflow_shell()
         # Fake only the external probe; execute real bounded Git and real
         # publication shell logic in a disposable environment with no VPS.
@@ -667,8 +668,13 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
             # No raw response, secrets, URL or implied recovery authority.
             self.assertNotIn("https://github.com/", observed)
             self.assertEqual(observed != "", published)
-            self.assertEqual((root / "calls").read_text(),
-                             "2" if refs[0] == current else "1")
+            # Preserve exact read-count proof across initial, post-probe and
+            # post-sanitizer main checks without consulting production.
+            if expected_reads is None:
+                expected_reads = (1 if refs[0] != current else
+                                  2 if (len(refs) < 2 or refs[1] != current or
+                                        not published) else 3)
+            self.assertEqual((root / "calls").read_text(), str(expected_reads))
             return observed
 
     def test_exact_head_checkout_and_bounded_main_transport_contract(self):
@@ -685,7 +691,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertNotIn("gh api --method POST", manual)
         self.assertIn("env -u GH_TOKEN timeout -k 2s 115s python3 scripts/", manual)
         self.assertEqual(manual.count("          verify_main_head"), 0)
-        self.assertEqual(manual.count("verify_main_head\n"), 2)
+        self.assertEqual(manual.count("verify_main_head\n"), 3)
         self.assertLess(manual.index("verify_main_head\n"),
                         manual.index("summary_file="))
         self.assertLess(manual.rindex("verify_main_head\n"),
@@ -697,7 +703,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_current_main_same_before_after_can_publish(self):
-        observed = self._simulate(["a" * 40, "a" * 40], 0)
+        observed = self._simulate(["a" * 40] * 3, 0)
         self.assertIn("**Status:** API bereikbaar", observed)
         self.assertIn("**Getoetste main-commit:** `" + "a" * 40 + "`", observed)
 
@@ -730,7 +736,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         body = probe.operator_markdown(
             probe.ProbeSummary("unhealthy", "timeout", 1, False, {"timeout": 1})
         ) + "\n"
-        observed = self._simulate(["a" * 40, "a" * 40], 1,
+        observed = self._simulate(["a" * 40] * 3, 1,
                                   output=body, probe_rc=1, published=True)
         self.assertIn("niet aantoonbaar", observed)
 
@@ -755,7 +761,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
                        output=fake_failure, probe_rc=1, published=False)
 
     def test_global_timeout_replaces_partial_sensitive_output(self):
-        observed = self._simulate(["a" * 40, "a" * 40], 124,
+        observed = self._simulate(["a" * 40] * 3, 124,
                                   output="SECRET_PARTIAL_RESPONSE_OR_URL",
                                   probe_rc=124, published=True)
         self.assertIn("totale tijdslimiet overschreden", observed)
@@ -771,6 +777,24 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         body = ("## zCloud · externe dashboardcontrole\n"
                 "**Status:** API bereikbaar\n" + "x" * 2200)
         self._simulate(["a" * 40, "a" * 40], 3, output=body, published=False)
+
+    def test_main_moved_during_final_publication_preflight_denies_report(self):
+        # First two immutable-main checks pass, but an independently moved
+        # branch on the final read must suppress even sanitized green output.
+        self._simulate(["a" * 40, "a" * 40, "b" * 40], 2,
+                       published=False, expected_reads=3)
+
+    def test_main_unverifiable_after_sanitizer_denies_report(self):
+        self._simulate(["a" * 40, "a" * 40, "ERROR"], 2,
+                       published=False, expected_reads=3)
+
+    def test_failure_report_denied_if_main_changes_after_sanitizer(self):
+        body = probe.operator_markdown(
+            probe.ProbeSummary("unhealthy", "timeout", 1, False, {"timeout": 1})
+        ) + "\n"
+        self._simulate(["a" * 40, "a" * 40, "b" * 40], 2,
+                       output=body, probe_rc=1,
+                       published=False, expected_reads=3)
 
     def test_main_moved_during_probe_denies_summary(self):
         self._simulate(["a" * 40, "b" * 40], 2)
