@@ -244,8 +244,23 @@ def main(argv=None, environ=None, transport=api):
         receipts[-1]["decision"] = "merged"
         receipts[-1]["merge_sha"] = result["sha"]
         break  # Deliberately only one merge per run; next run revalidates main.
+    # Preserve a bounded, metadata-only backlog inventory. These counts are
+    # visibility, NOT automatic review or a substitute for per-PR authorization.
+    # PR titles, authors, branch names and arbitrary user content are omitted.
+    inventory = {
+        "open_prs_scanned": len(prs),
+        "explicitly_labeled": sum(has_label(p) for p in prs),
+        "draft_prs": sum(p.get("draft") is True for p in prs),
+        "unlabeled_non_draft": sum(not has_label(p) and p.get("draft") is False
+                                   for p in prs),
+        "review_only_pr_ids": [
+            p["number"] for p in prs
+            if not has_label(p) and p.get("draft") is False
+        ][:10],
+    }
     print(json.dumps({"mode": "apply" if options.apply else "dry_run",
-                      "repo": REPO, "receipts": receipts}, sort_keys=True))
+                      "repo": REPO, "inventory": inventory,
+                      "receipts": receipts}, sort_keys=True))
     return 0
 
 
