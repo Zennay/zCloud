@@ -462,6 +462,73 @@ class GitTest(unittest.TestCase):
             manual.replace("  workflow_dispatch:", "  schedule:")
         ))
 
+    def test_triage_prioritizes_nonmanual_then_manual_and_unknown(self):
+        self.path.write_text(CANCEL)
+        (self.path.parent / "manual.yml").write_text(
+            CANCEL.replace("pull_request:", "workflow_dispatch:")
+        )
+        (self.path.parent / "bad.yml").write_text("not: a workflow\n")
+        (self.path.parent / "clean.yml").write_text(SAFE)
+        self.git("add", ".")
+        self.git("commit", "-qm", "triage cohorts")
+        entries, count = scanner.triage(self.root, self.git("rev-parse", "HEAD"))
+        self.assertEqual(3, count)
+        self.assertEqual(["automatic_or_unknown", "manual_only",
+                          "unknown_source"], [x[0] for x in entries])
+        self.assertEqual([".github/workflows/cancellation.yml",
+                          ".github/workflows/manual.yml",
+                          ".github/workflows/bad.yml"], [x[1] for x in entries])
+
+    def test_triage_is_bounded_and_deterministic(self):
+        self.path.write_text(CANCEL)
+        (self.path.parent / "second.yml").write_text(CANCEL)
+        self.git("add", ".")
+        self.git("commit", "-qm", "triage limit")
+        sha = self.git("rev-parse", "HEAD")
+        first, total = scanner.triage(self.root, sha, 1)
+        second, observed = scanner.triage(self.root, sha, 1)
+        self.assertEqual(2, total)
+        self.assertEqual(total, observed)
+        self.assertEqual(first, second)
+        self.assertEqual(1, len(first))
+        self.assertEqual("automatic_or_unknown", first[0][0])
+
+    def test_triage_refuses_untrusted_ref_and_bad_limits(self):
+        self.commit(SAFE)
+        sha = self.git("rev-parse", "HEAD")
+        for revision, limit in (("HEAD", 12), (sha, 0),
+                                (sha, 26), (sha, -2)):
+            with self.subTest(revision=revision, limit=limit):
+                self.assertRaises(scanner.Unverifiable, scanner.triage,
+                                  self.root, revision, limit)
+
+    def test_triage_output_is_source_free_and_non_authorizing(self):
+        self.commit(CANCEL)
+        sha = self.git("rev-parse", "HEAD")
+        from io import StringIO
+        from contextlib import redirect_stdout
+        out = StringIO()
+        with redirect_stdout(out):
+            status = scanner.main(["--triage-head", sha, "--triage-limit", "1",
+                                   "--repo-root", str(self.root)])
+        self.assertEqual(0, status)
+        self.assertIn("TRIAGE=OBSERVED", out.getvalue())
+        self.assertIn("VPS_MUTATION_AUTHORIZED=false", out.getvalue())
+        self.assertIn(".github/workflows/cancellation.yml", out.getvalue())
+        for denied in ("echo safe", "runs-on:", "token:"):
+            self.assertNotIn(denied, out.getvalue())
+
+    def test_triage_mode_is_exclusive(self):
+        sha = self.commit(SAFE)
+        from io import StringIO
+        from contextlib import redirect_stdout
+        output = StringIO()
+        with redirect_stdout(output):
+            code = scanner.main(["--triage-head", sha, "--inventory-head", sha,
+                                 "--repo-root", str(self.root)])
+        self.assertEqual(2, code)
+        self.assertIn("TRIAGE=DENY", output.getvalue())
+
     def test_inventory_does_not_accept_non_workflow_paths(self):
         self.commit(SAFE)
         (self.path.parent / "NOT-A-WORKFLOW.txt").write_text("unexpected")
