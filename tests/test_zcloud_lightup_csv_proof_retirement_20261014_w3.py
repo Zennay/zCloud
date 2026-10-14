@@ -41,10 +41,12 @@ class LightUpCsvProofRetirementTests(unittest.TestCase):
         self.assertIn(PRESERVED_SHA, source)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", source)
 
-    def test_old_cancellation_workflow_remains_out_of_scope(self):
+    def test_terminal_actions_write_cancel_workflow_is_retired(self):
+        # Historical run 37704077077 completed cancelled on 7 October.
+        # A now-useless workflow_dispatch Actions-write entrypoint must not
+        # be kept merely to cancel this same terminal identity a second time.
         path = WORKFLOWS / "lightup-export-obsolete-proof-cleanup.yml"
-        self.assertTrue(path.is_file())
-        self.assertIn("lightup-pr960-exact-head-proof.yml", path.read_text(encoding="utf-8"))
+        self.assertFalse(path.exists())
 
     def test_retirement_provenance_is_recorded_and_source_only(self):
         doc = DOCUMENT.read_text(encoding="utf-8")
@@ -54,6 +56,8 @@ class LightUpCsvProofRetirementTests(unittest.TestCase):
                 self.assertIn(f"#{pr}", doc)
                 self.assertIn(sha, doc)
         self.assertIn("#963", doc)
+        self.assertIn("37704077077", doc)
+        self.assertIn("cancelled", doc)
         self.assertIn("does not cancel existing", doc)
 
     def test_new_proof_is_github_hosted_only_and_no_privileged_gate(self):
