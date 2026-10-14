@@ -50,6 +50,20 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
             or data.get("cancel_run_ids") != []
         ):
             raise ValueError("unauthorized_or_invalid")
+        # This remains a source-local claim, not cryptographic attestation.
+        # Nevertheless reject reports that contradict the collector's stated
+        # canonical main SHA before presenting route observations.
+        before = data.get("main_sha_before")
+        after = data.get("main_sha_after")
+        if (
+            type(before) is not str or len(before) != 40 or
+            any(c not in "0123456789abcdef" for c in before)
+            or type(after) is not str or after != before
+            or type(data.get("observed_at")) is not str
+            or not data["observed_at"].endswith("Z")
+            or len(data["observed_at"]) > 40
+        ):
+            raise ValueError("invalid_source_identity")
         rows = data.get("runs")
         n = data.get("observed_runs")
         summary = data.get("route_counts")
