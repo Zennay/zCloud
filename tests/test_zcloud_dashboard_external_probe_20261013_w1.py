@@ -195,6 +195,32 @@ class DashboardProbeTests(unittest.TestCase):
                 response.headers = headers
                 self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
 
+    def test_transfer_encoding_is_never_trusted_for_status_proof(self):
+        # Even where urllib silently decodes an HTTP/1.1 chunked response,
+        # the external probe must not confuse uncertain framing with health.
+        for coding in ("chunked", "gzip", "identity", "chunked, gzip", ""):
+            with self.subTest(coding=coding):
+                response = Response()
+                response.headers["Transfer-Encoding"] = coding
+                response.read = mock.Mock(side_effect=AssertionError("must not read"))
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+                response.read.assert_not_called()
+
+    def test_duplicate_transfer_encoding_and_length_conflict_fail_closed(self):
+        for duplicate in (False, True):
+            with self.subTest(duplicate=duplicate):
+                headers = Message()
+                headers.add_header("Content-Type", "application/json")
+                headers.add_header("Content-Length", str(len(VALID)))
+                headers.add_header("Transfer-Encoding", "chunked")
+                if duplicate:
+                    headers.add_header("Transfer-Encoding", "gzip")
+                response = Response()
+                response.headers = headers
+                response.read = mock.Mock(side_effect=AssertionError("must not read"))
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+                response.read.assert_not_called()
+
     def test_declared_oversize_rejected_without_reading_body(self):
         response = Response()
         response.headers["Content-Length"] = str(probe.MAX_BYTES + 1)
