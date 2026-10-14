@@ -245,6 +245,24 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["route"], "mixed_job_routes")
         self.assertEqual(result["runs"][0]["job_count"], 2)
 
+    def test_only_unambiguous_hosted_image_label_is_classified_hosted(self):
+        candidates = [
+            (["ubuntu-latest"], "github_hosted"),
+            (["windows-2022"], "github_hosted"),
+            ([], "other_or_mixed"),
+            (["undocumented-custom-image"], "other_or_mixed"),
+            (["ubuntu-latest", "private-runner"], "other_or_mixed"),
+            (["zcloud", "vps"], "other_or_mixed"),
+        ]
+        for index, (labels, expected) in enumerate(candidates, start=1):
+            with self.subTest(labels=labels):
+                item = job(index)
+                item["labels"] = labels
+                get, _ = mock([run(index)], {index: [item]})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["route"], expected)
+                self.assertFalse(result["runner_recovery_authorized"])
+
     def test_job_with_positive_assigned_runner_keeps_uncertain_liveness(self):
         item = job(1)
         item["runner_id"] = 32
