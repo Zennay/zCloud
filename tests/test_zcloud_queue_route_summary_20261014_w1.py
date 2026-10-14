@@ -66,6 +66,34 @@ class QueueRouteSummaryTests(unittest.TestCase):
         self.assertIn("zcloud_vps", markdown)
         self.assertNotIn("runner is offline", markdown)
 
+    def test_verified_dutch_route_totals_are_derived_from_rows(self):
+        rows = [
+            record(21, route="ftmo_research"),
+            record(22, route="ftmo_research"),
+            record(23, route="no_job_records", assignment="no_job_records",
+                   state="no_job_records", jobs=0),
+            record(24, scope="current_main", route="zcloud_vps"),
+        ]
+        markdown, code = self.render(report(rows))
+        self.assertEqual(code, 0)
+        self.assertIn("**2 FTMO-onderzoek**", markdown)
+        self.assertIn("**1 zCloud-VPS**", markdown)
+        self.assertIn("**1 zonder jobrecords**", markdown)
+        self.assertIn("**3 zonder runnertoewijzing**", markdown)
+        self.assertIn("**1 op huidige main**", markdown)
+        self.assertNotIn("productie groen", markdown.lower())
+
+    def test_route_counts_are_not_printed_when_any_row_is_invalid(self):
+        rows = [record(1), record(2, route="no_job_records",
+                                  assignment="no_job_records",
+                                  state="no_job_records", jobs=0)]
+        payload = report(rows)
+        payload["route_counts"] = {"wrong": 2}
+        markdown, status = self.render(payload)
+        self.assertEqual(status, 1)
+        self.assertNotIn("FTMO-onderzoek", markdown)
+        self.assertNotIn("zonder jobrecords**", markdown)
+
     def test_wrong_exit_status_and_incomplete_reports_deny(self):
         for rc in (1, 2, 124, True):
             with self.subTest(code=rc):
