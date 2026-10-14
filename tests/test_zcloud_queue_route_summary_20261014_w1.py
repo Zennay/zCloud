@@ -282,6 +282,17 @@ class QueueRouteSummaryTests(unittest.TestCase):
                 self.assertEqual(status, 1)
                 self.assertNotIn("Run 71", markdown)
 
+    def test_bucket_counts_must_be_real_positive_integers_not_json_booleans(self):
+        for invalid in (True, False, 1.0, 1.5, 0, -1, None, "1", [], {}):
+            with self.subTest(invalid=invalid):
+                data = report([record(71)])
+                bucket = next(iter(data["route_counts"]))
+                data["route_counts"][bucket] = invalid
+                rendered, status = self.render(data)
+                self.assertEqual(status, 1)
+                self.assertIn("Geen aantallen gepubliceerd", rendered)
+                self.assertNotIn("Run 71", rendered)
+
     def test_unknown_or_html_injected_scope_is_not_reflected(self):
         data = report([record()])
         data["runs"][0]["scope"] = "<script>SECRET</script>"
