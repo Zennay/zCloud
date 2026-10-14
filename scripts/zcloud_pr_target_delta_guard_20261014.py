@@ -139,6 +139,33 @@ def risk_set(source: str) -> set[str]:
     return risk
 
 
+# Existing legacy debt is counted, not merely bucketed. Otherwise a PR that
+# adds a SECOND secret use to a workflow with one pre-existing secret reference
+# would silently pass a boolean/category-only monotonic check.
+WRITE_SCOPE = re.compile(
+    r"(?m)(?:^[ \t]*|(?<=[{,])[ \t]*)[A-Za-z][\w-]*[ \t]*:[ \t]*['\"]?write['\"]?[ \t]*(?=$|[,}])"
+)
+SECRET_REFERENCE = re.compile(r"\bsecrets[ \t]*(?:\.|\[)", re.I)
+
+
+def risk_counts(source: str) -> dict[str, int]:
+    risks = risk_set(source)
+    if not risks:
+        return {}
+    clean = _content_without_comments(source)
+    counts = {reason: 1 for reason in risks}
+    if "write_permission" in risks:
+        counts["write_permission"] = max(1, len(WRITE_SCOPE.findall(clean)))
+    if "secret_reference" in risks:
+        counts["secret_reference"] = max(1, len(SECRET_REFERENCE.findall(clean)))
+    if "untrusted_pr_checkout" in risks or "pr_source_in_run_job" in risks:
+        occurrences = max(1, len(PR_SOURCE.findall(clean)))
+        for reason in ("untrusted_pr_checkout", "pr_source_in_run_job"):
+            if reason in risks:
+                counts[reason] = occurrences
+    return counts
+
+
 def evaluate(root: Path, base: str, head: str) -> tuple[int, list[tuple[str, str]]]:
     root = root.resolve(strict=True)
     paths = changed_workflows(root, base, head)
@@ -148,7 +175,10 @@ def evaluate(root: Path, base: str, head: str) -> tuple[int, list[tuple[str, str
         candidate = source_at(root, head, path)
         # Existing risk may be reduced, but never newly introduced. This
         # preserves already-owned legacy debt without legitimizing it.
-        additional = risk_set(candidate) - risk_set(original)
+        before = risk_counts(original)
+        after = risk_counts(candidate)
+        additional = {reason for reason, count in after.items()
+                      if count > before.get(reason, 0)}
         for reason in sorted(additional):
             findings.append((path, reason))
     return len(paths), findings
