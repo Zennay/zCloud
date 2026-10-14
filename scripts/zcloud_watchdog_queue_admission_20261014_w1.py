@@ -45,7 +45,7 @@ def _fail(reason: str) -> dict[str, Any]:
     # A snapshot alone can NEVER authorize GitHub Actions writes.
     return {
         "policy": POLICY, "decision": "DENY", "reason": reason,
-        "inventory_complete": False, "candidate_duplicate_groups": [],
+        "inventory_complete": False, "submitted_pagination_consistent": False, "candidate_duplicate_groups": [],
         "cancel_run_ids": [], "mutation_authorized": False,
         "production_verified": False,
     }
@@ -136,7 +136,7 @@ def assess(snapshot: Any, *, expected_main_sha: str, now: datetime) -> dict[str,
         "policy": POLICY,
         "decision": "REVIEW_ONLY" if duplicate_groups else "NOOP",
         "reason": "no_authenticated_duplicate_intent_key",
-        "inventory_complete": True, "observed_run_count": run_count,
+        "inventory_complete": False, "submitted_pagination_consistent": True, "observed_run_count": run_count,
         "candidate_duplicate_groups": duplicate_groups,
         "cancel_run_ids": [], "mutation_authorized": False,
         "production_verified": False,
