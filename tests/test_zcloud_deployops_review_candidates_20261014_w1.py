@@ -1,5 +1,6 @@
 """Deterministic deny-first PR/PR-less ownership admission regressions."""
 import copy
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 import pathlib
@@ -16,7 +17,8 @@ S = 'a' * 40
 H = 'b' * 40
 
 def payload():
-    return {'main_sha': S, 'inventory': {'prs_complete': True, 'branches_complete': True},
+    return {'main_sha': S, 'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'inventory': {'prs_complete': True, 'branches_complete': True},
             'branch_inventory_receipt': {
                 'schema': 'zcloud-prless-branch-snapshot-v1',
                 'inventory_complete': True, 'admission_authorized': False,
@@ -269,6 +271,34 @@ class ReviewQueueTests(unittest.TestCase):
         d['branch_inventory_receipt']['branch_pages'] = 0
         with self.assertRaises(mod.InvalidEvidence):
             mod.snapshot(d)
+
+    def test_time_window_accepts_now_and_300_seconds(self):
+        base = datetime(2026, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
+        d = payload()
+        for age in (0, 300, -30):
+            d['observed_at'] = (base - timedelta(seconds=age)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            self.assertEqual(mod.snapshot(d, now=base)['review_candidate_count'], 1)
+
+    def test_time_window_rejects_stale_or_future(self):
+        base = datetime(2026, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
+        d = payload()
+        for age in (301, 3600, -31, -3600):
+            d['observed_at'] = (base - timedelta(seconds=age)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d, now=base)
+
+    def test_time_window_requires_unambiguous_utc(self):
+        for bad in ('2026-10-14T00:00:00', '2026-10-14T00:00:00+00:00',
+                    '2026-10-14T00:00:00.000Z', '2026-02-30T00:00:00Z',
+                    'yesterday', 42, True):
+            d = payload()
+            d['observed_at'] = bad
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_invalid_clock_rejected(self):
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(payload(), now=datetime(2026, 10, 14))
 
     def test_incomplete_inventory_denied(self):
         self.assert_denied(lambda d: d['inventory'].update(branches_complete=False))
