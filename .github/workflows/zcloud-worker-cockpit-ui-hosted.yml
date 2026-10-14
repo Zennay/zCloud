@@ -16,6 +16,7 @@ on:
       - tests/test_dashboard_start_force_regression.py
       - .github/workflows/zcloud-worker-cockpit-ui-hosted.yml
       - tests/test_worker_cockpit_ui_hosted_trust_20261014.py
+      - tests/test_deployops_cockpit_dispatch_admission_20261014_w3.py
   push:
     branches:
       - fix/worker-allocation-cockpit-20261013
@@ -31,7 +32,21 @@ concurrency:
 
 jobs:
   ui-contract:
-    if: github.repository == 'Zennay/zCloud'
+    # No untrusted forks, alternate dispatch refs or rerun attempts may execute
+    # repository JS. This is hosted CI only, never a VPS deployment.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.run_attempt == 1 &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.repo.full_name == github.repository) ||
+       (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' ||
+         github.ref == 'refs/heads/fix/worker-allocation-cockpit-20261013')) ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay' &&
+        github.triggering_actor == 'Zennay'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,9 +62,28 @@ jobs:
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          EVENT_REF: ${{ github.ref }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           test "$REPOSITORY" = Zennay/zCloud
+          test "$HEAD_REPOSITORY" = "$REPOSITORY"
+          test "$BASE_REPOSITORY" = "$REPOSITORY"
+          test "$ATTEMPT" = 1
+          case "$EVENT_NAME" in
+            pull_request) test "$GITHUB_BASE_REF" = main ;;
+            push) [[ "$EVENT_REF" == refs/heads/main || "$EVENT_REF" == refs/heads/fix/worker-allocation-cockpit-20261013 ]] ;;
+            workflow_dispatch)
+              test "$EVENT_REF" = refs/heads/main
+              test "$ACTOR" = Zennay
+              test "$TRIGGERING_ACTOR" = Zennay ;;
+            *) echo "Unrecognized workflow event" >&2; exit 1 ;;
+          esac
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           echo "COCKPIT_UI_IMMUTABLE_SOURCE_VERIFIED=1"
@@ -57,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check public/app.js
-          python3 -m unittest -v tests.test_worker_cockpit_ui_hosted_trust_20261014
+          python3 -m unittest -v tests.test_worker_cockpit_ui_hosted_trust_20261014 tests.test_deployops_cockpit_dispatch_admission_20261014_w3
       - name: Run focused UI contracts
         run: |
           set -euo pipefail
