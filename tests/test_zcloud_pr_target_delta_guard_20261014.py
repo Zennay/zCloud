@@ -1182,6 +1182,81 @@ jobs:
             with self.assertRaises(gate.Unverified):
                 gate.changed_workflows(Path("."), "a"*40, "b"*40)
 
+
+    def test_git_workflow_deletion_requires_explicit_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def command(*args):
+                return subprocess.check_output(
+                    ["git", *args], cwd=root, stderr=subprocess.DEVNULL
+                ).decode().strip()
+            command("init", "-q")
+            command("config", "user.name", "zcloud test")
+            command("config", "user.email", "test@example.invalid")
+            target = root / ".github" / "workflows" / "protected.yml"
+            target.parent.mkdir(parents=True)
+            target.write_text(SAFE)
+            command("add", ".")
+            command("commit", "-qm", "trusted baseline")
+            base = command("rev-parse", "HEAD")
+            target.unlink()
+            command("add", "-A")
+            command("commit", "-qm", "remove workflow")
+            head = command("rev-parse", "HEAD")
+            with self.assertRaisesRegex(gate.Unverified, "workflow_removal_requires_review"):
+                gate.changed_workflows(root, base, head)
+            with self.assertRaisesRegex(gate.Unverified, "workflow_removal_requires_review"):
+                gate.evaluate(root, base, head)
+
+    def test_git_workflow_rename_requires_explicit_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def command(*args):
+                return subprocess.check_output(
+                    ["git", *args], cwd=root, stderr=subprocess.DEVNULL
+                ).decode().strip()
+            command("init", "-q")
+            command("config", "user.name", "zcloud test")
+            command("config", "user.email", "test@example.invalid")
+            directory_workflows = root / ".github" / "workflows"
+            directory_workflows.mkdir(parents=True)
+            source = directory_workflows / "protected.yml"
+            source.write_text(SAFE)
+            command("add", ".")
+            command("commit", "-qm", "trusted baseline")
+            base = command("rev-parse", "HEAD")
+            source.rename(directory_workflows / "renamed.yaml")
+            command("add", "-A")
+            command("commit", "-qm", "rename workflow")
+            head = command("rev-parse", "HEAD")
+            with self.assertRaisesRegex(gate.Unverified, "workflow_removal_requires_review"):
+                gate.changed_workflows(root, base, head)
+
+    def test_git_outside_workflow_deletion_does_not_block_safe_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def command(*args):
+                return subprocess.check_output(
+                    ["git", *args], cwd=root, stderr=subprocess.DEVNULL
+                ).decode().strip()
+            command("init", "-q")
+            command("config", "user.name", "zcloud test")
+            command("config", "user.email", "test@example.invalid")
+            workflow = root / ".github" / "workflows" / "protected.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(SAFE)
+            unrelated = root / "old-notes.txt"
+            unrelated.write_text("remove me")
+            command("add", ".")
+            command("commit", "-qm", "trusted baseline")
+            base = command("rev-parse", "HEAD")
+            unrelated.unlink()
+            workflow.write_text(SAFE.replace("echo 'trusted metadata'", "echo safe"))
+            command("add", "-A")
+            command("commit", "-qm", "change safely")
+            head = command("rev-parse", "HEAD")
+            self.assertEqual(gate.evaluate(root, base, head), (1, []))
+
     def test_git_mode_denies_symlink(self):
         with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
             with self.assertRaises(gate.Unverified):
