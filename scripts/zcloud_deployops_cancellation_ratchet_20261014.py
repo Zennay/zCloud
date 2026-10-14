@@ -198,16 +198,30 @@ def build_vps_group_index(root, base, head):
                 # old-and-new inventory. Missing source evidence is not safety.
                 raise Unverifiable("collision_external_unknown") from exc
             if possible_vps:
-                for group in static_concurrency_groups(other):
+                groups = static_concurrency_groups(other)
+                for group in groups:
                     owners.setdefault(group, set()).add(path)
+                # A previous VPS-capable workflow can select a runtime group
+                # dynamically. Absence of a provable literal group is *not*
+                # proof that it cannot match the new hosted cancellation group.
+                if not groups and re.search(
+                    r"(?m)^(?:concurrency:|    concurrency:)", other
+                ):
+                    owners.setdefault(None, set()).add(path)
     return owners
 
 
 def literal_group_collision(candidate_path, candidate, exposure_index):
     """Reject exact literal cross-workflow concurrency-group collisions."""
+    groups = static_concurrency_groups(candidate)
+    # Unknown old/current group values are possible collisions with every
+    # literal candidate group; this must remain deny-first.
+    if groups and any(owner != candidate_path
+                      for owner in exposure_index.get(None, ())):
+        return True
     return any(
         any(owner != candidate_path for owner in exposure_index.get(group, ()))
-        for group in static_concurrency_groups(candidate)
+        for group in groups
     )
 
 
