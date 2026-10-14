@@ -7,6 +7,7 @@ Scope: isolated **offline-only** advisory for [issue #1009](https://github.com/Z
 - Current-main SHA is 40 lowercase hexadecimal characters and both PR and PR-less branch inventories are explicitly complete.
 - Releases #580/PWQ-41, #1089 and #1135 have explicit known issue state (open/closed); even when all are closed the tool always emits `release_authorized=false`.
 - Every PR has a unique numeric identity, exact immutable head and base SHA, explicit draft flag, owner approval signal and at least one uniquely named CI check bound to **that head** with a successful conclusion. Each must also declare a nonempty, unambiguous `required_checks` inventory; missing required checks cannot be replaced by a single convenient green check. The collector must derive this requirement from authenticated branch protection/rulesets, not user-supplied JSON alone.
+- The manifest must include a **separately owned #1312-compatible PR-less branch inventory receipt**; its exact main SHA, full branch names and head SHAs, completion counters and never-authorizing flags must agree with the candidate manifest. If the receipt is missing, partial or mismatched, the classifier refuses the entire input. This is schema/consistency checking, not authentication of data or ownership takeover.
 - Every PR and PR-less branch reserves its changed paths. Draft and not-yet-reviewed PRs still own their files; any overlap rejects both candidates. Every changed-file cohort must additionally carry exact main/base and head SHA, `complete=true`, and an integer total count matching the entire path list. This prevents page-1-only lists (GitHub PR files can span multiple pages), stale comparisons and empty PR diffs from masquerading as conflict-free. A genuinely unchanged PR-less branch may have zero paths and reserves none.
 - Invalid JSON, duplicate keys, non-finite values, missing inventory, stale base, failed/pending/skipped tests, unknown gates, path traversal, conflicting owners and oversized input deny admission. Path conflicts conservatively include a file-to-directory replacement, Unicode NFC-equivalent names and case-only differences, rather than relying only on exact strings. Invalid snapshots are not echoed.
 - Outputs `review_candidate` (a suggestion for **subsequent human review**, **not merge eligibility**), bounded reason codes and non-authorization flags.
@@ -25,6 +26,14 @@ The input JSON schema uses:
 {
   "main_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "inventory": {"prs_complete": true, "branches_complete": true},
+  "branch_inventory_receipt": {
+    "schema": "zcloud-prless-branch-snapshot-v1",
+    "inventory_complete": true, "admission_authorized": false,
+    "deployment_authorized": false, "paths_compared": false,
+    "main_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "branch_count": 1, "open_pr_head_count": 1,
+    "branch_pages": 1, "pr_pages": 1, "pr_less": []
+  },
   "gates": {"580": "open", "1089": "open", "1135": "open"},
   "prs": [{
     "number": 12,
