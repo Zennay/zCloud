@@ -469,6 +469,49 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
         with self.assertRaises(collection.InventoryError):
             adapter.get(MAIN)
 
+
+    def test_github_token_cannot_read_arbitrary_repository_paths(self):
+        observer = collection.ReadOnlyAPI("fake-token")
+        class DenyNetwork:
+            def open(self, request, timeout):
+                raise AssertionError("No network permitted for disallowed path")
+        observer.opener = DenyNetwork()
+        forbidden = (
+            "/repos/Zennay/zCloud/actions/secrets",
+            "/repos/Zennay/zCloud/contents/.env",
+            "/repos/Zennay/zCloud/branches/worker",
+            "/repos/Zennay/zCloud/actions/runs/1/cancel",
+            "/repos/Zennay/zCloud/actions/runs?status=completed&per_page=100&page=1",
+            "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100&page=0",
+            "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100&page=1&extra=1",
+            "/repos/Zennay/zCloud/actions/runs/0/jobs?per_page=100&page=1",
+            "/repos/Zennay/zCloud/actions/runs/1/jobs?per_page=100&page=0",
+            "/repos/Zennay/zCloud/actions/runs/1/jobs?per_page=100&page=1#fragment",
+            "/repos/Zennay/zCloud/../another-repo/actions/runs",
+            "https://api.github.com/repos/Zennay/zCloud/branches/main",
+            "/repos/Zennay/zCloud/branches/main?unexpected=1",
+        )
+        for bad in forbidden:
+            with self.subTest(path=bad):
+                with self.assertRaisesRegex(collection.InventoryError, "noncanonical_api_path"):
+                    observer.get(bad)
+        for bad in (None, 12, True):
+            with self.subTest(path=bad):
+                with self.assertRaisesRegex(collection.InventoryError, "noncanonical_api_path"):
+                    observer.get(bad)
+
+    def test_only_three_readonly_github_route_families_admitted(self):
+        accepted = (
+            MAIN,
+            RUNS,
+            ROOT + "/actions/runs?status=queued&per_page=100&page=2",
+            ROOT + "/actions/runs/315/jobs?per_page=100&page=1",
+            ROOT + "/actions/runs/315/jobs?per_page=100&page=3",
+        )
+        for path in accepted:
+            with self.subTest(path=path):
+                self.assertIsNotNone(collection._ALLOWED_GET_PATH.fullmatch(path))
+
     def test_api_token_validation_denies_newlines(self):
         with self.assertRaises(collection.InventoryError):
             collection.ReadOnlyAPI("token\r\ninjected")
