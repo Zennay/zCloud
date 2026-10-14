@@ -341,8 +341,11 @@ class QueueWatchTests(unittest.TestCase):
 
         class Reply:
             headers = Headers()
-            def __init__(self, payload):
+            def __init__(self, payload, url):
                 self.payload = json.dumps(payload).encode("utf-8")
+                self.url = url
+            def geturl(self):
+                return self.url
             def __enter__(self):
                 return self
             def __exit__(self, *args):
@@ -360,10 +363,10 @@ class QueueWatchTests(unittest.TestCase):
                 assert self_timeout == 12
                 assert request.get_header("Authorization") == "Bearer test-token"
                 if request.full_url == m.URL:
-                    return Reply({"total_count": 99, "workflow_runs": runs})
+                    return Reply({"total_count": 99, "workflow_runs": runs}, request.full_url)
                 for rid, job in jobs.items():
                     if request.full_url.endswith(f"/actions/runs/{rid}/jobs?per_page=100"):
-                        return Reply({"total_count": 1, "jobs": [job]})
+                        return Reply({"total_count": 1, "jobs": [job]}, request.full_url)
                 raise AssertionError("unexpected GitHub request")
 
         opener = Opener()
@@ -380,7 +383,7 @@ class QueueWatchTests(unittest.TestCase):
         class MissingJobOpener(Opener):
             def open(self, request, timeout):
                 if request.full_url.endswith("/actions/runs/2/jobs?per_page=100"):
-                    return Reply({"total_count": 2, "jobs": [jobs[2]]})
+                    return Reply({"total_count": 2, "jobs": [jobs[2]]}, request.full_url)
                 return super().open(request, timeout)
         with self.assertRaisesRegex(m.Unavailable, "incomplete_job_page"):
             m.collect("test-token", opener=MissingJobOpener())
