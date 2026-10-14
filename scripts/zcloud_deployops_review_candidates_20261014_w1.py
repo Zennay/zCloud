@@ -10,7 +10,7 @@ import os
 import stat
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import unicodedata
 from pathlib import PurePosixPath
 
@@ -191,6 +191,7 @@ ADVISORY_NEXT_ACTIONS = (
     ("required_checks_missing", "verify_required_checks", "Laat de onafhankelijke reviewer ontbrekende verplichte checks verifiëren."),
     ("exact_head_checks_not_green", "rerun_exact_head_checks", "Laat de eigenaar de juiste commit opnieuw testen."),
     ("owner_review_stale", "request_exact_head_reapproval", "Vraag nieuwe onafhankelijke goedkeuring op de huidige PR-commit."),
+    ("owner_review_dismissed", "request_fresh_approval", "Vraag een nieuwe geldige onafhankelijke goedkeuring aan."),
     ("owner_review_missing", "request_independent_review", "Vraag onafhankelijke beoordeling door de bron-eigenaar."),
     ("draft", "request_owner_completion", "Laat de eigenaar het concept afronden."),
 )
@@ -211,6 +212,7 @@ def reviewer_evidence(record):
     """
     review = obj(record.get("owner_review_evidence"), "owner_review_evidence")
     require(review.get("complete") is True, "incomplete_review_evidence")
+    require(type(review.get("dismissed")) is bool, "invalid_review_dismissal")
     decision = review.get("decision")
     require(decision in ("approved", "pending", "changes_requested")
             and type(decision) is str, "invalid_review_decision")
@@ -268,7 +270,11 @@ def snapshot(report, *, now=None):
         require(sha(p.get("head_sha")) and sha(p.get("base_sha")), "invalid_pr_sha")
         require(type(p.get("draft")) is bool and type(p.get("owner_approved")) is bool,
                 "invalid_pr_admission")
-        reviewer_evidence(p)
+        review = reviewer_evidence(p)
+        observed_at = datetime.strptime(d["observed_at"], "%Y-%m-%dT%H:%M:%SZ")
+        submitted_at = datetime.strptime(review["submitted_at"], "%Y-%m-%dT%H:%M:%SZ")
+        require(submitted_at <= observed_at + timedelta(seconds=30),
+                "future_review_event")
         required_checks = p.get("required_checks")
         require(type(required_checks) is list and 0 < len(required_checks) <= 100
                 and all(type(x) is str and 0 < len(x) <= 128 for x in required_checks)
@@ -310,6 +316,8 @@ def snapshot(report, *, now=None):
         review = p["owner_review_evidence"]
         if not p["owner_approved"] or review["decision"] != "approved":
             reasons.append("owner_review_missing")
+        elif review["dismissed"]:
+            reasons.append("owner_review_dismissed")
         elif review["reviewed_head_sha"] != p["head_sha"]:
             reasons.append("owner_review_stale")
         if not set(p["required_checks"]).issubset({c["name"] for c in p["checks"]}):
@@ -329,7 +337,7 @@ def snapshot(report, *, now=None):
                     "next_action": advisory_next_action(reasons)})
     blockers = {key: sum(key in row["reasons"] for row in out)
                 for key in ("overlapping_owner", "stale_base", "draft",
-                            "owner_review_missing", "owner_review_stale", "required_checks_missing",
+                            "owner_review_missing", "owner_review_stale", "owner_review_dismissed", "required_checks_missing",
                             "exact_head_checks_not_green")}
     return {"main_sha": d["main_sha"], "inventory_complete": True,
             "serialized_gates_closed": all(gates[k] == "closed" for k in REQUIRED_GATES),
@@ -346,6 +354,7 @@ REASONS_NL = {
     "draft": "concept-PR",
     "owner_review_missing": "geen eigenaarstoestemming",
     "owner_review_stale": "goedkeuring hoort bij oudere PR-commit",
+    "owner_review_dismissed": "goedkeuring is ingetrokken",
     "required_checks_missing": "verplichte CI-controle ontbreekt",
     "exact_head_checks_not_green": "tests niet groen op exacte commit",
     "overlapping_owner": "bestandsconflict met andere worker",
