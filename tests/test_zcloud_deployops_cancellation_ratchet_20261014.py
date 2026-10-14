@@ -191,6 +191,14 @@ class GitTest(unittest.TestCase):
         self.assertRaises(scanner.Unverifiable, scanner.evaluate, self.root,
                           base, self.git("rev-parse", "HEAD"))
 
+    def test_diverged_base_denied(self):
+        base = self.commit(SAFE)
+        feature = self.commit(CANCEL)
+        self.git("reset", "--hard", base)
+        main = self.commit(SAFE + "# diverged main\n")
+        self.assertRaises(scanner.Unverifiable, scanner.evaluate,
+                          self.root, main, feature)
+
     def test_ambiguous_revision_denied(self):
         head = self.commit(SAFE)
         self.assertRaises(scanner.Unverifiable, scanner.evaluate,
