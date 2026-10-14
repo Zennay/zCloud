@@ -37,6 +37,27 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_ambiguous_duplicate_runner_and_timeout_keys_fail_closed(self):
+        source = """jobs:
+  duplicate_runner:
+    runs-on: ubuntu-latest
+    "runs-on": [self-hosted, zcloud]
+    timeout-minutes: 10
+  duplicate_timeout:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    'timeout-minutes': 120
+  healthy_hosted:
+    runs-on: windows-2022
+    timeout-minutes: 180
+"""
+        rows = audit.inspect_workflow(".github/workflows/duplicates.yml", source, max_minutes=30)
+        self.assertEqual(
+            [("duplicate_runner", "dynamic_runner_unknown"), ("duplicate_timeout", "dynamic_or_invalid")],
+            [(row.job, row.status) for row in rows],
+        )
+        self.assertTrue(all(row.status != "bounded" for row in rows))
+
     def test_quoted_yaml_keys_cannot_hide_timeout_violation(self):
         source = """'jobs':
     "private-job":
