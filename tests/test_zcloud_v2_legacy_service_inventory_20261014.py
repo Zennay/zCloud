@@ -108,6 +108,8 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertEqual(get_source_version(worker), "2.0.3")
             worker.write_text("// @version 2.0.3\n// @version 9.9.9\n", encoding="utf-8")
             self.assertIsNone(get_source_version(worker))
+            worker.write_text("// @version 2.0.3\n// @version private-secret\n", encoding="utf-8")
+            self.assertIsNone(get_source_version(worker))
             worker.write_text("// @version private-secret\n", encoding="utf-8")
             self.assertIsNone(get_source_version(worker))
             worker.write_bytes(b"X" * 65537)
@@ -125,6 +127,17 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
+            for invalid in (
+                ["../secrets.js"], ["/absolute.js"], ["dir//script.js"],
+                [".hidden/../other.js"], ["valid.js", "valid.js"],
+                ["script.js?token=private"], ["line\\nbreak.js"],
+                [""], ["x" * 257],
+            ):
+                with self.subTest(invalid=invalid):
+                    manifest.write_text(json.dumps({"background": {"scripts": invalid}}), encoding="utf-8")
+                    self.assertIsNone(get_background_count(manifest))
+            manifest.write_text('{"background":{"scripts":["scripts/background.js","lib/v2-app.js"]}}', encoding="utf-8")
+            self.assertEqual(get_background_count(manifest), 2)
             manifest.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
             self.assertIsNone(get_background_count(manifest))
 

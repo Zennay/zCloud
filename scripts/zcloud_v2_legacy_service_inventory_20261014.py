@@ -230,9 +230,16 @@ def get_source_version(path=WORKER_SCRIPT):
     text = read_regular(path, 65536)
     if text is None:
         return None
-    versions = [match.group(1) for line in text.splitlines()[:8]
-                if (match := VERSION_RE.fullmatch(line))]
-    return versions[0] if len(versions) == 1 else None
+    # An extra malformed @version header alongside a valid one is just as
+    # ambiguous as two valid versions. Do not silently take the first match.
+    headers = [
+        line for line in text.splitlines()[:8]
+        if re.match(r"^// @version(?:\\s|$)", line)
+    ]
+    if len(headers) != 1:
+        return None
+    match = VERSION_RE.fullmatch(headers[0])
+    return match.group(1) if match else None
 
 
 def get_background_count(path=EXTENSION_MANIFEST):
@@ -257,8 +264,17 @@ def get_background_count(path=EXTENSION_MANIFEST):
         scripts = background.get("scripts")
         if not isinstance(scripts, list) or len(scripts) > 1000:
             return None
-        if any(not isinstance(item, str) for item in scripts):
-            return None
+        # Manifest scripts are relative extension paths, not arbitrary
+        # strings. Duplicate and traversal entries are incomplete evidence.
+        validated = set()
+        for item in scripts:
+            if (not isinstance(item, str) or not 1 <= len(item) <= 256 or
+                    item.startswith(("/", "\\\\")) or "\\\\" in item or
+                    any(component in ("", ".", "..") for component in item.split("/")) or
+                    not re.fullmatch(r"[A-Za-z0-9._/@+~-]+", item) or
+                    item in validated):
+                return None
+            validated.add(item)
         return len(scripts)
     except (TypeError, ValueError, RecursionError):
         return None
