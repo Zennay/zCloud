@@ -86,6 +86,11 @@ class PolicyTest(unittest.TestCase):
             "cancel-in-progress: " + "$" + "{{ github.ref == 'refs/heads/main' }}"
         )))
 
+    def test_private_hosted_label_spoof_refused(self):
+        self.assertTrue(scanner.risks(CANCEL.replace(
+            "runs-on: [self-hosted, zcloud, vps]", "runs-on: ubuntu-private-vps"
+        )))
+
     def test_dynamic_runner_denied(self):
         self.assertTrue(scanner.risks(DYNAMIC))
 
