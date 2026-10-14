@@ -37,6 +37,35 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_compact_yaml_job_mapping_and_alias_cannot_escape_audit(self):
+        source = """jobs:
+  compact: {runs-on: [self-hosted, zcloud, vps], timeout-minutes: 90}
+  reference: *private_job
+  ordinary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+"""
+        rows = audit.inspect_workflow(".github/workflows/compact.yml", source, max_minutes=30)
+        self.assertEqual(["compact", "reference"], [row.job for row in rows])
+        self.assertTrue(all(row.status == "dynamic_runner_unknown" for row in rows))
+        self.assertEqual(2, audit.summarize(rows, max_minutes=30)["finding_count"])
+
+    def test_root_compact_jobs_mapping_denied_instead_of_empty_inventory(self):
+        source = "jobs: {private: {runs-on: self-hosted, timeout-minutes: 90}}\\n"
+        with self.assertRaisesRegex(RuntimeError, "inline root jobs"):
+            audit.inspect_workflow(".github/workflows/root-flow.yml", source, max_minutes=30)
+
+    def test_quoted_job_keys_require_matching_quotes(self):
+        source = """jobs:
+  'ok':
+    runs-on: self-hosted
+    timeout-minutes: 10
+  'mismatch":
+    runs-on: ubuntu-latest
+"""
+        rows = audit.inspect_workflow(".github/workflows/quotes.yml", source, max_minutes=30)
+        self.assertEqual(["ok"], [row.job for row in rows])
+
     def test_ambiguous_duplicate_runner_and_timeout_keys_fail_closed(self):
         source = """jobs:
   duplicate_runner:
