@@ -64,8 +64,14 @@ def failures(source: str) -> list[str]:
     runner_values = re.findall(r"(?m)^    runs-on:\s*(\S.*?)\s*$", jobs)
     if runner_values != ["ubuntu-latest", "ubuntu-latest"]:
         issues.append("hosted_only")
-    if "cancel-in-progress: false" not in before_jobs:
-        issues.append("noncancelling")
+    # PR updates are safe to supersede *within the same PR number* only.
+    # All main/worker/manual sources remain non-cancelling.
+    group = "group: zcloud-regression-" + "$" + "{{ github.event.pull_request.number || github.ref }}"
+    cancel = "cancel-in-progress: " + "$" + "{{ github.event_name == 'pull_request' }}"
+    if group not in before_jobs:
+        issues.append("pr_partition")
+    if cancel not in before_jobs or before_jobs.count("cancel-in-progress:") != 1:
+        issues.append("unsafe_cancellation")
     permissions = before_jobs.split("\npermissions:\n", 1)[1].split("\nconcurrency:\n", 1)[0] if "\npermissions:\n" in before_jobs and "\nconcurrency:\n" in before_jobs else ""
     if re.findall(r"(?m)^  ([a-z-]+):\s*([a-z-]+)\s*$", permissions) != [("contents", "read")]:
         issues.append("read_only")
@@ -156,9 +162,23 @@ class HostedRegressionSmokeTrustTests(unittest.TestCase):
             "  contents: read\n  actions: write", 1)
         self.assertIn("read_only", failures(token))
 
-    def test_cancellation_of_in_progress_proofs_is_forbidden(self):
-        self.assertIn("noncancelling", failures(
-            self.source.replace("cancel-in-progress: false", "cancel-in-progress: true", 1)))
+    def test_pr_supersession_is_partitioned_and_main_evidence_survives(self):
+        cancel = "cancel-in-progress: " + "$" + "{{ github.event_name == 'pull_request' }}"
+        group = "group: zcloud-regression-" + "$" + "{{ github.event.pull_request.number || github.ref }}"
+        self.assertIn(cancel, self.source)
+        self.assertIn(group, self.source)
+        self.assertNotIn("unsafe_cancellation", failures(self.source))
+        self.assertNotIn("pr_partition", failures(self.source))
+        for bad in ("cancel-in-progress: true", "cancel-in-progress: false",
+                    "cancel-in-progress: " + "$" + "{{ github.event_name == 'push' }}",
+                    "cancel-in-progress: " + "$" + "{{ github.event_name != 'pull_request' }}"):
+            with self.subTest(bad=bad):
+                self.assertIn("unsafe_cancellation",
+                              failures(self.source.replace(cancel, bad, 1)))
+        for bad in ("group: zcloud-regression-main", "group: zcloud-regression-all"):
+            with self.subTest(bad=bad):
+                self.assertIn("pr_partition",
+                              failures(self.source.replace(group, bad, 1)))
 
     def test_floating_or_unbound_checkout_is_forbidden(self):
         self.assertIn("exact_checkout", failures(
