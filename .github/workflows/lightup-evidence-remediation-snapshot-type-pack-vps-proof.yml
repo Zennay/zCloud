@@ -1,0 +1,256 @@
+name: LightUp evidence-remediation snapshot/type pack VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-evidence-remediation-snapshot-type-pack-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-evidence-remediation-snapshot-type-pack-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+
+jobs:
+  prove:
+    name: LightUp evidence-remediation snapshot/type pack on permanent vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          snapshot() {
+            local key="$1"
+            local branch="$2"
+            local expected="$3"
+            local remote_ref="refs/remotes/origin/${key}-proof"
+            local dir="${RUNNER_TEMP}/${key}-${GITHUB_RUN_ID}"
+
+            git -C "${LIGHTUP_REPO}" fetch --prune origin "+refs/heads/${branch}:${remote_ref}"
+            local actual
+            actual="$(git -C "${LIGHTUP_REPO}" rev-parse "${remote_ref}^{commit}")"
+            test "${actual}" = "${expected}"
+
+            rm -rf "${dir}"
+            mkdir -p "${dir}"
+            git -C "${LIGHTUP_REPO}" archive "${actual}" | tar -x -C "${dir}"
+            echo "${key}=${dir}" >> "${GITHUB_ENV}"
+            echo "${key}_SHA=${actual}" >> "${GITHUB_ENV}"
+          }
+
+          snapshot S535 chatgpt/st5-implementation-plan-revision-request-snapshot-isolation-20261007 dcb03e8638180c620eb34974717b7c756cc37ac7
+          snapshot S537 chatgpt/st5-implementation-plan-revision-request-sequence-types-20261007 a9f610258482289df147e855683f304454d304bd
+          snapshot S539 chatgpt/st5-implementation-plan-revision-request-persisted-metadata-types-20261007 9df901b71a3dbded2e9b0716ceea2c2c88035a3b
+          snapshot S541 chatgpt/st5-implementation-plan-revision-request-schema-key-types-20261007 d69de39ef37b0f5e6a47920525a246f35e65028f
+          snapshot S543 chatgpt/st5-revised-plan-persisted-metadata-types-20261007 05944d07a9d9f15cf64eb0572dcf6e2865e91db1
+          snapshot S545 chatgpt/st5-revised-plan-schema-key-types-20261007 8911349cedea09c14c740f5ea63021de77225cf4
+          snapshot S547 chatgpt/st5-revised-plan-snapshot-isolation-20261007 d2fe0af9a07a54e3a41fed875d2674bc592925c8
+          snapshot S549 chatgpt/st5-revised-plan-review-request-snapshot-isolation-20261007 b7b63241b046ccf5a10a64b7c23134d4dab475cd
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python 3.11 exact-head contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYVER=311
+
+          run_green() {
+            local dir="$1"
+            local module="$2"
+            local tests="$3"
+            local log="${RUNNER_TEMP}/${module}-py${PYVER}.log"
+            (
+              cd "${dir}"
+              PYTHONPATH=src:tests python -m compileall -q src tests
+              PYTHONPATH=src:tests python -m unittest -v "${module}"
+            ) >"${log}" 2>&1
+            cat "${log}"
+            grep -Fq "Ran ${tests} tests" "${log}"
+            grep -Fq "OK" "${log}"
+            ! grep -Fq "FAILED (" "${log}"
+            ! grep -Fq "ERROR:" "${log}"
+          }
+
+          run_red() {
+            local dir="$1"
+            local module="$2"
+            local tests="$3"
+            local failures="$4"
+            shift 4
+            local log="${RUNNER_TEMP}/${module}-py${PYVER}.log"
+            set +e
+            (
+              cd "${dir}"
+              PYTHONPATH=src:tests python -m compileall -q src tests
+              PYTHONPATH=src:tests python -m unittest -v "${module}"
+            ) >"${log}" 2>&1
+            local rc=$?
+            set -e
+            cat "${log}"
+            test "${rc}" -ne 0
+            grep -Fq "Ran ${tests} tests" "${log}"
+            grep -Fq "FAILED (failures=${failures})" "${log}"
+            ! grep -Fq "ERROR:" "${log}"
+            for marker in "$@"; do
+              grep -Fq "${marker}" "${log}"
+            done
+          }
+
+          run_green "${S535}" test_future_remediation_implementation_plan_revision_request_snapshot_isolation 4
+          run_red "${S537}" test_future_remediation_implementation_plan_revision_request_sequence_types 2 1             test_exact_builtin_list_control_remains_accepted             test_required_revisions_list_subclass_fails_closed_before_iteration
+          run_red "${S539}" test_future_remediation_implementation_plan_revision_request_persisted_metadata_types 2 4             test_canonical_fixed_metadata_are_exact_builtin_strings             test_fixed_metadata_string_subclasses_fail_closed_before_equality
+          run_red "${S541}" test_future_remediation_implementation_plan_revision_request_schema_key_types 2 1             test_canonical_payload_uses_exact_builtin_string_keys             test_string_subclass_schema_key_fails_closed
+          run_red "${S543}" test_future_remediation_implementation_plan_revision_proposal_persisted_metadata_types 2 3             test_canonical_fixed_metadata_are_exact_builtin_strings             test_fixed_metadata_string_subclasses_fail_closed_before_equality
+          run_red "${S545}" test_future_remediation_implementation_plan_revision_proposal_schema_key_types 3 2             test_canonical_top_level_and_item_keys_are_exact_builtin_strings             test_nested_plan_item_string_subclass_key_fails_closed             test_top_level_string_subclass_key_fails_closed
+          run_green "${S547}" test_future_remediation_implementation_plan_revision_proposal_snapshot_isolation 4
+          run_green "${S549}" test_future_remediation_implementation_plan_revision_review_request_snapshot_isolation 4
+
+          for dir in "${S535}" "${S537}" "${S539}" "${S541}" "${S543}" "${S545}" "${S547}" "${S549}"; do
+            (cd "${dir}" && PYTHONPATH=src python scripts/check_safety_canaries.py)
+          done
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Python 3.14 exact-head contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYVER=314
+
+          run_green() {
+            local dir="$1"
+            local module="$2"
+            local tests="$3"
+            local log="${RUNNER_TEMP}/${module}-py${PYVER}.log"
+            (
+              cd "${dir}"
+              PYTHONPATH=src:tests python -m compileall -q src tests
+              PYTHONPATH=src:tests python -m unittest -v "${module}"
+            ) >"${log}" 2>&1
+            cat "${log}"
+            grep -Fq "Ran ${tests} tests" "${log}"
+            grep -Fq "OK" "${log}"
+            ! grep -Fq "FAILED (" "${log}"
+            ! grep -Fq "ERROR:" "${log}"
+          }
+
+          run_red() {
+            local dir="$1"
+            local module="$2"
+            local tests="$3"
+            local failures="$4"
+            shift 4
+            local log="${RUNNER_TEMP}/${module}-py${PYVER}.log"
+            set +e
+            (
+              cd "${dir}"
+              PYTHONPATH=src:tests python -m compileall -q src tests
+              PYTHONPATH=src:tests python -m unittest -v "${module}"
+            ) >"${log}" 2>&1
+            local rc=$?
+            set -e
+            cat "${log}"
+            test "${rc}" -ne 0
+            grep -Fq "Ran ${tests} tests" "${log}"
+            grep -Fq "FAILED (failures=${failures})" "${log}"
+            ! grep -Fq "ERROR:" "${log}"
+            for marker in "$@"; do
+              grep -Fq "${marker}" "${log}"
+            done
+          }
+
+          run_green "${S535}" test_future_remediation_implementation_plan_revision_request_snapshot_isolation 4
+          run_red "${S537}" test_future_remediation_implementation_plan_revision_request_sequence_types 2 1             test_exact_builtin_list_control_remains_accepted             test_required_revisions_list_subclass_fails_closed_before_iteration
+          run_red "${S539}" test_future_remediation_implementation_plan_revision_request_persisted_metadata_types 2 4             test_canonical_fixed_metadata_are_exact_builtin_strings             test_fixed_metadata_string_subclasses_fail_closed_before_equality
+          run_red "${S541}" test_future_remediation_implementation_plan_revision_request_schema_key_types 2 1             test_canonical_payload_uses_exact_builtin_string_keys             test_string_subclass_schema_key_fails_closed
+          run_red "${S543}" test_future_remediation_implementation_plan_revision_proposal_persisted_metadata_types 2 3             test_canonical_fixed_metadata_are_exact_builtin_strings             test_fixed_metadata_string_subclasses_fail_closed_before_equality
+          run_red "${S545}" test_future_remediation_implementation_plan_revision_proposal_schema_key_types 3 2             test_canonical_top_level_and_item_keys_are_exact_builtin_strings             test_nested_plan_item_string_subclass_key_fails_closed             test_top_level_string_subclass_key_fails_closed
+          run_green "${S547}" test_future_remediation_implementation_plan_revision_proposal_snapshot_isolation 4
+          run_green "${S549}" test_future_remediation_implementation_plan_revision_review_request_snapshot_isolation 4
+
+          for dir in "${S535}" "${S537}" "${S539}" "${S541}" "${S543}" "${S545}" "${S547}" "${S549}"; do
+            (cd "${dir}" && PYTHONPATH=src python scripts/check_safety_canaries.py)
+          done
+
+      - name: Write exact-head batch receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-evidence-remediation-snapshot-type-pack-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          heads = {
+              "535": {"sha": os.environ["S535_SHA"], "result": "green_targeted_both", "tests": 4},
+              "537": {"sha": os.environ["S537_SHA"], "result": "expected_red_targeted_both", "tests": 2, "expected_failures": 1},
+              "539": {"sha": os.environ["S539_SHA"], "result": "expected_red_targeted_both", "tests": 2, "expected_failures": 4},
+              "541": {"sha": os.environ["S541_SHA"], "result": "expected_red_targeted_both", "tests": 2, "expected_failures": 1},
+              "543": {"sha": os.environ["S543_SHA"], "result": "expected_red_targeted_both", "tests": 2, "expected_failures": 3},
+              "545": {"sha": os.environ["S545_SHA"], "result": "expected_red_targeted_both", "tests": 3, "expected_failures": 2},
+              "547": {"sha": os.environ["S547_SHA"], "result": "green_targeted_both", "tests": 4},
+              "549": {"sha": os.environ["S549_SHA"], "result": "green_targeted_both", "tests": 4},
+          }
+          payload = {
+              "project": "LightUp",
+              "focus": "evidence-remediation",
+              "host": os.uname().nodename,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "python": ["3.11", "3.14"],
+              "lightup_prs": heads,
+              "contracts": 8,
+              "green_contracts": 3,
+              "expected_red_contracts": 5,
+              "safety_canaries": "green_all_heads_both_pythons",
+              "lightup_production_source_changes": 0,
+              "authority_widening": False,
+              "result": "exact_head_batch_proven",
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-evidence-remediation-snapshot-type-pack-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head batch receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-evidence-remediation-snapshot-type-pack-vps-proof
+          path: ${{ runner.temp }}/lightup-evidence-remediation-snapshot-type-pack-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${S535:-}" "${S537:-}" "${S539:-}" "${S541:-}"                  "${S543:-}" "${S545:-}" "${S547:-}" "${S549:-}"
