@@ -75,9 +75,10 @@ def problems(source):
     if "legacy synthetic P3 continuation is occupying" in job or \
             'waiting_hax_p1' in job:
         issues.append("legacy_cross_project_preemption")
-    if 'result.get("ok") is not True' not in job or \
-            'reconciled.get("ok") is not True' not in job:
+    if 'result.get("ok") is not True' not in job:
         issues.append("mutation_ack_required")
+    if 'base+"/api/dynamic-workers"' in job or 'post("/api/dynamic-workers"' in job:
+        issues.append("global_pool_write")
     if any(raw in job for raw in (
         'json.dumps(reconciled,sort_keys=True)',
         'print("ALLOCATION_FINAL"',
@@ -85,7 +86,7 @@ def problems(source):
         'json.dumps(result,sort_keys=True)',
     )):
         issues.append("raw_data_logging")
-    for required in ('"action":"enqueue"', 'post("/api/portfolio-queue"', "get_queue()", "same_settings"):
+    for required in ('"action":"enqueue"', 'post("/api/portfolio-queue"', "get_queue()"):
         if required not in job and not (required == 'post("/api/portfolio-queue"' and 'base+"/api/portfolio-queue"' in job):
             issues.append("canonical_work_preservation")
             break
@@ -152,21 +153,21 @@ class HaxLabWriteBacklogSafety(unittest.TestCase):
         broken = self.text.replace('result.get("ok") is not True', "False")
         self.assertIn("mutation_ack_required", problems(broken))
 
-    def test_pool_error_cannot_be_ignored(self):
-        broken = self.text.replace('reconciled.get("ok") is not True', "False")
-        self.assertIn("mutation_ack_required", problems(broken))
+    def test_global_worker_pool_writes_are_denied(self):
+        self.assertNotIn('base+"/api/dynamic-workers"', self.text)
+        injected = self.text.replace('final=get_queue()',
+            'urllib.request.urlopen(base+"/api/dynamic-workers")\n          final=get_queue()')
+        self.assertIn("global_pool_write", problems(injected))
 
     def test_no_raw_worker_or_allocation_payload_log(self):
         self.assertIn("raw_data_logging", problems(
             self.text.replace('print("HAXLAB_ELIGIBLE_COUNT",len(hax))',
                               'print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))')))
 
-    def test_no_raw_reconcile_response(self):
-        safe = 'print("WORKER_POOL_RECONCILED",json.dumps({"acknowledged":True},sort_keys=True))'
-        unsafe = 'print("WORKER_POOL_RECONCILED",json.dumps(reconciled,sort_keys=True))'
-        self.assertIn(safe, self.text)
-        self.assertNotEqual(self.text, self.text.replace(safe, unsafe))
-        self.assertIn("raw_data_logging", problems(self.text.replace(safe, unsafe)))
+    def test_original_global_pool_reconcile_is_absent(self):
+        self.assertNotIn('same_settings', self.text)
+        self.assertNotIn('WORKER_POOL_RECONCILED', self.text)
+        self.assertNotIn('X-ZCloud-Actor', self.text)
 
 
 if __name__ == "__main__":
