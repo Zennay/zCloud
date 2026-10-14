@@ -24,6 +24,17 @@ HIGH_RISK = (
     "deploy/", "worker/", "config/", "systemd/",
 )
 ALLOWED_PREFIXES = ("docs/", "tests/", "scripts/")
+# GitHub-hosted integration has a write-scoped token. Never use that same
+# token to auto-merge changes to its own authorization, admission evidence or
+# operator reporting logic, even when an owner adds the usual approval label.
+# These exact files require a separately reviewed, manually merged PR.
+PROTECTED_INTEGRATION_FILES = frozenset((
+    "scripts/zcloud_autonomous_pr_integrator.py",
+    "scripts/zcloud_automerge_report_20261014.py",
+    "tests/test_zcloud_autonomous_pr_integrator.py",
+    "tests/test_zcloud_automerge_report_20261014.py",
+    "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
+))
 ALLOWED_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 
@@ -40,6 +51,8 @@ def safe_path(path):
         return False
     components = path.split("/")
     if any(c in ("", ".", "..") for c in components):
+        return False
+    if path in PROTECTED_INTEGRATION_FILES:
         return False
     if path.startswith(HIGH_RISK) or path in HIGH_RISK:
         return False
@@ -80,6 +93,8 @@ def decide(pr, files, checks, statuses, main_sha):
         if not isinstance(f, dict) or f.get("status") not in ("added", "modified"):
             return "unsupported_file_change"
         name = f.get("filename")
+        if name in PROTECTED_INTEGRATION_FILES:
+            return "protected_integration_source"
         if not safe_path(name) or name in filenames:
             return "unsafe_or_duplicate_path"
         filenames.add(name)
