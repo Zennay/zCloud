@@ -42,7 +42,7 @@ def paths(value):
     require(type(value) is list and 0 < len(value) <= MAX_ITEMS, "invalid_paths")
     require(all(type(p) is str and 0 < len(p) <= 256 and p[0] != "/" and "\\" not in p
                 and all(part not in ("", ".", "..") for part in p.split("/"))
-                and not any(ord(c) < 32 or ord(c) == 127 for c in p)
+                and not any(unicodedata.category(c) in ("Cc", "Cf", "Cs") for c in p)
                 and PurePosixPath(p).as_posix() == p for p in value), "invalid_path")
     require(len(value) == len(set(value)), "duplicate_paths")
     require(len({unicodedata.normalize("NFC", p).casefold() for p in value}) == len(value),
