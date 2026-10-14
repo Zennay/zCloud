@@ -154,6 +154,40 @@ jobs:
         )
         self.assertIn("pr_source_in_run_job", gate.risk_set(src))
 
+
+    def test_bracket_expression_pr_title_executed_in_run_is_denied(self):
+        src = SAFE + """      - name: Unsafe expression
+        run: echo '${{ github['event']['pull_request']['title'] }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, src))
+
+    def test_mixed_access_pr_head_checkout_is_denied(self):
+        src = SAFE + """      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request['head']['sha'] }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_bracket_head_ref_direct_execution_is_denied(self):
+        src = SAFE + """      - run: echo '${{ github['head_ref'] }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_direct_head_object_expansion_is_denied(self):
+        src = SAFE + """      - run: echo '${{ github.event.pull_request.head }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_dotted_to_bracket_pr_expression_change_not_laundered(self):
+        old = SAFE + """      - run: echo '${{ github.event.pull_request.title }}'
+"""
+        new = SAFE + """      - run: echo '${{ github.event.pull_request['body'] }}'
+"""
+        self.assertEqual(gate.risk_counts(old)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(new)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(old, new))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
