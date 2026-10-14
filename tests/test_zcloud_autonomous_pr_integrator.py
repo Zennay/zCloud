@@ -123,6 +123,7 @@ class DecisionTest(unittest.TestCase):
             "tests/test_zcloud_autonomous_pr_integrator.py",
             "tests/test_zcloud_automerge_report_20261014.py",
             "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
+    "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
         }
         self.assertEqual(mod.PROTECTED_INTEGRATION_FILES, expected)
         for path in expected:
