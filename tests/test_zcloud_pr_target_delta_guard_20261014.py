@@ -185,6 +185,21 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn("cd candidate && python3", trusted)
         self.assertEqual(gate.risk_set(trusted), set())
 
+    def test_trusted_base_denies_its_own_modified_trust_roots(self):
+        trusted = (TARGET.parents[1] / ".github/workflows/zcloud-pr-target-trusted-base-20261014.yml").read_text()
+        self.assertIn("trust_root_changes=\"$(git -C trusted diff --name-only", trusted)
+        self.assertIn('if [ -n "$trust_root_changes" ]; then', trusted)
+        self.assertIn("PR_TARGET_TRUST_ROOT_REVIEW_REQUIRED", trusted)
+        for protected in (
+            "scripts/zcloud_pr_target_delta_guard_20261014.py",
+            "tests/test_zcloud_pr_target_delta_guard_20261014.py",
+            ".github/workflows/zcloud-pr-target-risk-ratchet-20261014.yml",
+            ".github/workflows/zcloud-pr-target-trusted-base-20261014.yml",
+        ):
+            self.assertIn(protected, trusted)
+        self.assertLess(trusted.index("PR_TARGET_TRUST_ROOT_REVIEW_REQUIRED"),
+                        trusted.index("(cd trusted && python3 -m unittest"))
+
     def test_separate_steps_do_not_conflate_trusted_checkout_with_head_metadata(self):
         trusted = (TARGET.parents[1] / ".github/workflows/zcloud-pr-target-trusted-base-20261014.yml").read_text()
         self.assertIn("github.event.pull_request.head.repo.full_name", trusted)
