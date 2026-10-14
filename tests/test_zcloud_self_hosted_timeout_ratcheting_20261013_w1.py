@@ -321,26 +321,59 @@ jobs:
             with self.assertRaisesRegex(RuntimeError, "size exceeds limit"):
                 audit.scan_git_ref(root, sha, max_minutes=30)
 
-    def test_workflow_reads_use_single_nofollow_fd_and_bounded_buffer(self):
+    def test_workflow_reads_pin_both_directories_and_bound_file_descriptor(self):
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             directory = root / ".github" / "workflows"
             directory.mkdir(parents=True)
-            file = directory / "proof.yml"
-            file.write_text(
-                "jobs:\n  proof:\n    runs-on: self-hosted\n    timeout-minutes: 10\n",
+            (directory / "proof.yml").write_text(
+                "jobs:\\n  proof:\\n    runs-on: self-hosted\\n    timeout-minutes: 10\\n",
                 encoding="utf-8",
             )
             original_open = audit.os.open
             with patch.object(audit.os, "open", wraps=original_open) as spy:
                 rows = audit.scan_repository(root, max_minutes=30)
             self.assertEqual([("proof", "bounded")], [(r.job, r.status) for r in rows])
-            self.assertEqual(1, spy.call_count)
-            flags = spy.call_args.args[1]
-            self.assertTrue(flags & audit.os.O_NOFOLLOW)
-            self.assertTrue(flags & audit.os.O_RDONLY == audit.os.O_RDONLY)
+            self.assertEqual(3, spy.call_count)
+            ancestor_flags = spy.call_args_list[0].args[1]
+            workflow_flags = spy.call_args_list[1].args[1]
+            file_flags = spy.call_args_list[2].args[1]
+            self.assertTrue(ancestor_flags & audit.os.O_NOFOLLOW)
+            self.assertTrue(ancestor_flags & audit.os.O_DIRECTORY)
+            self.assertTrue(workflow_flags & audit.os.O_NOFOLLOW)
+            self.assertTrue(workflow_flags & audit.os.O_DIRECTORY)
+            self.assertTrue(file_flags & audit.os.O_NOFOLLOW)
+            self.assertIn("dir_fd", spy.call_args_list[2].kwargs)
+
+    def test_workflow_directory_substitution_does_not_redirect_read(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".github" / "workflows"
+            directory.mkdir(parents=True)
+            (directory / "proof.yml").write_text(
+                "jobs:\\n  legitimate:\\n    runs-on: self-hosted\\n"
+                "    timeout-minutes: 10\\n", encoding="utf-8",
+            )
+            external = root / "external"
+            external.mkdir()
+            (external / "proof.yml").write_text(
+                "jobs:\\n  swapped:\\n    runs-on: ubuntu-latest\\n", encoding="utf-8"
+            )
+            real_listdir = audit.os.listdir
+
+            def replace_directory(fd):
+                names = real_listdir(fd)
+                directory.rename(root / ".github" / "workflows.original")
+                directory.symlink_to(external, target_is_directory=True)
+                return names
+
+            with patch.object(audit.os, "listdir", side_effect=replace_directory):
+                rows = audit.scan_repository(root, max_minutes=30)
+            self.assertEqual([("legitimate", "bounded")], [(r.job, r.status) for r in rows])
 
     def test_fifo_workflow_is_rejected_without_blocking(self):
         import os
