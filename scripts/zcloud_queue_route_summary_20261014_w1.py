@@ -91,6 +91,20 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
         if n == 0:
             lines.append("- GitHub gaf geen wachtende runs terug op het moment van uitlezen.\n")
         else:
+            # Numeric totals come only from the same rigorously checked rows,
+            # never from upstream free text or self-declared summary fields.
+            no_jobs = sum(row["route"] == "no_job_records" for row in rows)
+            ftmo = sum(row["route"] == "ftmo_research" for row in rows)
+            zcloud = sum(row["route"] == "zcloud_vps" for row in rows)
+            unassigned = sum(row["assignment"] == "not_assigned" for row in rows)
+            current = sum(row["scope"] == "current_main" for row in rows)
+            lines.append(
+                "- Routes: "
+                f"**{ftmo} FTMO-onderzoek**, **{zcloud} zCloud-VPS**, "
+                f"**{no_jobs} zonder jobrecords**; "
+                f"**{unassigned} zonder runnertoewijzing**, "
+                f"**{current} op huidige main**.\\n"
+            )
             lines.append(
                 "- Een job zonder runnertoewijzing bewijst **niet** dat een listener defect is; "
                 "een run zonder jobrecord is evenmin een veilige annuleringskandidaat.\n"
