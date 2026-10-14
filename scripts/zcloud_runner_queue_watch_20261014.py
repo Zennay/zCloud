@@ -175,17 +175,24 @@ def summarize(runs, jobsets, now, *, total_count=None):
             raise Unavailable("ambiguous_job_state")
     # Even repeated long queues cannot establish a dead listener without
     # independently authenticated service and runner-registration evidence.
-    if stale_unassigned >= 3 and recent_assigned == 0:
-        classification = "POSSIBLE_LISTENER_GAP"
-    elif recent_assigned > 0:
+    # A truncated run page can hide an assignment on another page. Do not
+    # emit a listener-gap warning from an incomplete negative sample.
+    sample_truncated = total_count > len(seen)
+    if recent_assigned > 0:
+        # Positive evidence of a real assignment remains meaningful even
+        # when additional unsampled historical runs exist.
         classification = "RECENT_RUNNER_ASSIGNMENT_OBSERVED"
+    elif sample_truncated:
+        classification = "INCOMPLETE_QUEUE_SAMPLE"
+    elif stale_unassigned >= 3:
+        classification = "POSSIBLE_LISTENER_GAP"
     else:
         classification = "INSUFFICIENT_QUEUE_EVIDENCE"
     return {"schema": "zcloud-hosted-runner-queue-watch-v1",
             "classification": classification, "sampled_runs": len(seen),
             "inspected_recent_runs": inspected,
             "total_workflow_runs": total_count,
-            "sample_truncated": total_count > len(seen),
+            "sample_truncated": sample_truncated,
             "queue_jobs_observed": observed, "stale_unassigned": stale_unassigned,
             "oldest_queued_minutes": oldest_queued_seconds // 60 if oldest_queued_seconds else None,
             "queued_over_2h": stale_over_2h,
