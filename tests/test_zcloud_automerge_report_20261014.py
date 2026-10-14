@@ -138,7 +138,7 @@ class SummaryTests(unittest.TestCase):
                 self.assertEqual(report.main([str(input_path), str(output_path)]), 0)
             self.assertFalse([entry for entry in seen
                               if issubclass(entry.category, ResourceWarning)])
-            self.assertEqual(output_path.read_text().count("bronoverzicht"), 2)
+            self.assertEqual(output_path.read_text().count("## zCloud autonome PR-integratie — bronoverzicht"), 2)
 
     def test_existing_hourly_pipeline_receipts_are_not_prod_authority(self):
         wf = WORKFLOW.read_text(encoding="utf-8")
