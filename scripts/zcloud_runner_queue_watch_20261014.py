@@ -84,11 +84,14 @@ def summarize(runs, jobsets, now):
             raise Unavailable("run_identity")
         seen.add(number)
         path = run.get("path")
-        if (not isinstance(path, str) or path.split("@", 1)[0] != PATH
+        repository = run.get("repository")
+        head_repository = run.get("head_repository")
+        if (type(repository) is not dict or type(head_repository) is not dict
+                or not isinstance(path, str) or path.split("@", 1)[0] != PATH
                 or run.get("name") != NAME
                 or run.get("event") not in ("pull_request", "workflow_dispatch")
-                or run.get("repository", {}).get("full_name") != REPO
-                or run.get("head_repository", {}).get("full_name") != REPO
+                or repository.get("full_name") != REPO
+                or head_repository.get("full_name") != REPO
                 or not isinstance(run.get("head_sha"), str)
                 or not SHA.fullmatch(run["head_sha"])):
             raise Unavailable("run_provenance")
@@ -117,6 +120,16 @@ def summarize(runs, jobsets, now):
             runner_id = 0
         if type(runner_id) is not int or runner_id < 0:
             raise Unavailable("invalid_runner_id")
+        runner_name = job.get("runner_name")
+        if runner_id == 0 and runner_name not in (None, ""):
+            raise Unavailable("contradictory_runner_identity")
+        if runner_id > 0 and (runner_id != 21 or runner_name != "zcloud-vps-1"):
+            raise Unavailable("unattested_runner_assignment")
+        if status == "completed" and job.get("conclusion") not in (
+                "success", "failure", "cancelled", "timed_out", "neutral", "skipped"):
+            raise Unavailable("ambiguous_conclusion")
+        if status != "completed" and job.get("conclusion") is not None:
+            raise Unavailable("nonterminal_conclusion")
         age = (now - _utc(job.get("created_at"))).total_seconds()
         if age < -5:
             raise Unavailable("future_job")
