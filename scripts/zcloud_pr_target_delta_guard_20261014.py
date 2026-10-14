@@ -238,7 +238,7 @@ def risk_set(source: str) -> set[str]:
 # conceal the write-all token from the monotonic authority check.
 WRITE_ALL = re.compile(
     r"""(?mix)
-    ^[ \t]*['"]?permissions['"]?[ \t]*:[ \t]*
+    ^(?P<indent>[ \t]*)['"]?permissions['"]?[ \t]*:[ \t]*
     (?:['"]?write-all['"]?
        |(?:[>|][+-]?)?[ \t]*\n[ \t]+['"]?write-all['"]?)
     [ \t]*$
@@ -265,6 +265,12 @@ def risk_signatures(source: str) -> dict[str, Counter[str]]:
         return {}
     clean = _content_without_comments(source)
     signatures: dict[str, Counter[str]] = {}
+    if "write_all" in risks:
+        # Moving an existing job-only grant to the workflow root broadens
+        # GITHUB_TOKEN authority even if the total write-all count is equal.
+        root_grants = sum(not match.group("indent") for match in WRITE_ALL.finditer(clean))
+        if root_grants:
+            signatures["write_all"] = Counter({"workflow_root": root_grants})
     if "write_permission" in risks:
         signatures["write_permission"] = Counter(
             match.group("scope").strip("\"'").lower()
