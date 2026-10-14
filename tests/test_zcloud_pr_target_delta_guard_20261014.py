@@ -1257,6 +1257,34 @@ jobs:
             head = command("rev-parse", "HEAD")
             self.assertEqual(gate.evaluate(root, base, head), (1, []))
 
+
+    def test_folded_multiline_permission_write_is_detected(self):
+        for scalar in ("contents: >-\n    write", "contents: |\n    write",
+                       "contents:\n    write", "contents: >\n    'write'"):
+            with self.subTest(scalar=scalar):
+                source = SAFE.replace("  contents: read", "  " + scalar)
+                self.assertIn("write_permission", gate.risk_set(source))
+                self.assertIn("write_permission", gate.increasing_risks(SAFE, source))
+
+    def test_multiline_job_permission_write_is_detected(self):
+        candidate = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    permissions:\n      actions: >-\n        write\n    runs-on: ubuntu-latest",
+        )
+        self.assertIn("write_permission", gate.risk_set(candidate))
+        self.assertIn("write_permission", gate.increasing_risks(SAFE, candidate))
+
+    def test_existing_folded_permission_does_not_hide_different_scope(self):
+        previous = SAFE.replace("contents: read", "contents: >-\n    write")
+        current = SAFE.replace("contents: read", "actions: >-\n    write")
+        self.assertEqual(gate.risk_counts(previous)["write_permission"], 1)
+        self.assertEqual(gate.risk_counts(current)["write_permission"], 1)
+        self.assertIn("write_permission", gate.increasing_risks(previous, current))
+
+    def test_multiline_permission_read_remains_unprivileged(self):
+        candidate = SAFE.replace("contents: read", "contents: >-\n    read")
+        self.assertNotIn("write_permission", gate.risk_set(candidate))
+
     def test_git_mode_denies_symlink(self):
         with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
             with self.assertRaises(gate.Unverified):
