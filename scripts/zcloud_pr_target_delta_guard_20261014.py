@@ -158,6 +158,14 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
     The scanner deliberately does not claim full shell data-flow coverage.
     """
     references: Counter[str] = Counter()
+    # PR values passed as immutable data are routine in the trusted source
+    # scanner (e.g. EXACT_HEAD for git fetch). Require an actual dynamic shell
+    # execution sink before classifying step-local environment forwarding.
+    if not re.search(
+        r"(?i)\b(?:eval|exec|source)\b|\b(?:bash|sh|zsh|python[0-9.]*)\s+-c\b",
+        command_source,
+    ):
+        return references
     in_env = False
     env_indent = 0
     for line in step.splitlines():
