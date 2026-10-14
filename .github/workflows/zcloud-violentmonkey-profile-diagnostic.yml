@@ -2,6 +2,12 @@
 name: zCloud Violentmonkey profile diagnostic
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-violentmonkey-profile-diagnostic.yml"
+      - "tests/test_violentmonkey_profile_diagnostic_workflow.py"
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
   push:
     branches: [main]
@@ -12,19 +18,53 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-violentmonkey-profile-diagnostic
-  cancel-in-progress: true
+  group: zcloud-violentmonkey-profile-diagnostic-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  inspect:
-    runs-on: self-hosted
-    timeout-minutes: 5
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate diagnostic trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_violentmonkey_profile_diagnostic_workflow
+
+  inspect:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact diagnostic source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           clean: true
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Inspect Firefox profile and userscript runtime
         shell: bash
@@ -68,7 +108,7 @@ jobs:
               except OSError:
                   continue
               if " -contentproc " not in f" {cmd} " and "/usr/lib/firefox/firefox" in cmd:
-                  main_pids.append({"pid": pid, "cmdline": cmd})
+                  main_pids.append(pid)
 
           profiles = []
           for root in roots:
@@ -141,9 +181,8 @@ jobs:
                   })
 
           # Identify profile paths actually held open by the main Firefox process.
-          open_profile_paths = {}
-          for proc_info in main_pids:
-              pid = proc_info["pid"]
+          open_profile_paths = set()
+          for pid in main_pids:
               found = set()
               fd_root = Path(f"/proc/{pid}/fd")
               try:
@@ -159,7 +198,7 @@ jobs:
                       p = profile["path"]
                       if str(target).startswith(p + "/") or str(target) == p:
                           found.add(p)
-              open_profile_paths[str(pid)] = sorted(found)
+              open_profile_paths.update(found)
 
           runtime_storage = []
           for profile in profiles:
@@ -256,8 +295,8 @@ jobs:
               })
 
           result = {
-              "main_firefox": main_pids,
-              "open_profile_paths": open_profile_paths,
+              "main_firefox_count": len(main_pids),
+              "open_profile_paths": sorted(open_profile_paths),
               "profiles": profiles,
               "violentmonkey_runtime_storage": runtime_storage,
           }
@@ -273,6 +312,12 @@ jobs:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
+          restore_managed_firefox() {
+            systemctl --user reset-failed chatgpt-firefox.service || true
+            systemctl --user start chatgpt-firefox.service || true
+          }
+          trap restore_managed_firefox EXIT
+          systemctl --user stop chatgpt-firefox.service || true
           python3 - <<'PY'
           import json, os, shutil, signal, sqlite3, subprocess, time
           from pathlib import Path
@@ -285,7 +330,6 @@ jobs:
 
           proc=subprocess.run(["pgrep","-u",str(os.getuid()),"-f",r"/snap/firefox/.*/usr/lib/firefox/firefox"],text=True,capture_output=True,check=False)
           pids=[]
-          main=None
           for raw in proc.stdout.split():
               if not raw.isdigit(): continue
               pid=int(raw)
@@ -295,7 +339,6 @@ jobs:
                   continue
               if " -contentproc " not in f" {cmd} " and "/usr/lib/firefox/firefox" in cmd:
                   pids.append(pid)
-                  if main is None: main=(pid,cmd)
 
           for p in pids:
               try: os.kill(p,signal.SIGTERM)
@@ -325,7 +368,7 @@ jobs:
               "prompt-missing-project-instruction",
               "Kijk in Notion in welke fase het project zit"
           ]
-          con=sqlite3.connect(str(db))
+          con=sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
           tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
           result={"tables":[],"records":[]}
           for table in tables:
@@ -350,14 +393,16 @@ jobs:
                           low=s.lower()
                           found=[m for m in markers if m.lower() in low]
                           if found:
-                              snippets=[]
-                              for m in found:
-                                  i=low.find(m.lower())
-                                  snippets.append(s[max(0,i-240):i+520].replace("\n","\\n"))
-                              hits.append({"position":pos,"column":cols[pos-1] if pos>0 and pos-1<len(cols) else "rowid","encoding":enc,"markers":found,"snippets":snippets})
+                              hits.append({
+                                  "position": pos,
+                                  "column": cols[pos-1] if pos>0 and pos-1<len(cols) else "rowid",
+                                  "encoding": enc,
+                                  "markers": found,
+                              })
                   if hits:
                       result["records"].append({"table":table,"rowid":row[0],"hits":hits})
           print("VM_DB_INSPECT="+json.dumps(result,ensure_ascii=False))
+          con.close()
 
           PY
 
@@ -372,5 +417,6 @@ jobs:
           systemctl --user is-active chatgpt-firefox.service
           main_pid="$(systemctl --user show -p MainPID --value chatgpt-firefox.service)"
           echo "VM_DIAGNOSTIC_MANAGED_RESTART_GREEN main_pid=$main_pid"
+          echo "ZCLOUD_VIOLENTMONKEY_PROFILE_DIAGNOSTIC_GREEN=1"
 
 # push-test diagnostic rerun after prompt-contract repair 2026-10-04
