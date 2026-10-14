@@ -110,10 +110,33 @@ class QueueRouteSummaryTests(unittest.TestCase):
         self.assertIn("3 runs", markdown)
         for number in (71, 72, 73):
             self.assertIn(f"https://github.com/Zennay/zCloud/actions/runs/{number}", markdown)
-        self.assertIn("ftmo_research", markdown)
-        self.assertIn("no_job_records", markdown)
-        self.assertIn("zcloud_vps", markdown)
+        self.assertIn("FTMO-onderzoeksroute", markdown)
+        self.assertIn("geen jobgegevens", markdown)
+        self.assertIn("zCloud-VPS-route", markdown)
         self.assertNotIn("runner is offline", markdown)
+
+    def test_actionable_guidance_is_specific_to_verified_run_route(self):
+        cases = [
+            ([record(71, scope="current_main", route="zcloud_vps")],
+             "zCloud-runnerlabels en repositorytoegang",
+             "leid hieruit geen zCloud-VPS-storing af"),
+            ([record(72, route="ftmo_research")],
+             "FTMO-runnerroute",
+             "zCloud-runnerlabels en repositorytoegang"),
+            ([record(73, route="no_job_records", assignment="no_job_records",
+                     state="no_job_records", jobs=0)],
+             "workflowvoorwaarden",
+             "FTMO-runnerroute"),
+        ]
+        for rows, included, excluded in cases:
+            with self.subTest(rows=rows):
+                markdown, status = self.render(report(rows))
+                self.assertEqual(status, 0)
+                self.assertIn(included, markdown)
+                self.assertNotIn(excluded, markdown)
+                self.assertIn("Geen bewijs van productiestatus", markdown)
+                self.assertNotIn("restart", markdown.lower())
+                self.assertNotIn("cancel", markdown.lower())
 
     def test_verified_dutch_route_totals_are_derived_from_rows(self):
         rows = [
