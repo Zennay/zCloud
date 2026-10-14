@@ -89,6 +89,15 @@ def risks(text):
         raise Unverifiable("structure")
     if re.search(r"(?m)^[ ]{0,6}(?:<<:|concurrency:\s*[&*]|runs-on:\s*[&*])", text):
         raise Unverifiable("yaml_alias")
+    # Nonstandard valid YAML indentation or quoted policy keys are DENY, not PASS.
+    if re.search(r"(?m)^[ \t]*[\x27\x22](?:concurrency|cancel-in-progress)[\x27\x22]\s*:", text):
+        raise Unverifiable("quoted_key")
+    for match in re.finditer(r"(?m)^([ \t]*)cancel-in-progress:", text):
+        if match.group(1) not in ("  ", "      "):
+            raise Unverifiable("cancel_indentation")
+    for match in re.finditer(r"(?m)^([ \t]*)concurrency:", text):
+        if match.group(1) not in ("", "    "):
+            raise Unverifiable("concurrency_indentation")
     start = re.search(r"(?m)^jobs:\s*$", text)
     tail = text[start.end():]
     next_root = re.search(r"(?m)^[A-Za-z_-][\w-]*:\s*", tail)
