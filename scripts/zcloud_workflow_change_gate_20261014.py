@@ -92,11 +92,20 @@ def judge(source):
                 break
             lines.append(line.strip())
         expression = " ".join(lines)
-        required = ("github.event_name", "workflow_dispatch",
-                    "github.repository", "github.ref", "github.actor")
-        if any(word not in expression for word in required) or "||" in expression:
+        # Require positive equalities, not mere marker words (which could
+        # occur in !=, comments or untrusted fallback alternatives).
+        conditions = (
+            r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]",
+            r"github\.repository\s*==\s*['\"]Zennay/zCloud['\"]",
+            r"github\.ref\s*==\s*['\"]refs/heads/main['\"]",
+            r"github\.actor\s*==\s*['\"]Zennay['\"]",
+            r"github\.triggering_actor\s*==\s*['\"]Zennay['\"]",
+            r"github\.run_attempt\s*==\s*1\b",
+        )
+        if any(not re.search(pattern, expression) for pattern in conditions) or "||" in expression:
             problems.append(f"{name}:incomplete_manual_if")
-        if "confirm_sha" not in source or "GITHUB_SHA" not in job or "git ls-remote" not in job:
+        if (not re.search(r"(?m)^      confirm_sha:[ \t]*$", source)
+                or "GITHUB_SHA" not in job or "git ls-remote" not in job):
             problems.append(f"{name}:no_exact_main_preflight")
     return problems
 
