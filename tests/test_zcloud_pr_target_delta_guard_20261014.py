@@ -150,7 +150,7 @@ jobs:
     def test_minimal_indent_named_run_still_detects_head_ref(self):
         src = SAFE.replace(
             "      - run: echo 'trusted metadata'",
-            "   - name: inspect head\\n     run: echo '${{ github.head_ref }}'",
+            "   - name: inspect head\n     run: echo '${{ github.head_ref }}'",
         )
         self.assertIn("pr_source_in_run_job", gate.risk_set(src))
 
