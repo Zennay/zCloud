@@ -86,6 +86,23 @@ class GuardTests(unittest.TestCase):
         candidate = gate.risk_set(SAFE.replace("contents: read", "contents: write") + "      - run: echo '${{ secrets.X }}'\n")
         self.assertEqual(candidate - baseline, {"secret_reference"})
 
+    def test_preexisting_secret_does_not_hide_new_secret(self):
+        previous = SAFE + "      - run: echo '${{ secrets.FIRST }}'\n"
+        current = previous + "      - run: echo '${{ secrets.SECOND }}'\n"
+        self.assertEqual(gate.risk_counts(previous)["secret_reference"], 1)
+        self.assertEqual(gate.risk_counts(current)["secret_reference"], 2)
+
+    def test_preexisting_write_does_not_hide_new_write_scope(self):
+        previous = SAFE.replace("contents: read", "contents: write")
+        current = previous.replace("    runs-on:", "    permissions:\n      actions: write\n    runs-on:")
+        self.assertEqual(gate.risk_counts(previous)["write_permission"], 1)
+        self.assertEqual(gate.risk_counts(current)["write_permission"], 2)
+
+    def test_comment_only_rewrite_preserves_risk_counters(self):
+        previous = SAFE.replace("contents: read", "contents: write") + "      - run: echo '${{ secrets.FIRST }}'\n"
+        candidate = previous + "# actions: write and secrets.BAD are commented out\n"
+        self.assertEqual(gate.risk_counts(previous), gate.risk_counts(candidate))
+
     def test_git_base_delta_blocks_new_risk(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
