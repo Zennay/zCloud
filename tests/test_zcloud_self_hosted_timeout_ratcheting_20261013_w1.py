@@ -103,8 +103,15 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
   'mismatch":
     runs-on: ubuntu-latest
 """
-        rows = audit.inspect_workflow(".github/workflows/quotes.yml", source, max_minutes=30)
-        self.assertEqual(["ok"], [row.job for row in rows])
+        with self.assertRaisesRegex(RuntimeError, "unparseable workflow job declaration"):
+            audit.inspect_workflow(".github/workflows/quotes.yml", source, max_minutes=30)
+
+    def test_incorrectly_named_job_does_not_silently_disappear(self):
+        for declaration in ("'broken\":", "with.dot:", "- item:"):
+            with self.subTest(declaration=declaration):
+                source = "jobs:\n  " + declaration + "\n    runs-on: self-hosted\n"
+                with self.assertRaisesRegex(RuntimeError, "unparseable workflow job declaration"):
+                    audit.inspect_workflow("bad.yml", source, max_minutes=30)
 
     def test_ambiguous_duplicate_runner_and_timeout_keys_fail_closed(self):
         source = """jobs:
