@@ -92,7 +92,12 @@ jobs:
           test "$current_main" = "$CONFIRMED_SHA"
           test "$(hostname)" = 'vps-bb300bba'
           test "$(id -un)" = 'ubuntu'
-          python3 scripts/zcloud_vps_runner_guard.py --json
+          # Runner identity guard returns trusted status only. Its JSON also
+          # includes machine and runner names; never leak those to Actions.
+          if ! python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null 2>&1; then
+            echo 'ZCLOUD_V2_LEGACY_RUNNER_IDENTITY_DENIED=1'
+            exit 2
+          fi
       - name: Read-only bounded worker service inventory
         shell: bash
         env:

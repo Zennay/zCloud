@@ -204,6 +204,20 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
                         observation.index("python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py"))
         self.assertNotIn("systemctl ", gate)
 
+    def test_runner_identity_guard_is_silent_and_fail_closed(self):
+        workflow = self.job(self.text, "inspect")
+        identity = workflow.split(
+            "- name: Enforce exact commit and permanent VPS identity", 1
+        )[1].split("- name: Read-only bounded worker service inventory", 1)[0]
+        self.assertIn(
+            "python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null 2>&1",
+            identity,
+        )
+        self.assertIn("ZCLOUD_V2_LEGACY_RUNNER_IDENTITY_DENIED=1", identity)
+        self.assertIn("exit 2", identity)
+        self.assertNotIn("runner_name", identity)
+        self.assertNotIn("actual_host", identity)
+
     def test_hosted_pr_validates_exact_head_not_synthetic_merge_sha(self):
         validate = self.job(self.text, "validate")
         self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", validate)
