@@ -201,6 +201,59 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             "source_version", "extension_background_script_count",
         }))
 
+    def test_each_command_failure_is_unknown_never_false_green(self):
+        # Every independently timed-out component must make the snapshot
+        # incomplete, without publishing source exceptions or private output.
+        baseline = {
+            "process": "firefox\\n",
+            "user_services": "zcloud.service loaded active running",
+            "system_services": "zcloud.service loaded inactive dead",
+            "user_timers": "zcloud-hourly.timer loaded active waiting",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            worker = root / "worker.user.js"
+            worker.write_text("// @version 2.0.3\\n", encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text('{"background":{"scripts":["entry.js"]}}', encoding="utf-8")
+            for broken in COMMANDS:
+                with self.subTest(command=broken):
+                    rows = baseline.copy()
+                    rows[broken] = subprocess.TimeoutExpired(
+                        "PRIVATE_PATH_PLEASE_DO_NOT_LOG", 5)
+                    report = collect(execute=self.fake(rows),
+                                     source_path=worker, manifest_path=manifest)
+                    self.assertFalse(report["inventory_complete"])
+                    self.assertFalse(report["observation_complete"])
+                    self.assertEqual(report["missing_components"], [broken])
+                    self.assertNotIn("PRIVATE_PATH_PLEASE_DO_NOT_LOG", json.dumps(report))
+                    self.assertFalse(report["production_verified"])
+
+    def test_valid_commands_cannot_mask_missing_source_or_manifest(self):
+        baseline = {
+            "process": "",
+            "user_services": "zcloud.service loaded inactive dead",
+            "system_services": "",
+            "user_timers": "",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            worker = root / "worker.user.js"
+            worker.write_text("// @version 2.0.3\\n", encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text('{"background":{"scripts":["entry.js"]}}', encoding="utf-8")
+            missing = root / "not-installed"
+            for worker_path, manifest_path, expected in (
+                (missing, manifest, ["source_version"]),
+                (worker, missing, ["extension_background_script_count"]),
+            ):
+                with self.subTest(expected=expected):
+                    report = collect(execute=self.fake(baseline),
+                                     source_path=worker_path, manifest_path=manifest_path)
+                    self.assertTrue(report["observation_complete"])
+                    self.assertFalse(report["inventory_complete"])
+                    self.assertEqual(report["missing_components"], expected)
+
     def test_subprocess_does_not_inherit_runner_secrets_or_mutable_paths(self):
         with mock.patch.dict(os.environ, {
             "GITHUB_TOKEN": "secret",

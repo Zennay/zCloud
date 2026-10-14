@@ -47,3 +47,6 @@ Every inventory command runs inside a **new isolated process session**, with std
 
 
 Systemd observation now validates every matching unit's `UNIT LOAD ACTIVE SUB` columns. A `not-found`, `masked`, unknown or corrupt LOAD field is *unknown*, **never counted as an active worker**; valid inactive/failed loaded units remain distinguishable. This is observation quality only, not proof of deploy health.
+
+
+Failure-shape regression matrix: individual `ps`/user-service/system-service/timer timeouts are each independently classified as unknown with only the fixed component name exposed. Missing user script or extension manifest makes the inventory incomplete even when all process/systemd commands succeeded. Private exception arguments must never be returned in output.
