@@ -226,6 +226,29 @@ class GitTest(unittest.TestCase):
         head = self.commit(candidate)
         self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
 
+    def test_many_changed_workflows_share_one_collision_census(self):
+        from unittest import mock
+        second = self.path.parent / "second.yml"
+        legacy = self.path.parent / "legacy.yml"
+        self.path.write_text(SAFE, encoding="utf-8")
+        second.write_text(SAFE, encoding="utf-8")
+        legacy.write_text(SELFHOST, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "legacy vps plus hosted consumers")
+        base = self.git("rev-parse", "HEAD")
+        candidate = SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        )
+        self.path.write_text(candidate, encoding="utf-8")
+        second.write_text(candidate, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "two concurrent hosted cancellation risks")
+        with mock.patch.object(scanner, "build_vps_group_index",
+                               wraps=scanner.build_vps_group_index) as census:
+            risks = scanner.evaluate(self.root, base, self.git("rev-parse", "HEAD"))
+        self.assertEqual(2, len(risks))
+        self.assertEqual(1, census.call_count)
+
     def test_dynamic_group_is_not_claimed_literal_collision(self):
         self.assertEqual(set(), scanner.static_concurrency_groups(
             SAFE.replace("group: isolated", "group: " + "$" + "{{ github.workflow }}")
