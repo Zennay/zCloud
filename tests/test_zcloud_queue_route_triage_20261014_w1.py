@@ -122,6 +122,31 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertFalse(result["runner_recovery_authorized"])
         self.assertFalse(result["worker_generation_verified"])
 
+    def test_queue_filter_does_not_accept_a_completed_run(self):
+        item = run(1)
+        item["status"] = "completed"
+        get, calls = mock([item], {1: [job(1)]})
+        with self.assertRaisesRegex(source.InventoryError, "nonqueued_run"):
+            triage.collect(get, clock=NOW)
+        self.assertFalse(any("/jobs?" in path for path in calls))
+
+    def test_job_state_enum_rejects_untrusted_github_status(self):
+        item = job(1)
+        item["status"] = "PRIVATE_SECRET"
+        get, _ = mock([run(1)], {1: [item]})
+        with self.assertRaisesRegex(source.InventoryError, "unknown_queue_job_state"):
+            triage.collect(get, clock=NOW)
+
+    def test_cross_run_duplicate_job_id_fails_closed(self):
+        first = job(1)
+        second = job(2)
+        second["id"] = first["id"]
+        get, calls = mock([run(1), run(2)], {1: [first], 2: [second]})
+        with self.assertRaisesRegex(source.InventoryError, "job_identity_reused_across_runs"):
+            triage.collect(get, clock=NOW)
+        # Abort before repeating the snapshot or presenting a mixed diagnosis.
+        self.assertEqual(calls.count(RUNS), 1)
+
     def test_current_main_zcloud_vps_job_is_still_not_runner_recovery(self):
         get, _ = mock([run(1)], {1: [job(1, route="zcloud_vps")]})
         result = triage.collect(get, clock=NOW)
