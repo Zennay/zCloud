@@ -193,8 +193,10 @@ def build_vps_group_index(root, base, head):
             try:
                 other = source(root, sha, path)
                 _, possible_vps, _ = risks(other, details=True)
-            except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
-                continue  # Unknown external source is not evidence of non-collision.
+            except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError) as exc:
+                # A positive claim that there is no collision needs a complete
+                # old-and-new inventory. Missing source evidence is not safety.
+                raise Unverifiable("collision_external_unknown") from exc
             if possible_vps:
                 for group in static_concurrency_groups(other):
                     owners.setdefault(group, set()).add(path)
