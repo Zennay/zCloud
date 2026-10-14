@@ -35,7 +35,7 @@ def changed_workflows(base, head):
 
 
 def events_from(source):
-    anchor = re.search(r"(?m)^on:\s*(.*)$", source)
+    anchor = re.search(r"(?m)^on:[ \t]*(.*)$", source)
     if not anchor:
         raise ValueError("missing_literal_on")
     value = anchor.group(1).split("#", 1)[0].strip()
