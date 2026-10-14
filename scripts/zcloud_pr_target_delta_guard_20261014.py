@@ -128,9 +128,7 @@ def risk_set(source: str) -> set[str]:
     # permissions are nested. Harmless comments are not counted.
     if re.search(r"(?m)^\s*permissions\s*:\s*write-all\s*$", clean):
         risk.add("write_all")
-    if re.search(r"(?m)^\s*[A-Za-z][\w-]*\s*:\s*['\"]?write['\"]?\s*(?:$|[},])", clean) or re.search(
-        r"\b[A-Za-z][\w-]*\s*:\s*['\"]?write['\"]?\s*(?=[},])", clean
-    ):
+    if WRITE_SCOPE.search(clean):
         risk.add("write_permission")
     if re.search(r"\bsecrets\s*\.", clean, re.I) or re.search(r"\bsecrets\s*\[", clean, re.I):
         risk.add("secret_reference")
