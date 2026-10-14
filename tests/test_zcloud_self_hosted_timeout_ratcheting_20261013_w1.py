@@ -92,6 +92,44 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertTrue(all(row.status == "runner_target_unknown" for row in rows))
         self.assertEqual(3, audit.summarize(rows, max_minutes=30)["by_status"]["runner_target_unknown"])
 
+    def test_oversized_workflow_denied_before_processing_live_and_git_ref(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wfdir = root / ".github" / "workflows"
+            wfdir.mkdir(parents=True)
+            file = wfdir / "oversized.yml"
+            file.write_text(
+                "jobs:\n  x:\n    runs-on: self-hosted\n" + " " * (audit.MAX_WORKFLOW_FILE_BYTES + 1),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "size exceeds limit"):
+                audit.scan_repository(root, max_minutes=30)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for key, value in (("user.email", "audit@example.invalid"), ("user.name", "Audit Test")):
+                subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+            subprocess.run(["git", "-C", str(root), "add", ".github"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "oversized workflow"], check=True)
+            sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            with self.assertRaisesRegex(RuntimeError, "size exceeds limit"):
+                audit.scan_git_ref(root, sha, max_minutes=30)
+
+    def test_workflow_file_count_is_bounded(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wfdir = root / ".github" / "workflows"
+            wfdir.mkdir(parents=True)
+            for name in ("one.yml", "two.yml"):
+                (wfdir / name).write_text(
+                    "jobs:\n  hosted:\n    runs-on: ubuntu-latest\n", encoding="utf-8"
+                )
+            with patch.object(audit, "MAX_WORKFLOW_FILES", 1):
+                with self.assertRaisesRegex(RuntimeError, "file count exceeds limit"):
+                    audit.scan_repository(root, max_minutes=30)
+
     def test_git_and_workspace_symlink_ancestors_fail_closed(self):
         for alias in ("github", "workflows"):
             with self.subTest(alias=alias), tempfile.TemporaryDirectory() as tmp:
