@@ -30,6 +30,22 @@ class RegressionNode24RestackTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", self.workflow)
         self.assertIn("clean: true", self.workflow)
 
+    def test_exact_checkout_is_verified_before_any_repository_test(self):
+        text = self.workflow
+        gate = "Verify exact immutable revision before executing repository code"
+        self.assertIn(gate, text)
+        self.assertEqual(text.count(gate), 1)
+        self.assertIn("EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", text)
+        self.assertIn("EXPECTED_REPOSITORY: ${{ github.repository }}", text)
+        self.assertIn('test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"', text)
+        self.assertIn('[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]', text)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', text)
+        self.assertIn("set -euo pipefail", text)
+        self.assertLess(text.index(gate), text.index("Run critical zCloud smoke suite"))
+        # No repo-controlled code may run between checkout and identity verification.
+        window = text[text.index("actions/setup-node@"):text.index(gate)]
+        self.assertNotIn("run: ", window)
+
     def test_only_readonly_hosted_source_checks(self):
         self.assertIn("permissions:\n  contents: read\n", self.workflow)
         self.assertIn("runs-on: ubuntu-latest", self.workflow)
