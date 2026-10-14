@@ -143,6 +143,34 @@ class ReviewQueueTests(unittest.TestCase):
             self.assertFalse(json.loads(r.stdout)['release_authorized'])
             self.assertNotIn('Traceback', r.stdout + r.stderr)
 
+    def test_markdown_never_authorizes_release(self):
+        d = payload(); d['gates'] = dict.fromkeys(d['gates'], 'closed')
+        report = mod.markdown(mod.snapshot(d))
+        self.assertIn('Geen toestemming', report)
+        self.assertIn('PR #12', report)
+        self.assertNotIn('scripts/a.py', report)
+        self.assertNotIn('vrijgegeven', report)
+
+    def test_markdown_bounded(self):
+        d = payload()
+        # 34 disjoint PRs; only 30 are ever shown by the renderer.
+        d['prs'] = []
+        for i in range(1, 35):
+            p = copy.deepcopy(payload()['prs'][0]); p['number'] = i; p['files'] = [f'changes/{i}.py']
+            d['prs'].append(p)
+        output = mod.markdown(mod.snapshot(d))
+        self.assertIn('Nog 4 PR', output)
+        self.assertNotIn('PR #34:', output)
+
+    def test_cli_markdown(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = pathlib.Path(t) / 'input.json'
+            path.write_text(json.dumps(payload()))
+            r = subprocess.run([sys.executable, str(SCRIPT), str(path), '--format', 'markdown'], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0)
+            self.assertIn('Geen toestemming', r.stdout)
+            self.assertNotIn('scripts/a.py', r.stdout)
+
     def test_cli_valid(self):
         with tempfile.TemporaryDirectory() as t:
             path = pathlib.Path(t) / 'input.json'
