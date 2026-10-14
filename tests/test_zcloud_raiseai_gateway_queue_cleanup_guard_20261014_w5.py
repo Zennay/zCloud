@@ -155,7 +155,7 @@ class RaiseAiGatewayCleanupGuardTests(unittest.TestCase):
             {"ZCLOUD_EXPECTED_SHA": "bad"},
             {"REMOTE_ZCLOUD_MAIN": "e" * 40},
             {"GIT_REMOTE_MAIN": "e" * 40},
-            {"REMOTE_RAISE_MAIN": "f" * 40},
+            {"REMOTE_RAISE_MAIN": STALE_SHA},
         ]
         for patch in failures:
             with self.subTest(patch=patch):
