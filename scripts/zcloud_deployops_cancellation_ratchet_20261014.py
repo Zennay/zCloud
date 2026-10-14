@@ -95,6 +95,10 @@ def risks(text, *, details=False):
     # source scanner must deny those layouts rather than miss enabled cancels.
     if re.search(r"(?m)^[ \t]*(?:concurrency|cancel-in-progress)[ \t]+:", text):
         raise Unverifiable("policy_key_whitespace")
+    # Explicit YAML complex mapping keys can express the same policy names
+    # without the expected trailing colon on the key line. Never skip them.
+    if re.search(r"(?m)^[ \t]*\?[ \t]+(?:concurrency|cancel-in-progress)(?:[ \t]*(?:#.*)?)?$", text):
+        raise Unverifiable("yaml_explicit_policy_key")
     # Nonstandard valid YAML indentation or quoted policy keys are DENY, not PASS.
     if re.search(r"(?m)^[ \t]*[\x27\x22](?:concurrency|cancel-in-progress)[\x27\x22]\s*:", text):
         raise Unverifiable("quoted_key")
