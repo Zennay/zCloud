@@ -192,6 +192,34 @@ def static_concurrency_groups(text):
     return groups
 
 
+def has_ambiguous_group(text):
+    """Unknown concurrency groups are exposures even beside literal groups.
+
+    Mixed job/global mappings can contain one static group AND another dynamic
+    one. Set-based literal indexing alone would miss the second possibility.
+    """
+    for match in re.finditer(
+        r"(?m)^(?P<indent>|    )concurrency:[ \t]*(?P<value>[^\r\n#]*)$", text
+    ):
+        indent = match.group("indent")
+        value = match.group("value").strip()
+        if value:
+            if not value.startswith("{"):
+                return True
+            found = re.search(r"(?:^|[{,])\s*group:\s*([^,}]+)\s*[,}]", value)
+            if not found or _literal_group(found.group(1)) is None:
+                return True
+            continue
+        tail = text[match.end():]
+        next_peer = re.search(r"(?m)^" + re.escape(indent) + r"[^ \r\n#]", tail)
+        region = tail[:next_peer.start()] if next_peer else tail
+        vals = re.findall(r"(?m)^" + re.escape(indent) +
+                          r"  group:[ \t]*([^\r\n#]*)$", region)
+        if len(vals) != 1 or _literal_group(vals[0]) is None:
+            return True
+    return False
+
+
 def build_vps_group_index(root, base, head):
     """Scan each immutable Git revision once, not once per changed workflow."""
     owners = {}
@@ -218,9 +246,7 @@ def build_vps_group_index(root, base, head):
                 # A previous VPS-capable workflow can select a runtime group
                 # dynamically. Absence of a provable literal group is *not*
                 # proof that it cannot match the new hosted cancellation group.
-                if not groups and re.search(
-                    r"(?m)^(?:concurrency:|    concurrency:)", other
-                ):
+                if has_ambiguous_group(other):
                     owners.setdefault(None, set()).add(path)
     return owners
 
@@ -254,7 +280,7 @@ def evaluate(root, base, head):
         collision = False
         if not now and not prior_vps and now_cancels:
             groups = static_concurrency_groups(after)
-            if not groups:
+            if not groups or has_ambiguous_group(after):
                 # Dynamic/unknown group identity cannot prove isolation from
                 # an independent, possibly running VPS workflow.
                 collision = True
