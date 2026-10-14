@@ -1,16 +1,52 @@
 name: zCloud read-only live tab version probe
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-live-tab-version-probe.yml
+      - tests/test_zcloud_live_tab_probe_trust.py
   push:
     branches: [main]
     paths:
       - .github/workflows/zcloud-live-tab-version-probe.yml
   workflow_dispatch:
+
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-live-tab-version-probe-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  hosted-policy-regression:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read exact PR revision without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Check exact PR revision and run trust regressions
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_live_tab_probe_trust
+
   inspect:
+    # A PR may only execute the hosted source checks above. Never grant an
+    # unreviewed revision access to Firefox or the permanent self-hosted runner.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && github.actor == 'Zennay'))
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
     steps:
@@ -18,7 +54,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "${GITHUB_REPOSITORY:-}" = "Zennay/zCloud"
+          test "${GITHUB_REF:-}" = "refs/heads/main"
+          test "${RUNNER_OS:-}" = "Linux"
+          test "$(id -un)" = "ubuntu"
           test "$(hostname)" = "vps-bb300bba"
+          # Step-level defense in depth if a job-level condition is refactored.
+          case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}" in
+            push:*) ;;
+            workflow_dispatch:Zennay) ;;
+            *) echo "Untrusted tab probe invocation refused" >&2; exit 1 ;;
+          esac
           python3 - <<'PY'
           import json, os, re, socket, subprocess, time
           from pathlib import Path
@@ -75,39 +121,56 @@ jobs:
                   # which don't include consoleActor until getTarget().
                   # This is a read-only actor discovery; no tab is navigated,
                   # reloaded, selected, closed, or paused.
-                  if chat:
-                      send(sock,{"to":chat[0]["actor"],"type":"getTarget"})
-                      target_form=None
-                      deadline=time.monotonic()+4
-                      while time.monotonic()<deadline:
-                          resp=msg(sock,4)
-                          if resp.get("from")!=chat[0]["actor"]:continue
-                          print("RDP_TARGET_RESPONSE_FIELDS="+json.dumps(sorted(resp.keys())))
-                          target_form=resp.get("target") or resp.get("form") or resp.get("frame") or {}
-                          if isinstance(target_form,dict):
-                              print("RDP_TARGET_FORM_FIELDS="+json.dumps(sorted(target_form.keys())))
-                              if target_form.get("consoleActor"):
-                                  chat[0]["consoleActor"]=target_form["consoleActor"]
-                          break
-                  for tab in chat[:20]:
-                      actor=tab.get("consoleActor")
-                      if not actor:continue
-                      send(sock,{"to":actor,"type":"evaluateJS",
-                         "text":"document.documentElement?.getAttribute('data-zcloud-violentmonkey-ready') || ''"})
-                      deadline=time.monotonic()+3
-                      while time.monotonic()<deadline:
-                          response=msg(sock,3)
-                          if response.get("from")!=actor:continue
+                  # Firefox exposes TabDescriptor actors; obtaining the
+                  # console actor for only chat[0] silently hides stale
+                  # userscripts in other tabs. Query each bounded tab instead.
+                  def matching_reply(sock, expected_actor, budget=2.0):
+                      deadline=time.monotonic()+budget
+                      for _ in range(16):
+                          remaining=deadline-time.monotonic()
+                          if remaining<=0:break
+                          try:
+                              response=msg(sock,remaining)
+                          except TimeoutError:
+                              return {}
+                          if isinstance(response,dict) and response.get("from")==expected_actor:
+                              return response
+                      return {}
+                  sampled=chat[:20]
+                  for tab in sampled:
+                      tab_actor=tab.get("actor")
+                      if not isinstance(tab_actor,str) or not tab_actor:
+                          continue
+                      try:
+                          console_actor=tab.get("consoleActor")
+                          if not console_actor:
+                              send(sock,{"to":tab_actor,"type":"getTarget"})
+                              target_reply=matching_reply(sock,tab_actor)
+                              target_form=(target_reply.get("target") or
+                                           target_reply.get("form") or
+                                           target_reply.get("frame") or {})
+                              if isinstance(target_form,dict):
+                                  console_actor=target_form.get("consoleActor")
+                          if not isinstance(console_actor,str) or not console_actor:
+                              continue
+                          send(sock,{"to":console_actor,"type":"evaluateJS",
+                             "text":"document.documentElement?.getAttribute('data-zcloud-violentmonkey-ready') || ''"})
+                          response=matching_reply(sock,console_actor)
+                          if not response:
+                              continue
                           value=response.get("result")
                           if isinstance(value,dict):value=value.get("value","")
-                          text=str(value or "")
-                          if re.fullmatch(r"1\.3\.\d{1,3}",text):
-                              versions.append(text)
-                          else:versions.append("unknown")
-                          break
+                          version=str(value or "")
+                          versions.append(version if re.fullmatch(r"1\\.3\\.\\d{1,3}",version) else "unknown")
+                      except (OSError,ValueError,TimeoutError,EOFError):
+                          # A failed per-tab observation is unknown, never a
+                          # reason to call the entire browser healthy.
+                          continue
+                  print("RDP_TABS_SAMPLED="+str(len(sampled)))
+                  print("RDP_SAMPLE_COMPLETE="+str(len(chat)<=20 and len(versions)==len(chat)).lower())
                   print("RDP_VERSION_PROBES="+str(len(versions)))
                   print("RDP_SCRIPT_VERSIONS="+json.dumps(sorted(set(versions))))
-                  print("RDP_IS_TARGET_SCRIPT_LIVE="+str(bool(versions) and set(versions)=={"1.3.18"}).lower())
+                  print("RDP_IS_TARGET_SCRIPT_LIVE="+str(bool(chat) and len(chat)<=20 and len(versions)==len(chat) and set(versions)=={"1.3.18"}).lower())
           except (OSError,ValueError,TimeoutError,EOFError) as exc:
               print("RDP_SAFE_PROBE_UNAVAILABLE="+type(exc).__name__)
           PY
