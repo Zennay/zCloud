@@ -6,34 +6,43 @@ on:
     paths:
       - ".github/workflows/zssh-cloudflare-capability-probe.yml"
       - ".github/zssh-cloudflare-capability-trigger"
+      - "scripts/zssh_cloudflare_capability_probe.py"
+      - "tests/test_zssh_cloudflare_capability_probe.py"
+      - "tests/test_zssh_cloudflare_capability_probe_workflow.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zssh-cloudflare-capability-probe
-  cancel-in-progress: true
+  group: zssh-cloudflare-capability-probe-live
+  cancel-in-progress: false
 
 jobs:
   probe:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
     name: Probe persistent VPS Cloudflare auth for zSSH
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - name: Check out zCloud control plane
+      - name: Check out exact zCloud control plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           persist-credentials: false
+          fetch-depth: 1
 
-      - name: Enforce permanent VPS runner identity
+      - name: Enforce permanent VPS runner identity and exact revision
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 scripts/zcloud_vps_runner_guard.py --json \
-            | tee "$RUNNER_TEMP/zssh-cloudflare-runner-guard.json"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json \
+            | tee "$RUNNER_TEMP/zssh-cloudflare-runner-guard.json"
 
       - name: Probe persistent Cloudflare authorization without mutation
         id: capability
