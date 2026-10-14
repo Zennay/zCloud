@@ -851,6 +851,31 @@ class WorkflowSourceTest(unittest.TestCase):
                        "id-token: write", "pull-requests: write"):
             self.assertNotIn(denied, self.source)
 
+    def test_the_guard_workflow_has_zero_possible_vps_jobs(self):
+        # The source-only guard cannot use a dynamic/reusable runner even if a
+        # future edit uses a non-obvious spelling the substring tests miss.
+        findings, possible_vps, effective_cancel = scanner.risks(
+            self.source, details=True
+        )
+        self.assertEqual([], findings)
+        self.assertFalse(possible_vps)
+        self.assertFalse(effective_cancel)
+
+    def test_guards_against_runner_label_masquerading_as_hosted(self):
+        altered = self.source.replace(
+            "runs-on: ubuntu-latest", "runs-on: ubuntu-private-vps"
+        )
+        _, possible_vps, _ = scanner.risks(altered, details=True)
+        self.assertTrue(possible_vps)
+
+    def test_guards_against_hidden_reusable_workflow_delegate(self):
+        altered = self.source.replace(
+            "    runs-on: ubuntu-latest",
+            "    uses: ./reusable-vps-workflow.yml"
+        )
+        _, possible_vps, _ = scanner.risks(altered, details=True)
+        self.assertTrue(possible_vps)
+
     def test_checkout_exact_commit_and_credentials_not_persisted(self):
         self.assertIn("github.event.pull_request.head.sha || github.sha",
                       self.source)
