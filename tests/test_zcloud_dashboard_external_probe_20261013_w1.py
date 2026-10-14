@@ -299,6 +299,41 @@ class DashboardProbeTests(unittest.TestCase):
         self.assertIn("HTTP-antwoord heeft cacheleeftijd: 2", text)
         self.assertNotIn(probe.STATUS_URL, text)
 
+    def test_http_cache_status_hit_is_a_non_authorizing_failure(self):
+        for value in ("zcloud; hit", "CacheOne; fwd=stale, CDN; HIT",
+                      "cdn; hit; ttl=15", "cdn;hit"):
+            with self.subTest(value=value):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                response.read = mock.Mock(side_effect=AssertionError("do not read cached body"))
+                self.assertEqual(probe.probe_once(Opener(response)), "cache_evidence")
+                response.read.assert_not_called()
+        for value in ("cdn; fwd=uri-miss", "cdn; fwd=miss",
+                      'cdn; detail="hit"', "cdn"):
+            with self.subTest(miss=value):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                self.assertEqual(probe.probe_once(Opener(response)), "healthy")
+
+    def test_http_cache_status_malformed_or_duplicate_denied(self):
+        for value in ("", "cdn; " + "x" * 513, "cdn; hit\\n",
+                      "cdn; hit\\x00", "cdn; hït"):
+            with self.subTest(value=repr(value)):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                response.read = mock.Mock(side_effect=AssertionError("must not read"))
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+                response.read.assert_not_called()
+        headers = Message()
+        headers.add_header("Content-Type", "application/json")
+        headers.add_header("Cache-Status", "cdn; fwd=miss")
+        headers.add_header("Cache-Status", "cdn; hit")
+        response = Response()
+        response.headers = headers
+        response.read = mock.Mock(side_effect=AssertionError("must not read"))
+        self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+        response.read.assert_not_called()
+
     def test_declared_oversize_rejected_without_reading_body(self):
         response = Response()
         response.headers["Content-Length"] = str(probe.MAX_BYTES + 1)
@@ -660,6 +695,17 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
 
     def test_actual_http_duplicate_age_is_denied(self):
         self._run("invalid_headers", extra_headers=(("Age", "0"), ("Age", "1")))
+
+    def test_actual_http_explicit_cache_hit_is_denied(self):
+        self._run("cache_evidence",
+                  extra_headers=(("Cache-Status", "CDN; hit; ttl=30"),))
+        self._run("healthy",
+                  extra_headers=(("Cache-Status", "CDN; fwd=uri-miss"),))
+
+    def test_actual_http_duplicate_cache_status_is_denied(self):
+        self._run("invalid_headers",
+                  extra_headers=(("Cache-Status", "CDN; fwd=miss"),
+                                 ("Cache-Status", "CDN; hit")))
 
     def test_actual_http_claims_impossible_large_length(self):
         self._run("body_too_large", declared_length=probe.MAX_BYTES + 1)
