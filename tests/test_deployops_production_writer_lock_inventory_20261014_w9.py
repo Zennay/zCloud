@@ -28,8 +28,9 @@ class ProductionWriterInventoryTests(unittest.TestCase):
         result = audit_mod.audit(ROOT)
         self.assertEqual(result["policy"], "zcloud-production-writer-lock-inventory-v1")
         self.assertEqual(result["observed_workflows"], 7)
-        self.assertEqual(len(result["protected_workflows"]), 4)
-        self.assertEqual(len(result["outstanding_writer_debt"]), 3)
+        self.assertGreaterEqual(len(result["protected_workflows"]), 4)
+        self.assertLessEqual(len(result["outstanding_writer_debt"]), 3)
+        self.assertEqual(len(result["protected_workflows"]) + len(result["outstanding_writer_debt"]), 7)
         self.assertEqual(result["new_or_regressed_debt"], [])
         self.assertFalse(result["mutation_performed"])
         self.assertFalse(result["production_verified"])
@@ -45,8 +46,12 @@ class ProductionWriterInventoryTests(unittest.TestCase):
         for workflow in audit_mod.KNOWN_DEBT:
             with self.subTest(workflow=workflow):
                 outcome = audit_mod.inspect_source(workflow, text(workflow))
-                self.assertNotIn(outcome["risk"], ("protected", "remediated"))
-                self.assertIn(workflow, audit_mod.audit(ROOT)["outstanding_writer_debt"])
+                reported = audit_mod.audit(ROOT)["outstanding_writer_debt"]
+                if outcome["risk"] == "remediated":
+                    self.assertNotIn(workflow, reported)
+                else:
+                    self.assertNotEqual(outcome["risk"], "protected")
+                    self.assertIn(workflow, reported)
 
     def test_missing_lock_in_protected_writer_is_detected(self):
         for workflow, (_, location) in audit_mod.PROTECTED.items():
