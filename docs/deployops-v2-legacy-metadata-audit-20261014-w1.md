@@ -21,3 +21,10 @@ The script has 5-second command deadlines, bounded input (64 KiB/4,000 rows per 
 - Test the hosted-only contract, raw-output redaction and adversarial input cases (malformed process row, duplicate unit, ambiguous version/manifest, timeout, symlink, oversize, invalid UTF-8).
 - Use the hosted full Python/Node/shell regression as **source proof only**; the branch **does not** authorize a VPS job, SQLite mutation, Firefox state changes, runner restart, queue cancellation or deploy.
 - No new privileged auto-trigger, token permission or self-hosted regression has been added. Production release evidence must be collected separately by its exclusive owner.
+
+
+## Bounded evidence quality
+
+The local `ps` and `systemctl` commands now stream stdout into a **hard 64 KiB maximum** with **five seconds per command**, instead of capturing unbounded memory and checking size afterwards. Timeout, non-zero exit, invalid UTF-8, duplicate or malformed rows and oversize output give incomplete evidence. Each regular source file is opened with `O_NOFOLLOW` and checked with descriptor `fstat` before/after the read, rejecting swaps, symlinks and concurrent edits.
+
+The JSON contains `observation_complete` for the four command components, and `inventory_complete` for all six components including script version and extension manifest. `missing_components` is a sorted fixed-name allowlist (no raw exceptions or sensitive identities). Neither completion flag implies the runner is healthy, a worker is generating, nor that any production release is authorized.

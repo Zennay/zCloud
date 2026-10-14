@@ -223,9 +223,25 @@ def collect(*, execute=None, source_path=WORKER_SCRIPT, manifest_path=EXTENSION_
     timers = summarize_units(lines["user_timers"], kind="timer")
     version = get_source_version(source_path)
     background = get_background_count(manifest_path)
+    components = {
+        "process": processes,
+        "user_services": user,
+        "system_services": system,
+        "user_timers": timers,
+        "source_version": version,
+        "extension_background_script_count": background,
+    }
+    # Stable enum only: report unavailable component *types*, never paths,
+    # raw exceptions, service names, process identities or credentials.
+    missing = sorted(key for key, value in components.items() if value is None)
     return {
         "policy": "zcloud-v2-legacy-readonly-inventory-v1",
-        "observation_complete": all(value is not None for value in (processes, user, system, timers)),
+        "observation_complete": all(
+            components[key] is not None
+            for key in ("process", "user_services", "system_services", "user_timers")
+        ),
+        "inventory_complete": not missing,
+        "missing_components": missing,
         "firefox_process_count": processes,
         "user_services": user,
         "system_services": system,

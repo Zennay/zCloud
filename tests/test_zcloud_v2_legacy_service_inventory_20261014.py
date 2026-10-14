@@ -41,6 +41,8 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             }
             report = collect(execute=self.fake(rows), source_path=worker, manifest_path=manifest)
         self.assertTrue(report["observation_complete"])
+        self.assertTrue(report["inventory_complete"])
+        self.assertEqual(report["missing_components"], [])
         self.assertEqual(report["firefox_process_count"], 2)
         self.assertEqual(report["user_services"]["matching_units"], 1)
         self.assertEqual(report["system_services"]["failed_units"], 1)
@@ -105,6 +107,29 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
+
+    def test_missing_component_names_are_allowlisted_not_raw_errors(self):
+        marker = "PRIVATE_UNIT_DESCRIPTION_DO_NOT_EXPOSE"
+        with tempfile.TemporaryDirectory() as temp:
+            rows = {
+                "process": "",
+                "user_services": marker,
+                "system_services": "unknown.service loaded active running",
+                "user_timers": "",
+            }
+            report = collect(
+                execute=self.fake(rows),
+                source_path=Path(temp) / "missing-script",
+                manifest_path=Path(temp) / "missing-manifest",
+            )
+        self.assertFalse(report["inventory_complete"])
+        self.assertIn("user_services", report["missing_components"])
+        self.assertNotIn(marker, json.dumps(report))
+        self.assertEqual(sorted(report["missing_components"]), report["missing_components"])
+        self.assertTrue(set(report["missing_components"]).issubset({
+            "process", "user_services", "system_services", "user_timers",
+            "source_version", "extension_background_script_count",
+        }))
 
     def test_real_subprocess_streaming_is_bounded_before_decoding(self):
         ok = (sys.executable, "-c", "print('firefox')")
@@ -183,6 +208,9 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             report = collect(execute=self.fake(rows), source_path=Path(temp) / "missing",
                              manifest_path=Path(temp) / "missing")
         self.assertFalse(report["observation_complete"])
+        self.assertFalse(report["inventory_complete"])
+        self.assertEqual(report["missing_components"],
+                         ["extension_background_script_count", "source_version", "system_services"])
         self.assertIsNone(report["system_services"])
         self.assertIsNone(report["source_version"])
         self.assertFalse(report["production_verified"])
