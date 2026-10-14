@@ -198,6 +198,20 @@ class QueueRouteSummaryTests(unittest.TestCase):
         self.assertIn("Run 111", output)
         self.assertIn("Geen bewijs van productiestatus", output)
 
+    def test_terminal_job_without_runner_does_not_claim_future_assignment(self):
+        # GitHub can return completed/skipped evidence with no runner assigned.
+        # The human output must not imply an active runner-capacity incident.
+        payload = report([record(88, scope="current_main", route="ftmo_research",
+                                 state="completed", assignment="not_assigned")])
+        markdown, status = self.render(payload)
+        self.assertEqual(status, 0)
+        self.assertIn("al afgerond", markdown)
+        self.assertIn("geen runner geregistreerd", markdown)
+        self.assertNotIn("nog geen runner toegewezen", markdown)
+        self.assertIn("**0 wachtende runs zonder runnertoewijzing**", markdown)
+        self.assertNotIn("onderzoek afzonderlijk de FTMO-runnerroute", markdown)
+        self.assertIn("Geen bewijs van productiestatus", markdown)
+
     def test_unknown_job_phase_does_not_print_any_run_link(self):
         data = report([record(state="PRIVATE_UNTRUSTED_STATUS")])
         output, status = self.render(data)
