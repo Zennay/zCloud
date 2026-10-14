@@ -169,7 +169,7 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
     in_env = False
     env_indent = 0
     for line in step.splitlines():
-        header = re.match(r"""^([ ]+)['"]?env['"]?[ \t]*:[ \t]*$""", line)
+        header = re.match(r"""^([ ]+)(?:-\s+)?['"]?env['"]?[ \t]*:[ \t]*$""", line)
         if header:
             in_env = True
             env_indent = len(header.group(1))
@@ -196,7 +196,7 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
         )
         expression_expansion = re.search(
             r"""\benv(?:\s*\.\s*""" + re.escape(name)
-            + r"""|\s*\[\s*['"]""" + re.escape(name) + r"""['"]\s*\])\b""",
+            + r"""|\s*\[\s*['"]""" + re.escape(name) + r"""['"]\s*\])(?=\W|$)""",
             command_source,
         )
         if shell_expansion or expression_expansion:
