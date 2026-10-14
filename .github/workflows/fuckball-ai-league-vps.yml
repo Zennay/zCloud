@@ -1,12 +1,11 @@
 name: Fuckball autonomous AI league on VPS
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/fuckball-ai-league-vps.yml'
-  schedule:
-    - cron: '41 */6 * * *'
+    inputs:
+      confirm_sha:
+        description: Confirm the exact zCloud main commit SHA before VPS changes
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -17,6 +16,13 @@ concurrency:
 
 jobs:
   provision:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 30
     steps:
@@ -26,8 +32,13 @@ jobs:
           node-version: '22'
       - name: Install or recover isolated training service without touching the game
         shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          [[ "$CONFIRMED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
           export PATH="$PATH:/usr/local/bin"
           app=/opt/fuckball-ai-league
           data=/opt/fuckball-league-training
