@@ -111,6 +111,11 @@ def risk_set(source: str) -> set[str]:
     if not PR_TARGET.search(event_region):
         return set()
     risk = set()
+    # PR-target events may inherit a write-scoped GITHUB_TOKEN unless the
+    # workflow explicitly narrows root permissions. Deny newly omitted roots,
+    # even if every step looks read-only in this syntax-only scan.
+    if not re.search(r"(?m)^permissions:[ \t]*", clean):
+        risk.add("missing_explicit_root_permissions")
     # Merge aliases or YAML anchors can obscure the effective trigger and
     # permissions. Do not allow a changed PR-target job to use them.
     if re.search(r"(?m)^\s*<<\s*:|\s[&*][A-Za-z][\w-]*", clean):
