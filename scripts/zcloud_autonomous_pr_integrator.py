@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from math import isfinite
 import os
 import re
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO = "Zennay/zCloud"
 LABEL = "zcloud-automerge-ready"
@@ -38,6 +39,7 @@ PROTECTED_INTEGRATION_FILES = frozenset((
     "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
     "tests/test_deployops_automerge_file_count_cpu_20261014_w15.py",
     "tests/test_deployops_automerge_import_shadow_20261014_w16.py",
+    "tests/test_deployops_automerge_api_transport_20261014_w17.py",
 ))
 # These Python module-loading entrypoints are reachable from the trusted
 # GitHub-hosted unittest preflight, even when the integrator engine itself is
@@ -234,6 +236,47 @@ def decide(pr, files, checks, statuses, main_sha):
     return "eligible"
 
 
+
+class NoGitHubRedirect(HTTPRedirectHandler):
+    """Never forward the owner write-capable token outside the exact API URL."""
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        raise Refused("github_api_redirect_denied")
+
+
+def strict_github_json(raw):
+    """Fail closed on ambiguous, oversized, non-standard GitHub evidence."""
+    if not isinstance(raw, bytes) or len(raw) > 1024 * 1024:
+        raise Refused("github_api_response_oversize")
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise Refused("github_api_duplicate_key")
+            value[key] = item
+        return value
+
+    def finite_float(text):
+        value = float(text)
+        if not isfinite(value):
+            raise Refused("github_api_nonfinite_number")
+        return value
+
+    try:
+        parsed = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(
+                Refused("github_api_nonfinite_number")),
+            parse_float=finite_float
+        )
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise Refused("github_api_malformed_json") from exc
+    if type(parsed) not in (dict, list):
+        raise Refused("github_api_invalid_shape")
+    return parsed
+
+
 def api(token, method, path, data=None):
     url = "https://api.github.com/repos/" + REPO + path
     headers = {"Accept": "application/vnd.github+json",
@@ -243,12 +286,12 @@ def api(token, method, path, data=None):
     payload = json.dumps(data, separators=(",", ":")).encode() if data is not None else None
     req = Request(url, data=payload, headers=headers, method=method)
     try:
-        with urlopen(req, timeout=15) as response:
-            body = response.read(1024 * 1024 + 1)
-            if len(body) > 1024 * 1024:
-                raise Refused("api_response_oversize")
-            return json.loads(body)
-    except (HTTPError, URLError, TimeoutError, ValueError) as exc:
+        with build_opener(NoGitHubRedirect()).open(req, timeout=15) as response:
+            if (response.geturl() != url or
+                    response.headers.get_content_type() != "application/json"):
+                raise Refused("github_api_untrusted_response")
+            return strict_github_json(response.read(1024 * 1024 + 1))
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise Refused("github_api_request_failed") from exc
 
 
