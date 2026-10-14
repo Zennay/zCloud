@@ -167,7 +167,10 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
     # scanner (e.g. EXACT_HEAD for git fetch). Require an actual dynamic shell
     # execution sink before classifying step-local environment forwarding.
     if not re.search(
-        r"(?i)\b(?:eval|exec|source)\b|\b(?:bash|sh|zsh|python[0-9.]*)\s+-c\b",
+        r"(?i)\b(?:eval|exec|source)\b"
+        r"|\b(?:bash|sh|zsh)\s+-[a-z]*c[a-z]*\b"
+        r"|\bpython[0-9.]*\s+-c\b|\bnode\s+-(?:e|p)\b"
+        r"|(?:^|[\s;&|])\.[ \t]+(?=[\"'\$])",
         command_source,
     ):
         return references
