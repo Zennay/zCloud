@@ -28,6 +28,7 @@ def _try_owner_admission(**overrides):
         GITHUB_REF="refs/heads/main",
         GITHUB_ACTOR="Zennay",
         GITHUB_TRIGGERING_ACTOR="Zennay",
+        GITHUB_RUN_ATTEMPT="1",
         GITHUB_SHA="0123456789abcdef0123456789abcdef01234567",
         CONFIRM_SHA="0123456789abcdef0123456789abcdef01234567",
         APPLY="true",
@@ -71,6 +72,9 @@ class NoBrowserChurnManualGateTests(unittest.TestCase):
     def test_strict_sha_shape_and_owner_rerun_denial(self):
         self.assertEqual(0, _try_owner_admission())
         self.assertNotEqual(0, _try_owner_admission(GITHUB_TRIGGERING_ACTOR="attacker"))
+        for attempt in ("", "2", "0", "01", "three"):
+            with self.subTest(attempt=attempt):
+                self.assertNotEqual(0, _try_owner_admission(GITHUB_RUN_ATTEMPT=attempt))
         for sha in ("A" * 40, "f" * 39, "z" * 40, "0123456789abcdef0123456789abcdef0123456\\n"):
             with self.subTest(sha=sha):
                 self.assertNotEqual(0, _try_owner_admission(CONFIRM_SHA=sha))
@@ -80,6 +84,7 @@ class NoBrowserChurnManualGateTests(unittest.TestCase):
         preflight, install = workflow.split("- name: Install only the validated non-restarting watchdog", 1)
         for needle in (
             'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
             '[[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]',
             'test "$(git rev-parse HEAD)" = "$CONFIRM_SHA"',
             "timeout 15 git ls-remote --exit-code origin refs/heads/main",
@@ -99,6 +104,7 @@ class NoBrowserChurnManualGateTests(unittest.TestCase):
         self.assertNotIn("||", job_gate)
         self.assertIn("inputs.apply == true", job_gate)
         self.assertIn("inputs.confirm_sha == github.sha", job_gate)
+        self.assertIn("github.run_attempt == 1", job_gate)
         self.assertIn("cancel-in-progress: false", SOURCE)
 
     def test_no_automatic_main_push_install_entrypoint(self):
@@ -126,6 +132,22 @@ class NoBrowserChurnManualGateTests(unittest.TestCase):
         self.assertIn('test "$(git rev-parse HEAD)" = "$CONFIRM_SHA"', SOURCE)
         self.assertIn("runs-on: ubuntu-latest", SOURCE)
         self.assertNotIn("actions: write", SOURCE)
+
+    def test_fresh_remote_main_check_immediately_precedes_first_write(self):
+        install = SOURCE.split("      - name: Install only the validated non-restarting watchdog", 1)[1]
+        prewrite = install.split('          backup="$HOME/', 1)[0]
+        self.assertIn('prewrite_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk \'{print $1}\')"', prewrite)
+        self.assertIn('test -n "$prewrite_main"', prewrite)
+        self.assertIn('test "$prewrite_main" = "$GITHUB_SHA"', prewrite)
+        self.assertLess(install.index('test "$prewrite_main" = "$GITHUB_SHA"'), install.index('backup="$HOME/'))
+
+    def test_second_fresh_main_check_directly_before_root_install(self):
+        install = SOURCE.split("      - name: Install only the validated non-restarting watchdog", 1)[1]
+        self.assertIn('final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk \'{print $1}\')"', install)
+        self.assertIn('test -n "$final_main"', install)
+        self.assertIn('test "$final_main" = "$GITHUB_SHA"', install)
+        self.assertLess(install.index('test "$final_main" = "$GITHUB_SHA"'), install.index('sudo -n install'))
+        self.assertNotIn("|| true", install.split('final_main="$(timeout 15 ', 1)[1].split("sudo -n install", 1)[0])
 
     def test_guard_precedes_any_sudo_or_runtime_install(self):
         self.assertLess(SOURCE.index("test \"$CONFIRM_SHA\" = \"$GITHUB_SHA\""), SOURCE.index("sudo -n install"))
