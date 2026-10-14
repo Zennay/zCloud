@@ -6,17 +6,24 @@ on:
     paths:
       - .github/workflows/zcloud-live-tab-version-probe.yml
       - tests/test_zcloud_live_tab_probe_trust.py
+      - tests/test_zcloud_live_tab_manual_privacy_20261014.py
   push:
     branches: [main]
     paths:
       - .github/workflows/zcloud-live-tab-version-probe.yml
       - tests/test_zcloud_live_tab_probe_trust.py
+      - tests/test_zcloud_live_tab_manual_privacy_20261014.py
   workflow_dispatch:
     inputs:
       confirm_sha:
         description: "Explicit exact current main SHA for read-only browser debugger inspection"
         required: true
         type: string
+      approve_readonly_probe:
+        description: "Explicitly approve safe read-only Firefox debugger inspection"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -43,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          python3 -m unittest -v tests.test_zcloud_live_tab_probe_trust
+          python3 -m unittest -v tests.test_zcloud_live_tab_probe_trust tests.test_zcloud_live_tab_manual_privacy_20261014
 
   inspect:
     # A PR may only execute the hosted source checks above. Never grant an
@@ -55,6 +62,7 @@ jobs:
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
       github.run_attempt == 1 &&
+      inputs.approve_readonly_probe == true &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
@@ -70,12 +78,14 @@ jobs:
         shell: bash
         env:
           CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_READONLY: ${{ inputs.approve_readonly_probe }}
         run: |
           set -euo pipefail
           test "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch"
           test "${GITHUB_ACTOR:-}" = "Zennay"
           test "${GITHUB_TRIGGERING_ACTOR:-}" = "Zennay"
           test "${GITHUB_RUN_ATTEMPT:-}" = "1"
+          test "$APPROVE_READONLY" = "true"
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -115,10 +125,15 @@ jobs:
               if "-start-debugger-server" not in line or "/firefox" not in line:continue
               found=re.search(r"-start-debugger-server\s+(\d+)",line)
               if found:matches.append((line.strip().split()[0],int(found.group(1))))
-          print("FIREFOX_DEBUGGER_PROCESS_COUNT="+str(len(matches)))
-          if not matches:raise SystemExit(0)
+          print("FIREFOX_DEBUGGER_UNIQUE="+str(len(matches)==1).lower())
+          if not matches:
+              print("RDP_AVAILABLE=false")
+              raise SystemExit(0)
+          if len(matches)!=1 or len({entry[1] for entry in matches})!=1:
+              print("RDP_SAFE_PROBE_UNAVAILABLE=ambiguous_debugger")
+              raise SystemExit(0)
           pid,port=matches[0]
-          print("FIREFOX_MAIN_PID="+pid)
+          # No host process identifiers in public Actions logs.
           def msg(sock,timeout=8):
               sock.settimeout(timeout)
               prefix=bytearray()
@@ -140,19 +155,19 @@ jobs:
               data=json.dumps(payload,separators=(",",":")).encode()
               sock.sendall(str(len(data)).encode()+b":"+data)
           try:
+              if not 1 <= port <= 65535:
+                  raise ValueError("invalid local debugger port")
               with socket.create_connection(("127.0.0.1",port),timeout=4) as sock:
                   hello=msg(sock)
                   send(sock,{"to":str(hello.get("from") or "root"),"type":"listTabs"})
                   listing=msg(sock)
                   if "tabs" not in listing:
                       print("RDP_LIST_TABS_UNAVAILABLE=1")
-                      print("RDP_RESPONSE_KIND="+str(listing.get("error") or listing.get("type") or "unknown")[:50])
+                      print("RDP_RESPONSE_DETAIL_REDACTED=1")
                       raise SystemExit(0)
                   tabs=[tab for tab in listing.get("tabs",[]) if isinstance(tab,dict)]
                   chat=[tab for tab in tabs if str(tab.get("url","")).startswith("https://chatgpt.com/")]
-                  print("RDP_ROOT_FIELD_NAMES="+json.dumps(sorted(listing.keys())))
-                  if chat:
-                      print("RDP_TAB_FIELD_NAMES="+json.dumps(sorted(chat[0].keys())))
+                  # RDP field names and tab descriptor details remain private.
                   print("RDP_TAB_COUNT="+str(len(tabs)))
                   print("RDP_CHATGPT_TABS="+str(len(chat)))
                   versions=[]
@@ -208,7 +223,8 @@ jobs:
                   print("RDP_TABS_SAMPLED="+str(len(sampled)))
                   print("RDP_SAMPLE_COMPLETE="+str(len(chat)<=20 and len(versions)==len(chat)).lower())
                   print("RDP_VERSION_PROBES="+str(len(versions)))
-                  print("RDP_SCRIPT_VERSIONS="+json.dumps(sorted(set(versions))))
+                  print("RDP_MATCHED_EXPECTED_COUNT="+str(sum(v==expected_version for v in versions)))
+                  print("RDP_NONMATCHING_OR_UNKNOWN_COUNT="+str(len(versions)-sum(v==expected_version for v in versions)))
                   print("RDP_IS_TARGET_SCRIPT_LIVE="+str(bool(chat) and len(chat)<=20 and len(versions)==len(chat) and set(versions)=={expected_version}).lower())
           except (OSError,ValueError,TimeoutError,EOFError) as exc:
               print("RDP_SAFE_PROBE_UNAVAILABLE="+type(exc).__name__)
