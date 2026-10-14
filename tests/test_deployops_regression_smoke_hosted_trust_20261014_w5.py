@@ -116,7 +116,14 @@ class HostedRegressionSmokeTrustTests(unittest.TestCase):
     def test_each_pr_push_and_manual_provenance_check_matters(self):
         for fragment in CONDITIONS:
             with self.subTest(fragment=fragment):
-                variant = self.source.replace(fragment, "false", 1)
+                # The PR-only concurrency predicate can share event text
+                # with the job guard. Mutate the privileged admission guard
+                # specifically, never the independent cancellation gate.
+                before, critical = self.source.split("\\n  critical-runner-flows:\\n", 1)
+                self.assertIn(fragment, critical)
+                variant = before + "\\n  critical-runner-flows:\\n" + critical.replace(
+                    fragment, "false", 1
+                )
                 self.assertIn("event:" + fragment, failures(variant))
 
     def test_fork_pr_fails_an_unskipped_hosted_admission_job(self):
