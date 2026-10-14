@@ -145,6 +145,19 @@ class DecisionTest(unittest.TestCase):
         writes = [x for x in calls if x[0] == "PUT"]
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0][2]["sha"], A)
+        self.assertTrue(writes[0][2]["commit_title"].endswith(" [skip ci]"))
+
+    def test_untrusted_multiline_title_cannot_change_commit_directives(self):
+        def transport(token, method, path, data=None):
+            if path == "/pulls/21":
+                malicious = pr()
+                malicious["title"] = "ok\\nproduction restart"
+                return malicious
+            if method == "PUT":
+                self.assertNotIn("\\n", data["commit_title"])
+                self.assertTrue(data["commit_title"].endswith(" [skip ci]"))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
 
     def test_main_moves_before_merge(self):
         branch_calls = 0
