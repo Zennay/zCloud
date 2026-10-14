@@ -113,6 +113,64 @@ class PolicyTest(unittest.TestCase):
                                   "       cancel-in-progress: true")
         self.assertRaises(scanner.Unverifiable, scanner.risks, text)
 
+    def test_global_cancel_with_space_before_colon_is_denied(self):
+        for whitespace in (" ", "  ", "\t"):
+            with self.subTest(whitespace=repr(whitespace)):
+                changed = CANCEL.replace(
+                    "cancel-in-progress: true",
+                    "cancel-in-progress" + whitespace + ": true"
+                )
+                self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_concurrency_with_space_before_colon_is_denied(self):
+        for whitespace in (" ", "\t"):
+            with self.subTest(whitespace=repr(whitespace)):
+                changed = CANCEL.replace(
+                    "concurrency:", "concurrency" + whitespace + ":"
+                )
+                self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_job_cancel_with_space_before_colon_is_denied(self):
+        changed = JOB_CANCEL.replace(
+            "cancel-in-progress: true", "cancel-in-progress : true"
+        )
+        self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_duplicate_global_cancel_even_false_is_denied(self):
+        changed = SELFHOST.replace(
+            "  cancel-in-progress: false",
+            "  cancel-in-progress: false\n  cancel-in-progress: false"
+        )
+        self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_duplicate_global_concurrency_even_safe_is_denied(self):
+        changed = SAFE.replace(
+            "jobs:\n",
+            "concurrency:\n  group: different\n  cancel-in-progress: false\njobs:\n"
+        )
+        self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_duplicate_job_cancel_even_false_is_denied(self):
+        changed = JOB_CANCEL.replace(
+            "      cancel-in-progress: true",
+            "      cancel-in-progress: false\n      cancel-in-progress: false"
+        )
+        self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_duplicate_job_concurrency_even_safe_is_denied(self):
+        changed = JOB_CANCEL.replace(
+            "    concurrency:\n",
+            "    concurrency:\n      group: previous\n      cancel-in-progress: false\n"
+            "    concurrency:\n"
+        )
+        self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
+    def test_standard_space_after_colon_still_allowed(self):
+        changed = SELFHOST.replace(
+            "cancel-in-progress: false", "cancel-in-progress:  false"
+        )
+        self.assertEqual([], scanner.risks(changed))
+
     def test_quoted_concurrency_key_is_denied(self):
         text = CANCEL.replace("concurrency:", "'concurrency':")
         self.assertRaises(scanner.Unverifiable, scanner.risks, text)
