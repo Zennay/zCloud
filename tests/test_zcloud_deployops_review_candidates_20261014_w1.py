@@ -61,6 +61,19 @@ class ReviewQueueTests(unittest.TestCase):
         with self.assertRaises(mod.InvalidEvidence):
             mod.snapshot(data)
 
+    def test_hosted_proof_workflow_never_gains_privileged_trigger(self):
+        workflow = (pathlib.Path(__file__).resolve().parents[1] / '.github' /
+                    'workflows' / 'zcloud-review-candidate-offline-20261014-w1.yml').read_text()
+        self.assertIn('uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683', workflow)
+        self.assertIn('runs-on: ubuntu-latest', workflow)
+        self.assertIn('  contents: read', workflow)
+        self.assertIn('persist-credentials: false', workflow)
+        self.assertIn('timeout-minutes: 10', workflow)
+        for forbidden in ('pull_request:', 'workflow_dispatch:', 'workflow_run:',
+                          'self-hosted', 'environment:', 'secrets.', 'actions: write',
+                          'contents: write', 'issues: write'):
+            self.assertNotIn(forbidden, workflow)
+
     def test_advisory_only(self):
         report = mod.snapshot(payload())
         self.assertEqual(report['review_candidate_count'], 1)
