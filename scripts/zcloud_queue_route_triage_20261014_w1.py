@@ -26,6 +26,14 @@ RUN_ROUTE = "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100"
 _LIMIT_RUNS = 40
 _LIMIT_JOBS = 100
 _MAX_SECONDS = 45
+# Only unambiguous, familiar GitHub-hosted image requests merit that label.
+# Unknown/custom/missing labels are observational OTHER, never proof that
+# GitHub-hosted capacity or the dedicated VPS listener is healthy.
+_HOSTED_LABELS = {
+    "ubuntu-latest", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-24.04-arm",
+    "windows-latest", "windows-2022", "windows-2025",
+    "macos-latest", "macos-14", "macos-15", "macos-15-intel",
+}
 
 
 def _deny(reason: str = "unverified_github_inventory") -> dict:
@@ -45,8 +53,10 @@ def _route(jobs: list[dict]) -> str:
     candidates = []
     for job in jobs:
         labels = job["labels"]
-        if "self-hosted" not in labels:
+        if "self-hosted" not in labels and len(labels) == 1 and labels[0] in _HOSTED_LABELS:
             candidates.append("github_hosted")
+        elif "self-hosted" not in labels:
+            candidates.append("other_or_mixed")
         elif {"self-hosted", "zcloud", "vps"}.issubset(labels) and "ftmo-research" not in labels:
             candidates.append("zcloud_vps")
         elif {"self-hosted", "ftmo-research"}.issubset(labels) and not {"zcloud", "vps"}.intersection(labels):
