@@ -134,6 +134,57 @@ class TestWatchdogQueueAdmission(unittest.TestCase):
         snap["run_pages"][0]["runs"] = [run(i) for i in range(1, 102)]
         self.assertEqual(self.classify(snap)["decision"], "DENY")
 
+
+    def test_unhashable_run_event_and_status_are_denied_without_exceptions(self):
+        for field in ("event", "status"):
+            for invalid in ([], {}, ["queued"], {"queued": True}, None, True):
+                with self.subTest(field=field, invalid=invalid):
+                    row = run(4)
+                    row[field] = invalid
+                    report = self.classify(fixture(row))
+                    self.assertEqual(report["decision"], "DENY")
+                    self.assertFalse(report["mutation_authorized"])
+                    self.assertEqual(report["cancel_run_ids"], [])
+
+    def test_unhashable_job_status_denied_without_exceptions(self):
+        for invalid in ([], {}, ["queued"], {"status": "queued"}, None, True):
+            with self.subTest(invalid=invalid):
+                row = run(4, jobs=[job(1004, status=invalid)])
+                self.assertEqual(self.classify(fixture(row))["decision"], "DENY")
+
+    def test_invalid_clock_object_denied_safely(self):
+        for wrong_now in (None, [], {}, "2026-10-14T03:00:00Z", 0):
+            with self.subTest(now=wrong_now):
+                report = self.classify(fixture(), now=wrong_now)
+                self.assertEqual(report["decision"], "DENY")
+                self.assertEqual(report["reason"], "invalid_now")
+
+    def test_cli_unhashable_adversarial_json_never_crashes_or_leaks(self):
+        for field, invalid in (("event", ["secret_event"]), ("status", {"secret": True}),
+                               ("job_status", ["secret_job"])):
+            with self.subTest(field=field):
+                row = run(4)
+                if field == "job_status":
+                    row["jobs"][0]["status"] = invalid
+                else:
+                    row[field] = invalid
+                payload = fixture(row)
+                payload["observed_at"] = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    input_path = Path(directory) / "snapshot.json"
+                    input_path.write_text(json.dumps(payload), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(PATH), "--snapshot", str(input_path),
+                         "--expected-main-sha", SHA], text=True,
+                        capture_output=True, timeout=8,
+                    )
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(json.loads(result.stdout)["decision"], "DENY")
+                self.assertEqual(result.stderr, "")
+                self.assertNotIn("secret", result.stdout)
+
     def test_cli_rejects_duplicate_json_keys_without_exposing_input(self):
         with tempfile.TemporaryDirectory() as directory:
             snapshot = Path(directory) / "case.json"
