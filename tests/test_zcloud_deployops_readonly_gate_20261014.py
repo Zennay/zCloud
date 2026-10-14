@@ -256,6 +256,25 @@ class GateTests(unittest.TestCase):
         self.assertEqual(result["latest_run_failed_jobs"], 0)
         self.assertFalse(result["runner_outage_verified"])
 
+    def test_hosted_workflow_manual_main_only_and_no_privileged_trigger(self):
+        workflow = (SCRIPT.parents[1] / ".github/workflows" /
+                    "zcloud-deployops-readonly-gate-20261014.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("github.actor == 'Zennay'", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
+        self.assertIn("github.repository == 'Zennay/zCloud'", workflow)
+        self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("actions: read", workflow)
+        self.assertIn("statuses: read", workflow)
+        for forbidden in ("runs-on: self-hosted", "runs-on: [self-hosted",
+                          "statuses: write", "actions: write", "contents: write",
+                          "workflow_run:", "pull_request:"):
+            self.assertNotIn(forbidden, workflow)
+
     def test_no_job_leak_on_failure(self):
         item = fixture()
         item["jobs_by_run"]["1234"]["jobs"][0]["runner_name"] = "INTERNAL_NAME_FORBIDDEN"
