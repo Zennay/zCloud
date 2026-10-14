@@ -171,6 +171,37 @@ class DecisionTest(unittest.TestCase):
             return self.transport(token, method, path, data)
         self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
 
+    def test_paginated_pr_inventory_reaches_older_opted_in_items(self):
+        paths = []
+        def transport(token, method, path, data=None):
+            paths.append(path)
+            if path.endswith("page=1"):
+                return [{"number": i, "labels": []} for i in range(1, 101)]
+            if path.endswith("page=2"):
+                return [{"number": 1001, "labels": [{"name": mod.LABEL}]}]
+            self.fail("unexpected page: " + path)
+        result = mod.list_open_prs(transport, "test-token")
+        self.assertEqual(len(result), 101)
+        self.assertEqual(result[-1]["number"], 1001)
+        self.assertEqual(len(paths), 2)
+
+    def test_pagination_fails_closed_on_duplicate_or_oversized_backlog(self):
+        def duplicate(token, method, path, data=None):
+            if path.endswith("page=1"):
+                return [{"number": i} for i in range(1, 101)]
+            return [{"number": 1}]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(duplicate, "test-token")
+        def endless(token, method, path, data=None):
+            page = int(path.split("page=")[-1])
+            return [{"number": 100 * (page - 1) + i} for i in range(1, 101)]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(endless, "test-token")
+        def malformed(token, method, path, data=None):
+            return [{"number": True}]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(malformed, "test-token")
+
     def test_only_original_and_triggering_owner_may_apply(self):
         for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR"):
             with self.subTest(key=key), self.assertRaises(mod.Refused):
