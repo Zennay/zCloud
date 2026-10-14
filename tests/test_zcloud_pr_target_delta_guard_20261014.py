@@ -89,6 +89,11 @@ class GuardTests(unittest.TestCase):
         src = SAFE + "      - name: Checkout head\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.label }}\n"
         self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
 
+    def test_new_job_condition_is_not_appended_to_earlier_run(self):
+        src = SAFE + "  second_job:\n    if: github.event.pull_request.head.repo.full_name != github.repository\n    runs-on: ubuntu-latest\n    steps:\n      - name: safe\n        run: echo safe\n"
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
+        self.assertEqual(gate.risk_set(src), set())
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 

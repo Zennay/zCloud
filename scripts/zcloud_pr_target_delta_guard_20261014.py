@@ -110,11 +110,16 @@ def executable_steps(source: str) -> list[str]:
         if match:
             starts.append((index, len(match.group(1))))
     blocks = []
-    for position, (start, indent) in enumerate(starts):
+    for start, indent in starts:
         end = len(lines)
-        for other_start, other_indent in starts[position + 1:]:
-            if other_indent <= indent:
-                end = other_start
+        for row_number in range(start + 1, len(lines)):
+            row = lines[row_number]
+            trimmed = row.lstrip(" ")
+            # A new job, steps block, or sibling step ends this step.
+            # This also prevents a PR-head expression in a later job
+            # from being mistaken for a run argument.
+            if trimmed and not trimmed.startswith("#") and len(row) - len(trimmed) <= indent:
+                end = row_number
                 break
         blocks.append("\n".join(lines[start:end]))
     return blocks
