@@ -29,7 +29,14 @@ def payload():
             },
             'gates': {'580': 'open', '1089': 'open', '1135': 'open'},
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
-                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'previous_files': [],
+                     'draft': False, 'owner_approved': True,
+                     'owner_review_evidence': {
+                         'complete': True, 'decision': 'approved',
+                         'author_login': 'project-author', 'reviewer_login': 'independent-reviewer',
+                         'reviewed_head_sha': H,
+                         'submitted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                     },
+                     'files': ['scripts/a.py'], 'previous_files': [],
                      'files_evidence': {'complete': True, 'total_count': 1,
                          'rename_sources_complete': True, 'previous_files_total': 0,
                          'head_sha': H, 'base_sha': S}, 'required_checks': ['tests'],
@@ -80,6 +87,7 @@ class ReviewQueueTests(unittest.TestCase):
             (['stale_base'], 'request_owner_restack'),
             (['required_checks_missing'], 'verify_required_checks'),
             (['exact_head_checks_not_green'], 'rerun_exact_head_checks'),
+            (['owner_review_stale'], 'request_exact_head_reapproval'),
             (['owner_review_missing'], 'request_independent_review'),
             (['draft'], 'request_owner_completion'),
             ([], 'independent_source_review'),
@@ -121,6 +129,57 @@ class ReviewQueueTests(unittest.TestCase):
     def test_stale_base_denied(self):
         d = payload(); d['prs'][0]['base_sha'] = H
         self.assertEqual(snap(d)['review_candidates'][0]['reasons'], ['stale_base'])
+
+    def test_independent_review_must_match_exact_pr_head(self):
+        d = payload()
+        d['prs'][0]['owner_review_evidence']['reviewed_head_sha'] = S
+        row = snap(d)['review_candidates'][0]
+        self.assertFalse(row['review_candidate'])
+        self.assertIn('owner_review_stale', row['reasons'])
+        self.assertEqual(row['next_action']['code'], 'request_exact_head_reapproval')
+        self.assertIn('goedkeuring hoort bij oudere PR-commit', mod.markdown(snap(d)))
+
+    def test_missing_review_receipt_fails_closed(self):
+        d = payload()
+        del d['prs'][0]['owner_review_evidence']
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_unreviewed_pr_never_review_candidate(self):
+        for decision in ('pending', 'changes_requested'):
+            d = payload()
+            d['prs'][0]['owner_review_evidence']['decision'] = decision
+            row = snap(d)['review_candidates'][0]
+            self.assertIn('owner_review_missing', row['reasons'])
+            self.assertFalse(row['review_candidate'])
+
+    def test_self_approval_denied(self):
+        d = payload()
+        d['prs'][0]['owner_review_evidence']['reviewer_login'] = 'PROJECT-AUTHOR'
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_missing_and_incomplete_approval_evidence_denied(self):
+        for mutation in (
+            lambda r: r.update(complete=False),
+            lambda r: r.update(decision='garbage'),
+            lambda r: r.update(reviewer_login=''),
+            lambda r: r.update(author_login='person\u202e'),
+            lambda r: r.update(reviewed_head_sha='x' * 39),
+            lambda r: r.update(submitted_at='not-a-time'),
+            lambda r: r.update(submitted_at='2026-02-30T01:00:00Z'),
+        ):
+            d = payload()
+            mutation(d['prs'][0]['owner_review_evidence'])
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_valid_independent_approval_no_live_permission(self):
+        d = payload()
+        row = snap(d)['review_candidates'][0]
+        self.assertTrue(row['review_candidate'])
+        self.assertEqual(row['next_action']['code'], 'independent_source_review')
+        self.assertFalse(snap(d)['release_authorized'])
 
     def test_draft_owner_unapproved(self):
         d = payload(); d['prs'][0]['draft'] = True; d['prs'][0]['owner_approved'] = False
