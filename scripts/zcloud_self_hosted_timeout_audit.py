@@ -197,11 +197,15 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
             status = "dynamic_or_invalid"
         else:
             raw = timeout_matches[0].group("value").strip().strip("'\"")
-            try:
-                timeout = int(raw)
-            except ValueError:
+            # int() accepts Python-only forms such as "1_0", "+10",
+            # Unicode digits and leading-zero values. A YAML/Actions
+            # interpreter need not agree; only canonical ASCII decimals
+            # can substantiate a bounded timeout.
+            if not re.fullmatch(r"-?(?:0|[1-9][0-9]*)", raw):
                 timeout = None
                 status = "dynamic_or_invalid"
+            else:
+                timeout = int(raw)
             else:
                 if timeout < 1:
                     status = "invalid"
