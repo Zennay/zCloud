@@ -1,50 +1,128 @@
 name: zCloud v2 activate existing Firefox addon in-place
 
+# This procedure changes a live addon. Never auto-dispatch it from a main push.
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - .github/workflows/zcloud-v2-activate-addon-in-place.yml
+      - scripts/zcloud_inplace_addon_idle_admission_20261013_w2.py
+      - tests/test_zcloud_inplace_addon_idle_admission_20261013_w2.py
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact approved current main SHA (40 lowercase hex characters)"
+        required: true
+        type: string
+      maintenance_ack:
+        description: "Type I_APPROVE_ADDON_ONLY_RELOAD after serialized deploy-owner authorization"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  activate:
-    runs-on: [self-hosted, zcloud, vps]
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout immutable untrusted PR revision hosted only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Switch only addon controller, no process or tab changes
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout, syntax and offline admission cases
         shell: bash
         run: |
           set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_inplace_addon_idle_admission_20261013_w2
+          python3 -m py_compile scripts/zcloud_inplace_addon_idle_admission_20261013_w2.py
+
+  activate:
+    name: Owner-approved, exact-main, manual addon-only reload
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      inputs.maintenance_ack == 'I_APPROVE_ADDON_ONLY_RELOAD'
+    # Serialize with the canonical production deploy; no parallel addon reload.
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable approved main revision without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          clean: true
+
+      - name: Enforce manual SHA, permanent runner and current main before live reads
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          test "$(hostname)" = vps-bb300bba
           test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Verify installed addon matches approved main and workers are idle
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check firefox-extension/background.js
+          node --check firefox-extension/worker-controller-v2.js
           addon="$HOME/snap/firefox/common/chatgpt-project-extension"
-          script="$HOME/.local/state/zcloud/worker-v2-addon-activation-$GITHUB_RUN_ID.txt"
-          mkdir -p "$(dirname "$script")"
-          test -f "$addon/worker-controller-v2.js"
-          test -f "$addon/background.js"
-          test -f "$addon/manifest.json"
+          for file in background.js worker-controller-v2.js manifest.json; do
+            test -f "$addon/$file"
+            cmp -- "firefox-extension/$file" "$addon/$file"
+          done
           grep -Fq 'ZCLOUD_SINGLE_TAB_CONTROLLER_V2 = true' "$addon/background.js"
           python3 - "$addon/manifest.json" <<'PY'
-          import json,sys
-          m=json.load(open(sys.argv[1]))
-          assert m["background"]["scripts"][-1]=="worker-controller-v2.js"
-          print("V2_CONTROLLER_MANIFEST_VERIFIED=1")
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as source:
+              manifest = json.load(source)
+          scripts = manifest["background"]["scripts"]
+          if not isinstance(scripts, list) or not scripts or scripts[-1] != "worker-controller-v2.js":
+              raise SystemExit("V2 controller is not last in reviewed manifest")
+          print("V2_REVIEWED_SOURCE_IDENTICAL_TO_INSTALLED=1")
           PY
+          python3 scripts/zcloud_inplace_addon_idle_admission_20261013_w2.py
+
+      - name: Recheck exact main and stable idle workers immediately before addon-only reload
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          python3 scripts/zcloud_inplace_addon_idle_admission_20261013_w2.py
           before="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test -n "$before"
           kill -0 "$before"
           echo "FIREFOX_MAIN_PID_BEFORE=$before"
-          node scripts/zcloud_reload_extension.mjs | tee "$script"
+          # This affects the addon only and never sends browser kill/tab close.
+          node scripts/zcloud_reload_extension.mjs
           sleep 3
+          kill -0 "$before"
           after="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test "$before" = "$after"
           echo "FIREFOX_MAIN_PID_AFTER=$after"
-          echo "V2_ADDON_ACTIVATED_WITHOUT_FIREFOX_RESTART=1"
-          echo "NO_TABS_CLOSED_OR_BROWSER_WINDOWS_STARTED_BY_WORKFLOW=1"
+          echo "MANUAL_ADDON_ONLY_RELOAD_NO_BROWSER_SERVICE_RESTART=1"
