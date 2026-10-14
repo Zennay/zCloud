@@ -323,7 +323,7 @@ class DashboardProbeTests(unittest.TestCase):
             ("CDN; hit=?1", "cache_evidence"),
             ("Origin; fwd=miss, CDN; hit=?1; ttl=35", "cache_evidence"),
             ("cdn; hit=?0", "healthy"),
-            ("cdn; hit=?0; fwd=uri-miss", "healthy"),
+            ("cdn; hit=?0; fwd=uri-miss", "invalid_headers"),
             ('cdn; detail="quoted; hit"; fwd=uri-miss', "healthy"),
             ('cdn; detail="quoted, other; hit=?1"', "healthy"),
             ('cdn; detail="escaped ' + chr(92) + '"; hit"; fwd=miss', "healthy"),
@@ -336,6 +336,11 @@ class DashboardProbeTests(unittest.TestCase):
             ("cdn; hit=?", "invalid_headers"),
             ("cdn; hit=", "invalid_headers"),
             ("cdn; fwd", "invalid_headers"),
+            ("cdn; fwd=uri-miss", "healthy"),
+            ("cdn; fwd=miss; fwd=stale", "invalid_headers"),
+            ('cdn; fwd="uri-miss"', "invalid_headers"),
+            ("cdn; fwd=?1", "invalid_headers"),
+            ("cdn; fwd=not a token", "invalid_headers"),
             ("cdn; hit=?2", "invalid_headers"),
             ('cdn; detail="unterminated', "invalid_headers"),
             ("cdn; fwd=miss,", "invalid_headers"),
@@ -747,6 +752,8 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
             ('Edge; detail="semi; hit"; fwd=uri-miss', "healthy"),
             ("Origin; fwd=uri-miss, CDN; hit=?1", "cache_evidence"),
             ("CDN; hit=?1; fwd=miss", "invalid_headers"),
+            ("CDN; hit=?0; fwd=miss", "invalid_headers"),
+            ('CDN; fwd="quoted"', "invalid_headers"),
         ):
             with self.subTest(value=value):
                 self._run(expected, extra_headers=(("Cache-Status", value),))
