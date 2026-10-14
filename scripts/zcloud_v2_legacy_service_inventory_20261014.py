@@ -23,6 +23,7 @@ COMMANDS = {
 PREFIXES = ("zcloud", "zennay-cloud", "chatgpt", "firefox", "worker", "watchdog", "self-heal")
 UNIT_RE = re.compile(r"^[a-zA-Z0-9_.@:-]{1,150}\.(service|timer)$")
 VERSION_RE = re.compile(r"^// @version[ \t]+([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})[ \t]*$")
+PROCESS_RE = re.compile(r"^[a-zA-Z0-9_./:@+\\-\\[\\]]{1,80}$")
 STATES = {"active", "inactive", "failed", "activating", "deactivating", "reloading"}
 MAX_LINES = 4000
 MAX_OUTPUT = 65536
@@ -48,6 +49,8 @@ def summarize_processes(lines):
     for line in lines:
         # ps "comm" is a command *name*, never command-line arguments.
         word = line.strip().lower()
+        if not PROCESS_RE.fullmatch(word):
+            return None
         if word in ("firefox", "firefox-bin", "web-ext", "web-ext-run"):
             count += 1
     return count
@@ -66,7 +69,10 @@ def summarize_units(lines, *, kind):
             continue
         unit = fields[0]
         # Only the first column is a unit identity; descriptions are ignored.
-        if not UNIT_RE.fullmatch(unit) or not unit.endswith("." + kind):
+        if not UNIT_RE.fullmatch(unit):
+            # Malformed source is unknown, not proof of zero services.
+            return None
+        if not unit.endswith("." + kind):
             continue
         if not unit.lower().startswith(PREFIXES):
             continue
@@ -97,11 +103,9 @@ def get_source_version(path=WORKER_SCRIPT):
     text = read_regular(path, 65536)
     if text is None:
         return None
-    for line in text.splitlines()[:8]:
-        result = VERSION_RE.fullmatch(line)
-        if result:
-            return result.group(1)
-    return None
+    versions = [match.group(1) for line in text.splitlines()[:8]
+                if (match := VERSION_RE.fullmatch(line))]
+    return versions[0] if len(versions) == 1 else None
 
 
 def get_background_count(path=EXTENSION_MANIFEST):
@@ -109,7 +113,15 @@ def get_background_count(path=EXTENSION_MANIFEST):
     if raw is None:
         return None
     try:
-        manifest = json.loads(raw)
+        def unique_keys(pairs):
+            values = {}
+            for key, value in pairs:
+                if key in values:
+                    raise ValueError("ambiguous manifest key")
+                values[key] = value
+            return values
+
+        manifest = json.loads(raw, object_pairs_hook=unique_keys)
         if not isinstance(manifest, dict):
             return None
         background = manifest.get("background")
