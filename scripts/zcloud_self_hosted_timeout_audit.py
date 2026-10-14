@@ -378,6 +378,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.require_no_new_debt and not args.base_ref:
         parser.error("--require-no-new-debt requires --base-ref")
+    if args.require_no_new_debt and not re.fullmatch(r"[0-9a-f]{40}", args.base_ref):
+        print(json.dumps({
+            "ok": False, "error": "strict_base_ref_must_be_full_immutable_sha"
+        }, sort_keys=True))
+        return 2
 
     if args.base_ref:
         try:
