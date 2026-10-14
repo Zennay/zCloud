@@ -185,6 +185,28 @@ class QueueRouteTriageTests(unittest.TestCase):
                 with self.assertRaisesRegex(source.InventoryError, "job_state_changed"):
                     triage.collect(racing, clock=NOW)
 
+    def test_precise_job_states_never_infer_all_jobs_queued(self):
+        for state in ("queued", "in_progress", "completed", "waiting",
+                      "requested", "pending"):
+            with self.subTest(status=state):
+                get, _ = mock([run(1)], {1: [job(1, route="zcloud_vps", state=state)]})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["job_state"], state)
+                self.assertEqual(result["runs"][0]["route"], "zcloud_vps")
+                self.assertIs(result["mutation_authorized"], False)
+                self.assertEqual(result["cancel_run_ids"], [])
+
+    def test_mixed_job_states_are_not_misreported_as_only_queued(self):
+        for other in ("completed", "in_progress", "waiting", "requested", "pending"):
+            with self.subTest(other=other):
+                jobs = [job(1, route="zcloud_vps"),
+                        dict(job(1, route="zcloud_vps", state=other), id=2001)]
+                get, _ = mock([run(1)], {1: jobs})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["job_state"], "mixed_job_states")
+                self.assertEqual(result["runs"][0]["job_count"], 2)
+                self.assertFalse(result["runner_recovery_authorized"])
+
     def test_queued_run_census_changed_denied(self):
         get, _ = mock([run(1)], {1: [job(1)]})
         hits = [0]
