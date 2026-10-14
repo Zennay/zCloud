@@ -79,7 +79,7 @@ def _inline_concurrency(area, indent):
     return bool(vals)
 
 
-def risks(text):
+def risks(text, *, details=False):
     """Conservative parser of jobs and root/job-level cancellation.
 
     Unknown runner expressions/reusable jobs are possibly self-hosted.
@@ -114,6 +114,7 @@ def risks(text):
         raise Unverifiable("duplicate_job")
     global_cancel = _cancel_values(outside_jobs, indent="  ") or _inline_concurrency(outside_jobs, "")
     findings = []
+    possible_vps = False
     for index, marker in enumerate(markers):
         job = jobs_area[
             marker.end():markers[index + 1].start()
@@ -121,10 +122,14 @@ def risks(text):
         ]
         runner = RUNNER.findall("  " + marker.group(1) + ":\n" + job)
         is_hosted = len(runner) == 1 and bool(HOSTED.fullmatch(runner[0].strip()))
+        possible_vps = possible_vps or not is_hosted
         job_cancel = _cancel_values(job, indent="      ") or _inline_concurrency(job, "    ")
         if (global_cancel or job_cancel) and not is_hosted:
             findings.append("possible_vps_cancellation")
-    return sorted(set(findings))
+    findings = sorted(set(findings))
+    if details:
+        return findings, possible_vps, global_cancel
+    return findings
 
 
 def evaluate(root, base, head):
@@ -132,10 +137,14 @@ def evaluate(root, base, head):
     for path in changed(root, base, head):
         before = source(root, base, path, missing_ok=True)
         after = source(root, head, path)
-        now = risks(after)
+        now, _, now_global_cancel = risks(after, details=True)
+        prior_vps = False
         if before is not None:
-            risks(before)  # Reject unparseable legacy content as well.
-        if now:
+            _, prior_vps, _ = risks(before, details=True)
+        # GitHub concurrency may cancel a still-running job from the previous
+        # workflow revision. Hosted-only new jobs do NOT prove older VPS
+        # invocations with the same group have stopped.
+        if now or (prior_vps and now_global_cancel):
             # Changed legacy risk needs owner review. Risk removal passes.
             result.append(path)
     return result
