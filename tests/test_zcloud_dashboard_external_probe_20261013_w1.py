@@ -358,6 +358,38 @@ class DashboardProbeTests(unittest.TestCase):
                 if expected != "healthy":
                     response.read.assert_not_called()
 
+    def test_structured_cache_identifiers_and_duplicate_extension_keys(self):
+        cases = (
+            ('"CDN Company Here"; hit', "cache_evidence"),
+            ('"CDN, Gateway"; fwd=uri-miss', "healthy"),
+            ("CDN; hit; detail=MEMORY", "cache_evidence"),
+            ("CDN; detail=MEMORY; fwd=miss", "healthy"),
+            ("CDN; hit; detail=MEMORY; detail=DISK", "invalid_headers"),
+            ("CDN; fwd=miss; foo=a; foo=b", "invalid_headers"),
+            ("CDN; fwd=miss; foo=bar; FOO=baz", "invalid_headers"),
+            ("CDN; hit; 1bad=value", "invalid_headers"),
+            ("CDN; hit; bad name=value", "invalid_headers"),
+            ("CDN; hit; @bad=value", "invalid_headers"),
+            ("CDN Name; hit", "invalid_headers"),
+            ("CDN=0; hit", "invalid_headers"),
+            (":; hit", "invalid_headers"),
+            ("; hit", "invalid_headers"),
+            ('"Unfinished; hit', "invalid_headers"),
+            ('"Cached "Broken"; hit', "invalid_headers"),
+            ('"Backslash ' + chr(92) + 'q"; hit', "invalid_headers"),
+        )
+        for value, expected in cases:
+            with self.subTest(cache_status=value):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                if expected != "healthy":
+                    response.read = mock.Mock(
+                        side_effect=AssertionError("malformed cache body should not be read")
+                    )
+                self.assertEqual(probe.probe_once(Opener(response)), expected)
+                if expected != "healthy":
+                    response.read.assert_not_called()
+
     def test_http_cache_status_malformed_or_duplicate_denied(self):
         for value in ("", "cdn; " + "x" * 513, "cdn; hit\n",
                       "cdn; hit\x00", "cdn; hït"):
@@ -754,6 +786,16 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
             ("CDN; hit=?1; fwd=miss", "invalid_headers"),
             ("CDN; hit=?0; fwd=miss", "invalid_headers"),
             ('CDN; fwd="quoted"', "invalid_headers"),
+        ):
+            with self.subTest(value=value):
+                self._run(expected, extra_headers=(("Cache-Status", value),))
+
+    def test_actual_http_malformed_cache_member_does_not_claim_reachability(self):
+        for value, expected in (
+            ('"CDN Company Here"; hit', "cache_evidence"),
+            ("CDN Name; hit", "invalid_headers"),
+            ("CDN; hit; detail=MEMORY; detail=DISK", "invalid_headers"),
+            ("CDN; fwd=miss; ext=value", "healthy"),
         ):
             with self.subTest(value=value):
                 self._run(expected, extra_headers=(("Cache-Status", value),))
