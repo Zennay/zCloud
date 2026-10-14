@@ -1,0 +1,57 @@
+name: zCloud trusted-main PR-target risk ratchet
+
+# Uses ONLY this main-branch workflow and source. An untrusted PR head is
+# fetched as inert Git objects, never checked out or executed.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_pr_target_delta_guard_20261014.py'
+      - 'tests/test_zcloud_pr_target_delta_guard_20261014.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-pr-target-trusted-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  trusted-main:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Check out executable trusted main commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/zCloud
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 1
+      - name: Verify exact main and fetch candidate as inert Git objects
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git -C trusted rev-parse HEAD)" = "$EXACT_BASE"
+          current_main="$(timeout 15 git -C trusted ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          test -n "$current_main"
+          test "$current_main" = "$EXACT_BASE"
+          git -C trusted fetch --quiet --no-tags origin "$EXACT_HEAD"
+          test "$(git -C trusted rev-parse --verify "$EXACT_HEAD^{commit}")" = "$EXACT_HEAD"
+          (cd trusted && python3 -m unittest -v tests.test_zcloud_pr_target_delta_guard_20261014)
+          python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py \
+            --root "$GITHUB_WORKSPACE/trusted" --base "$EXACT_BASE" --head "$EXACT_HEAD"
