@@ -100,6 +100,12 @@ The headline "**wachtende runs zonder runnertoewijzing**" now counts **run recor
 
 Offline matrix coverage distinguishes all six statuses plus mixed jobs, the Dutch report and queued-only capacity count. Production `server.py`, runners, privileged watchdog and all other owners are unchanged.
 
+### GitHub null runner references are not proof of listener failure
+
+GitHub Actions job records can carry an *explicit JSON null* `runner_id` and `runner_name` while the job is still queued. The route observer now accepts this exact, present-but-unassigned representation, alongside the previously observed `0 / ""` shape. It separately rejects missing runner fields, Boolean/float/string impersonations of numeric runner IDs, malformed names and negative IDs. Contradictions such as a positive runner ID with no name or a runner name with ID 0/null are **`indeterminate`**, never certified as assigned or evidence of a failed listener.
+
+The reader rechecks each observed job in the second pass; a transition from null/null to an assigned named runner invalidates the initial observation instead of publishing a stale queue figure. End-to-end tests confirm a real-shaped `ftmo-research` queued job with `null` runner metadata remains **read-only**, generates a sanitized Dutch summary, reveals no job name, and does not infer a zCloud VPS outage. The positive count is *only* evidence of an observed pending assignment — not live availability, restart authorization, or verified AI generation.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
