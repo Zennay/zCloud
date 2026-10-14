@@ -321,6 +321,38 @@ jobs:
             with self.assertRaisesRegex(RuntimeError, "size exceeds limit"):
                 audit.scan_git_ref(root, sha, max_minutes=30)
 
+    def test_workflow_reads_use_single_nofollow_fd_and_bounded_buffer(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".github" / "workflows"
+            directory.mkdir(parents=True)
+            file = directory / "proof.yml"
+            file.write_text(
+                "jobs:\n  proof:\n    runs-on: self-hosted\n    timeout-minutes: 10\n",
+                encoding="utf-8",
+            )
+            original_open = audit.os.open
+            with patch.object(audit.os, "open", wraps=original_open) as spy:
+                rows = audit.scan_repository(root, max_minutes=30)
+            self.assertEqual([("proof", "bounded")], [(r.job, r.status) for r in rows])
+            self.assertEqual(1, spy.call_count)
+            flags = spy.call_args.args[1]
+            self.assertTrue(flags & audit.os.O_NOFOLLOW)
+            self.assertTrue(flags & audit.os.O_RDONLY == audit.os.O_RDONLY)
+
+    def test_fifo_workflow_is_rejected_without_blocking(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".github" / "workflows"
+            directory.mkdir(parents=True)
+            os.mkfifo(directory / "pipe.yml")
+            with self.assertRaisesRegex(RuntimeError, "non-file workflow"):
+                audit.scan_repository(root, max_minutes=30)
+
     def test_workflow_file_count_is_bounded(self):
         from unittest.mock import patch
 
