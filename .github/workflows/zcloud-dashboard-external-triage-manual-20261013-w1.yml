@@ -56,7 +56,7 @@ jobs:
           probe_rc=0
           # Socket read timeout only protects individual waits. Slow-drip HTTP
           # streams must also be bounded by one process-wide wall-clock budget.
-          env -i PATH="$PATH" LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py --attempts 6 --format markdown > "$summary_file" || probe_rc=$?
+          env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC timeout -k 2s 115s python3 scripts/zcloud_dashboard_external_probe_20261013_w1.py --attempts 6 --format markdown > "$summary_file" || probe_rc=$?
           # GNU timeout exit 124 is a strict wall-clock failure, never green.
           # Replace any partial output with a short, constant private-safe note.
           if (( probe_rc == 124 )); then
