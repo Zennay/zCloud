@@ -71,5 +71,8 @@ jobs:
             echo "DASHBOARD_TRIAGE_SUMMARY_REJECTED"
             exit 3
           fi
-          cat "$verified_file" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Attach trusted immutable main identity AFTER canonical report
+          # admission, so an operator can correlate a copied receipt with
+          # the exact tested source. Never allow endpoint text to set the SHA.
+          { cat "$verified_file"; printf '\n**Getoetste main-commit:** `%s`\n' "$GITHUB_SHA"; } | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$probe_rc"
