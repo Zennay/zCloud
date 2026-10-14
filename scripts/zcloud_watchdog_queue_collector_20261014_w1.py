@@ -211,31 +211,58 @@ def _main(api_get):
 
 
 def _run_identity(run):
-    """Select stable admission fields, not incidental GitHub display metadata."""
+    """Strictly typed run identity; bools must never compare equal to ints."""
     if type(run) is not dict or type(run.get("head_repository")) is not dict:
         raise InventoryError("invalid_run_identity")
     if not _integer(run.get("id")):
         raise InventoryError("invalid_run_id")
+    if (
+        not _integer(run.get("run_attempt"))
+        or not _integer(run.get("workflow_id"))
+        or type(run.get("head_sha")) is not str
+        or _SHA.fullmatch(run["head_sha"]) is None
+        or type(run.get("head_branch")) is not str
+        or not run["head_branch"]
+        or type(run.get("event")) is not str
+        or not run["event"]
+        or type(run.get("status")) is not str
+        or not run["status"]
+        or type(run["head_repository"].get("full_name")) is not str
+    ):
+        raise InventoryError("invalid_run_identity")
     return (
-        run["id"], run.get("run_attempt"), run.get("workflow_id"),
-        run.get("head_sha"), run.get("head_branch"), run.get("event"),
-        run.get("status"), run["head_repository"].get("full_name"),
+        run["id"], run["run_attempt"], run["workflow_id"],
+        run["head_sha"], run["head_branch"], run["event"],
+        run["status"], run["head_repository"]["full_name"],
     )
 
 
 def _job_signature(job):
-    """Bounded evidence identity; omit private log payloads and display names."""
+    """Strictly typed job identity; omit private logs and display names."""
     if type(job) is not dict:
         raise InventoryError("invalid_candidate_job")
     labels = job.get("labels")
     if type(labels) is not list or any(type(x) is not str for x in labels):
         raise InventoryError("invalid_candidate_labels")
-    if type(job.get("id")) is not int or job["id"] <= 0:
+    if not _integer(job.get("id")):
         raise InventoryError("invalid_candidate_job_id")
+    runner_id = job.get("runner_id")
+    if (
+        not _integer(job.get("run_id"))
+        or not _integer(job.get("run_attempt"))
+        or type(job.get("head_sha")) is not str
+        or _SHA.fullmatch(job["head_sha"]) is None
+        or type(job.get("head_branch")) is not str
+        or not job["head_branch"]
+        or type(job.get("status")) is not str
+        or not job["status"]
+        or not (runner_id is None or (type(runner_id) is int and runner_id >= 0))
+    ):
+        raise InventoryError("invalid_candidate_job")
     return (
-        job["id"], job.get("run_id"), job.get("run_attempt"),
-        job.get("head_sha"), job.get("head_branch"), job.get("status"),
-        tuple(sorted(labels)), job.get("runner_id"),
+        job["id"], job["run_id"], job["run_attempt"],
+        job["head_sha"], job["head_branch"], job["status"],
+        tuple(sorted(labels)), runner_id,
     )
 
 
