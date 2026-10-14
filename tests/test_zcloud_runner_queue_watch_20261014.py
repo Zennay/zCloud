@@ -24,6 +24,7 @@ def sample(n, age=1500, *, status="queued", runner=0):
     job = {"id": 1000 + n, "run_id": n, "name": "cpu-snapshot",
            "created_at": iso(age), "status": status,
            "runner_id": runner,
+           "runner_name": "zcloud-vps-1" if runner else None,
            "labels": ["self-hosted", "zcloud", "vps"],
            "conclusion": None}
     if status == "completed":
@@ -51,6 +52,19 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(report["recent_assignments"], 1)
         self.assertFalse(report["production_verified"])
 
+    def test_spoofed_numeric_identity_cannot_prove_runner_recovery(self):
+        pair = sample(1, age=60, status="in_progress", runner=21)
+        good = self.classify(pair)
+        self.assertEqual(good["recent_assignments"], 1)
+        for data in ({"runner_id": 999, "runner_name": "zcloud-vps-1"},
+                     {"runner_id": 21, "runner_name": "other"},
+                     {"runner_id": 21, "runner_name": None},
+                     {"status": "completed", "conclusion": None}):
+            run, job = sample(1, age=60, status="in_progress", runner=21)
+            job.update(data)
+            with self.subTest(data=data), self.assertRaises(m.Unavailable):
+                self.classify((run, job))
+
     def test_not_enough_jobs_or_new_jobs_are_inconclusive(self):
         for pairs in ((sample(1),), (sample(1, 1500), sample(2, 60)),
                       (sample(1, 20), sample(2, 40), sample(3, 50))):
@@ -61,7 +75,8 @@ class QueueWatchTests(unittest.TestCase):
         for patch in ({"labels": ["self-hosted", "zcloud", "vps", "private"]},
                       {"labels": ["self-hosted", "zcloud", "vps", "VPS"]},
                       {"labels": None}, {"runner_id": True},
-                      {"runner_id": 21}, {"status": "requested"},
+                      {"runner_id": 21}, {"runner_name": "spoofed-runner"},
+                      {"status": "requested"},
                       {"conclusion": "success"}, {"created_at": iso(-60)}):
             r, j = sample(1)
             j.update(patch)
