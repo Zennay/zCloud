@@ -51,8 +51,15 @@ def path_collision(left, right):
     """Directory/file swaps and case/normalization collisions reserve both owners."""
     l = {unicodedata.normalize("NFC", p).casefold() for p in left}
     r = {unicodedata.normalize("NFC", p).casefold() for p in right}
-    return any(a == b or a.startswith(b + "/") or b.startswith(a + "/")
-               for a in l for b in r)
+    # Linear in the number of path components, rather than O(files_left * files_right).
+    def overlaps(paths, other):
+        for path in paths:
+            parts = path.split("/")
+            for i in range(1, len(parts) + 1):
+                if "/".join(parts[:i]) in other:
+                    return True
+        return False
+    return overlaps(l, r) or overlaps(r, l)
 
 
 def complete_files(record, main_sha, head_sha):
