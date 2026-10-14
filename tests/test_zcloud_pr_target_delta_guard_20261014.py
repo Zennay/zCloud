@@ -188,6 +188,34 @@ jobs:
         self.assertEqual(gate.risk_counts(new)["pr_source_in_run_job"], 1)
         self.assertIn("pr_source_in_run_job", gate.increasing_risks(old, new))
 
+
+    def test_folded_uses_checkout_of_pr_head_is_denied(self):
+        src = SAFE + """      - name: Checkout untrusted code
+        uses: >-
+          actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_plain_multiline_checkout_scalar_is_denied(self):
+        src = SAFE + """      - uses:
+          actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request['head']['ref'] }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_folded_trusted_base_checkout_does_not_conflate_other_metadata(self):
+        src = SAFE + """      - uses: >-
+          actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - name: unrelated metadata
+        run: echo safe
+"""
+        self.assertNotIn("untrusted_pr_checkout", gate.risk_set(src))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
