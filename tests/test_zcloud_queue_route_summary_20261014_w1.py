@@ -148,6 +148,38 @@ class QueueRouteSummaryTests(unittest.TestCase):
             with self.subTest(row=invalid):
                 self.assertEqual(self.render(report([invalid]))[1], 1)
 
+    def test_contradictory_route_assignment_and_status_are_rejected(self):
+        for item in (
+            record(route="ftmo_research", assignment="no_job_records"),
+            record(route="ftmo_research", state="no_job_records"),
+            record(route="no_job_records", assignment="not_assigned",
+                   state="no_job_records", jobs=0),
+            record(route="no_job_records", assignment="no_job_records",
+                   state="queued", jobs=0),
+            record(route="zcloud_vps", assignment="no_job_records",
+                   state="mixed_or_active"),
+        ):
+            with self.subTest(row=item):
+                markdown, status = self.render(report([item]))
+                self.assertEqual(status, 1)
+                self.assertIn("Geen aantallen gepubliceerd", markdown)
+                self.assertNotIn("Run 71", markdown)
+
+    def test_noncanonical_impossible_and_unparsed_utc_clock_denied(self):
+        for when in (
+            "PRIVATE_SECRETZ", "2026-02-30T04:10:00Z",
+            "2026-10-14T25:10:00Z", "2026-1-14T04:10:00Z",
+            "2026-10-14T04:10:00.999Z", "2026-10-14T04:10:00ZZ",
+            "2026-10-14T04:10:00+00:00",
+        ):
+            with self.subTest(observed_at=when):
+                data = report([record()])
+                data["observed_at"] = when
+                markdown, code = self.render(data)
+                self.assertEqual(code, 1)
+                self.assertNotIn("PRIVATE_SECRET", markdown)
+                self.assertNotIn("Run 71", markdown)
+
     def test_main_sha_drift_and_missing_identity_deny_all_route_counts(self):
         for field, value in (
             ("main_sha_after", "b" * 40),
