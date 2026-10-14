@@ -333,6 +333,48 @@ class ReviewQueueTests(unittest.TestCase):
         }]
         self.assertEqual(snap(d)['review_candidate_count'], 1)
 
+    def test_case_fold_alias_branches_denied(self):
+        d = payload()
+        d['branches'] = [
+            {'name': branch, 'head_sha': H, 'files': [],
+             'files_evidence': {'complete': True, 'total_count': 0,
+                                'head_sha': H, 'base_sha': S}}
+            for branch in ('office', 'OFFICE')
+        ]
+        with self.assertRaises(mod.InvalidEvidence):
+            snap(d)
+
+    def test_unicode_bidi_and_decomposed_branch_names_denied(self):
+        for branch in ('name\u202e', 'cafe\u0301', ' main', 'main ', 'main'):
+            d = payload()
+            d['branches'] = [{'name': branch, 'head_sha': H, 'files': [],
+                              'files_evidence': {'complete': True, 'total_count': 0,
+                                                 'head_sha': H, 'base_sha': S}}]
+            with self.assertRaises(mod.InvalidEvidence, msg=repr(branch)):
+                snap(d)
+
+    def test_case_only_branch_receipt_spelling_drift_denied(self):
+        d = payload()
+        d['branches'] = [{'name': 'office', 'head_sha': H, 'files': [],
+                          'previous_files': [],
+                          'files_evidence': {'complete': True, 'total_count': 0,
+                                             'rename_sources_complete': True,
+                                             'previous_files_total': 0,
+                                             'head_sha': H, 'base_sha': S}}]
+        d['inventory']['prless_branch_count'] = 1
+        d['branch_inventory_receipt']['pr_less'] = [
+            {'branch': 'OFFICE', 'commit_sha': H}]
+        d['branch_inventory_receipt']['branch_count'] = 2
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_canonical_unicode_branch_name_allowed(self):
+        d = payload()
+        d['branches'] = [{'name': 'café', 'head_sha': H, 'files': [],
+                          'files_evidence': {'complete': True, 'total_count': 0,
+                                             'head_sha': H, 'base_sha': S}}]
+        self.assertEqual(snap(d)['review_candidate_count'], 1)
+
     def test_prless_missing_receipt_denied(self):
         d = payload()
         del d['branch_inventory_receipt']
