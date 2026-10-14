@@ -202,7 +202,8 @@ class WorkflowTrustTests(unittest.TestCase):
         )
         for var in ("current_main", "last_main", "root_main"):
             with self.subTest(var=var):
-                self.assertIn('test -n "
+                self.assertIn('test -n "' + chr(36) + var + '"', self.reclaim)
+                self.assertIn('test "' + chr(36) + var + '" = "' + chr(36) + 'GITHUB_SHA"', self.reclaim)
         root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
         kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
         self.assertLess(root, kernel)
