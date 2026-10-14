@@ -404,6 +404,45 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertIs(result["mutation_authorized"], False)
         self.assertEqual(result["cancel_run_ids"], [])
 
+    def test_runner_id_above_signed_boundary_is_not_a_known_assignment(self):
+        forged = 1 << 63
+        self.assertEqual(
+            triage._assignment([{"runner_id": forged, "runner_name": "runner"}]),
+            "indeterminate",
+        )
+        entry = job(1)
+        entry["runner_id"] = forged
+        entry["runner_name"] = "runner"
+        get, calls = mock([run(1)], {1: [entry]})
+        with self.assertRaisesRegex(source.InventoryError, "invalid_runner_evidence"):
+            triage.collect(get, clock=NOW)
+        self.assertEqual(calls.count(RUNS), 1)
+
+    def test_nonprinting_unicode_runner_name_cannot_forge_assignment(self):
+        for name in ("runner\u200bghost", "runner\u202eoverride", "\ufeff"):
+            with self.subTest(name=repr(name)):
+                self.assertEqual(
+                    triage._assignment([{"runner_id": 45, "runner_name": name}]),
+                    "indeterminate",
+                )
+                entry = job(1)
+                entry["runner_id"] = 45
+                entry["runner_name"] = name
+                get, _ = mock([run(1)], {1: [entry]})
+                with self.assertRaisesRegex(source.InventoryError, "invalid_runner_evidence"):
+                    triage.collect(get, clock=NOW)
+
+    def test_legitimate_unicode_runner_name_remains_assigned_but_not_verified(self):
+        entry = job(1)
+        entry["runner_id"] = 45
+        entry["runner_name"] = "Haarlem-één"
+        get, _ = mock([run(1)], {1: [entry]})
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["runs"][0]["assignment"], "assigned")
+        self.assertIs(result["mutation_authorized"], False)
+        self.assertIs(result["worker_generation_verified"], False)
+        self.assertNotIn("Haarlem-één", json.dumps(result))
+
     def test_boolean_runner_assignment_denied(self):
         item = job(1)
         item["runner_id"] = True
