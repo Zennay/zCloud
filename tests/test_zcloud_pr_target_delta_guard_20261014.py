@@ -653,6 +653,105 @@ jobs:
 """
         self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
 
+
+    def test_job_env_pr_head_ref_passed_to_checkout_denied(self):
+        candidate = """name: indirect PR checkout
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    env:
+      PR_REF: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_REF }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(SAFE, candidate))
+
+    def test_workflow_env_pr_merge_sha_forwarded_to_checkout_denied(self):
+        candidate = """name: inherited checkout
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env:
+  PR_MERGE: ${{ github.event.pull_request.merge_commit_sha }}
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_MERGE }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_job_env_pr_checkout_does_not_flow_into_another_job(self):
+        candidate = """name: no shared job env
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    env:
+      REV: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: echo harmless
+  checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REV }}
+"""
+        self.assertNotIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_unreferenced_job_env_does_not_contaminate_checkout(self):
+        candidate = """name: base only
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    env:
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+"""
+        self.assertNotIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_job_env_checkout_ref_source_swap_cannot_launder_risk(self):
+        before = """name: indirect
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    env:
+      REF: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+"""
+        after = before.replace("pull_request.head.sha", "pull_request.merge_commit_sha")
+        self.assertEqual(gate.risk_counts(before)["untrusted_pr_checkout"], 1)
+        self.assertEqual(gate.risk_counts(after)["untrusted_pr_checkout"], 1)
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(before, after))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
