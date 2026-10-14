@@ -6,6 +6,8 @@ on:
     paths:
       - 'scripts/zcloud_dashboard_external_probe_20261013_w1.py'
       - 'tests/test_zcloud_dashboard_external_probe_20261013_w1.py'
+      - 'scripts/zcloud_dashboard_summary_guard_20261014_w1.py'
+      - 'tests/test_zcloud_dashboard_summary_guard_20261014_w1.py'
       - '.github/workflows/zcloud-dashboard-external-probe-hosted-20261013-w1.yml'
       - '.github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml'
       - 'docs/zcloud-dashboard-external-triage-20261013-w1.md'
@@ -28,10 +30,11 @@ jobs:
           persist-credentials: false
       - name: Compile safe probe and fixture tests
         run: |
-          python3 -m py_compile scripts/zcloud_dashboard_external_probe_20261013_w1.py tests/test_zcloud_dashboard_external_probe_20261013_w1.py
+          python3 -m py_compile scripts/zcloud_dashboard_external_probe_20261013_w1.py tests/test_zcloud_dashboard_external_probe_20261013_w1.py scripts/zcloud_dashboard_summary_guard_20261014_w1.py tests/test_zcloud_dashboard_summary_guard_20261014_w1.py
       - name: Run failure taxonomy, privacy and retry tests (no network)
         run: |
           python3 -m unittest discover -s tests -p 'test_zcloud_dashboard_external_probe_20261013_w1.py' -v
+          python3 -m unittest discover -s tests -p 'test_zcloud_dashboard_summary_guard_20261014_w1.py' -v
       - name: Run full Python regression (hosted only)
         run: |
           python3 -m unittest discover -s tests -p 'test_*.py' -q
