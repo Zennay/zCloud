@@ -552,6 +552,34 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIsNotNone(collection._ALLOWED_GET_PATH.fullmatch(path))
 
+
+    def test_collector_error_category_is_allowlisted_and_redacted(self):
+        pairs = {
+            "truncated_inventory": "incomplete_queue_pages",
+            "duplicate_or_invalid_paged_identity": "invalid_job_identity",
+            "cross_run_job_evidence": "invalid_job_identity",
+            "candidate_job_changed_during_inventory": "job_state_changed",
+            "queue_changed_during_inventory": "job_state_changed",
+            "main_moved_during_inventory": "main_changed",
+            "snapshot_acquisition_too_slow": "observation_too_slow",
+            "candidate_recheck_cap_exceeded": "queue_too_large",
+        }
+        for code, reason in pairs.items():
+            with self.subTest(code=code):
+                self.assertEqual(
+                    collection.safe_error_category(collection.InventoryError(code)), reason
+                )
+        # Unknown codes or raw data can never reach the operator.
+        for bad in ("bearer TOKEN-private", "https://evil.example/secret", None):
+            self.assertEqual(
+                collection.safe_error_category(collection.InventoryError(bad)),
+                "github_inventory_untrusted",
+            )
+        self.assertEqual(
+            collection.safe_error_category(ValueError("private data")),
+            "github_inventory_untrusted",
+        )
+
     def test_api_token_validation_denies_newlines(self):
         with self.assertRaises(collection.InventoryError):
             collection.ReadOnlyAPI("token\r\ninjected")
