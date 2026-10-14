@@ -42,11 +42,11 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
             root = Path(tmp)
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
-            names = ("name with space.yml", "tab\\tname.yaml", "unicode-épreuve.yml", "line\\nbreak.yml")
+            names = ("name with space.yml", "tab\tname.yaml", "unicode-épreuve.yml", "line\nbreak.yml")
             for position, name in enumerate(names):
                 (workflows / name).write_text(
-                    f"jobs:\\n  proof_{position}:\\n    runs-on: self-hosted\\n"
-                    "    timeout-minutes: 15\\n",
+                    f"jobs:\n  proof_{position}:\n    runs-on: self-hosted\n"
+                    "    timeout-minutes: 15\n",
                     encoding="utf-8",
                 )
             subprocess.run(["git", "init", "-q", str(root)], check=True)
