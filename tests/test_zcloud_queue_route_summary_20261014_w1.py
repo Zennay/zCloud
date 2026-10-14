@@ -138,6 +138,45 @@ class QueueRouteSummaryTests(unittest.TestCase):
                 self.assertNotIn("restart", markdown.lower())
                 self.assertNotIn("cancel", markdown.lower())
 
+    def test_dutch_job_phase_is_precise_and_read_only(self):
+        phases = [
+            ("queued", "wachtend"),
+            ("in_progress", "bezig met uitvoeren"),
+            ("completed", "al afgerond"),
+            ("waiting", "wacht op volgende stap"),
+            ("requested", "uitvoering aangevraagd"),
+            ("pending", "in behandeling"),
+            ("mixed_job_states", "jobs in verschillende fasen"),
+        ]
+        for phase, dutch in phases:
+            with self.subTest(phase=phase):
+                data = report([record(state=phase, scope="current_main",
+                                      route="zcloud_vps")])
+                output, code = self.render(data)
+                self.assertEqual(code, 0)
+                self.assertIn(dutch, output)
+                self.assertIn("Geen bevoegdheid", output)
+                if phase != "queued":
+                    self.assertNotIn("zCloud-runnerlabels en repositorytoegang", output)
+
+    def test_finished_or_waiting_ftmo_job_cannot_trigger_runner_queue_advice(self):
+        for phase in ("completed", "in_progress", "requested", "waiting",
+                      "pending", "mixed_job_states"):
+            with self.subTest(phase=phase):
+                payload = report([record(state=phase)])
+                output, status = self.render(payload)
+                self.assertEqual(status, 0)
+                self.assertNotIn("onderzoek afzonderlijk de FTMO-runnerroute", output)
+                self.assertNotIn("Geen jobgegevens", output)
+                self.assertIn("Geen bewijs van productiestatus", output)
+
+    def test_unknown_job_phase_does_not_print_any_run_link(self):
+        data = report([record(state="PRIVATE_UNTRUSTED_STATUS")])
+        output, status = self.render(data)
+        self.assertEqual(status, 1)
+        self.assertNotIn("PRIVATE_UNTRUSTED_STATUS", output)
+        self.assertNotIn("Run 71", output)
+
     def test_verified_dutch_route_totals_are_derived_from_rows(self):
         rows = [
             record(21, route="ftmo_research"),
