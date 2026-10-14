@@ -234,7 +234,7 @@ def get_source_version(path=WORKER_SCRIPT):
     # ambiguous as two valid versions. Do not silently take the first match.
     headers = [
         line for line in text.splitlines()[:8]
-        if re.match(r"^// @version(?:\\s|$)", line)
+        if re.match(r"^// @version(?:\s|$)", line)
     ]
     if len(headers) != 1:
         return None
@@ -269,7 +269,7 @@ def get_background_count(path=EXTENSION_MANIFEST):
         validated = set()
         for item in scripts:
             if (not isinstance(item, str) or not 1 <= len(item) <= 256 or
-                    item.startswith(("/", "\\\\")) or "\\\\" in item or
+                    item.startswith(("/", "\\")) or "\\" in item or
                     any(component in ("", ".", "..") for component in item.split("/")) or
                     not re.fullmatch(r"[A-Za-z0-9._/@+~-]+", item) or
                     item in validated):
