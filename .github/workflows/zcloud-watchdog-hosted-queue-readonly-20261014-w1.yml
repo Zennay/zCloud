@@ -18,7 +18,7 @@ jobs:
       github.actor == 'Zennay' &&
       github.run_attempt == 1
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     concurrency:
       group: zcloud-hosted-queue-observation
       cancel-in-progress: false
@@ -51,12 +51,34 @@ jobs:
           read_rc=$?
           set -e
 
+          # Independent tolerant route triage: distinguish queued workflows
+          # with zero job records from genuine unassigned FTMO/zCloud routes.
+          # Both collectors are GET-only and separately fail closed.
+          triage="$RUNNER_TEMP/zcloud-queue-route-triage.json"
+          set +e
+          timeout --signal=TERM --kill-after=5s 105s \
+            python3 scripts/zcloud_queue_route_triage_20261014_w1.py > "$triage"
+          triage_rc=$?
+          set -e
+
           main_after="$(timeout 12s gh api --method GET repos/Zennay/zCloud/branches/main --jq '.commit.sha')"
           if [[ "$main_after" != "$GITHUB_SHA" ]]; then
             echo "Queue observer denied: canonical main moved during scan." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
+          # Both diagnostics get a safe summary even when the other fails.
+          # A partial observation can never produce a green final job.
+          set +e
           python3 scripts/zcloud_watchdog_operator_summary_20261014_w1.py \
             --report "$report" --collector-exit "$read_rc" \
             --summary-path "$GITHUB_STEP_SUMMARY"
+          observer_summary_rc=$?
+          python3 scripts/zcloud_queue_route_summary_20261014_w1.py \
+            --report "$triage" --collector-exit "$triage_rc" \
+            --summary-path "$GITHUB_STEP_SUMMARY"
+          triage_summary_rc=$?
+          set -e
+          if (( observer_summary_rc != 0 || triage_summary_rc != 0 )); then
+            exit 1
+          fi
