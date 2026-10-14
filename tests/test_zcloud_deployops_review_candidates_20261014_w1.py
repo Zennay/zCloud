@@ -398,6 +398,67 @@ class ReviewQueueTests(unittest.TestCase):
     def test_empty_checks_denied(self):
         self.assert_denied(lambda d: d['prs'][0].update(checks=[]))
 
+    def test_cli_refuses_symlinked_parent_directory(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            real = root / 'real'
+            real.mkdir()
+            secret = real / 'manifest.json'
+            secret.write_text('{"secret":"never-display-this"}')
+            alias = root / 'alias'
+            alias.symlink_to(real, target_is_directory=True)
+            r = subprocess.run([sys.executable, str(SCRIPT), str(alias / secret.name)],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+            self.assertNotIn('never-display-this', r.stdout + r.stderr)
+            self.assertFalse(json.loads(r.stdout)['release_authorized'])
+
+    def test_cli_refuses_nested_symlink_directory(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            (root / 'real').mkdir()
+            (root / 'real' / 'manifest.json').write_text(json.dumps(payload()))
+            (root / 'safe').mkdir()
+            (root / 'safe' / 'link').symlink_to(root / 'real', target_is_directory=True)
+            r = subprocess.run([sys.executable, str(SCRIPT),
+                                str(root / 'safe' / 'link' / 'manifest.json')],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+
+    def test_cli_nested_real_parent_directory_still_works(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            folder = root / 'safe' / 'nested'
+            folder.mkdir(parents=True)
+            manifest = folder / 'manifest.json'
+            manifest.write_text(json.dumps(payload()))
+            r = subprocess.run([sys.executable, str(SCRIPT), str(manifest)],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(json.loads(r.stdout)['review_candidate_count'], 1)
+
+    def test_cli_rejects_parent_traversal(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            (root / 'real').mkdir()
+            file = root / 'real' / 'manifest.json'
+            file.write_text(json.dumps(payload()))
+            # Do not normalize the source string through pathlib before calling.
+            attempted = str(root / 'real') + '/../real/manifest.json'
+            r = subprocess.run([sys.executable, str(SCRIPT), attempted],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+            self.assertFalse(json.loads(r.stdout)['release_authorized'])
+
+    def test_cli_rejects_empty_segment(self):
+        with tempfile.TemporaryDirectory() as t:
+            file = pathlib.Path(t) / 'manifest.json'
+            file.write_text(json.dumps(payload()))
+            attempted = str(pathlib.Path(t)) + '//manifest.json'
+            r = subprocess.run([sys.executable, str(SCRIPT), attempted],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+
     def test_cli_refuses_symlink_without_following(self):
         with tempfile.TemporaryDirectory() as t:
             private = pathlib.Path(t) / 'private.json'
