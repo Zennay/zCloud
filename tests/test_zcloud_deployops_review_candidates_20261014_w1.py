@@ -171,6 +171,47 @@ class ReviewQueueTests(unittest.TestCase):
                                                      'head_sha': H, 'base_sha': S}})
         self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
+    def test_conflict_counts_distinguish_pr_and_unmerged_branch(self):
+        d = payload()
+        competing = copy.deepcopy(d['prs'][0])
+        competing['number'] = 13
+        d['prs'].append(competing)
+        d['branches'] = [
+            {'name': 'worker-other', 'head_sha': H,
+             'files': ['scripts/a.py/subfolder.py'],
+             'files_evidence': {'complete': True, 'total_count': 1,
+                                'head_sha': H, 'base_sha': S}},
+            {'name': 'worker-disjoint', 'head_sha': H,
+             'files': ['docs/unrelated.md'],
+             'files_evidence': {'complete': True, 'total_count': 1,
+                                'head_sha': H, 'base_sha': S}},
+        ]
+        report = snap(d)
+        for row in report['review_candidates']:
+            self.assertEqual(row['conflict_counts']['other_prs'], 1)
+            self.assertEqual(row['conflict_counts']['prless_branches'], 1)
+            self.assertFalse(row['review_candidate'])
+        human = mod.markdown(report)
+        self.assertIn('conflict met 1 andere PR', human)
+        self.assertIn('1 PR-loze branches', human)
+        self.assertNotIn('scripts/a.py', human)
+        self.assertNotIn('worker-other', human)
+
+    def test_duplicate_overlapping_paths_count_other_owner_once(self):
+        d = payload()
+        d['branches'] = [{
+            'name': 'same-branch', 'head_sha': H,
+            'files': ['scripts/a.py/one.py', 'scripts/a.py/two.py'],
+            'files_evidence': {'complete': True, 'total_count': 2,
+                               'head_sha': H, 'base_sha': S}
+        }]
+        result = snap(d)['review_candidates'][0]
+        self.assertEqual(result['conflict_counts'], {'other_prs': 0, 'prless_branches': 1})
+
+    def test_disjoint_candidate_has_zero_conflict_counts(self):
+        self.assertEqual(snap(payload())['review_candidates'][0]['conflict_counts'],
+                         {'other_prs': 0, 'prless_branches': 0})
+
     def test_ancestry_index_marks_both_colliding_prs(self):
         d = payload()
         other = copy.deepcopy(d['prs'][0])
