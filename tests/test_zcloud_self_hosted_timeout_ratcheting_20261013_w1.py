@@ -346,6 +346,39 @@ jobs:
             with self.assertRaisesRegex(RuntimeError, "size exceeds limit"):
                 audit.scan_git_ref(root, sha, max_minutes=30)
 
+    def test_workflow_missing_jobs_root_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "jobs root missing"):
+            audit.inspect_workflow("rootless.yml", "name: rootless\non: push\n", max_minutes=30)
+
+    def test_workflow_content_mutation_during_read_denies_stale_snapshot(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".github" / "workflows"
+            directory.mkdir(parents=True)
+            file = directory / "dynamic.yml"
+            file.write_text(
+                "jobs:\n  safe:\n    runs-on: self-hosted\n    timeout-minutes: 5\n",
+                encoding="utf-8",
+            )
+            fstat_orig = audit.os.fstat
+            seen = 0
+
+            def changed_after_read(fd):
+                nonlocal seen
+                seen += 1
+                if seen == 2:
+                    file.write_text(
+                        "jobs:\n  unsafe:\n    runs-on: self-hosted\n"
+                        "    timeout-minutes: 600\n", encoding="utf-8"
+                    )
+                return fstat_orig(fd)
+
+            with patch.object(audit.os, "fstat", side_effect=changed_after_read):
+                with self.assertRaisesRegex(RuntimeError, "workflow changed during read"):
+                    audit.scan_repository(root, max_minutes=30)
+
     def test_workflow_reads_pin_both_directories_and_bound_file_descriptor(self):
         from unittest.mock import patch
 
