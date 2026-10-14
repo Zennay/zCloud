@@ -23,15 +23,15 @@ TRIGGERS = (
     "issue_comment", "check_run", "check_suite",
 )
 AUTO_BLOCK = re.compile(
-    r"(?m)^[ ]{2}(" + "|".join(TRIGGERS) + r"):[ \\t]*"
+    r"(?m)^[ ]{2}(" + "|".join(TRIGGERS) + r"):[ \t]*"
 )
-ON_INLINE = re.compile(r"(?m)^[ \\t]*[\\\"']?on[\\\"']?:[ \\t]*(?P<value>[^\\n]*)$")
-RUNS_ON = re.compile(r"(?m)^[ \\t]+runs-on:[ \\t]*(?P<value>[^\\n#]*)")
+ON_INLINE = re.compile(r"(?m)^[ \t]*[\\"']?on[\\"']?:[ \t]*(?P<value>[^\n]*)$")
+RUNS_ON = re.compile(r"(?m)^[ \t]+runs-on:[ \t]*(?P<value>[^\n#]*)")
 HOSTED = re.compile(
-    r"(?:ubuntu|windows|macos)-(?:latest|[0-9]+(?:\\.[0-9]+)?(?:-arm|-large|-xlarge)?)",
+    r"(?:ubuntu|windows|macos)-(?:latest|[0-9]+(?:\.[0-9]+)?(?:-arm|-large|-xlarge)?)",
     re.IGNORECASE,
 )
-SHA = re.compile(r"[0-9a-f]{40}\\Z")
+SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
 def _automatic(text: str) -> bool:
@@ -49,11 +49,11 @@ def _automatic(text: str) -> bool:
 
 def _possible_vps(text: str) -> bool:
     for match in RUNS_ON.finditer(text):
-        raw = match.group("value").strip().strip("\\\"'")
+        raw = match.group("value").strip().strip("\\"'")
         if HOSTED.fullmatch(raw):
             continue
         if raw.startswith("[") and raw.endswith("]"):
-            labels = [part.strip().strip("\\\"'") for part in raw[1:-1].split(",")]
+            labels = [part.strip().strip("\\"'") for part in raw[1:-1].split(",")]
             if labels and all(HOSTED.fullmatch(label) for label in labels):
                 continue
         # A name, alias, expression, multiline array or group is not proof
