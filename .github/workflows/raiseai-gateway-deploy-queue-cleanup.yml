@@ -54,6 +54,7 @@ jobs:
           test "$GITHUB_SHA" = "$ZCLOUD_EXPECTED_SHA"
           gh auth status >/dev/null 2>&1
           test "$(gh api repos/Zennay/zCloud/commits/main --jq .sha)" = "$ZCLOUD_EXPECTED_SHA"
+          test "$(git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | cut -f1)" = "$ZCLOUD_EXPECTED_SHA"
           main_sha="$(gh api repos/$RAISE_REPO/commits/main --jq .sha)"
           [[ "$main_sha" =~ ^[a-f0-9]{40}$ ]]
           echo "RAISEAI_MAIN_SHA=$main_sha"
@@ -61,8 +62,8 @@ jobs:
           # Process-substitution failures are not propagated by mapfile.
           # Capture the entire GET result first; API/pagination errors must
           # prevent all cancellations rather than silently using a partial list.
-          stale_rows="$(gh api "repos/$RAISE_REPO/actions/runs?per_page=100" --paginate \
-            --jq '.workflow_runs[] |
+          # Capture the complete GitHub GET before considering a write.
+          stale_rows="$(gh api "repos/$RAISE_REPO/actions/runs?per_page=100" --paginate --jq '.workflow_runs[] |
                 select(.name=="Raise gateway deploy + live smoke") |
                 select(.status=="queued" or .status=="pending" or .status=="waiting") |
                 select(.head_sha != "'"$main_sha"'") |
@@ -71,21 +72,12 @@ jobs:
           if [[ -n "$stale_rows" ]]; then
             mapfile -t stale <<<"$stale_rows"
           fi
-          # A manual emergency cleanup should never bulk-cancel an unbounded
-          # cross-repository backlog. Stop instead of partially cancelling.
+          # Deny instead of partially cancelling unbounded queue inventory.
           test "${#stale[@]}" -le 5
 
           declare -A seen_run_ids=()
           for row in "${stale[@]}"; do
-            IFS=
-          current="$(
-            gh api "repos/$RAISE_REPO/actions/runs?per_page=100"               --jq '[.workflow_runs[] |
-                select(.name=="Raise gateway deploy + live smoke") |
-                select(.head_sha=="'"$main_sha"'")] |
-                sort_by(.created_at) | last // {}'
-          )"
-          echo "CURRENT_MAIN_DEPLOY=$current"
-\t' read -r run_id sha status <<<"$row"
+            IFS=$'\t' read -r run_id sha status <<<"$row"
             [[ "$run_id" =~ ^[1-9][0-9]{0,15}$ ]]
             [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
             [[ "$status" == queued || "$status" == pending || "$status" == waiting ]]
@@ -94,31 +86,12 @@ jobs:
           done
 
           for row in "${stale[@]}"; do
-            IFS=
-          current="$(
-            gh api "repos/$RAISE_REPO/actions/runs?per_page=100"               --jq '[.workflow_runs[] |
-                select(.name=="Raise gateway deploy + live smoke") |
-                select(.head_sha=="'"$main_sha"'")] |
-                sort_by(.created_at) | last // {}'
-          )"
-          echo "CURRENT_MAIN_DEPLOY=$current"
-\t' read -r run_id sha status <<<"$row"
-            # Re-check both repositories and the exact target immediately
-            # before each POST. A transition after this GET is still a race:
-            # this workflow makes no claim of atomic cancellation.
+            IFS=$'\t' read -r run_id sha status <<<"$row"
+            # GET-to-POST races remain possible; do not infer atomicity.
             test "$(gh api repos/Zennay/zCloud/commits/main --jq .sha)" = "$ZCLOUD_EXPECTED_SHA"
             test "$(gh api repos/$RAISE_REPO/commits/main --jq .sha)" = "$main_sha"
-            fresh="$(gh api "repos/$RAISE_REPO/actions/runs/$run_id" \
-              --jq '[.id,.name,.head_sha,.status] | @tsv')"
-            IFS=
-          current="$(
-            gh api "repos/$RAISE_REPO/actions/runs?per_page=100"               --jq '[.workflow_runs[] |
-                select(.name=="Raise gateway deploy + live smoke") |
-                select(.head_sha=="'"$main_sha"'")] |
-                sort_by(.created_at) | last // {}'
-          )"
-          echo "CURRENT_MAIN_DEPLOY=$current"
-\t' read -r fresh_id fresh_name fresh_sha fresh_status <<<"$fresh"
+            fresh="$(gh api "repos/$RAISE_REPO/actions/runs/$run_id" --jq '[.id,.name,.head_sha,.status] | @tsv')"
+            IFS=$'\t' read -r fresh_id fresh_name fresh_sha fresh_status <<<"$fresh"
             test "$fresh_id" = "$run_id"
             test "$fresh_name" = "Raise gateway deploy + live smoke"
             test "$fresh_sha" = "$sha"
@@ -128,7 +101,7 @@ jobs:
           done
 
           current="$(
-            gh api "repos/$RAISE_REPO/actions/runs?per_page=100"               --jq '[.workflow_runs[] |
+            gh api "repos/$RAISE_REPO/actions/runs?per_page=100" --jq '[.workflow_runs[] |
                 select(.name=="Raise gateway deploy + live smoke") |
                 select(.head_sha=="'"$main_sha"'")] |
                 sort_by(.created_at) | last // {}'
