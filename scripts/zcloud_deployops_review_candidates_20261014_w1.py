@@ -8,6 +8,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 import unicodedata
 from pathlib import PurePosixPath
 
@@ -145,9 +146,27 @@ def correlate_prless_receipt(report):
     require(names == local, "prless_receipt_identity_drift")
 
 
-def snapshot(report):
+def evidence_freshness(report, *, now=None):
+    """Time-window screen for an advisory snapshot; NOT source authentication."""
+    value = report.get("observed_at")
+    require(type(value) is str
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value),
+            "invalid_observation_time")
+    try:
+        observed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise InvalidEvidence("invalid_observation_time") from None
+    current = now if now is not None else datetime.now(timezone.utc)
+    require(isinstance(current, datetime) and current.tzinfo is not None,
+            "invalid_trusted_clock")
+    age = (current.astimezone(timezone.utc) - observed).total_seconds()
+    require(-30 <= age <= 300, "stale_or_future_observation")
+
+
+def snapshot(report, *, now=None):
     d = obj(report, "snapshot")
     require(sha(d.get("main_sha")), "invalid_main_sha")
+    evidence_freshness(d, now=now)
     inv = obj(d.get("inventory"), "inventory")
     require(inv.get("prs_complete") is True and inv.get("branches_complete") is True,
             "incomplete_inventory")
