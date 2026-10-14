@@ -55,10 +55,16 @@ jobs:
           persist-credentials: false
           clean: true
           fetch-depth: 1
-      - name: Set up Node for offline browser contract tests
-        uses: actions/setup-node@v4
+      - name: Set up pinned Node 24 for browser-contract tests
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
+          package-manager-cache: false
+      - name: Assert supported Node.js runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.versions.node.split(".")[0]')" = 24
       - name: Verify SHA identity and fresh main before test
         shell: bash
         env:
