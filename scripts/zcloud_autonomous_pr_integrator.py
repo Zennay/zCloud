@@ -95,15 +95,9 @@ def decide(pr, files, checks, statuses, main_sha):
     for s in statuses:
         if not isinstance(s, dict) or s.get("state") != "success":
             return "status_not_green"
-    # A red production release must not prevent harmless development reviews,
-    # but merging code on main can trigger a deploy: reject code paths until
-    # independently recorded production health is green.
-    docs_only = all(name.startswith("docs/") for name in filenames)
-    if not docs_only and not any(
-        s.get("context") == "zcloud/vps-production" and s.get("state") == "success"
-        for s in statuses
-    ):
-        return "production_gate_not_green"
+    # Source integration is independent of the VPS deployment health status.
+    # Privileged/runtime paths are excluded above; a merge is never permission
+    # to restart a worker, alter SQLite or promote production.
     return "eligible"
 
 
@@ -136,6 +130,9 @@ def main(argv=None, environ=None, transport=api):
         raise Refused("untrusted_event")
     if options.apply and env.get("ZCLOUD_AUTOMERGE_ENABLED") != "true":
         raise Refused("explicit_feature_gate_disabled")
+    if options.apply and (env.get("GITHUB_ACTOR") != "Zennay"
+                          or env.get("GITHUB_TRIGGERING_ACTOR") != "Zennay"):
+        raise Refused("owner_only_apply")
     token = env.get("GITHUB_TOKEN", "")
     if not token or any(ord(c) < 33 or ord(c) > 126 for c in token) or len(token) > 1024:
         raise Refused("missing_or_invalid_token")
