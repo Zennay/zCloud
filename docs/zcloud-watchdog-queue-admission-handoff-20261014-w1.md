@@ -92,6 +92,14 @@ The GET-only GitHub reader now admits only bounded printable ASCII token charact
 
 After allowlist, identity, timestamp and count validation, the summary prints a Dutch description of each run's branch provenance, runner pool, runner assignment and queued/active state. It then supplies **one** conditional troubleshooting checkpoint: inspect the current-main zCloud runner label/repo grant for eligible unassigned zCloud jobs, otherwise inspect the FTMO repository route for unassigned FTMO jobs, otherwise inspect workflow conditions when queued run entries have no job records. These are read-only manual review suggestions, **never** `systemctl`, cancellation, retry, or dispatch steps. Mixed/stale/malformed evidence still emits no claims or links. The explanatory priority is deterministic and tested; no runner-offline or AI-generation assertion is inferred from these counts.
 
+### Evidence-accurate queue pressure and job life-cycle (follow-up)
+
+A run returned by GitHub's `status=queued` listing does not prove **every** job inside it is waiting for an available self-hosted runner. The observer now distinguishes the actual bounded job-status set (`queued`, `in_progress`, `completed`, `waiting`, `requested`, `pending`) and `mixed_job_states` instead of collapsing all non-queued states into a vague "mixed or active" bucket. An empty jobs collection remains `no_job_records`, **not** a queued job. All recognized phases receive plain-language Dutch labels and keep the run link tied to the original numeric GitHub ID.
+
+The headline "**wachtende jobs zonder runnertoewijzing**" now counts only records with **both** `job_state=queued` and `assignment=not_assigned`. Completed, running, waiting-for-approval or requested jobs do not inflate this capacity warning. The manual FTMO or current-main zCloud routing suggestion likewise requires a *queued, unassigned* job. Operator evidence remains an **observation**; the source snapshot cannot establish listener liveness, identical dispatch intent or actual AI generation, and never grants restart, cancellation or deployment authority.
+
+Offline matrix coverage distinguishes all six statuses plus mixed jobs, the Dutch report and queued-only capacity count. Production `server.py`, runners, privileged watchdog and all other owners are unchanged.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
