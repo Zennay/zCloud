@@ -125,6 +125,24 @@ class ReviewQueueTests(unittest.TestCase):
             self.assertNotIn('do-not-print', r.stdout+r.stderr)
             self.assertFalse(json.loads(r.stdout)['release_authorized'])
 
+    def test_cli_huge_integer_is_sanitized(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = pathlib.Path(t) / 'too-large-int.json'
+            path.write_text('{"secret":' + '9' * 6000 + '}')
+            r = subprocess.run([sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 2)
+            self.assertFalse(json.loads(r.stdout)['release_authorized'])
+            self.assertNotIn('Traceback', r.stdout + r.stderr)
+
+    def test_cli_recursive_json_is_sanitized(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = pathlib.Path(t) / 'recursive.json'
+            path.write_text('[' * 1500 + '0' + ']' * 1500)
+            r = subprocess.run([sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 2)
+            self.assertFalse(json.loads(r.stdout)['release_authorized'])
+            self.assertNotIn('Traceback', r.stdout + r.stderr)
+
     def test_cli_valid(self):
         with tempfile.TemporaryDirectory() as t:
             path = pathlib.Path(t) / 'input.json'
