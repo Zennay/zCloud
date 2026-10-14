@@ -61,8 +61,7 @@ class RetiredOwnerContinuityWatchTests(unittest.TestCase):
     def test_old_busy_deferred_watch_marker_is_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
             name = Path(tmp) / "innocent.yaml"
-            name.write_text('run: echo "CONTINUITY_BUSY_DEFERRED="
-', encoding="utf-8")
+            name.write_text('run: echo "CONTINUITY_BUSY_DEFERRED="\\n', encoding="utf-8")
             self.assertIn(name.name, find_retired_watch(Path(tmp)))
 
     def test_old_success_marker_is_detected(self):
