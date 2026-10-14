@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -13,6 +13,7 @@ except ModuleNotFoundError:
     import zcloud_queue_route_triage_20261014_w1 as triage
 
 _MAX_BYTES = 32768
+_MAX_REPORT_AGE_SECONDS = 60
 _SCOPES = {"current_main", "historical_main", "other_branch", "foreign_repository"}
 _ROUTES = {"no_job_records", "github_hosted", "zcloud_vps", "ftmo_research",
            "other_or_mixed", "mixed_job_routes"}
@@ -30,7 +31,10 @@ def _unique(pairs):
     return result
 
 
-def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
+def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
+    """Reject stale/future source timestamps before printing any observations."""
+    if now is None:
+        now = datetime.now(timezone.utc)
     intro = "### zCloud GitHub-wachtrij — alleen leestoegang\n"
     disclaimer = (
         "- **Geen bevoegdheid om runs te annuleren of runners/workers te herstarten.**\n"
@@ -49,6 +53,8 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
             or data.get("production_verified") is not False
             or data.get("worker_generation_verified") is not False
             or data.get("cancel_run_ids") != []
+            or data.get("reason") != "read_only_route_counts_not_runner_liveness"
+            or data.get("mutation_authorized") is not False
         ):
             raise ValueError("unauthorized_or_invalid")
         # This remains a source-local claim, not cryptographic attestation.
@@ -65,6 +71,15 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
             raise ValueError("invalid_observation_time") from exc
         if parsed_at.strftime("%Y-%m-%dT%H:%M:%SZ") != observed_at:
             raise ValueError("noncanonical_observation_time")
+        if (
+            not isinstance(now, datetime) or now.tzinfo is None
+            or now.utcoffset() is None
+            or now.utcoffset().total_seconds() != 0
+        ):
+            raise ValueError("invalid_current_clock")
+        age = (now - parsed_at.replace(tzinfo=timezone.utc)).total_seconds()
+        if not 0 <= age <= _MAX_REPORT_AGE_SECONDS:
+            raise ValueError("stale_or_future_report")
         if (
             type(before) is not str or len(before) != 40 or
             any(c not in "0123456789abcdef" for c in before)
