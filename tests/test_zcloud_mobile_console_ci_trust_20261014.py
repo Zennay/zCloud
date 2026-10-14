@@ -19,6 +19,9 @@ class MobileConsoleHostedCITrustTests(unittest.TestCase):
         self.assertIn("  push:\n    branches: [main, fix/ui-consistency-tokens-and-mobile-20261010]", self.text)
         self.assertIn("  workflow_dispatch:", self.text)
         for path in ("public/app.js", "public/index.html", "public/enhancements.css",
+                     "public/enhancements.js", "tests/test_worker_debug_panel.js",
+                     "tests/test_mobile_css_delivery_20261010.py",
+                     "tests/test_dashboard_design_system.py",
                      "public/design-system.css", "tests/test_global_worker_console_ui.py",
                      "tests/test_mobile_worker_console_navigation.py",
                      "tests/test_mobile_worker_actions_20261010.py",
@@ -53,6 +56,19 @@ class MobileConsoleHostedCITrustTests(unittest.TestCase):
         # No repository-controlled tests execute before exact source verification.
         window = self.text[self.text.index("Checkout exact immutable source"):self.text.index("Parse dashboard source")]
         self.assertNotRegex(window, r"(?m)^\s*run: (?:node|python|bash)")
+
+    def test_real_worker_debug_and_enhancement_js_are_executed(self):
+        self.assertIn("node --check public/enhancements.js", self.text)
+        self.assertIn("node tests/test_worker_debug_panel.js", self.text)
+        self.assertIn("node --check public/app.js", self.text)
+        self.assertLess(
+            self.text.index("Verify canonical repository and exact head before running code"),
+            self.text.index("Check dashboard JavaScript and worker diagnostics behavior"),
+        )
+        self.assertLess(
+            self.text.index("node tests/test_worker_debug_panel.js"),
+            self.text.index("Run all repository Python regression tests"),
+        )
 
     def test_preserves_mobile_and_full_regression_coverage(self):
         for command in ("node --check public/app.js",
