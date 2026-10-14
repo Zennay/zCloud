@@ -458,6 +458,96 @@ jobs:
         self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 1)
         self.assertIn("pr_source_in_run_job", gate.increasing_risks(prior, candidate))
 
+
+    def test_job_env_pr_body_executed_with_bash_c_is_denied(self):
+        src = """name: job env risk
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  examine:
+    runs-on: ubuntu-latest
+    env:
+      PAYLOAD: ${{ github.event.pull_request.body }}
+    steps:
+      - name: run payload
+        run: bash -c "$PAYLOAD"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, src))
+
+    def test_job_env_not_executed_remains_metadata_only(self):
+        src = """name: safe job
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  examine:
+    runs-on: ubuntu-latest
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - run: echo "$TITLE"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_job_env_does_not_cross_job_boundary(self):
+        src = """name: job isolation
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    env:
+      SCRIPT: ${{ github.event.pull_request.title }}
+    steps:
+      - run: echo metadata
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - run: eval "$SCRIPT"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_job_env_pr_number_to_head_swap_detected_at_equal_count(self):
+        before = """name: job env identities
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      INPUT: ${{ github.event.pull_request.number }}
+    steps:
+      - run: eval "$INPUT"
+"""
+        after = before.replace("pull_request.number", "pull_request.head.sha")
+        self.assertEqual(gate.risk_counts(before)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(after)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(before, after))
+
+    def test_job_env_safe_immutable_sha_is_not_shell_execution(self):
+        src = """name: source-only fetch
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: git fetch origin "$HEAD_SHA"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
