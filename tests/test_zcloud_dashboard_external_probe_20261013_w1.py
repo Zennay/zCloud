@@ -256,6 +256,49 @@ class DashboardProbeTests(unittest.TestCase):
                 self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
                 response.read.assert_not_called()
 
+    def test_http_age_header_nonzero_never_claims_live_reachability(self):
+        for age in ("1", "30", "180", "999999999999"):
+            with self.subTest(age=age):
+                response = Response()
+                response.headers["Age"] = age
+                response.read = mock.Mock(side_effect=AssertionError("must not read cached body"))
+                self.assertEqual(probe.probe_once(Opener(response)), "cache_evidence")
+                response.read.assert_not_called()
+        response = Response()
+        response.headers["Age"] = "0"
+        self.assertEqual(probe.probe_once(Opener(response)), "healthy")
+
+    def test_http_age_header_malformed_or_duplicate_fails_closed(self):
+        for age in ("", "00x", "+1", "-1", "１", "1, 2",
+                    " 1", "1 ", "1.0", "1" * 14):
+            with self.subTest(age=repr(age)):
+                response = Response()
+                response.headers["Age"] = age
+                response.read = mock.Mock(side_effect=AssertionError("must not read"))
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+                response.read.assert_not_called()
+        headers = Message()
+        headers.add_header("Content-Type", "application/json")
+        headers.add_header("Age", "0")
+        headers.add_header("Age", "0")
+        response = Response()
+        response.headers = headers
+        response.read = mock.Mock(side_effect=AssertionError("must not read"))
+        self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+        response.read.assert_not_called()
+
+    def test_cache_evidence_is_unauthenticated_and_never_authorizes_mutation(self):
+        summary = probe.run_probe(lambda: "cache_evidence", lambda _: None, attempts=2)
+        self.assertEqual(summary.status, "unhealthy")
+        self.assertEqual(summary.failure_counts, {"cache_evidence": 2})
+        self.assertEqual(summary.last_failure_category, "cache_evidence")
+        self.assertFalse(summary.authorized)
+        self.assertFalse(summary.mutations_performed)
+        self.assertFalse(summary.transport_authenticated)
+        text = probe.operator_markdown(summary)
+        self.assertIn("HTTP-antwoord heeft cacheleeftijd: 2", text)
+        self.assertNotIn(probe.STATUS_URL, text)
+
     def test_declared_oversize_rejected_without_reading_body(self):
         response = Response()
         response.headers["Content-Length"] = str(probe.MAX_BYTES + 1)
@@ -606,6 +649,17 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
         self._run("invalid_headers",
                   extra_headers=(("Transfer-Encoding", "chunked"),
                                  ("Transfer-Encoding", "gzip")))
+
+    def test_actual_http_cache_age_zero_is_still_only_unauthenticated_reachability(self):
+        self._run("healthy", extra_headers=(("Age", "0"),))
+
+    def test_actual_http_nonzero_age_is_cache_evidence_not_health(self):
+        for age in ("1", "180"):
+            with self.subTest(age=age):
+                self._run("cache_evidence", extra_headers=(("Age", age),))
+
+    def test_actual_http_duplicate_age_is_denied(self):
+        self._run("invalid_headers", extra_headers=(("Age", "0"), ("Age", "1")))
 
     def test_actual_http_claims_impossible_large_length(self):
         self._run("body_too_large", declared_length=probe.MAX_BYTES + 1)
