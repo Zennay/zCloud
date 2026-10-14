@@ -182,6 +182,8 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
 
 def scan_repository(root: Path, *, max_minutes: int) -> list[TimeoutFinding]:
     workflows = root / WORKFLOW_DIR
+    if (root / ".github").is_symlink() or workflows.is_symlink():
+        raise RuntimeError("symlink workflow directory rejected")
     if not workflows.is_dir():
         raise FileNotFoundError(f"workflow directory not found: {workflows}")
 
@@ -206,6 +208,21 @@ def scan_repository(root: Path, *, max_minutes: int) -> list[TimeoutFinding]:
 
 def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFinding]:
     """Read workflow blobs from an existing git commit without checking it out."""
+    # A Git tree may replace .github or workflows with a symlink, causing the
+    # recursive inventory to appear empty. Such snapshots cannot prove safety.
+    for treeish, entry in ((ref, ".github"), (f"{ref}:.github", "workflows")):
+        ancestor = subprocess.run(
+            ["git", "-C", str(root), "ls-tree", treeish, "--", entry],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        rows = [line for line in ancestor.stdout.splitlines() if line.endswith("\t" + entry)]
+        if len(rows) != 1:
+            raise RuntimeError("workflow Git tree ancestry missing or ambiguous")
+        mode, object_type, _sha = rows[0].split("\t", 1)[0].split(" ", 2)
+        if mode == "120000" or object_type != "tree":
+            raise RuntimeError("symlink or non-tree workflow Git ancestor rejected")
     proc = subprocess.run(
         ["git", "-C", str(root), "ls-tree", "-r", ref, "--", WORKFLOW_DIR.as_posix()],
         check=True,
