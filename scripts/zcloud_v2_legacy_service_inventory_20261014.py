@@ -8,6 +8,8 @@ This is observation only: it does not attest worker health or authorize deploy.
 import json
 import os
 import re
+import selectors
+import time
 import stat
 import subprocess
 from pathlib import Path
@@ -30,12 +32,69 @@ MAX_LINES = 4000
 MAX_OUTPUT = 65536
 
 
-def command_lines(argv, *, execute=subprocess.run):
+def _bounded_process_output(argv, *, timeout_seconds=5):
+    """Stream subprocess output with a hard memory and wall-time ceiling.
+
+    subprocess.run(capture_output=True) buffered arbitrary output before
+    our old post-capture size check, so it could still exhaust VPS memory.
+    """
+    process = None
+    selector = None
     try:
-        done = execute(list(argv), capture_output=True, text=True, timeout=5, check=False)
-        raw = done.stdout
-        if (done.returncode != 0 or not isinstance(raw, str)
-                or len(raw) > MAX_OUTPUT or "\x00" in raw):
+        if timeout_seconds <= 0 or timeout_seconds > 5:
+            return None
+        process = subprocess.Popen(
+            list(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True,
+        )
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout_seconds
+        bounded = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                return None
+            # Never read more than the remaining budget plus one sentinel.
+            chunk = os.read(process.stdout.fileno(), min(4096, MAX_OUTPUT + 1 - len(bounded)))
+            if not chunk:
+                break
+            bounded.extend(chunk)
+            if len(bounded) > MAX_OUTPUT:
+                return None
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
+            return None
+        return bytes(bounded).decode("utf-8", "strict")
+    except (OSError, UnicodeError, ValueError, TypeError, subprocess.SubprocessError):
+        return None
+    finally:
+        if selector is not None:
+            selector.close()
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=1)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if process.stdout is not None:
+                process.stdout.close()
+
+
+def command_lines(argv, *, execute=None):
+    try:
+        if execute is None:
+            raw = _bounded_process_output(argv)
+            if raw is None:
+                return None
+        else:
+            # Offline tests inject deterministic command outcomes without
+            # spawning any VPS service or changing runtime state.
+            done = execute(list(argv), capture_output=True, text=True, timeout=5, check=False)
+            raw = done.stdout
+            if done.returncode != 0:
+                return None
+        if not isinstance(raw, str) or len(raw) > MAX_OUTPUT or "\x00" in raw:
             return None
         lines = raw.splitlines()
         return lines if len(lines) <= MAX_LINES else None
@@ -156,7 +215,7 @@ def get_background_count(path=EXTENSION_MANIFEST):
         return None
 
 
-def collect(*, execute=subprocess.run, source_path=WORKER_SCRIPT, manifest_path=EXTENSION_MANIFEST):
+def collect(*, execute=None, source_path=WORKER_SCRIPT, manifest_path=EXTENSION_MANIFEST):
     lines = {key: command_lines(argv, execute=execute) for key, argv in COMMANDS.items()}
     processes = summarize_processes(lines["process"])
     user = summarize_units(lines["user_services"], kind="service")
