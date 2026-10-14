@@ -63,6 +63,17 @@ class ManualDispatchPolicy(unittest.TestCase):
     def test_true_or_admission_cannot_bypass_identity(self):
         self.assertDenied(workflow(if_statement="true || (" + SAFE_IF + ")"))
 
+    def test_trust_literals_inside_functions_cannot_fake_authorization(self):
+        fake = "contains('" + SAFE_IF + "', 'Zennay')"
+        self.assertDenied(workflow(if_statement=fake))
+
+    def test_braced_positive_github_expression_is_accepted(self):
+        guarded = "$" + "{{ " + SAFE_IF + " }}"
+        self.assertTrue(guard.evaluate({}, {WF: workflow(if_statement=guarded)})["ok"])
+
+    def test_alias_runner_cannot_hide_manual_vps_selection(self):
+        self.assertDenied(workflow(runner="*shared_runner"))
+
     def test_separate_step_condition_does_not_count_as_job_if(self):
         body = workflow().decode().replace("      - run:", f"      - if: {SAFE_IF}\n        run:")
         self.assertDenied(body.encode())
