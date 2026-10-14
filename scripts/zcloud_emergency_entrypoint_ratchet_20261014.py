@@ -64,7 +64,7 @@ def inspect_text(filename: str, source: str) -> list[str]:
         problems.append("automatic_or_unknown_trigger")
     if re.search(r"(?m)^\s*(?:pull_request_target|schedule|push|workflow_run|repository_dispatch|issue_comment):", events):
         problems.append("privileged_trigger")
-    permission_block = source.split("\npermissions:\n", 1)[1].split("\n", 1)[1].split("\nconcurrency:", 1)[0].split("\njobs:", 1)[0]
+    permission_block = source.split("\npermissions:\n", 1)[1].split("\nconcurrency:", 1)[0].split("\njobs:", 1)[0]
     allowed = {"contents: read", "actions: read"} if filename == "zcloud-hosted-emergency-queue-sweep.yml" else {"contents: read"}
     observed = set(re.findall(r"(?m)^  ([a-z-]+:\s*\w+)\s*$", permission_block))
     if observed != allowed:
@@ -73,7 +73,7 @@ def inspect_text(filename: str, source: str) -> list[str]:
     marker = "\n  " + config["job"] + ":\n"
     if source.count(marker) != 1:
         return sorted(set(problems + ["missing_or_duplicate_job"]))
-    job = source.split(marker, 1)[1].split("\n  ", 1)[0] if False else source.split(marker, 1)[1]
+    job = source.split(marker, 1)[1]
     # Trust expression precedes the job's runner. A forged literal in a shell
     # command is not sufficient to satisfy a GitHub job-level admission gate.
     if "    runs-on:" not in job:
