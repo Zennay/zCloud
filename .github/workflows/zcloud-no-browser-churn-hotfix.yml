@@ -1,20 +1,30 @@
-name: zCloud emergency no-browser-churn hotfix
+name: zCloud no-browser-churn guarded watchdog hotfix
 
-# On a trusted main merge, replace ONLY the watchdog script that can issue
-# browser-wide restarts. No Firefox signal, tab close, systemd restart or
-# workflow dispatch is permitted in this activation path.
+# Never install a root-owned watchdog from a code push or pull request.
+# Owner approval and exact current main SHA are mandatory for manual install.
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - .github/workflows/zcloud-no-browser-churn-hotfix.yml
+      - tests/test_zcloud_no_browser_churn_manual_gate.py
   workflow_dispatch:
+    inputs:
+      apply:
+        description: "Explicitly authorize guarded watchdog installation"
+        type: boolean
+        required: true
+        default: false
+      confirm_sha:
+        description: "Copy the exact current main commit SHA to authorize apply"
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: zcloud-no-browser-churn-hotfix
+  group: zcloud-no-browser-churn-hotfix-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -23,51 +33,83 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - name: Validate source and tests
+      - name: Read the exact approved source without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact revision and offline no-browser-churn tests
         shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           python3 -m py_compile scripts/zcloud_worker_watchdog.py server.py
-          python3 -m unittest -v tests.test_worker_progress_watchdog
+          python3 -m unittest -v tests.test_worker_progress_watchdog tests.test_zcloud_no_browser_churn_manual_gate
           node tests/test_worker_tab_reuse.js
           node tests/test_worker_tab_identity_guard.js
 
   install:
-    name: Install non-restarting watchdog on existing VPS
+    name: Apply watchdog patch only with exact-main owner authorization
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      inputs.apply == true &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact approved main SHA without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Disable browser-wide stall recovery without touching Firefox
+          clean: true
+          fetch-depth: 1
+      - name: Verify owner identity and immutable release intent before writes
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$APPLY" = "true"
+          test -n "$CONFIRM_SHA"
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Install only the validated non-restarting watchdog
         shell: bash
         run: |
           set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
-          test "$(id -un)" = "ubuntu"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # No Firefox signal, tab close, queue write, or service restart.
           root="/home/ubuntu/zennay-cloud"
           live="/usr/local/sbin/zcloud-worker-watchdog"
           python3 -m py_compile scripts/zcloud_worker_watchdog.py
           echo "WATCHDOG_RUNTIME_ROOT_PRESENT=$(test -d "$root/scripts" && echo yes || echo no)"
           echo "WATCHDOG_LIVE_PRESENT=$(test -f "$live" && echo yes || echo no)"
-          # Do not touch the browser/session. The next normal watchdog tick
-          # automatically uses this updated standalone executable.
           backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
           if test -f "$live"; then cp -p "$live" "$backup"; fi
           if test -d "$root/scripts" && test -w "$root/scripts"; then
             install -m 0755 scripts/zcloud_worker_watchdog.py "$root/scripts/zcloud_worker_watchdog.py"
           else
-            echo "Runtime repo missing/read-only; standalone watchdog install still proceeds."
+            echo "Runtime repository absent/read-only; only canonical standalone path eligible."
           fi
           sudo -n install -D -m 0755 scripts/zcloud_worker_watchdog.py "$live"
           sudo -n cmp scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
           echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
-          echo "Watchdog backup: $backup"
-          ps -eo pid=,ppid=,args= | grep -E '[/]firefox|[/]web-ext' | head -n 30 || true
+          echo "Backup recorded: $backup"
