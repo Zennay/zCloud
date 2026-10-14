@@ -20,6 +20,8 @@ def report(decision="NOOP", **updates):
         "production_verified": False,
         "inventory_complete": False,
         "cancel_run_ids": [],
+        "observed_run_count": 2 if decision == "REVIEW_ONLY" else 0,
+        "candidate_duplicate_groups": [[1, 2]] if decision == "REVIEW_ONLY" else [],
     }
     data.update(updates)
     return json.dumps(data).encode("utf-8")
@@ -124,6 +126,61 @@ class TestHostedQueueSummary(unittest.TestCase):
         self.assertIn("Geen mogelijke dubbele", markdown)
         self.assertIn("**NIET BEWEZEN**", markdown)
         self.assertNotIn("Productie gezond", markdown)
+
+
+    def test_valid_review_reports_only_bounded_group_counts(self):
+        markdown, status = reporter.summarize(
+            report("REVIEW_ONLY", observed_run_count=7,
+                   candidate_duplicate_groups=[[4, 5], [6, 7]]), 1
+        )
+        self.assertEqual(status, 1)
+        self.assertIn("wachtrijruns: **7**", markdown)
+        self.assertIn("groepen ter beoordeling: **2**", markdown)
+        self.assertNotIn("[4, 5]", markdown)
+        self.assertIn("geen bevestiging van productiegezondheid", markdown)
+
+    def test_invalid_or_contradictory_report_counts_never_displayed(self):
+        cases = (
+            {"observed_run_count": -1},
+            {"observed_run_count": True},
+            {"observed_run_count": "2"},
+            {"observed_run_count": 501},
+            {"candidate_duplicate_groups": [[1, 2]]},
+            {"candidate_duplicate_groups": "secret-list"},
+        )
+        for change in cases:
+            with self.subTest(change=change):
+                markdown, code = reporter.summarize(report(**change), 0)
+                self.assertEqual(code, 1)
+                self.assertIn("**DENY**", markdown)
+                self.assertNotIn("Aangeleverde wachtrijruns", markdown)
+                self.assertNotIn("secret-list", markdown)
+
+    def test_invalid_review_groups_and_mismatched_counts_fail_closed(self):
+        cases = (
+            {"candidate_duplicate_groups": []},
+            {"candidate_duplicate_groups": [[1]]},
+            {"candidate_duplicate_groups": [[1, True]]},
+            {"candidate_duplicate_groups": [[1, 1]]},
+            {"candidate_duplicate_groups": [[1, 2], [2, 3]]},
+            {"observed_run_count": 1},
+        )
+        for change in cases:
+            with self.subTest(change=change):
+                markdown, code = reporter.summarize(report("REVIEW_ONLY", **change), 1)
+                self.assertEqual(code, 1)
+                self.assertIn("**DENY**", markdown)
+                self.assertNotIn("Aangeleverde wachtrijruns", markdown)
+
+    def test_deny_report_never_uses_partial_or_hostile_counts(self):
+        markdown, status = reporter.summarize(
+            report("DENY", observed_run_count=500,
+                   candidate_duplicate_groups=[[1, 2]],
+                   reason="invalid_job_identity"), 1
+        )
+        self.assertEqual(status, 1)
+        self.assertIn("**DENY**", markdown)
+        self.assertNotIn("Aangeleverde wachtrijruns", markdown)
 
     def test_actual_cli_writes_only_sanitized_summary(self):
         with tempfile.TemporaryDirectory() as temp:
