@@ -76,3 +76,27 @@ The live main SHA changed from `e5a63e3` to `c2a944d`; the newer SHA returned ze
 The workflow now tests **every** commit to this dedicated branch, including a commit that only integrates new current-main changes; this prevents an unnoticed stale green proof when the code base changes but the four observer paths remain unchanged.
 
 A passing hosted workflow is strictly source/test evidence. Production/worker generation/SQLite/runner state requires separate live proof. If an owner later merges this observer into main, use a controlled source-only release path that does not accidentally trigger the legacy `workflow_run` production deployment.
+
+
+## Manual main operator action (source-only rollout)
+
+After this workflow update lands on `main`, navigate to **GitHub Actions →
+zCloud deploy-ops read-only exact-main receipt proof → Run workflow**. Select
+`main` and start a run as repository owner **Zennay**. No other branch,
+actor or trigger can run the diagnostic job. Only a trusted first-attempt
+manual main run is accepted; ordinary `main` pushes never trigger this
+workflow. The isolated `deployops/manual-main-readonly-proof-20261014-w1`
+branch permits source CI while this change is being validated.
+
+The hosted job checks out exactly the triggering commit with persisted
+credentials disabled, runs its full source tests, and uses only `contents:read`,
+`actions:read`, `statuses:read` to inspect the latest current-main GitHub
+receipts. It publishes a bounded sanitized GitHub job summary and 7-day
+artifact. It **cannot** mutate a deployment, cancel queued work, restart a
+runner, touch SQLite, change service permissions or certify worker generation.
+A result of `PRODUCTION_STATUS_ABSENT` is informative, never release approval.
+
+The user-facing workflow remains manual-only on main specifically to avoid
+triggering `zcloud-vps-deploy.yml` through an automatic successful main
+regression. Do not enable a schedule or `push: main` trigger until the
+separately owned production release safety gates have been reviewed.
