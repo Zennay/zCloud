@@ -158,6 +158,38 @@ class ReviewQueueTests(unittest.TestCase):
                           'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
         self.assertEqual(snap(d)['review_candidate_count'], 1)
 
+    def test_index_matches_independent_pairwise_reference_on_250_fixed_cases(self):
+        import random
+        import unicodedata
+        rng = random.Random(20261014)
+        candidates = ['src/a.py', 'src/a.py/deeper.py', 'src/A.PY',
+                      'src/a.py2', 'src/b.py', 'src/B.py/nested.py',
+                      'docs/a.md', 'docs/a.md/child.md',
+                      'src/café.py', 'src/cafe\u0301.py',
+                      'other/unrelated.txt']
+        for _ in range(250):
+            owners = []
+            for n in range(rng.randrange(1, 16)):
+                files = set(rng.sample(candidates, rng.randrange(0, 5)))
+                owners.append((f'owner:{n}', files))
+            fast = mod.conflicted_owners(owners)
+
+            def norm(path):
+                return unicodedata.normalize('NFC', path).casefold()
+
+            def collides(left, right):
+                return any(norm(a) == norm(b)
+                           or norm(a).startswith(norm(b) + '/')
+                           or norm(b).startswith(norm(a) + '/')
+                           for a in left for b in right)
+
+            slow = {owner: set() for owner, _ in owners}
+            for i, (owner, files) in enumerate(owners):
+                for j, (other, theirs) in enumerate(owners):
+                    if i != j and collides(files, theirs):
+                        slow[owner].add(other)
+            self.assertEqual(fast, slow)
+
     def test_many_disjoint_owners_stay_review_candidates(self):
         d = payload()
         d['prs'] = []
