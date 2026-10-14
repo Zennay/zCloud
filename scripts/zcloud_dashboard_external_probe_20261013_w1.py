@@ -237,6 +237,8 @@ def _cache_status_signal(value):
             return "invalid_headers"
         cache_hit = None
         has_fwd = False
+        reused_origin_body = False
+        needs_forward = False
         seen_keys = set()
         for param in group[1:]:
             key, separator, raw_value = param.partition("=")
@@ -264,11 +266,37 @@ def _cache_status_signal(value):
                             for ch in reason)):
                     return "invalid_headers"
                 has_fwd = True
+            elif key == "fwd-status":
+                # A 304 or partial 206 next-hop response can leave a cache
+                # assembling/revalidating stored content. That is not
+                # evidence of a fresh, full origin status representation.
+                status_text = raw_value.strip() if separator else ""
+                if (not status_text.isascii() or len(status_text) != 3 or
+                        not status_text.isdigit() or
+                        not 100 <= int(status_text) <= 599):
+                    return "invalid_headers"
+                needs_forward = True
+                reused_origin_body |= int(status_text) in (206, 304)
+            elif key in ("stored", "collapsed"):
+                # RFC 9211 says these booleans are meaningful only on fwd.
+                value_text = raw_value.strip() if separator else ""
+                if value_text not in ("", "?0", "?1"):
+                    return "invalid_headers"
+                needs_forward = True
+            elif key == "ttl":
+                # RFC 8941 integer format, in seconds; do not parse floats.
+                lifetime = raw_value.strip() if separator else ""
+                digits = lifetime[1:] if lifetime.startswith("-") else lifetime
+                if (not 1 <= len(digits) <= 15 or
+                        not digits.isascii() or not digits.isdigit()):
+                    return "invalid_headers"
+        if needs_forward and not has_fwd:
+            return "invalid_headers"
         # RFC 9211 says hit and fwd are exclusive on a single member,
         # including an explicitly false hit=?0.
         if cache_hit is not None and has_fwd:
             return "invalid_headers"
-        hit_detected |= cache_hit is True
+        hit_detected |= cache_hit is True or reused_origin_body
     return "cache_evidence" if hit_detected else None
 
 
