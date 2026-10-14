@@ -37,7 +37,39 @@ PROTECTED_INTEGRATION_FILES = frozenset((
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
     "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
     "tests/test_deployops_automerge_file_count_cpu_20261014_w15.py",
+    "tests/test_deployops_automerge_import_shadow_20261014_w16.py",
 ))
+# These Python module-loading entrypoints are reachable from the trusted
+# GitHub-hosted unittest preflight, even when the integrator engine itself is
+# unchanged. Never allow an automatically merged PR to edit them.
+PYTHON_PACKAGE_ENTRYPOINTS = frozenset((
+    "scripts/__init__.py", "tests/__init__.py",
+    "scripts/sitecustomize.py", "scripts/usercustomize.py",
+    "tests/sitecustomize.py", "tests/usercustomize.py",
+))
+STDLIB_IMPORT_ROOTS = frozenset(sys.stdlib_module_names)
+
+
+def unsafe_import_shadow(path):
+    if not isinstance(path, str):
+        return False
+    if path in PYTHON_PACKAGE_ENTRYPOINTS:
+        return True
+    if not path.startswith(("scripts/", "tests/")):
+        return False
+    if path.endswith((".pyc", ".pyo")):
+        return True
+    if path.startswith("scripts/"):
+        # python3 scripts/zcloud_autonomous_pr_integrator.py puts scripts/
+        # first on sys.path. json.py, argparse.py, urllib/__init__.py, etc.
+        # can shadow imports before the integrity guard itself starts.
+        component = path.split("/", 2)[1]
+        module_name = component[:-3] if component.endswith(".py") else component
+        if module_name in STDLIB_IMPORT_ROOTS:
+            return True
+    return False
+
+
 ALLOWED_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
 # Verified against the actual GitHub Actions check-run API on recent zCloud PR
 # heads. A human-supplied name alone cannot attest the critical regression job.
@@ -88,6 +120,8 @@ def safe_path(path):
         return False
     if path in PROTECTED_INTEGRATION_FILES:
         return False
+    if unsafe_import_shadow(path):
+        return False
     if path.startswith(HIGH_RISK) or path in HIGH_RISK:
         return False
     return path.startswith(ALLOWED_PREFIXES)
@@ -129,6 +163,8 @@ def decide(pr, files, checks, statuses, main_sha):
         name = f.get("filename")
         if name in PROTECTED_INTEGRATION_FILES:
             return "protected_integration_source"
+        if unsafe_import_shadow(name):
+            return "unsafe_python_import_root"
         if not safe_path(name) or name in filenames:
             return "unsafe_or_duplicate_path"
         filenames.add(name)
