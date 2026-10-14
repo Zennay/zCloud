@@ -264,6 +264,25 @@ class QueueRouteTriageTests(unittest.TestCase):
                 self.assertEqual(result["runs"][0]["route"], expected)
                 self.assertFalse(result["runner_recovery_authorized"])
 
+    def test_exact_self_hosted_pool_labels_not_broadened_by_private_extra(self):
+        candidates = [
+            (["self-hosted", "zcloud", "vps"], "zcloud_vps"),
+            (["self-hosted", "zcloud", "vps", "Linux", "X64"], "zcloud_vps"),
+            (["self-hosted", "ftmo-research", "Linux", "ARM64"], "ftmo_research"),
+            (["self-hosted", "zcloud", "vps", "ftmo-research"], "other_or_mixed"),
+            (["self-hosted", "zcloud", "vps", "secret-runner"], "other_or_mixed"),
+            (["self-hosted", "ftmo-research", "private-gpu"], "other_or_mixed"),
+            (["self-hosted", "ftmo-research", "ftmo-research"], "other_or_mixed"),
+        ]
+        for n, (labels, expected) in enumerate(candidates, start=1):
+            with self.subTest(labels=labels):
+                item = job(n)
+                item["labels"] = labels
+                get, _ = mock([run(n)], {n: [item]})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["route"], expected)
+                self.assertIs(result["mutation_authorized"], False)
+
     def test_job_with_positive_assigned_runner_keeps_uncertain_liveness(self):
         item = job(1)
         item["runner_id"] = 32
