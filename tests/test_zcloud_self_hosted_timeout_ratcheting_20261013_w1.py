@@ -37,6 +37,43 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_duplicate_root_jobs_sections_fail_closed(self):
+        for first_root, second_root in (("jobs", "jobs"), ("jobs", "'jobs'")):
+            with self.subTest(first_root=first_root, second_root=second_root):
+                source = (
+                    first_root + ":\\n"
+                    "  safe:\\n    runs-on: ubuntu-latest\\n"
+                    + second_root + ":\\n"
+                    "  hidden:\\n    runs-on: [self-hosted, zcloud]\\n"
+                    "    timeout-minutes: 200\\n"
+                ).replace("\\\\n", "\\n")
+                with self.assertRaisesRegex(RuntimeError, "duplicate root jobs sections"):
+                    audit.inspect_workflow(".github/workflows/roots.yml", source, max_minutes=30)
+
+    def test_duplicate_job_ids_fail_closed_even_with_different_quotes(self):
+        source = """jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+  "worker":
+    runs-on: [self-hosted, zcloud]
+    timeout-minutes: 120
+"""
+        with self.assertRaisesRegex(RuntimeError, "duplicate workflow job declaration"):
+            audit.inspect_workflow(".github/workflows/job-dup.yml", source, max_minutes=30)
+
+    def test_single_root_and_distinct_job_ids_still_work(self):
+        source = """jobs:
+  first:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+  second:
+    runs-on: [self-hosted, zcloud]
+    timeout-minutes: 20
+"""
+        rows = audit.inspect_workflow("valid.yml", source, max_minutes=30)
+        self.assertEqual([("second", "bounded")], [(r.job, r.status) for r in rows])
+
     def test_strict_cli_rejects_mutable_git_ref_but_allows_reporting(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
