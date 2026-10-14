@@ -6,6 +6,8 @@ main push or an explicitly owner-initiated manual dispatch on main.
 """
 import ast
 import os
+import re
+import tempfile
 import textwrap
 from pathlib import Path
 import subprocess
@@ -92,7 +94,7 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertEqual(0, _event_guard_result("push", "github-actions[bot]").returncode)
         inspect = _job("inspect")
         self.assertIn("READ_ONLY_PROBE_NO_TAB_OR_BROWSER_CHANGES=1", inspect)
-        self.assertNotIn("actions/checkout@", inspect)
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", inspect)
         for forbidden in ("systemctl ", "sqlite3.connect(", "os.kill(", "subprocess.Popen("):
             self.assertNotIn(forbidden, inspect)
 
@@ -120,6 +122,62 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertIn("RDP_SAMPLE_COMPLETE=", inspect)
         self.assertIn("RDP_IS_TARGET_SCRIPT_LIVE=", inspect)
 
+
+
+    def _run_version_preflight(self, candidate):
+        embedded = SOURCE.split("python3 - <<'PY'", 1)[1].split("\n          PY", 1)[0]
+        start = embedded.index('          source=Path("public/zcloud-worker.user.js")')
+        endmarker = 'print("RDP_EXPECTED_SCRIPT_VERSION="+expected_version)'
+        end = embedded.index(endmarker, start) + len(endmarker)
+        script = "import re\nfrom pathlib import Path\n" + textwrap.dedent(embedded[start:end])
+        with tempfile.TemporaryDirectory() as temp:
+            file = Path(temp) / "public" / "zcloud-worker.user.js"
+            file.parent.mkdir(parents=True)
+            file.write_text(candidate, encoding="utf-8")
+            return subprocess.run(
+                ["python3", "-c", script], cwd=temp,
+                text=True, capture_output=True, timeout=5,
+            )
+
+    def test_runtime_version_comes_from_actual_v2_source(self):
+        script_source = (ROOT / "public/zcloud-worker.user.js").read_text(encoding="utf-8")
+        match = re.search(r"(?m)^//\s*@version\s+(\d+\.\d+\.\d+)\s*$", script_source)
+        self.assertIsNotNone(match)
+        outcome = self._run_version_preflight(script_source)
+        self.assertEqual(0, outcome.returncode, outcome.stderr)
+        self.assertIn("RDP_EXPECTED_SCRIPT_VERSION=" + match.group(1), outcome.stdout)
+        self.assertIn("set(versions)=={expected_version}", SOURCE)
+        self.assertIn('re.fullmatch(r"\d+\.\d+\.\d+",version)', SOURCE)
+        self.assertNotIn('set(versions)=={"1.3.18"}', SOURCE)
+
+    def test_mismatched_source_metadata_denies_health(self):
+        script_source = (ROOT / "public/zcloud-worker.user.js").read_text(encoding="utf-8")
+        corrupted = re.sub(
+            r"(?m)^(//\s*@version\s+)\d+\.\d+\.\d+",
+            r"\g<1>9.9.9", script_source, count=1,
+        )
+        self.assertNotEqual(script_source, corrupted)
+        outcome = self._run_version_preflight(corrupted)
+        self.assertNotEqual(0, outcome.returncode)
+        self.assertIn("source version/DOM readiness mismatch", outcome.stderr)
+
+    def test_new_version_does_not_need_workflow_rewrite(self):
+        script_source = (ROOT / "public/zcloud-worker.user.js").read_text(encoding="utf-8")
+        original = re.search(r"(?m)^//\s*@version\s+(\d+\.\d+\.\d+)\s*$", script_source)
+        self.assertIsNotNone(original)
+        revised = script_source.replace(original.group(1), "7.8.9")
+        self.assertNotEqual(revised, script_source)
+        outcome = self._run_version_preflight(revised)
+        self.assertEqual(0, outcome.returncode, outcome.stderr)
+        self.assertIn("RDP_EXPECTED_SCRIPT_VERSION=7.8.9", outcome.stdout)
+
+    def test_self_hosted_checkout_is_exact_immutable_main(self):
+        inspect = _job("inspect")
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", inspect)
+        self.assertIn("ref: ${{ github.sha }}", inspect)
+        self.assertIn("persist-credentials: false", inspect)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', inspect)
+        self.assertLess(inspect.index('test "$(git rev-parse HEAD)"'), inspect.index("python3 - <<'PY'"))
 
 
 if __name__ == "__main__":
