@@ -9,6 +9,7 @@ on:
       - ".github/workflows/lightup-pr959-exact-head-proof.yml"
       - ".github/workflows/lightup-pr960-exact-head-proof.yml"
       - ".github/workflows/lightup-pr962-exact-head-proof.yml"
+      - ".github/workflows/lightup-export-obsolete-proof-cleanup.yml"
       - ".github/workflows/zcloud-lightup-csv-proof-retirement-hosted-20261014-w3.yml"
       - "tests/test_zcloud_lightup_csv_proof_retirement_20261014_w3.py"
       - "docs/deployops-lightup-csv-proof-retirement-20261014-w3.md"
