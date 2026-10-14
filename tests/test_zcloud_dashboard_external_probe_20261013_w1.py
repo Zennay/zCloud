@@ -326,7 +326,7 @@ class DashboardProbeTests(unittest.TestCase):
             ("cdn; hit=?0; fwd=uri-miss", "healthy"),
             ('cdn; detail="quoted; hit"; fwd=uri-miss', "healthy"),
             ('cdn; detail="quoted, other; hit=?1"', "healthy"),
-            ('cdn; detail="escaped \\"; hit" ; fwd=miss', "healthy"),
+            ('cdn; detail="escaped ' + chr(92) + '"; hit"; fwd=miss', "healthy"),
             ("cdn; hit=?1; fwd=miss", "invalid_headers"),
             ("cdn; hit; fwd=stale", "invalid_headers"),
             ("cdn; hit=?1; hit=?1", "invalid_headers"),
