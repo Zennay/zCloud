@@ -78,7 +78,10 @@ def failures(source: str) -> list[str]:
         problems.append("bounded_idempotent_start")
     if re.search(r"(?m)^\s*(?:sudo\s+-n\s+)?systemctl\s+(?:restart|stop|kill)\s+zennay-cloud\.service\b", source):
         problems.append("destructive_service_operation")
-    if re.search(r"(?:/api/dynamic-workers|urllib\.request\.Request\([^)]*method=['\"]POST|curl\s+[^\n]*-X\s+(?:POST|PUT|DELETE))", source):
+    # Ignore comment-only threat descriptions, never actual shell/Python calls.
+    executable = "\n".join(line for line in source.splitlines()
+                           if not line.lstrip().startswith("#"))
+    if re.search(r"(?:/api/dynamic-workers|urllib\.request\.Request\([^)]*method=['\"]POST|curl\s+[^\n]*-X\s+(?:POST|PUT|DELETE))", executable):
         problems.append("global_queue_mutation")
     if 'print("HAXLAB_P1_STATUS",json.dumps({' not in body:
         problems.append("redacted_queue_summary")
