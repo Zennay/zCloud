@@ -34,8 +34,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ZCLOUD_AUTOMERGE_ENABLED: ${{ vars.ZCLOUD_AUTOMERGE_ENABLED || 'true' }}
         run: |
+          set -euo pipefail
           if [ "$ZCLOUD_AUTOMERGE_ENABLED" = 'true' ]; then
-            python3 scripts/zcloud_autonomous_pr_integrator.py --apply
+            python3 scripts/zcloud_autonomous_pr_integrator.py --apply | tee "$RUNNER_TEMP/zcloud-automerge-report.json"
           else
-            python3 scripts/zcloud_autonomous_pr_integrator.py
+            python3 scripts/zcloud_autonomous_pr_integrator.py | tee "$RUNNER_TEMP/zcloud-automerge-report.json"
           fi
+      - name: Show bounded source integration backlog and refusal reasons
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_automerge_report_20261014.py \
+            "$RUNNER_TEMP/zcloud-automerge-report.json" "$GITHUB_STEP_SUMMARY"
