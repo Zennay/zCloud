@@ -132,16 +132,25 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         # Dynamic runner selection and reusable jobs require independent proof.
         potentially_vps = (
             "self-hosted" in block.lower()
-            or (runner is not None and ("$" in selection or not selection.strip()))
+            or (runner is not None and (any(mark in selection for mark in ("$", "*", "&", "!")) or not selection.strip()))
             or reuse is not None
         )
         if not potentially_vps:
             continue
         # Enforce actual job-level if, not shell/source comments or step-level if.
-        admission = re.search(r"(?m)^    if:\s*(.+(?:\n {6,}.+)*)", block)
+        admission = re.search(r"(?m)^    if:[ \t]*(.*(?:\n {6,}.+)*)", block)
         value = admission.group(1) if admission else ""
-        value = "\n".join(line.split(" #", 1)[0] for line in value.splitlines())
-        if re.search(r"\|\||\btrue\b", value, re.I) or not all(re.search(rule, value) for rule in TRUST):
+        value = "\n".join(line.split(" #", 1)[0] for line in value.splitlines()).strip()
+        if value.startswith((">-", ">", "|-", "|")):
+            value = value.split("\n", 1)[-1].strip()
+        if value.startswith("$" + "{{") and value.endswith("}}"):
+            value = value[3:-2].strip()
+        # Exact positive conjunctions only. Merely mentioning the five trusted
+        # strings inside a literal, function or OR clause is not authorization.
+        clauses = [part.strip() for part in value.split("&&")]
+        allowed = [any(re.fullmatch(rule, part) for rule in TRUST) for part in clauses]
+        complete = all(any(re.fullmatch(rule, part) for part in clauses) for rule in TRUST)
+        if not complete or not all(allowed):
             findings.add((path, job))
     # An apparently manual workflow with unparseable/missing jobs must not pass.
     if not jobs and re.search(r"\b(?:runs-on|uses)\s*:", source):
