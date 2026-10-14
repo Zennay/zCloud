@@ -32,6 +32,8 @@ def report(rows=None):
         buckets[key] = buckets.get(key, 0) + 1
     return {
         "policy": triage.IDENTITY, "decision": "OBSERVED",
+        "main_sha_before": "a" * 40, "main_sha_after": "a" * 40,
+        "observed_at": "2026-10-14T04:10:00Z",
         "observed_runs": len(rows), "runs": rows, "route_counts": buckets,
         "runner_recovery_authorized": False, "production_verified": False,
         "worker_generation_verified": False, "cancel_run_ids": [],
@@ -145,6 +147,23 @@ class QueueRouteSummaryTests(unittest.TestCase):
         ):
             with self.subTest(row=invalid):
                 self.assertEqual(self.render(report([invalid]))[1], 1)
+
+    def test_main_sha_drift_and_missing_identity_deny_all_route_counts(self):
+        for field, value in (
+            ("main_sha_after", "b" * 40),
+            ("main_sha_before", True),
+            ("main_sha_before", "ABC" * 13 + "X"),
+            ("main_sha_before", ""),
+            ("observed_at", "2026-10-14T04:10:00+00:00"),
+            ("observed_at", None),
+        ):
+            with self.subTest(field=field):
+                data = report([record()])
+                data[field] = value
+                markdown, code = self.render(data)
+                self.assertEqual(code, 1)
+                self.assertIn("Geen aantallen gepubliceerd", markdown)
+                self.assertNotIn("Run 71", markdown)
 
     def test_duplicate_json_keys_denied(self):
         raw = json.dumps(report()).encode("utf-8")[:-1] + b',"decision":"OBSERVED"}'
