@@ -77,6 +77,35 @@ class SummaryTests(unittest.TestCase):
             with self.subTest(reason=bad), self.assertRaises(report.InvalidReport):
                 report.summary(sample)
 
+    def test_disjoint_draft_and_review_only_cohorts_must_add_up(self):
+        for draft, review, scanned in ((90, 60, 147), (148, 0, 147),
+                                      (0, 148, 147), (100, 48, 147)):
+            item = fixture()
+            item["inventory"].update({
+                "draft_prs": draft, "unlabeled_non_draft": review,
+                "open_prs_scanned": scanned,
+            })
+            with self.subTest(draft=draft, review=review, scanned=scanned):
+                with self.assertRaises(report.InvalidReport):
+                    report.summary(item)
+
+    def test_unlabeled_review_ids_cannot_exceed_cohort_or_overlap_labelled(self):
+        item = fixture()
+        item["inventory"]["unlabeled_non_draft"] = 1
+        with self.assertRaisesRegex(report.InvalidReport, "inconsistent_review_ids"):
+            report.summary(item)
+        item = fixture()
+        item["inventory"]["review_only_pr_ids"] = [7, 13]
+        with self.assertRaisesRegex(report.InvalidReport, "contradictory_pr_cohorts"):
+            report.summary(item)
+
+    def test_valid_partial_review_sample_does_not_require_all_pr_numbers(self):
+        item = fixture()
+        item["inventory"]["review_only_pr_ids"] = []
+        self.assertIn("Open PR's gecontroleerd:** 147", report.summary(item))
+        item["inventory"]["review_only_pr_ids"] = [12, 13]
+        self.assertIn("#12, #13", report.summary(item))
+
     def test_bounded_strict_json_and_missing_evidence_summary(self):
         for content in (b'{"repo":"A","repo":"B"}', b'{"x":NaN}',
                         b'[]', b'{' + b'a'*300000 + b'}'):
