@@ -14,6 +14,7 @@ except ModuleNotFoundError:
 
 _MAX_BYTES = 32768
 _MAX_REPORT_AGE_SECONDS = 60
+_MAX_GITHUB_ID = (1 << 63) - 1
 _SCOPES = {"current_main", "historical_main", "other_branch", "foreign_repository"}
 _ROUTES = {"no_job_records", "github_hosted", "zcloud_vps", "ftmo_research",
            "other_or_mixed", "mixed_job_routes"}
@@ -145,7 +146,7 @@ def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
             if type(row) is not dict:
                 raise ValueError("invalid_row")
             number = row.get("run_id")
-            if type(number) is not int or number <= 0 or number in seen:
+            if type(number) is not int or not 0 < number <= _MAX_GITHUB_ID or number in seen:
                 raise ValueError("invalid_run_id")
             seen.add(number)
             if (
