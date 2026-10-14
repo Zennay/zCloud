@@ -560,6 +560,12 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
         self._run("invalid_headers",
                   extra_headers=(("Content-Length", str(len(VALID))),))
 
+    def test_actual_http_ambiguous_content_encoding_is_not_healthy(self):
+        for coding in ("gzip", "", "identity, gzip"):
+            with self.subTest(coding=coding):
+                self._run("invalid_headers",
+                          extra_headers=(("Content-Encoding", coding),))
+
     def test_actual_http_conflicting_transfer_framing_is_not_healthy(self):
         # An actual HTTP/1.1 response with both Content-Length and
         # Transfer-Encoding is ambiguous; urllib can otherwise hide the coding.
